@@ -19,8 +19,8 @@ usable.
 - The issue tracker holds the scope of everything unbuilt.
 
 The repo started from [repo-template](https://github.com/l3a0/repo-template),
-and shares code with its siblings through
-[ithildin-core](https://github.com/l3a0/ithildin-core).
+and will share code with its siblings through
+[ithildin-core](https://github.com/l3a0/ithildin-core) once it has code to share.
 
 ## Running the checks locally
 
