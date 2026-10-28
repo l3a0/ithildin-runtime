@@ -7,14 +7,14 @@ and live trading, so what is tested is what runs live.
 ## Status
 
 Nothing is built yet. The first milestone is a walking skeleton that trades on
-paper, and [docs/build-plan.md](docs/build-plan.md) says what it must leave
-usable.
+paper, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
+its tests show it works.
 
 ## Where things live
 
 - [CLAUDE.md](CLAUDE.md) holds the hard limits and the rules agents work by.
 - [docs/team-charter.md](docs/team-charter.md) holds the team's roles, the
-  lifecycle from plan to operate, and the MVP.
+  lifecycle from plan to operate, and why the MVP is a walking skeleton.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
 - The issue tracker holds the scope of everything unbuilt.
 

@@ -298,15 +298,8 @@ simplest form, running end to end every trading day on paper. A complete data
 layer with no strategy on top is a component nobody can run, and so is an
 alpha model with no way to trade it.
 
-| Module | MVP form | Deferred |
-| --- | --- | --- |
-| Data | Daily bars for a handful of liquid ETFs, recorded as vintages, with a minimal security master. `marketlake` is the candidate source | Intraday, fundamentals, alternative data |
-| Alpha model | One strategy already replicated in `quantitative-trading`, so the backtest has a known answer to match | Signal mixing, machine learning |
-| Risk model | Hard limits from L6916 and a daily loss stop | Factor models, optimizer penalties |
-| Transaction cost model | Flat or linear per share (L2528) | Square-root impact, calibration from fills |
-| Portfolio construction | Rule-based, equal risk weight (L2684) | Optimizer |
-| Execution | Order manager, journal, simulated broker, then a paper account. Market or limit orders at one time of day | Algorithms, smart routing, FIX |
-| Monitoring | Daily report, reconciliation, dead-man, kill switch | Dashboards, latency tracking |
+[#4](https://github.com/l3a0/ithildin-runtime/issues/4) holds each module's simplest form, what it
+defers, and the four tests that show the skeleton works.
 
 The price of the skeleton is named rather than hidden: every module ships crude,
 and the first strategy's performance says little. What it buys is a loop that

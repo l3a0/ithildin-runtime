@@ -9,6 +9,7 @@ the module table this doc reasons about.
 
 - [Premise](#premise)
 - [One runtime](#one-runtime)
+- [How work is cut and ordered](#how-work-is-cut-and-ordered)
 - [Vocabulary](#vocabulary)
 - [Configuration](#configuration)
 - [Considered and rejected](#considered-and-rejected)
@@ -60,6 +61,26 @@ interface from its first commit, which is slower than a vectorised backtest
 over a price array. What it buys is that a strategy's backtest and its paper
 run exercise the same lines of code.
 
+## How work is cut and ordered
+
+A slice is the smallest set of deliverables that leaves the product usable by
+someone at the end of it. Not a layer, and not a subsystem. A slice that ends
+with a component nobody can run is a slice cut the wrong way.
+
+Each slice lives on the tracker as three things.
+
+1. A milestone with the slice's name, so a filed issue has one to take.
+2. A parent issue holding what the slice leaves usable and the tests that show
+   it works.
+3. One sub-issue per deliverable, each with a "blocked by" link to whatever it
+   waits on.
+
+Order the slices by what the ranking rule in [CLAUDE.md](../CLAUDE.md)
+decides: what is missing from the shortest path to a product someone can use
+goes first. Then ship it, use it, and let what breaks set the order after
+that. Slice 1 is the walking skeleton, on [#4](https://github.com/l3a0/ithildin-runtime/issues/4). The next slice is chosen
+by what breaks while the skeleton runs on paper.
+
 ## Vocabulary
 
 Terms with exact definitions, reused on purpose. A term listed here is not a
@@ -102,4 +123,5 @@ once rather than re-argued.
 | --- | --- |
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning |
+| A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and its order is the issues' "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | The template's cross-surface sweep module | The repo has no generated artifact and no figure yet. Take it from [repo-template](https://github.com/l3a0/repo-template) when the first one lands |
