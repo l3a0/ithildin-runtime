@@ -172,6 +172,6 @@ fi
 # that no longer exists.
 cat <<'NOTES'
 
-Done with the GitHub side. The rest is in README.md, under
+Done with the GitHub side. The rest is in repo-template's README.md, under
 "Starting a repo from it". Nothing here can guess those.
 NOTES
