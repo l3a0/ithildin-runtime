@@ -1,4 +1,4 @@
-# Build plan — PROJECT_NAME
+# Build plan — ithildin-runtime
 
 This doc carries the slicing rule, the build order, and each slice's test
 surface. It does not carry scope. An unbuilt deliverable's scope lives on its
@@ -21,24 +21,32 @@ issue has a milestone to take.
 
 ## Slices
 
-<!-- TEMPLATE: one section per slice. Each deliverable is a link to its issue.
-     The test surface says what must be true before the slice is done, in
-     terms of what a test executes rather than what the code looks like. -->
+### Slice 1, walking skeleton
 
-### Slice 1, TODO
+**What it leaves usable.** A platform that runs every trading day on paper,
+end to end, with every module in its simplest form. One strategy goes through
+data, alpha, risk, cost, portfolio construction and execution, and the day
+ends with positions reconciled against the broker.
 
-**What it leaves usable.** TODO.
+**Deliverables.** The issues are not filed yet. Filing them is the slice's
+first piece of work, one issue per row of the MVP table in
+[team-charter.md](team-charter.md#the-first-mvp), and this list becomes links
+when they exist.
 
-**Deliverables.**
+**Test surface.**
 
-- TODO, issue link
-
-**Test surface.** TODO.
+1. A strategy already replicated in the sibling
+   [quantitative-trading](https://github.com/l3a0/quantitative-trading)
+   repository, run through this platform's backtest, reproduces its pinned
+   numbers.
+2. A replay of recorded data through the full loop against the simulated
+   broker emits pinned orders, including on a day with a missing feed, a stale
+   price and a restart in the wrong order.
+3. The risk gate refuses an order over each limit, and a test shows no order
+   reaches the broker adapter without passing it.
+4. The kill switch and the dead-man check have each fired in a drill.
 
 ## Dependencies between slices
 
-<!-- TEMPLATE: name only the dependencies that are real, meaning a slice that
-     genuinely cannot start until another finishes. An invented dependency is
-     how a plan quietly becomes a layered build. -->
-
-TODO.
+There is one slice so far, so nothing depends on anything yet. The next slice
+is chosen by what breaks while the skeleton runs on paper.

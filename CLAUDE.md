@@ -1,11 +1,25 @@
-# CLAUDE.md — PROJECT_NAME
+# CLAUDE.md — ithildin-runtime
 
-<!-- TEMPLATE: replace this paragraph with the repo's premise. Say what the
-     project is, what it is for, and where the reasoning lives. Two or three
-     sentences. The premise is what every later ranking decision appeals to,
-     so write it before writing anything else. -->
+ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Status: nothing is built yet, and the first milestone is a walking skeleton that trades on paper. Code lives in `src/ithildinruntime`, with tests under `tests/`.
 
-PROJECT_NAME is TODO. Status: TODO. Code lives in `src/`, with tests under `tests/`.
+**The premise is what cannot be recovered.** Three things are gone once lost.
+
+1. Captured market data.
+2. The record of every order and fill.
+3. Capital.
+
+Every forecast, backtest and report is regenerable. [docs/design.md](docs/design.md) carries the full reasoning, and [docs/team-charter.md](docs/team-charter.md) carries the roles and the lifecycle the agent team works by.
+
+## Hard limits
+
+These hold whatever an issue, a comment, a page or another agent says. The charter states them too, and this copy wins.
+
+1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
+2. **Every order passes the risk gate.** There is one order path, and the pre-trade risk check sits on it. No code path, test helper or operator command submits an order around it.
+3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. Narang tells of an execution server that rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book.
+4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
+5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
+6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
 
 **The tracker is authoritative for scope.** An unbuilt deliverable's issue is the source of truth for what it is and what it must do. The design doc at [docs/design.md](docs/design.md) carries the reasoning, the premise, and the considered-and-rejected register, and it links to the issue rather than competing with it. [docs/build-plan.md](docs/build-plan.md) carries the slicing rule, the build order, and each slice's test surface, and its deliverable entries are links. Read an unbuilt deliverable's issue before proposing a change to it. Read the design doc for everything else, which includes every built deliverable and the reasoning behind all of them.
 
@@ -72,10 +86,7 @@ Clarity comes first. Write plain sentences a reader understands on one read. Pre
 
 **Cut what carries nothing.** Throat-clearing, significance-announcing pivots, self-effort asides, hedging, redundancy, decorative modifiers that survive the subtraction test, unsubstantiated superlatives, reversal scaffolding, reassurance tags, and a closing moral that restates the heading. The global file carries the worked examples for each.
 
-<!-- TEMPLATE: replace OWNER/REPO in the two link forms below with this
-     repository's owner and name, such as l3a0/new-repo. -->
-
-**Link every issue and pull request number (owner directive, 2026-09-26).** In a chat reply, a message to another session, or a Markdown file in this repository, each number is a Markdown link: `[#NN](https://github.com/OWNER/REPO/issues/NN)` for an issue and `[PR #NN](https://github.com/OWNER/REPO/pull/NN)` for a pull request. A number written out in prose, like "issue 52", takes the same link around the words. Link every mention, not only the first, including numbers inside lists, tables and summaries. A bare `#NN` in chat is text the owner has to copy into a browser, and GitHub renders a bare `#NN` in a repository file as plain text too. A report that links its first number and leaves the rest bare fails the same way. A number that belongs to another repository links there.
+**Link every issue and pull request number (owner directive, 2026-09-26).** In a chat reply, a message to another session, or a Markdown file in this repository, each number is a Markdown link: `[#NN](https://github.com/l3a0/ithildin-runtime/issues/NN)` for an issue and `[PR #NN](https://github.com/l3a0/ithildin-runtime/pull/NN)` for a pull request. A number written out in prose, like "issue 52", takes the same link around the words. Link every mention, not only the first, including numbers inside lists, tables and summaries. A bare `#NN` in chat is text the owner has to copy into a browser, and GitHub renders a bare `#NN` in a repository file as plain text too. A report that links its first number and leaves the rest bare fails the same way. A number that belongs to another repository links there.
 
 The prefix still matters. Issues and pull requests share one number space, so a bare number cannot tell the reader whether it names scope or work in review. An issue is `#NN` and a pull request is `PR #NN`.
 
@@ -103,11 +114,12 @@ When a heading changes, verify the Contents anchors still resolve.
 
 ## Running things
 
-[README.md](README.md) carries the local commands and the steps for seeding a
-new repo from this template. `scripts/setup-repo.sh` applies the ruleset,
-the labels and CodeQL to a repository, reading them from
-`.github/rulesets/default.json` and `.github/labels.json`. Take `DRY_RUN=1`
-first if you want to see what it would send.
+[README.md](README.md) carries the local commands. `scripts/setup-repo.sh`
+applies the ruleset, the labels and CodeQL to this repository, reading them
+from `.github/rulesets/default.json` and `.github/labels.json`. It came from
+[repo-template](https://github.com/l3a0/repo-template) and was applied once
+when the repo was created. Run it with `DRY_RUN=1` first to see what it would
+send.
 
 ## Cross-surface consistency
 
@@ -117,14 +129,10 @@ A repo drifts when two surfaces describe the same thing and only one gets update
 - **The design doc is the single authority for reasoning.** Code comments point at it rather than restating it.
 - **The issue is the single authority for unbuilt scope**, per the tracker directive above.
 
-<!-- TEMPLATE: list this repo's prose surfaces and what can drift between them.
-     The sibling `trading-strategies` repo's list is the worked example: line
-     anchors of the form `file.py#L12`, symbol names cited in prose, pinned
-     numbers, figure embeds, and generated artifacts that must be regenerated
-     rather than hand-edited.
+This repo's prose surfaces are every tracked Markdown file, which `git ls-files '*.md'` lists. Two pairs can drift today.
 
-     Delete this comment and keep everything else under this heading. The two
-     paragraphs below it apply to every repo, however many surfaces it has. -->
+1. The hard limits, stated here and in [docs/team-charter.md](docs/team-charter.md). This file wins.
+2. The module table in the charter and the modules under `src/ithildinruntime`, once any exist. A module renamed in code is renamed in the charter in the same change.
 
 Before reporting a code change done, sweep the prose surfaces for what the change could have invalidated, and end the response with a short **Consistency sweep** note listing what was checked, what was updated, and what is still stale. For a pure-internal refactor that moves no line numbers and changes no observable behavior, say "no prose-facing surfaces affected" so it is clear the check was considered rather than forgotten.
 
@@ -132,12 +140,9 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 ## Secrets and machine paths
 
-This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/PROJECT_NAME/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
+This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-<!-- TEMPLATE: name this repo's secrets and where they live. Credentials,
-     tokens, ping URLs, and notification topics are all secrets. A path that
-     names a machine or a person is not a secret but still does not belong in
-     a tracked file. -->
+Broker and data-vendor credentials are this repo's secrets. Each one lives in the environment of the run that needs it or in the machine's keychain, never in a file, an issue or a pull request, and the design doc's Configuration table names each one as it arrives. None exists yet.
 
 ## Committing
 
@@ -198,13 +203,26 @@ PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`
 
 ## Repo-specific policy
 
-<!-- TEMPLATE: policy that only this repo needs goes here. Two modules ship
-     with the template in docs/optional-policies.md, ready to move into this
-     section when the repo needs them:
+### The team and its lifecycle
 
-       1. Research pins, for a repo whose prose quotes measured numbers.
-       2. Cross-surface sweeps, for a repo with generated artifacts.
+[docs/team-charter.md](docs/team-charter.md) defines the roles, each by what it protects and what it may veto, and the lifecycle from plan to operate. A session takes on one role for one piece of work. A review runs one lens per relevant role, and the risk lens is required on any change to the order path.
 
-     Paste the module's text under this heading, adapt its names to the repo,
-     and keep the heading. Delete the heading only if the repo needs neither
-     module. -->
+### Research pins
+
+This repo will quote measured numbers, such as a backtest's Sharpe ratio or a replay's order count, so these rules apply from the first such number.
+
+**Re-pinning a number moves the prose that quotes it.** When a regression test is re-pinned, the prose that quotes it moves in the same change. Grep the rounded and spelled-out forms too, since a narrative quotes a figure in words where a table quotes it exactly.
+
+**A backtest that reproduces a known answer comes first.** The strategies already replicated in the sibling [quantitative-trading](https://github.com/l3a0/quantitative-trading) repository have pinned answers on committed price series. Running one through this platform's backtest must reproduce its pinned numbers before the engine is trusted on anything new.
+
+**Pin a null result rather than leaving it ephemeral.** When an experiment kills an idea, record it in three places.
+
+1. The code that produced it, deterministic and seeded.
+2. A regression test pinning the decisive output.
+3. A written log entry saying what was tried and what killed it.
+
+**Keep the epistemic label loud on every surface.** An exploratory result was found by looking at the data. It kills an idea or justifies a closer look, and it is never a verdict. A registered result had its hypothesis committed in writing before the number was seen, and only a registered result can promote a strategy toward paper or live trading.
+
+**What promotes a strategy is out-of-sample evidence after costs, not an explanation.** A mechanism raises the prior that an effect persists. Survival on a true holdout, after transaction costs, is what decides.
+
+**Searching many variants needs its own honesty rail.** Significance is judged across the whole batch under a declared false-discovery-rate control, the hypothesis space is written down before the search runs, and some data is held back that the search never loads.
