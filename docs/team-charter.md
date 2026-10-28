@@ -293,13 +293,14 @@ its agents' transcripts (`loop-cost`), and posts it on the issue it tracks.
 
 ## The first MVP
 
-The MVP is a walking skeleton: every box in the table above, each in its
-simplest form, running end to end every trading day on paper. A complete data
+The MVP is a walking skeleton: every box of the live loop in the table above,
+each in its simplest form, running end to end every trading day on paper. A complete data
 layer with no strategy on top is a component nobody can run, and so is an
-alpha model with no way to trade it.
+alpha model with no way to trade it. Research runs apart from the live loop,
+so it is not part of the skeleton.
 
 [#4](https://github.com/l3a0/ithildin-runtime/issues/4) holds each module's simplest form, what it
-defers, and the four tests that show the skeleton works.
+defers, and the tests that show the skeleton works.
 
 The price of the skeleton is named rather than hidden: every module ships crude,
 and the first strategy's performance says little. What it buys is a loop that
