@@ -61,8 +61,9 @@ module table, and three adapters at its edges.
 The price is that every module has to be written against an event from its
 first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
-lines of code. The next section says what that event is: one record appended
-to a file on disk. Only the data worker and the supervisor read the clock.
+lines of code. The next section says what that event is: one output file,
+recorded by a row in the component's event log. Only the data worker and the
+supervisor read the clock.
 
 ## Processes and files
 
@@ -115,8 +116,9 @@ Seven terms carry the design.
 
 1. An **output file** holds one thing a component produced for one session,
    such as a snapshot or a forecast. It is written once and never changed.
-2. An **event** is one row of a component's event log. It records one output
-   file, by path and SHA-256, or a halt, and names the events it came from.
+2. An **event** is one row of an event log. Most events point to an output
+   file. Others record a halt, a session or the end of the span in the
+   control log, a halt monitoring has handled, or a journal entry.
 3. An **event log** is the SQLite database holding one component's events in
    the order it wrote them, and it only ever grows. It is three files: the
    database, and the `-wal` and `-shm` files SQLite keeps beside it. Each event
@@ -127,10 +129,9 @@ Seven terms carry the design.
    world only through the adapter at its edge, such as the broker or the data
    source. A worker imports `core`, the shared types, and no sibling module,
    and shares no memory with any other worker.
-5. A **queue** is the one place a worker listens. A message on it names an
-   event log and the sequence number of an event there for the worker to
-   process. The message only says something is new. The event log stays the
-   record whether a message arrives or not.
+5. A **queue** is the one place a worker listens for notice of something new.
+   The message only says something is new. The event log stays the record
+   whether a message arrives or not.
 6. The **supervisor** is the process that starts a run's workers, writes the
    run's **control log**, which holds one event per session of the run and
    then an end-of-span event, watches the workers and stops the run.
@@ -143,65 +144,94 @@ Two stores sit outside every run directory, because they outlive any one run.
 2. The journal, at one path per broker account, which the book is replayed
    from. This doc proposes to
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that it is a
-   SQLite event log too, the one with more than one writer, keeping each
-   entry in its row rather than in a file, because an entry is small and must
-   be committed before the step it records happens. That commit is how hard
-   limit 4 holds on disk.
+   SQLite event log with the same row shape, the one with more than one
+   writer, and the one that keeps its content in its rows rather than in
+   files, because an entry is small and must be committed before the step it
+   records happens. That commit is how hard limit 4 holds on disk. Keeping
+   content in the rows is the option the owner set aside for components, so
+   it is the owner's to confirm for the journal.
 
 Nine rules make the files and the logs something a worker can trust.
 
-1. **An output file appears whole and is never changed.** A worker writes each
-   output to a temporary name in its directory and flushes it to stable
-   storage, with `fcntl(F_FULLFSYNC)` on macOS, because a plain `fsync` there
-   does not ask the drive to empty its cache. It then publishes the file at a
-   name fixed by the worker and the session, with `link`, which refuses to
-   replace an existing name, rather than `rename`, which silently replaces
-   one. So a reader never sees half a file, and no file is ever overwritten. A
+1. **An output file appears whole, once, and stays as written.** A worker
+   creates a temporary file at a name no other file has, refusing to open one
+   that exists, and read-only, so no later open can write through it. It
+   writes the output, flushes it to stable storage, publishes it at a name
+   fixed by the worker and the session with `link`, which refuses to replace
+   an existing name, unlinks the temporary name, and flushes the directory, so
+   the new name itself survives a power loss. A worker that starts and finds a
+   leftover temporary file unlinks it unopened. One function in `core` does
+   every flush, `fcntl(F_FULLFSYNC)` on macOS, because a plain `fsync` there
+   does not ask the drive to empty its cache, and `fsync` elsewhere, so the
+   one place that differs by operating system is tested on its own. Each
+   output file begins with a header naming the input events it consumed, the
+   release commit, a hash of the configuration, and when it was produced. A
    run's files and logs live on one local filesystem, never on a network
    share, because there a reader may not see a new file at once and SQLite's
    write-ahead mode needs memory shared on one machine.
 2. **The event log is the source of truth.** A file counts as an output only
    once the worker's event log holds a row that points to it, by path and
-   SHA-256. A reader never lists a directory to find inputs. It follows the
-   rows. Each append is one row in one transaction, which SQLite commits whole
-   or not at all. Each event log runs in SQLite's write-ahead mode, which lets
-   readers read while one writer commits. Every writer connection, each of the
-   journal's included, sets `synchronous=FULL` and `fullfsync=ON` each time it
-   opens, because both belong to the connection rather than the file, and
-   SQLite ignores `fullfsync` off macOS. Each append opens its transaction
-   with `BEGIN IMMEDIATE`, which takes the write lock first, then reads the
-   last row's sequence number and hash, then inserts the next row and
-   commits, so two writers never pick the same sequence number. Each table
-   carries three triggers. Two refuse any update or delete. The third refuses
-   any insert whose sequence number is not one past the last, which also
-   stops `INSERT OR REPLACE` from overwriting a row and `INSERT OR IGNORE` from
-   dropping one in silence. Each row stores its event as its exact serialized
-   body in one text column, with a hash of that body and the hash of the row
-   before it. A link that does not chain, a hash that does not match, or a log
+   SHA-256. A downstream reader never lists a directory to find inputs. It
+   follows the rows. Every event log, the journal included, has one row
+   shape: a sequence number, the event's exact serialized body in one text
+   column, so SQLite never rewrites a value, a hash of that body, and the hash
+   of the row before it. Each append is one row in one transaction, which
+   SQLite commits whole or not at all. Each event log runs in SQLite's
+   write-ahead mode, which lets readers read while one writer commits. Every
+   writer connection, each of the journal's included, sets `synchronous=FULL`
+   and `fullfsync=ON` each time it opens, because both belong to the
+   connection rather than the file, and SQLite ignores `fullfsync` off macOS.
+   Each append opens its transaction with `BEGIN IMMEDIATE`, which takes the
+   write lock first. It then looks for a row for the same session and the
+   same file, and if one is there, a commit that landed before an error was
+   reported, it inserts nothing. Otherwise it reads the last row's sequence
+   number and hash and inserts the next row. So two writers never pick the
+   same sequence number, and a retried append never doubles a row. Each table
+   carries three triggers.
+   1. One refuses any update.
+   2. One refuses any delete.
+   3. One refuses any insert whose sequence number is not one past the last,
+      which also stops `INSERT OR REPLACE` from overwriting a row and
+      `INSERT OR IGNORE` from dropping one in silence.
+
+   The triggers stop a mistake made through SQL, and the chain of hashes
+   catches a row changed or removed around them, which a row's own hash
+   cannot. A link that does not chain, a hash that does not match, or a log
    that fails SQLite's quick integrity check, which a writer runs when it
    opens, halts the reader or the writer with the log and the sequence number.
 3. **A worker resumes by reading what exists and retrying the log.** For each
    session, a worker first looks in its own event log. If a row for the
    session is there, the work is done. If not, it looks for the output file
-   at the session's fixed name. A file there was published whole by an
-   earlier attempt that crashed before its commit, so the worker reads it,
-   hashes it and retries the SQLite append that points to it. With no file
-   either, it computes the output, publishes the file and appends the row. A
-   SQLite append that fails, for example because another writer holds the
-   lock, is retried until a deadline. A file with no row pointing to it is
-   left alone and never read as an output. A worker that runs again after a
-   superseded attempt writes a new file under its own attempt number and a row
-   that names the event it supersedes. The newest superseding event wins, and
-   two events for one session with no link between them halt the reader.
+   at the session's name. A file there was published whole by an earlier
+   attempt that crashed before its commit, so the worker reads its header,
+   halts if the header names a different release or configuration from the
+   run's, and otherwise hashes it and retries the SQLite append, copying the
+   inputs, release, configuration hash and production time from the file's
+   header into the row, so the row records what made the file rather than
+   what resumed it. With no file either, it computes the output, publishes
+   the file and appends the row. A SQLite append that fails, for example
+   because another writer holds the lock, is retried until a deadline. A file
+   no row points to is never read by a downstream worker. A worker writes at
+   most one output event per session, because a halt is final and clearing
+   one never reruns the session, so a second event for one session halts the
+   reader.
 4. **A worker listens on its queue, then reads its inputs.** Each queue is a
    named pipe in the run directory, a file that one process reads and others
-   write to, one per worker. After a writer commits an event, it sends a
-   message to the queue of every worker that reads its log. One table in
-   `runtime` says which worker reads which log. A worker that is not running
-   has no listener on its pipe, so the send fails at once and is skipped, and
-   the worker catches up from its input logs when it starts. Each message is
-   one line under the pipe's 512-byte limit, so messages from several writers
-   never mix. Whichever message wakes a worker, it opens each input log
+   write to, one per worker. One table in `runtime` is the only place a
+   worker's inputs are declared. Each worker's entry point hands it its input
+   logs from that table, and hands the log contract the list of workers that
+   read its own log. After a writer commits an event, the log contract sends
+   a message to the queue of every worker on that list. A message names the
+   log and the sequence number, or says the kill switch was pulled. Every
+   send opens the pipe without waiting. A worker that is not running has no
+   listener, and a worker far behind may have a full pipe, which a long
+   backtest can fill. Either way the send fails at once and is skipped,
+   because a full pipe already holds a message that will wake its reader, and
+   a stopped worker catches up when it starts. A starting worker opens its
+   pipe for reading first, and only then reads its inputs to catch up, so no
+   event committed in between goes unannounced. Each message is one line
+   under the pipe's 512-byte limit, so messages from several writers never
+   mix. Whichever message wakes a worker, it opens each input log
    read-only, reads every row past the last sequence number it handled,
    follows each row to its file and checks the file's SHA-256 against the
    row. It holds no transaction open between reads, since an open read keeps
@@ -209,12 +239,13 @@ Nine rules make the files and the logs something a worker can trust.
    message has already committed, so when it starts again it sends a message
    for its newest event before anything else, and a deadline catches a writer
    that never starts again. A worker reads every row it finds rather than one
-   per message, so a lost or repeated message costs nothing.
-5. **Each event names what made it.** Its row names the last event it
+   per message, so a repeated message, or one skipped while the worker was
+   already listening with a message waiting, costs nothing.
+5. **Each event names what made it.** Its body names the last event it
    consumed from each input log, the control log included, by log, sequence
    number and hash, along with its output file's path and SHA-256, the release
-   commit, a hash of the configuration, the session it is for, when it was
-   written, and its format version. A worker keeps no cursor of its own. How
+   commit, a hash of the configuration, the session it is for, when the
+   output was produced, and its format version. A worker keeps no cursor of its own. How
    far it has read each input is the last event its own log names from it, so
    a restarted worker resumes from its log alone, after first checking that
    each event it names, and each file that event points to, is still there
@@ -231,8 +262,8 @@ Nine rules make the files and the logs something a worker can trust.
 6. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A worker waits for each session's input events. An event that
    names the wrong session halts as stale, and so does a file that is missing
-   or whose SHA-256 does not match its row. An output with no rows halts
-   unless it carries an explicit "trade nothing" mark, and that mark means
+   or whose SHA-256 does not match its row. An output file with no entries
+   halts unless it carries an explicit "trade nothing" mark, and that mark means
    hold every position and send no order, never a target of zero. A worker
    that cannot process a session appends a **halt event** for it instead of an
    output, with the reason, and then exits cleanly or moves to its next
@@ -304,8 +335,12 @@ Nine rules make the files and the logs something a worker can trust.
    the operator pulls it from outside any run, so it is a file at one path per
    broker account rather than an event in a run's log. Every worker checks for
    it when it starts and whenever a message wakes it, and execution checks it
-   before every send. Pulling the switch sends a message to every worker's
-   queue, so a worker that is waiting wakes and sees it. Any error other than
+   before every send. This doc adds one step to the owner's ruling on the
+   switch, because workers no longer check on a timer: pulling it sends a
+   message to every worker's queue, so a worker that is waiting wakes and sees
+   it. Each supervisor records its run directory beside the account's lock
+   file, which is how the command finds the queues of every run open on that
+   account. Any error other than
    "no such file" reads as pulled, with a reason that says the file could not
    be read. Pulling it, per the owner's ruling on
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the file,
@@ -362,7 +397,8 @@ The price of this section is four things.
    and a test that writes it and reads it back unchanged.
 2. A worker wakes on a message rather than a call, so each step waits a
    little longer than a function call would, and every writer has to know
-   which workers read its log, which one table in `runtime` holds. An event
+   which workers read its log, which the one table in `runtime` that declares
+   every worker's inputs hands it. An event
    log is audited with the `sqlite3` command line tool rather than `cat`,
    from a backup copy when it sits on read-only media.
 3. A backtest writes several files and events per session, a few tens of
@@ -419,11 +455,11 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It listens on its queue, reads its input files through the events that point to them, writes its output files and appends to its event log, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
-| **output file** | One thing a component produced for one session, written once at a name fixed by the worker and the session, and never changed |
-| **event** | One row of a component's event log, recording one output file by path and SHA-256, or a halt, and naming the events it came from |
+| **output file** | One thing a component produced for one session, written once and never changed. [Processes and files](#processes-and-files) says how it is published |
+| **event** | One row of an event log. Most point to an output file by path and SHA-256 and name the events it came from. Others record a halt, a session, the end of a span, a halt monitoring handled, or a journal entry |
 | **event log** | The SQLite database holding one component's events in the order it wrote them, which only ever grows and is the source of truth for what the component produced. Each event log in a run directory has one writer. The journal is an event log with several writers, which SQLite's write lock takes one at a time |
 | **control log** | The event log the supervisor writes, holding one event per session of the run, then an end-of-span event, and a halt event for any worker that failed |
-| **queue** | The named pipe in the run directory on which one worker listens. A message on it names an event log and a sequence number with something new to process, and the event log stays the record |
+| **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the event log stays the record |
 | **supervisor** | The process that starts every worker of a run at once, writes the run's control log, appends a halt event when a worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside the run directory |
 | **run directory** | The directory that holds every output file, event log and queue one run's workers use. The journal and marketlake's lake live outside it |
 | **halt event** | The event a worker appends instead of an output when it cannot process a session, naming the reason or the halt event it met. Every worker downstream passes it on and skips that session. The owner or the operator clears it, and clearing never reruns the session |
@@ -457,15 +493,16 @@ once rather than re-argued.
 | --- | --- |
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
-| A message queue that deletes what it delivers, or a database server, between workers | A queue of that kind leaves nothing behind to audit, and a server is one more process that can fail. A file needs neither, and stays as the record. The price is that a worker watches or polls its input files instead of being sent its input |
+| A queue as the carrier of events, or a database server, between workers | A queue that carries the events themselves deletes each one once it is read, so nothing is left to audit, and a server is one more process that can fail. A queue that only wakes a worker, with the event log as the record, is what the owner ruled for. The price is that a worker reads its inputs from files rather than being handed them |
 | One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
-| A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. An order fixed in a controller would state the dependencies a second time, beside the event logs that already carry them |
+| A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. A controller would also fix an order the event logs already carry. The one table in `runtime` that declares each worker's inputs is the only statement of the wiring, which the workers, the log contract and the supervisor's deadlines all read |
+| A second attempt that supersedes an earlier output for the same session | A halt is final and clearing it never reruns the session, so no second attempt exists to supersede the first. A second event for one session halts the reader instead, and the fields and rules for superseding were cut |
 | Outputs kept as rows in the event log itself | One write would have covered both the data and the record. The owner ruled on 2026-10-29 for separate output files with SQLite pointers, and the event log as the source of truth. The price is two writes per output, a file then a row, which rule 3 makes safe to retry because a file with no row pointing to it is never read as an output |
 | A JSON Lines file per event log | It reads with `cat`, but a crash partway through an append tears a line. That needed rules to set the fragment aside and to make a reader wait at it, and a review found that a writer appending after a torn line hid every event after it, a committed journal entry among them. The owner ruled on 2026-10-29 for SQLite, whose transactions make an append whole or absent. The price is that an event log is read with `sqlite3` |
 | A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about seven events a session on one VM |
 | A worker waking on file notifications through `watchdog`, or by polling its input logs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency and no polling. The price is that each writer sends a message to every reader of its event log, which one table in `runtime` wires |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
-| More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 7 takes a lock |
+| More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 8 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |
