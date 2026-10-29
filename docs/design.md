@@ -3,7 +3,8 @@
 This doc carries the reasoning. The tracker carries unbuilt scope, and this
 doc links to an issue rather than restating it.
 [team-charter.md](team-charter.md) carries the roles and the lifecycle, and
-the module table this doc reasons about.
+the module table this doc reasons about. [architecture.md](architecture.md)
+draws how slice 1's modules fit together.
 
 ## Contents
 
