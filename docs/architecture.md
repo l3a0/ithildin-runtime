@@ -1319,7 +1319,7 @@ Each question has a recommendation, so a review can answer it with a yes.
        than one night.
     2. **Read the close marketlake captures that day.** marketlake records each
        session's option-close quote, at 16:15 on a full day and 13:15 on an
-       early close, and seals it at 16:30. It already judges the daily bar
+       early close, and seals it fifteen minutes later, at 16:30 or 13:30. It already judges the daily bar
        against that quote's last price when the bar lands. The run reads that
        close and trades the next open, one night after the signal, as the mode
        table assumes above. So that every mode still reads one query,
