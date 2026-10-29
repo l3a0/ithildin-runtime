@@ -80,7 +80,8 @@ because a process per action was too granular. Two things follow from it.
    nothing else. Every output upstream of it is already stored, so recovering
    means starting one component again, which reads the blobs that exist and
    writes the ones that are missing, rather than replaying the day. A decision
-   that halted stays halted, and the next decision runs once the cause is gone.
+   that halted stays halted, and the next decision runs. If the cause is still
+   there, that decision finds it again and halts too.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is a blob whose header names the blobs it was
    made from. Auditing a decision means reading those blobs rather than
@@ -115,14 +116,13 @@ The owner ruled nine more things about the shape the same day.
    in git, any step that changes state first fetches the latest state from
    where it is kept, brings its own view up to date, and resolves any
    conflict before it changes anything.
-7. **Trading at any time of day.** The platform fixes no time of day for a
-   decision. The ruling answered a draft that started every run in the
-   evening, after marketlake's 18:30 sweep, with orders filling at the next
-   open.
-8. **As often as a strategy needs.** A strategy decides as frequently as it
-   needs to, from once a day to many times a day.
-9. **Open to other strategies.** A later strategy plugs in without changing
-   the platform's shared modules.
+7. **Any time of day.** In the owner's words, "the architecture should
+   support trading at any time of day." The ruling answered a draft that
+   started every run in the evening, after marketlake's 18:30 sweep, with
+   orders filling at the next open.
+8. **As often as needed.** "And as frequently as needed."
+9. **Other strategies.** "It should be extensible to other strategies in the
+   future."
 
 Every worker is its own process, so this doc takes the in-memory store as a
 memory-backed folder, such as `tmpfs` on Linux or a RAM disk on macOS, which
@@ -140,7 +140,7 @@ Ten entries define the design's terms.
    the component's stage, the decision and the output's name.
 2. A **stage** is one step a component takes in a decision. Most components
    take one. Execution takes two, recover and send, and monitoring takes two,
-   reconcile and report, because each acts at two points in the day.
+   reconcile and report, because each acts at two points in a decision.
 3. A **decision result** is the blob a stage writes last for a decision, at a
    key fixed by the run, the stage and the decision. It either lists the
    stage's output files for the decision, by key and SHA-256, or it is a
@@ -337,35 +337,29 @@ Ten rules make the blobs something a worker can trust.
      deadline, has failed. Its deadline runs from the moment its last needed
      input appears, so waiting on a slow upstream worker never counts against
      it. The supervisor writes the halt as the worker's result, as rule 5 says,
-     and stops every worker in the run but monitoring.
+     and stops every worker in the run but monitoring. A run's plan can hold a
+     whole trading day, so the supervisor then writes a halt naming the crash
+     record as every stage's result for every decision still left in the
+     plan. Monitoring reaches its exit rule, journals the failure, pings the
+     failure address and exits, and the supervisor exits with a status its
+     restart policy does not retry.
    - **Monitoring tells the owner once.** Monitoring, the one worker that reads
      every component's results and holds the alert channel, journals every
-     halt with its reason and raises one alarm per cause, on the halt that
-     names no earlier one. A halt that holds later decisions, and a run of
-     halts with the same reason, alarm once, and again only after a decision
-     succeeds or the halt is cleared. Before it alarms, it writes an output file naming
-     the halt it is handling, so a restarted monitoring finds that file and
-     neither repeats nor drops an alarm. On a halted day it pings
-     the heartbeat service's failure address, so the owner hears even if the
-     alarm sent from the machine is lost.
+     halt with its reason and raises an alarm on the halt that names no
+     earlier one. Within one run, a run of halts with the same reason alarms
+     once, and again only after a decision succeeds, so a fault that persists
+     through a day of frequent decisions alarms once that day, and once again
+     on each later day it persists. Before it alarms, it writes an output file
+     naming the halt it is handling, so a restarted monitoring finds that file
+     and neither repeats nor drops an alarm. Every halted decision pings the
+     heartbeat service's failure address, so the owner hears even if the alarm
+     sent from the machine is lost.
    - **A halt is final for its decision.** This finality is this doc's choice
      rather than part of the ruling. The owner ruled on 2026-10-29 that the
      owner or the operator clears a halt, with a command that journals who
      cleared it, why, and any correction a person made, such as a journaled
      override that explains a mismatch. Clearing never reruns the halted
      decision.
-   - **A halt that needs a person holds every later decision on the
-     account.** A halt for one decision's input, such as a missing or stale
-     quote, ends that decision, and the next decision runs as usual. A halt
-     whose cause needs a person holds every later decision of every
-     deployment on the account until it is cleared: a book that disagrees with
-     the broker, a fill or a broker move the platform did not ask for, a
-     journal that fails its check, a lease another VM holds, and a refusal by
-     the risk gate. Execution reads the account's open halts before it plans.
-     Once a day the difference is small, because the next decision is a day
-     away. Every five minutes, the next decision would meet the same cause
-     before a person could look, and a gate refusal would be planned again
-     against the same book.
 
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again starts each worker whose lock is free. A
@@ -428,18 +422,32 @@ Ten rules make the blobs something a worker can trust.
       since its recover stage, and compares the result with the book it
       replays from the journal. An open order at the broker that matches a
       `sending` entry, and a fill within that order's quantity, are the
-      platform's own and bring the book up to date. Any other difference
+      platform's own and bring the book up to date. So is an order the journal
+      holds as open that the broker no longer lists, once a lookup by its
+      client order id finds it `Expired`, `Rejected` or cancelled at the close
+      as its time in force allows, which execution journals. Any other difference
       halts the decision for a person, because the broker moved in a way the
       platform did not ask for. Only then does it plan. It journals the
       planned orders, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
       and a hash and the time of the broker state it fetched, before its first
       send. A rerun in the same decision reuses that list and never
-      plans again, so an order's id never shifts between attempts.
+      plans again, so an order's id never shifts between attempts. The id is
+      built from the account, the decision time and the order's place in that
+      list, so it is unique across the decisions of a day and the same on
+      every rerun.
    3. Its account file names the journal entry it replayed through, and the
       send stage's sync names the entry it synced through. Before it plans,
       execution halts if an entry that changes the book, and that neither its
       sync nor its own order loop wrote, lies past the entry its sync names.
+
+   The gate counts every open order at its worst case: an order on the side
+   that grows exposure counts as filled, and one on the other side counts as
+   unfilled, until the broker confirms its fill, its cancel or its expiry. A
+   cancel is journaled before it is sent, and the order stays open in the
+   book until the broker confirms it. Without this, an order left resting
+   from one decision lets the next decision plan a trade that passes
+   `max_position` if both fill.
 
    No other worker's output can loosen the gate, because its hard caps come
    from a blob the bucket's policy lets only the owner's credential write,
@@ -468,7 +476,7 @@ Ten rules make the blobs something a worker can trust.
     `Abandoned` if the switch is set. Two
     workers run with the switch set, because neither sends an order. The
     cancelling execution worker waits for the account's lease up to a deadline
-    and alarms if it passes. Monitoring writes the day's report and says the
+    and alarms if it passes. Monitoring writes the decision's report and says the
     switch is set. The runtime's credential can create the switch but never
     delete it. The owner ruled on 2026-10-29 that only the owner's or the
     operator's command clears the switch, and that the clearing is journaled.
@@ -504,7 +512,7 @@ in turn, and the exit rule is the same in both. A worker carries nothing from on
 decision to the next except through blobs, so a long span runs the same steps
 as a span of one. The launch is paid once per worker, and the workers run as a
 pipeline. The alpha worker can run ahead through every decision's snapshot
-while portfolio construction waits on each day's book.
+while portfolio construction waits on each decision's book.
 
 A backtest swaps S3 for the memory-backed folder, through the same storage
 port, so only the adapter differs by mode. The folder adapter keeps S3's
@@ -528,9 +536,8 @@ guards against a hung process rather than shaping what a strategy sees. The
 workers between those edges read no clock and move on only when messages
 arrive.
 
-A halt ends its decision, and the span goes on to the next decision unless
-the halt needs a person, in which case the account's later decisions halt
-too, as rule 7 says. A failure stops the whole run.
+A halt ends its decision, and the span goes on to the next decision, which
+halts again if its cause is still there. A failure stops the whole run.
 
 The price of this section is five things.
 
@@ -558,74 +565,103 @@ The price of this section is five things.
 
 ### Strategies, schedules and decisions
 
-The owner's rulings 7 to 9 take the time of day, the frequency and the
-strategy out of the platform and put them in the strategy. The first strategy
-trades once a day on daily closes, and a design shaped around it would bake
-in an evening run, a key per trading session and one strategy per account.
-Each of those would have to be undone for the next strategy, and since blobs
-are never rewritten, a key layout changed later leaves every reader handling
-two layouts. So the shape below is built in slice 1, and only what a second
-strategy needs on top of it waits.
+The owner's rulings 7 to 9 move the time of day, the frequency and the
+strategy out of the platform and into the strategy. The first strategy trades
+once a day on daily closes, and a design shaped around it would bake in an
+evening run, a key per trading session and one strategy per account. Blobs are
+never rewritten, so a key or a stored format changed later leaves every reader
+handling two layouts. That is the one part this subsection builds in slice 1:
+keys, stored formats and the plan. Machinery that only a strategy deciding
+minutes apart, or a second strategy, would exercise waits for one, and the
+list of what waits is below.
 
-A strategy brings five things, each declared in the one table in `runtime`
-beside the workers' inputs, so adding a strategy adds rows rather than
-changing a shared module.
+This doc proposes that a strategy bring five things, each declared in the one
+table in `runtime` beside the workers' inputs, so that adding a strategy adds
+rows rather than changing a shared module.
 
 1. The instruments it trades.
-2. Its schedule, a list of decision times on each trading day, at any time of
-   day and as often as it needs.
+2. Its schedule, a list of decision times on each trading day.
 3. The data it reads: the kinds, the bar length and the lookback.
-4. Its alpha model, which writes forecasts that each say until when they hold.
+4. Its alpha model, run as a stage of its own named for the strategy, so two
+   strategies' forecasts never share a key.
 5. Its configuration, whose hash every blob it touches records.
 
-A run in shadow, paper and live is one trading day of one deployment. The
-scheduler starts it before the deployment's first decision time, and the plan
-lists every decision time the deployment's schedules name that day, in order.
-The workers stay up all day and work through the decisions as they work
-through a backtest's span, and the data worker writes each decision's snapshot
-when the wall clock reaches its time. Live and backtest therefore run the
-same loop over a list of decisions, and a worker's launch is paid once a day.
-A daily strategy's plan holds one decision.
+A run in shadow, paper and live is one trading day of one deployment. One
+function in `core` turns the deployment's schedules and the exchange's trading
+calendar into a list of decisions, each with its time and the strategies
+deciding at it. The supervisor calls it for one day, and a backtest calls it
+for the whole span, so both build their plans the same way, and an early close
+drops the decision times after it. The scheduler starts the run before the
+first decision time. The workers stay up all day and work through the
+decisions as they work through a backtest's span, and the data worker writes
+each decision's snapshot once the wall clock reaches its time. A worker's
+launch is therefore paid once a day. A daily strategy's plan holds one
+decision.
 
-Five rules keep frequent decisions safe.
+Four rules keep a day of decisions safe.
 
-1. **Decisions send in order.** Execution sends for a decision only once it
+1. **Each decision starts from the broker's state at its own time.**
+   Execution's recover stage for a decision waits for two inputs: its own send
+   result for the decision before, and data's result for this one. So it reads
+   the broker after the last decision's orders went out and once the
+   decision's time has come, rather than once at the start of the day, and
+   reconcile, risk and portfolio construction size every decision on a
+   current book. Data and recover therefore no longer overlap.
+2. **Decisions send in order.** Execution sends for a decision only once it
    has a result for the one before, so two decisions never share the order
-   path. Upstream stages may run ahead, as the alpha worker does in a
-   backtest. Every stage's deadline fits inside the gap to the next decision
-   time.
-2. **A late decision does not trade.** Each strategy sets how long after its
-   decision time an order may still be sent. Execution halts a decision whose
-   send stage starts later than that, as stale, rather than sending on a
-   picture of the market that has moved.
+   path. Every stage's deadline fits inside the gap to the next decision time.
 3. **Orders still open at the next decision are netted.** The order manager
-   already trades the target minus the positions and the open orders, so an
-   order left resting is counted rather than sent again. Whether it is
-   cancelled and replaced instead is the order manager's choice, on
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-4. **A halt that needs a person holds the account**, as rule 7 says, so a
-   fault seen at 10:00 is not met again at 10:05 without anyone looking.
-5. **The dead-man check expects a ping per decision.** Monitoring pings after
-   each decision's report, so the heartbeat service's period is the
-   deployment's longest gap between decisions plus its grace period.
+   trades the target minus the positions and the open orders, and the risk
+   gate counts each open order at its worst case, as rule 9 says, so an order
+   left resting is neither sent again nor left out of a limit.
+4. **The dead-man check follows the schedule.** Monitoring pings after each
+   decision's report, and the heartbeat service's check runs on the
+   deployment's schedule, a check by cron expression in the exchange's time
+   zone, with a grace period of the longest chain of worker deadlines. On a
+   market holiday the supervisor writes a plan with no decisions, and
+   monitoring pings anyway. A period set to the longest gap between decisions
+   would span a long weekend, so a run that died on a Tuesday would go
+   unheard until Saturday.
 
-Several strategies on one account meet in portfolio construction, which
-combines their forecasts into one target for the account, the place *Inside
-the Black Box* puts the combining of alpha models. Execution, the risk gate,
-the journal and the account's lease therefore stay one per account, and
-hard limit 2's single order path holds however many strategies trade. A
-strategy whose schedule does not name a decision time contributes its latest
-forecast while that forecast still holds, and one past that time halts the
-decision as stale, as rule 6 says. Slice 1 runs one strategy on one account,
-so the combining rule is not built. Every key carries the deployment and
-every forecast the strategy and the time it holds until, which is the part
-that would be costly to add later.
+An account carries one deployment in each mode, and the supervisor refuses a
+plan whose account another deployment names. Execution, the risk gate, the
+journal and the account's lease therefore stay one per account, and hard limit
+2's single order path holds however many strategies trade. Strategies that
+share an account share its deployment, and meet in portfolio construction,
+which combines their forecasts into one target, the place *Inside the Black
+Box* puts the combining of alpha models.
+
+Four things wait for the first strategy that needs them. Each is written on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), so the next reader
+finds it there.
+
+1. **How several strategies combine.** Portfolio construction's rule for
+   combining forecasts, including what a strategy not deciding at a given
+   time contributes, waits for a second strategy. A forecast from an earlier
+   decision names the wrong decision, so rule 6 halts on it until that rule
+   is written.
+2. **A limit on how late a decision may send.** A strategy deciding minutes
+   apart needs execution to halt a send that starts too long after its
+   decision time. That needs execution to read the clock, a third reader
+   beside the data worker and the supervisor, and a cap the owner sets rather
+   than the strategy. An evening decision that fills at the next open needs
+   neither.
+3. **A halt that holds the account until a person clears it.** Once a day, a
+   persistent cause such as a book that disagrees with the broker halts the
+   next decision again, because every decision checks again. A strategy
+   deciding minutes apart would meet a gate refusal again before a person
+   could look. Holding the account needs an open halt recorded in the
+   journal, written by the stage that finds the cause before its halt result,
+   and cleared only by the clear command's own entry.
+4. **Cancel and replace.** Whether the order manager cancels an order left
+   resting and sends a new one, rather than netting it, is
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s to decide.
 
 Two limits come from marketlake rather than from this design.
 
 1. **About one decision a minute at the fastest.** marketlake captures quotes
    once a minute, so a decision more often than that sees no new data. A
-   decision also waits on S3 for about a second, as the price below says. A
+   decision also waits on S3 for about a second, as the span's price says. A
    strategy that needs seconds would need data streamed to it rather than
    read from marketlake's segments, which reopens ruling 3, and that is the
    owner's call when such a strategy exists.
@@ -635,16 +671,14 @@ Two limits come from marketlake rather than from this design.
    trades on daily closes. One that needs fresh quotes then halts as stale,
    until marketlake captures those hours too.
 
-The price of this subsection is four things.
+The price of this subsection is three things.
 
-1. Every key holds a deployment and a decision time, which a run with one
-   daily strategy does not need.
+1. Every key holds a deployment and a decision time, and every bar its end
+   time and length, which a run with one daily strategy does not need.
 2. The workers run all trading day rather than for a few minutes each
    evening, so the VM is up for the whole session.
-3. A halt that needs a person stops every strategy on the account, including
-   ones the fault did not touch.
-4. Each strategy sets a staleness limit for its sends and a validity time for
-   its forecasts, two more values to choose and test.
+3. Recover waits for data at every decision, so the first phase no longer
+   runs both at once.
 
 ## How work is cut and ordered
 
@@ -695,12 +729,12 @@ glossing it.
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
 | **supervisor** | The process that writes a run's plan, starts every worker of the run at once, writes a halt as a worker's result when the worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside storage |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues, lock files and error output, none of which is kept |
-| **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. A halt that needs a person, such as a book that disagrees with the broker, also holds every later decision on the account until it is cleared |
+| **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
 | **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
 | **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
-| **schedule** | A strategy's list of decision times on each trading day, at any time of day and as often as it needs |
-| **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. The deployment's lease covers it |
+| **schedule** | A strategy's list of decision times on each trading day. One function in `core` turns the schedules and the trading calendar into a plan's decisions |
+| **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. An account carries one deployment in each mode, and the deployment's lease covers it |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
 | **registered** | A result whose hypothesis was committed in writing before the number was seen. Only a registered result can promote a strategy |
@@ -714,7 +748,9 @@ lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
 as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
 account, with marketlake's VM role narrowed so it cannot read it. This doc
 proposes the rest:
-the key sits under the runtime's own path, a grant on that parameter alone
+every role in that account with a broad parameter read refuses reads of the
+key's path, as [architecture.md](architecture.md#where-it-runs)'s rule 3
+lists, the key sits under the runtime's own path, a grant on that parameter alone
 lets only the execution user read it, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
 gives that user alone. Nothing here sits in a file tracked in this
@@ -747,7 +783,7 @@ once rather than re-argued.
 | One process launch per worker per decision in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of decisions instead, as [A worker works through a span of decisions](#a-worker-works-through-a-span-of-decisions) says |
 | One run each evening after marketlake's sweep, as the platform's only schedule | The owner ruled on 2026-10-29 that the platform trades at any time of day and as often as a strategy needs. The time of a decision belongs to the strategy's schedule, as [Strategies, schedules and decisions](#strategies-schedules-and-decisions) says |
 | A process launch per decision in shadow, paper and live | A strategy deciding every few minutes would pay every worker's launch each time. One run per trading day keeps the workers up and works through the day's decisions, the way a backtest works through its span |
-| A strategy's logic spread through the shared modules, or a runtime per strategy | The owner ruled on 2026-10-29 that the platform stays open to other strategies. Spreading a strategy through the shared modules makes each new one a change to them, and a runtime per strategy would put two order paths on one account. A strategy is rows in the one table in `runtime`, and strategies on one account meet in portfolio construction |
+| A strategy's logic spread through the shared modules, or a runtime per strategy | The owner ruled on 2026-10-29 that the platform stays open to other strategies. Spreading a strategy through the shared modules makes each new one a change to them, and a runtime per strategy would put two order paths on one account. This doc proposes a strategy as rows in the one table in `runtime`, with strategies on one account sharing its one deployment and meeting in portfolio construction |
 | A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. A controller would also fix an order the decision results already carry. The one table in `runtime` that declares each worker's inputs is the only statement of the wiring, which the workers, the storage contract and the supervisor's deadlines all read |
 | A second attempt that supersedes an earlier output for the same decision | A halt is final and clearing it never reruns the decision, so no second attempt exists to supersede the first. A stage has one result key per decision, so a second result cannot be written, and the fields and rules for superseding were cut |
 | An event log per component, as a SQLite file or as numbered blobs | The owner ruled on 2026-10-29 for blobs keyed by decision, with the journal the only log. A numbered log per component needed sequence numbers, cursors, hash chains, rules for superseding, and a rebuild after a lost VM, and three review rounds each found holes in that machinery. A deterministic step needs none of it, because running it again writes the same bytes. The price is that every deterministic step's format must be canonical |
