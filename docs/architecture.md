@@ -77,11 +77,16 @@ Four facts make it the simplest candidate there.
    2006-04-26 to 2012-04-09, and each has a recorded SHA-256 checksum. Each
    file is a vintage, meaning one source's copy of a series stored once and
    never changed, as [design.md](design.md#vocabulary) defines it.
-3. **Discrete positions.** The unit is only ever −1, 0 or +1, so a test can
-   check the engine's position on each day, not only a summary ratio.
+3. **A discrete unit.** The number of spread units held is only ever −1, 0 or
+   +1, so a test can check it on each day, not only a summary ratio. The share
+   counts are not discrete. One unit holds `−h` shares of GLD, and `h` is a
+   regression slope refitted daily, so the GLD leg is fractional on every day
+   the strategy holds a position. The replication never deals in shares. It
+   turns units, the hedge ratio and prices into a dollar position per leg, so
+   test 1 checks the unit and the dollars, never a share count.
 4. **Tight pins.** `tests/test_bollinger.py` pins the APR at 0.17824928 and the
    Sharpe ratio at 0.96467289, both to 5e-9, over 1,480 rows. It also pins 162
-   changes of position, made of 77 entries, 76 exits and 9 reversals.
+   changes of unit, made of 77 entries, 76 exits and 9 reversals.
 
 The engine has to carry four quirks of the replication rather than tidy them
 away.
@@ -1101,15 +1106,25 @@ new arrow.
 
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
-| 1. The backtest reproduces a replicated strategy | Backtest | Vintage replay, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of position, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
+| 1. The backtest reproduces a replicated strategy | Backtest | Vintage replay, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected | The orders on each day, and a halt with no orders on each faulted day |
 | 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the fake broker | Six refusals, no import of `execution.brokers` outside `runtime`, and no broker call from outside `OrderPath` |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip a run's ping | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
 Chan's script assumes. A paper run cannot trade at a close it has already seen,
-so it fills at the next open. The two runs therefore differ by one night of
-price movement, and shadow running measures that gap.
+so it fills at the next open. A paper order also needs whole shares, or a
+fractional order the broker accepts, while the backtest holds fractional dollar
+positions. So the two runs differ in two ways.
+
+1. **Timing.** One night of price movement separates the backtest's fill from
+   the paper fill.
+2. **Rounding.** Rounding each leg to whole shares moves it by at most half a
+   share. Whether portfolio construction or the order manager rounds, and
+   whether the broker allows a fractional short sale for the GLD leg, is open
+   on [#9](https://github.com/l3a0/ithildin-runtime/issues/9).
+
+Shadow running measures both gaps rather than leaving them to argument.
 
 The charter's paper gate also asks for every alarm to fire in a drill, which
 covers more than test 4 names. The reconciliation mismatch above is one such
