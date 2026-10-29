@@ -220,7 +220,7 @@ adapter for each port.
 
 | Mode | Data source | Clock | Broker, and when it fills | Journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | Vintage replay | History clock | Simulated, at the signal's close | A temporary file, deleted when the run ends | Recorded, not sent |
+| Backtest | Vintage replay | History clock | Simulated, at the signal's close | A temporary file, deleted when the backtest ends | Recorded, not sent |
 | Shadow | marketlake reader | Wall clock | Simulated, at the next open | Shadow journal | Sent |
 | Paper | marketlake reader | Wall clock | Paper broker, at the next open | Paper journal | Sent |
 | Live | marketlake reader | Wall clock | Live broker, at the next open | Live journal | Sent |
@@ -469,14 +469,20 @@ sequenceDiagram
     R->>X: settle orders in doubt
     X->>J: which orders were sending with no ack?
     J-->>X: one
+    X->>J: in doubt journaled
     X->>B: is there an order with this client order id?
     B-->>X: yes, acknowledged
     X->>J: ack journaled
     R->>X: journal fills since the last run
-    X->>J: no new fills
+    X->>B: fills since the last run
+    B-->>X: none
     R->>J: replay
     J-->>R: current book
-    R->>M: reconcile against the broker's positions
+    R->>X: broker's positions
+    X->>B: positions
+    B-->>X: positions
+    X-->>R: broker's view
+    R->>M: reconcile book against broker
     M-->>R: match
     R->>D: is the snapshot recorded for this session?
     D-->>R: not yet
@@ -574,7 +580,7 @@ sequenceDiagram
     M->>A: owner alerted
     Note over K,X: Every later run checks the flag first,<br/>and the order path checks it before every send
 
-    Note over R,H: A day the run never finishes
+    Note over H,A: A day the run never finishes
     H->>H: no ping by the deadline
     H->>A: dead-man alarm
 ```
@@ -718,6 +724,7 @@ classDiagram
         +lookup(client_order_id) Ack
         +fills(since) list
         +positions() dict
+        +cancel(client_order_id) Ack
     }
     class AlphaModel {
         <<Protocol>>
@@ -748,6 +755,7 @@ classDiagram
     class Journal {
         -JournalStore store
         +append(entry)
+        +in_doubt() list
         +replay() Book
     }
     class OrderPath {
@@ -763,6 +771,7 @@ classDiagram
     class Monitoring {
         -Alerts alerts
         +reconcile(Book, dict) bool
+        +alarm(reason)
         +report(run)
     }
 
@@ -873,7 +882,7 @@ stateDiagram-v2
     Starting --> Halted: kill switch set
     Starting --> Recovering
     Recovering --> Halted: book and broker disagree
-    Recovering --> CheckingUpstream: fills journaled, orders settled, book matches
+    Recovering --> CheckingUpstream: orders settled, fills journaled, book matches
     CheckingUpstream --> Halted: data missing, stale or not ready
     CheckingUpstream --> Deciding: every input current
     Deciding --> Halted: a module raises Halt
@@ -885,8 +894,8 @@ stateDiagram-v2
     Done --> [*]
 ```
 
-`Recovering` is phase 1 of the trading day: journal the fills, settle any order
-in doubt, replay the journal and reconcile. Every halt passes through
+`Recovering` is phase 1 of the trading day: settle any order in doubt, journal
+the fills, replay the journal and reconcile. Every halt passes through
 `Reporting`, so a halted day still writes its report and its journal entry, and
 the owner hears why. A halted run never moves itself back to `Starting`. The
 next session's run starts fresh, and it halts again while the kill switch is
@@ -971,7 +980,10 @@ The entities live in four stores, and each store keeps its own rule.
    `fsync` before the step it records happens. Each entry carries the hash of
    the one before it, which makes the file a hash chain. Changing or deleting
    an entry breaks the link from the entry after it. That catches an edit unless someone recomputes every later
-   hash. Recording the latest hash off the machine each day, in the backup or
+   hash. The writer takes an exclusive file lock for each append, because the
+   kill switch command and a run can both write at once, and two interleaved
+   writers would break the sequence numbers and the chain. Recording the latest
+   hash off the machine each day, in the backup or
    the report, catches that case and a cut-off tail.
 4. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run keeps it for
@@ -1109,23 +1121,24 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Flat and linear cost models | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction, `TargetPortfolio` | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| Order manager, `OrderPath`, `Journal`, simulated and paper brokers | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Reconciliation, daily report, dead-man check, kill switch, startup order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Order manager, `OrderPath`, `Journal`, journal store adapters, simulated and paper brokers | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| `Monitoring`, reconciliation, daily report, alert channel adapter, dead-man check, kill switch, the run controller and its startup order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, which
 question 3 asks about.
 
-Three pieces belong to no single module.
+Two pieces belong to no single module.
 
 1. `core`, with the shared types and every `Protocol`.
 2. The import rule tests.
-3. The run controller.
 
 Question 9 asks where they are written, since
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#8](https://github.com/l3a0/ithildin-runtime/issues/8) are both free to start
-first and both would need `core`.
+first and both would need `core`. The run controller imports every module, so
+it is built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
+which already owns the startup order and waits on every other module.
 
 ## Decisions
 
@@ -1138,7 +1151,7 @@ accepted.
 
 | Decision | Turned down | Price | Settled on |
 | --- | --- | --- | --- |
-| Only the order path talks to the broker, for sends, lookups, fills and positions | Letting the run controller or reconciliation call the broker | One more method on `OrderPath` per broker read | This doc |
+| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels | Letting the run controller or reconciliation call the broker | One more method on `OrderPath` per broker read | This doc |
 | The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
 | The journal store and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Two more ports in `core`, and a change to design.md's `## One runtime` | This doc |
 | A missing, stale or empty input raises `Halt` | Defaulting a gap to the last value or to zero | A day with a data hiccup is a day with no trading | This doc, with the staleness rule on [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -1196,8 +1209,8 @@ Each question has a recommendation, so a review can answer it with a yes.
    order. An unwind is a trade of its own, so it would need its own path
    through the gate and its own tests, and
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7) can add it later.
-9. **Where are `core`, the import rule tests and the run controller written?**
-   The recommendation is a new sub-issue of
+9. **Where are `core` and the import rule tests written?** The
+   recommendation is a new sub-issue of
    [#4](https://github.com/l3a0/ithildin-runtime/issues/4), built first, which
    every module issue waits on through a "blocked by" link. Every module
    imports `core`, so the dependency is real. The price is one step before any
