@@ -58,11 +58,11 @@ module table, and three adapters at its edges.
    broker's paper account on paper, and the real account only once the owner
    switches it.
 
-The price is that every module has to be written against an event and clock
-interface from its first commit, which is slower than a vectorised backtest
-over a price array. What it buys is that a strategy's backtest and its paper
-run exercise the same lines of code. The next section says what that event is:
-a session's input files, on disk.
+The price is that every module has to be written against an event from its
+first commit, which is slower than a vectorised backtest over a price array.
+What it buys is that a strategy's backtest and its paper run exercise the same
+lines of code. The next section says what that event is: a session's input
+files, on disk. Only the data worker and the supervisor read the clock.
 
 ## Processes and files
 
@@ -78,7 +78,8 @@ because a process per action was too granular. Two things follow from it.
    separate processes, a failed component leaves its own output missing and
    nothing else. Every output upstream of it is already on disk, so recovering
    means running one component again on those files rather than replaying the
-   day.
+   day. When a failure has halted a session, the rerun waits for the owner or
+   the operator to clear the halt, as rule 5 says.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is a file, so auditing a decision means reading
    the files that produced it rather than rerunning code and hoping it
@@ -91,11 +92,9 @@ through the adapter at its edge, such as the broker or the data source. The
 alpha worker, for example, reads a session's snapshot file and writes that
 session's forecast file. A session here is one trading session. A worker
 imports `core`, the shared types, and no sibling module, and shares no memory
-with any other worker. The **supervisor** is the process that launches each
-worker, watches it and stops the run. It replaces the in-memory run controller
-that [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15)'s
-`docs/architecture.md` draws. A **run directory** holds everything one run's
-workers write.
+with any other worker. The **supervisor** is the process that starts a run's
+workers, watches them and stops the run. A **run directory** holds everything
+one run's workers write.
 
 Two stores sit outside every run directory, because they outlive any one run.
 
@@ -114,7 +113,9 @@ Seven rules make the files something a worker can trust.
    beside the output last, and an output counts as present only once its
    manifest records a successful exit. A run's files live on one local
    filesystem, never on a network share, because there a reader may not see a
-   new file at once and the flush may not reach the disk.
+   new file at once and the flush may not reach the disk. Every file carries a
+   format version, and each release reads the formats the release before it
+   wrote, so pinning back to an earlier release still reads what is on disk.
 2. **A file is never changed after it is written.** A second attempt at a
    worker writes under its own attempt number, so a failed attempt stays
    readable, and a reader takes the newest attempt whose manifest records
@@ -126,71 +127,77 @@ Seven rules make the files something a worker can trust.
 3. **Each output names what made it.** The manifest names every input file by
    path and SHA-256, the release commit, a hash of the configuration, the
    session the output is for, when it was written, and how the worker exited,
-   with the reason when it halted.
-   The journal grows, so a manifest names it by the sequence number and hash
-   of the last entry read rather than by a hash of the whole file. A worker
-   killed by a signal or a crash writes nothing about itself, so the
-   supervisor, which sees every exit, records the exit status or signal and
-   the end of the worker's error output in its place.
+   with the reason when it halted. The journal grows, so a manifest names it by
+   the sequence number and hash of the last entry read rather than by a hash
+   of the whole file. A worker killed by a signal or a crash writes nothing
+   about itself, so the supervisor records the exit status or signal and the
+   end of the worker's error output in its place. Each worker writes its
+   process id and the path of its error output into its lock file, so a
+   supervisor started after a crash can do the same for a worker it did not
+   start.
 4. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A worker waits for each session's inputs. Only the supervisor
    declares an input missing, when the worker upstream exits with a failure or
-   a halt, or when a deadline passes, and the supervisor then writes a **halt
-   record** naming the file. A file that names the wrong session halts as
-   stale. A file with no rows halts unless it carries an explicit "trade
-   nothing" mark. Hard limit 3 came from an execution server that read "no
-   signals" as "hold nothing" (L4690). With files, "has today's forecast been
-   written" is a check of one manifest and the session it names.
-5. **The supervisor keeps no state of its own.** The scheduler starts it, and
-   it holds an exclusive lock on the run directory, so two supervisors never
-   share one. Everything it knows, it reads from that directory. A supervisor
-   that crashes is started again, reads the directory, and launches a worker
-   only when its output is missing and no earlier copy of it still holds the
-   worker's lock, because a child process outlives a parent that crashes. A
-   halt record is final for its session: a restarted supervisor launches no
-   worker for that session again except monitoring, which writes the day's
-   report, and only the owner or the operator clears it. On any halt or failure, the supervisor journals the halt with its
-   reason and raises the alarm. It records the release commit when a run
-   starts, and a supervisor started on a different release halts rather than
-   finish the run with mixed code. The dead-man check catches a supervisor
-   that dies. Workers with no file between them run at the same time: once
-   the snapshot and the reconciled book exist, the alpha, risk and cost
-   workers run in parallel.
+   a halt, or when a deadline passes. A file that names the wrong session halts
+   as stale. A file with no rows halts unless it carries an explicit "trade
+   nothing" mark, and that mark means hold every position and send no order,
+   never a target of zero. Hard limit 3 came from an execution server that
+   read "no signals" as "hold nothing" (L4690). With files, "has today's
+   forecast been written" is a check of one manifest and the session it names.
+5. **One path in every mode, and the supervisor keeps no state of its own.**
+   The scheduler starts the supervisor, and the supervisor starts every one of
+   the run's workers at once. It holds an exclusive lock on the run directory,
+   so two supervisors never share one. A **halt record** is the file that
+   stops one session: the supervisor writes it when a worker halts, fails or
+   misses its deadline. Every worker skips a session that has a halt record and
+   goes on to its next session, and a worker whose span is one session simply
+   exits. The halt record is final for its session, and only the owner or the
+   operator clears it, with a command that journals who cleared it and why.
+   This finality is this doc's choice rather than part of the ruling.
+   Monitoring, the one worker that holds the alert channel, journals each halt
+   record with its reason and raises the alarm. On a halted day it pings the
+   heartbeat service's failure address, so the owner hears even if the alarm
+   sent from the machine is lost. A failure, meaning a crash or a missed
+   deadline, also stops every worker in the run but monitoring.
+   Everything the supervisor knows, it reads from the run directory, so a
+   supervisor that crashes and is started again starts each worker whose lock
+   is free. That restarted worker begins at its first session with no
+   successful output. A worker that still holds its lock, because a child
+   process outlives a parent that crashes, is left to finish. Workers with no
+   file between them run at the same time. Alpha and cost need only the
+   snapshot, and risk needs the snapshot and the reconciled book.
 6. **One process at a time talks to each broker account.** The execution
-   worker is the only one that holds the broker credential, and it holds an
+   worker is the only one that holds the broker credential. It holds an
    exclusive lock on a file tied to the account, outside every run directory,
-   for its whole life. A second execution worker that cannot take the lock
-   halts without sending. The order manager, the risk gate, the journal and
-   the order path all run inside it, because the gate checks each order
+   for its whole life, and a second execution worker that would send and
+   cannot take the lock halts. The order manager, the risk gate, the journal
+   and the order path all run inside it, because the gate checks each order
    against every order and position in the account's journal just before the
    order is sent, and a check passed through a file could be stale by then.
-   The journal records each order the order manager plans, so they stay
-   readable without a file of their own.
-   - **Recovery comes first.** The execution worker settles orders in doubt,
-     journals fills, and writes the journal's book and the broker's positions
-     before any model runs. The monitoring worker reconciles the two and
-     writes the reconciled book that the risk worker and portfolio
-     construction read. A mismatch halts there.
-   - **A rerun never sends twice.** The execution worker reads exactly one
-     target portfolio per session and journals its SHA-256 before the first
-     send. Each client order id is derived from the session, the instrument
-     and that hash, so a rerun computes the same ids. It sends an order only
-     when its client order id has no journal entry, and asks the broker about
-     any order in doubt by that id. Running a worker again is safe everywhere
-     else, because a sent order cannot be unsent.
-   - **The gate trusts no other worker for its caps.** It reads the hard caps
-     on its limits from the execution worker's own configuration, and a
-     constraints file from the risk worker can only tighten them.
+   This is the one place a risk engineer's piece runs in another component's
+   process. Running a worker again is safe everywhere except here, because a
+   sent order cannot be unsent. So execution sends an order only when the
+   journal holds no entry for its client order id, and asks the broker about
+   any order in doubt by that id. No other worker's file can loosen the gate,
+   because its hard caps come from execution's own configuration, which only
+   the owner changes, by hand. [architecture.md](architecture.md)'s
+   `## Decisions` proposes how execution recovers, derives its ids and
+   combines its limits, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7),
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to settle.
 7. **The kill switch is a file, and pulling it is a command.** The file lives
-   at one path per account, outside every run directory. Every worker checks
-   for it when it starts, and the execution worker checks before every send. Any
-   error other than "no such file" reads as pulled, so a switch that cannot be
-   read stops trading. Pulling it, per the owner's ruling on
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the
-   file, journals the halt, raises the alarm, and launches the execution
-   worker to cancel every resting order under the account's lock, journaling
-   each cancel first. Only the owner's or the operator's command clears it, and the
-   clearing is journaled.
+   at one path per broker account, outside every run directory. Every worker
+   checks for it when it starts and while it waits, and execution checks it
+   before every send. Any error other than "no such file" reads as pulled, with
+   a reason that says the file could not be read. Pulling it, per the owner's
+   ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates
+   the file, journals the halt, raises the alarm, and starts an execution
+   worker in cancel mode, which cancels every resting order and journals each
+   cancel first. Two workers run with the switch set, because neither sends an
+   order. The cancelling execution worker waits for the account's lock up to a
+   deadline and alarms if it passes. Monitoring writes the day's report and
+   says the switch is set. Only the owner's or the operator's command clears
+   the switch, and the clearing is journaled.
 
 ### A worker works through a span of sessions
 
@@ -198,13 +205,14 @@ The cost of starting a process decides how a backtest keeps
 [one runtime](#one-runtime). On the owner's M1 Max under Python 3.12, a launch
 that imports only the standard library took about 0.05 seconds, one that
 imports pyarrow 0.2 to 0.3 seconds, and one that imports pandas about 1
-second. Each figure is the mean of 20 to 50 launches on one machine, and a
-review rerun on a busy machine measured pyarrow higher, so read the figures as
-a scale rather than a pin. The backtest that test 1 runs covers 1,480
-sessions, the span quantitative-trading pins for the strategy [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) proposes
-on [#6](https://github.com/l3a0/ithildin-runtime/issues/6). Through seven
-modules that is 10,360 worker runs. One launch per worker per session would
-take about 9 minutes at the standard library's cost, 35 to 52 minutes at
+second. These are exploratory measurements, the mean of 20 to 50 launches on
+one machine, outside the test suite, and a rerun on a busy machine measured
+pyarrow higher. Read them as a scale rather than a pin. The backtest that test
+1 runs covers 1,480 sessions, the span quantitative-trading pins for the
+strategy [architecture.md](architecture.md#the-strategy-the-skeleton-runs)
+proposes on [#6](https://github.com/l3a0/ithildin-runtime/issues/6). Through
+seven modules that is 10,360 worker runs. One launch per worker per session
+would take about 9 minutes at the standard library's cost, 35 to 52 minutes at
 pyarrow's and 3 hours at pandas'.
 
 So a worker is given a span of sessions rather than one. In shadow, paper and
@@ -212,10 +220,9 @@ live the span is one session. In a backtest it is the whole history: each
 worker starts once, and for each session it waits for its inputs, writes its
 output and moves to the next. A worker carries nothing from one session to the
 next except through files, so a long span runs the same steps as a span of
-one. A restarted worker begins at its first session with no successful
-output. The launch is paid once per worker, and the workers run as a
-pipeline. The alpha worker can run ahead through every session's snapshot
-while portfolio construction waits on each day's book.
+one. The launch is paid once per worker, and the workers run as a pipeline.
+The alpha worker can run ahead through every session's snapshot while
+portfolio construction waits on each day's book.
 
 The clock adapter is read at two edges only. The data worker reads it to
 decide when a session's snapshot is written, which is as fast as possible
@@ -225,9 +232,8 @@ guards against a hung process rather than shaping what a strategy sees. The
 workers between those edges read no clock and move on only when files appear.
 
 A halt ends its session's chain, and the span goes on to the next session, the
-way the next day's live run starts after a halted one. A failure, meaning a
-worker that crashes or misses its deadline, stops the whole run and every
-worker still waiting.
+way the next day's live run starts after a halted one. A failure stops the
+whole run.
 
 The price of this section is four things.
 
@@ -236,10 +242,8 @@ The price of this section is four things.
 2. A worker notices a new file by watching the directory or by polling it, so
    each step waits a little longer than a function call would.
 3. A backtest writes several files per session, a few tens of thousands for
-   test 1. It may delete its outputs after a clean exit, keeping its manifests
-   and its report, and keeps everything after a halt or a failure. Shadow,
-   paper and live run directories are kept, and leave the machine with the
-   journal.
+   test 1. It may delete its outputs after a clean exit, keeping its manifests,
+   its journal and its report, and keeps everything after a halt or a failure.
 4. The locks, the manifests and the supervisor's records add machinery that a
    single process would not need, and each of their alarms has to fire in a
    drill before the paper gate.
@@ -283,10 +287,10 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It takes its inputs from files, writes its outputs to files, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
-| **supervisor** | The process that launches each worker, watches it, writes the halt record when an input is missing, and stops the run. It keeps no state outside the run directory |
+| **supervisor** | The process that starts every worker of a run at once, watches them, writes a halt record when one halts, fails or misses its deadline, and stops the run on a failure. It keeps no state outside the run directory |
 | **run directory** | The directory that holds every file one run's workers write, including each manifest and halt record. The journal and marketlake's lake live outside it |
 | **manifest** | The record written beside each output, naming every input by path and SHA-256, the release commit, a hash of the configuration, the session, when the output was written, and how the worker exited. An output counts only once its manifest records success |
-| **halt record** | The file the supervisor writes when a worker halts or an input is missing, naming the file and the reason. It is final for its session until the owner or the operator clears it |
+| **halt record** | The file the supervisor writes to stop one session, naming the worker and the reason. Every worker skips that session, and only the owner or the operator clears it |
 | **span** | The sessions one worker is given to work through: one in shadow, paper and live, and the whole history in a backtest |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
@@ -319,7 +323,7 @@ once rather than re-argued.
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
 | A message queue that deletes what it delivers, or a database server, between workers | A queue of that kind leaves nothing behind to audit, and a server is one more process that can fail. A file needs neither, and stays as the record. The price is that a worker polls or watches a directory instead of being sent its input |
 | One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
-| One process per action, such as the order manager, the risk gate and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role. Splitting one would turn checks that must happen just before a send, such as the risk gate's, into files that can be stale by the time the order goes |
+| One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |

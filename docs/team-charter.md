@@ -113,8 +113,8 @@ reaches the owner already reviewed.
 
 - **Protects:** "what is tested is what runs live."
 - **Does:** owns the module interfaces, the event and clock model shared by
-  backtest, paper and live, the file formats that workers pass each other, and
-  the design doc's considered-and-rejected register.
+  backtest, paper and live, and the design doc's considered-and-rejected
+  register.
 - **Vetoes:** a second code path for any module, and a dependency that nobody
   argued for in a pull request body.
 
@@ -297,12 +297,12 @@ evidence, not elapsed time.
   hit rate, execution quality as slippage and impact, and systems including
   latency (L4973 to L5006).
 - **Startup** checks that every upstream worker has written its output for the
-  session, with a manifest recording success, before execution may act. That is
-  the safeguard the reboot incident lacked (L4690). A worker is one component run
-  as its own process, as the design doc's
+  session, with a manifest recording success, before execution may send an
+  order. That is the safeguard the reboot incident lacked (L4690). A worker is
+  one component run as its own process, as the design doc's
   [Processes and files](design.md#processes-and-files) says.
-- **Reconciliation** compares journaled positions with the broker's every day,
-  and a mismatch halts trading.
+- **Reconciliation** compares journaled positions and open orders with the
+  broker's every day, and a mismatch halts trading.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it.
 - **Human override** stays the exception, for information the model cannot
