@@ -196,19 +196,23 @@ reaches the owner already reviewed.
 ## The lifecycle
 
 Agile here means small vertical slices, shipped, used, and allowed to set the
-order of what comes next. The ceremonies map onto machinery that already runs
-in the owner's other repositories. `decompose-problem`, `fast-mutation` and
-`loop-cost` are skills in the owner's `~/.claude/skills/`, so they run here
-today. `sync-prune-next` and the build board exist only in
-[quantitative-trading](https://github.com/l3a0/quantitative-trading), so they
-need porting before this repo has a board or a status round of its own.
+order of what comes next. The ceremonies map onto machinery that runs here.
+`decompose-problem`, `fast-mutation` and `loop-cost` are skills in the owner's
+`~/.claude/skills/`. The [build board](https://l3a0.github.io/ithildin-runtime/)
+is rebuilt from this repository's tracker by `.github/workflows/board.yml`,
+which calls a reusable workflow in
+[repo-template](https://github.com/l3a0/repo-template) at a pinned commit. The
+`update-build-board` and `sync-prune-next` skills under `.claude/skills/` are
+copies of repo-template's at that commit. [CLAUDE.md](../CLAUDE.md)'s
+`## Keep the build board current` says what a session sets for the board to
+read.
 
 | Agile practice | What runs here |
 | --- | --- |
 | Backlog | One GitHub issue per deliverable, with a milestone, a label and its blocked-by links. The issue is authoritative for scope |
 | Refinement | The `decompose-problem` loop: audit the plan against the code, compact it, split it when compaction stops paying |
-| Sprint planning | The delivery lead takes the next card on the shortest path to a usable platform, from the build board |
-| Daily standup | A status round (`sync-prune-next`): sync, prune finished worktrees, read the board, name what is next |
+| Sprint planning | The delivery lead takes the next card from the build board's ranked view. A `band:1` label marks a card on the shortest path to a usable platform, and the board puts a card behind the open issues its "blocked by" links name |
+| Daily standup | A status round with the `sync-prune-next` skill: fetch, prune the worktrees and branches whose work merged, build the board from GitHub, and name what to take next from its ranked list |
 | Build | One session per issue in its own worktree, test-first against the test engineer's acceptance tests |
 | Sprint review | The pull request, reviewed before the owner reads it |
 | Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it |
@@ -310,7 +314,9 @@ a ranking made in advance.
 ## Definition of done
 
 An issue is done when its pull request merged, its acceptance tests pass under
-mutation, its review posted, and the board shows it. The MVP is done when the
+mutation, and its review is posted as a comment opening with `## Review`. The
+build board then shows it done by dropping its card, since the merge closes the
+issue and the board draws only open ones. The MVP is done when the
 team can answer Narang's due-diligence questions about it in writing, with each
 answer pointing at code or a test (L5568).
 

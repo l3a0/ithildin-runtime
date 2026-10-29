@@ -17,6 +17,8 @@ its tests show it works.
   lifecycle from plan to operate, and why the MVP is a walking skeleton.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
 - The issue tracker holds the scope of everything unbuilt.
+- The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
+  in flight and what to take next, rebuilt from the tracker.
 
 The repo started from [repo-template](https://github.com/l3a0/repo-template),
 and will share code with its siblings through

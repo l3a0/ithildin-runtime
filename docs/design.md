@@ -71,9 +71,14 @@ Each slice lives on the tracker as three things.
 
 1. A milestone with the slice's name, so a filed issue has one to take.
 2. A parent issue holding what the slice leaves usable and the tests that show
-   it works.
-3. One sub-issue per deliverable, each with a "blocked by" link to whatever it
-   waits on.
+   it works, each stated as what a test executes rather than what the code
+   looks like.
+3. One sub-issue per deliverable.
+
+A sub-issue that cannot start until another finishes gets a "blocked by" link
+to it, and a slice's parent issue that waits on another slice gets one to that
+slice's parent issue. Name only the dependencies that are real. An invented
+dependency is how a plan quietly becomes a layered build.
 
 Order the slices by what the ranking rule in [CLAUDE.md](../CLAUDE.md)
 decides: what is missing from the shortest path to a product someone can use
