@@ -1528,13 +1528,34 @@ Nine rules hold the deployment to the premise and the hard limits.
    managed policy `AmazonSSMManagedInstanceCore`, which reads every
    parameter. The owner ruled on 2026-10-29 that the runtime's parameter lives
    in marketlake's AWS account, and that marketlake's VM role is narrowed so
-   it cannot read it. This doc proposes an explicit refusal of parameter reads
-   under the runtime's path in that role's own policy, which overrides the
-   managed policy's grant, and the same refusal of marketlake's path for the
-   runtime's VM role, which
+   it cannot read it. That role is not the only one with a broad read.
+   marketlake's two CI roles carry AWS's `ReadOnlyAccess`, which grants every
+   `ssm:Get` action, and the plan role runs on any pull request branch of a
+   public repository, so without a refusal one pushed branch could print the
+   key into a public Actions log. This doc therefore proposes a refusal for
+   every role in the account that holds a broad parameter read: marketlake's
+   VM role, both CI roles, and the runtime's own VM role.
+   1. Each refuses `ssm:GetParameter`, `ssm:GetParameters` and
+      `ssm:GetParameterHistory` on the broker key's path, because history also
+      returns decrypted values.
+   2. Each refuses `ssm:GetParametersByPath` on every path, because a
+      recursive read of a parent path returns every parameter below it and a
+      refusal on the child does not stop it. marketlake's CI roles already
+      refuse it everywhere.
+   3. A drill reads the key with each of those roles' credentials, directly,
+      by a recursive read from `/` and through its history, and expects
+      "access denied" every time.
+
    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
-   builds on marketlake's side. A drill on marketlake's VM reads the runtime's
-   parameter and expects "access denied".
+   builds marketlake's side. Three routes remain, each needing the owner's
+   approval or the owner's own credential: the owner's administrator session,
+   an approved apply that edits a role's refusal, which a policy diff in that
+   apply shows, and, if the runtime's VM runs in that account, an approved
+   apply that changes its start-up data. The runtime's VM carries no tag that
+   marketlake's deploy role targets. A key of the runtime's own in KMS, whose
+   policy names only the execution user's principal, would turn these
+   refusals into a list of who may read, and costs a monthly fee, so it is the
+   owner's to choose.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
    can create the switch, which pulls it, and can never delete it. The owner
    ruled on 2026-10-29 that only the owner's credential clears a live
