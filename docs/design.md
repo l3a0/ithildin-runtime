@@ -70,99 +70,170 @@ parallel wherever the data allows, and that processes pass everything to each
 other through the filesystem. Two things follow from that.
 
 1. **A failure stays where it happened.** In one process, an exception or a
-   crash in the alpha model ends the run that also holds the order path,
-   possibly between journaling an order and sending it. As separate
-   processes, a failed action leaves its own output missing and nothing else.
-   Every output upstream of it is already on disk, so recovering means
-   running one action again on those files rather than replaying the day.
+   crash in the alpha model ends the run that also holds the order path. As
+   separate processes, a failed action leaves its own output missing and
+   nothing else. Every output upstream of it is already on disk, so recovering
+   means running one action again on those files rather than replaying the
+   day.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is a file, so auditing a decision means reading
    the files that produced it rather than rerunning code and hoping it
    reproduces. The journal already records every step of an order. Files
    extend that record to every step before the order.
 
-A **stage** is one action run as its own process. It reads only files and its
-configuration, and writes only files. The alpha stage, for example, reads the
-session's snapshot file and writes the session's forecast file. It imports no
-other module and shares no memory with any other stage. A **run directory**
-holds everything one run's stages read and write.
+A **worker** is one action run as its own process. It takes its inputs from
+files and writes its outputs to files, and reaches the outside world only
+through the adapter at its edge, such as the broker or the data source. The
+alpha worker, for example, reads a session's snapshot file and writes that
+session's forecast file. A session here is one trading session. A worker
+imports `core`, the shared types, and no sibling module, and shares no memory
+with any other worker. The **supervisor** is the process that launches each
+worker, watches it and stops the run. It replaces the in-memory run controller
+that [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15)'s
+`docs/architecture.md` draws. A **run directory** holds everything one run's
+workers write.
 
-Seven rules make the files something a stage can trust.
+Two stores sit outside every run directory, because they outlive any one run.
 
-1. **A file appears whole or not at all.** A stage writes to a temporary name
-   in the destination directory, flushes it to disk with `fsync`, renames it
-   into place, and flushes the directory. A rename within one filesystem is
-   atomic on POSIX, so a reader never sees half a file, and a stage that dies
-   mid-write leaves only a temporary file. A run's files therefore live on one
-   local filesystem, never a network share, where neither the rename nor the
-   flush keeps that promise.
-2. **A file is written once.** No stage changes an output after writing it. A
-   second attempt at a stage writes beside the first, so a failed attempt stays
-   readable. The journal is the one file that grows, one appended entry at a
-   time, and no entry in it is ever changed.
-3. **Each output names what made it.** Beside each output, the stage writes a
-   **manifest**: the path and SHA-256 of every input file, the release commit,
-   a hash of its configuration, when it started and ended, and how it exited.
-   Any number in a report traces back to the exact bytes it came from.
-4. **A missing file halts. It never reads as empty.** A stage whose input is
-   absent writes a halt record naming the file, and exits with a halt status.
-   A stage that means "trade nothing" writes a file that says so. Hard limit 3
-   came from an execution server that read "no signals" as "hold nothing"
-   (L4690). With files, "has today's forecast been written" is a check of one
-   file and the session it names.
-5. **The supervisor keeps no state of its own.** The supervisor is the process
-   that launches each stage once its inputs exist, watches it, and halts the
-   run when a stage fails or misses its deadline. Everything it knows, it reads
-   from the run directory. A supervisor that crashes is started again, reads
-   the directory, and launches only the stages whose output is missing. Stages
-   with no file between them run at the same time. The alpha, risk and cost
-   stages each read only the snapshot, so all three run in parallel.
-6. **One process talks to the broker.** The order path is a single stage, and
-   the only process that holds the broker credential. It is not split into one
-   process per order, because the risk gate checks limits across all the run's
-   orders, such as the number of open orders and the net exposure. Two gates
-   running in parallel could each approve an order that together breach a
-   limit. Running a stage again is safe everywhere except here, because a sent
-   order cannot be unsent. So the order path recovers by reading the journal
-   and asking the broker about each order in doubt by its client order id,
-   never by sending again.
-7. **The kill switch is a file.** Every stage checks for it when it starts, and
-   the order path checks for it before every send. Pulling the switch means
-   creating one file, with no process that has to be running to receive it.
+1. marketlake's lake, which holds captured market data.
+2. The journal, at one path per broker account, which the book is replayed
+   from.
 
-### A stage works through a span of sessions
+Seven rules make the files something a worker can trust.
+
+1. **An output appears whole, once, and only with its manifest.** A worker
+   writes to a temporary name in the destination directory and flushes it to
+   stable storage. On macOS that takes `fcntl(F_FULLFSYNC)`, because plain
+   `fsync` there does not ask the drive to empty its cache. The worker then
+   publishes the file with `link`, which refuses to replace an existing name,
+   rather than `rename`, which silently replaces one. A **manifest** goes
+   beside the output last, and an output counts as present only once its
+   manifest records a successful exit. A run's files live on one local
+   filesystem, never on a network share, because there a reader may not see a
+   new file at once and the flush may not reach the disk.
+2. **A file is never changed after it is written.** A second attempt at a
+   worker writes under its own attempt number, so a failed attempt stays
+   readable, and a reader takes the newest attempt whose manifest records
+   success. The journal is the one file that grows. Each entry is appended
+   under an exclusive lock and flushed to stable storage before the step it
+   records happens, and no entry is ever changed. A reader that finds a final
+   entry cut short discards it, and one that finds an earlier entry it cannot
+   parse halts.
+3. **Each output names what made it.** The manifest names every input file by
+   path and SHA-256, the release commit, a hash of the configuration, the
+   session the output is for, when it was written, and how the worker exited.
+   The journal grows, so a manifest names it by the sequence number and hash
+   of the last entry read rather than by a hash of the whole file. A worker
+   killed by a signal or a crash writes nothing about itself, so the
+   supervisor, which sees every exit, records the exit status or signal and
+   the end of the worker's error output in its place.
+4. **An absent, stale or empty input halts. It never reads as "trade
+   nothing".** A worker waits for each session's inputs. Only the supervisor
+   declares an input missing, when the worker upstream exits with a failure or
+   a halt, or when a deadline passes, and the supervisor then writes a **halt
+   record** naming the file. A file that names the wrong session halts as
+   stale. A file with no rows halts unless it carries an explicit "trade
+   nothing" mark. Hard limit 3 came from an execution server that read "no
+   signals" as "hold nothing" (L4690). With files, "has today's forecast been
+   written" is a check of one manifest and the session it names.
+5. **The supervisor keeps no state of its own.** The scheduler starts it, and
+   it holds an exclusive lock on the run directory, so two supervisors never
+   share one. Everything it knows, it reads from that directory. A supervisor
+   that crashes is started again, reads the directory, and launches a worker
+   only when its output is missing and no earlier copy of it still holds the
+   worker's lock, because a child process outlives a parent that crashes. A
+   halt record is final for its session: a restarted supervisor launches
+   nothing more for that session, and only the owner or the operator clears
+   it. On any halt or failure, the supervisor journals the halt with its
+   reason and raises the alarm. It records the release commit when a run
+   starts, and a supervisor started on a different release halts rather than
+   finish the run with mixed code. The dead-man check catches a supervisor
+   that dies. Workers with no file between them run at the same time: once
+   the snapshot and the reconciled book exist, the alpha and risk workers run
+   in parallel.
+6. **One process at a time talks to each broker account.** The order path is
+   the only worker that holds the broker credential, and it holds an exclusive
+   lock on a file tied to the account, outside every run directory, for its
+   whole life. A second order path that cannot take the lock halts without
+   sending. It is not split into one process per order, because the risk gate
+   checks limits across every order and position in the account's journal,
+   such as the number of open orders and the net exposure. Two gates running
+   at once could each approve an order that together breach a limit, so rule 6
+   is the one place the ruling's "in parallel" gives way.
+   - **Recovery comes first.** The order path settles orders in doubt,
+     journals fills and reconciles before any model runs, then writes the
+     session's book file that the risk worker and portfolio construction read.
+     A mismatch halts there.
+   - **A rerun never sends twice.** The order path reads exactly one intents
+     file per session and journals its SHA-256 before the first send. It sends
+     an intent only when the intent's client order id has no journal entry,
+     and asks the broker about any order in doubt by that id. Running a worker
+     again is safe everywhere else, because a sent order cannot be unsent.
+   - **The gate trusts no other worker for its caps.** The order path reads
+     the hard caps on its limits from its own configuration, and a constraints
+     file from the risk worker can only tighten them.
+7. **The kill switch is a file, and pulling it is a command.** The file lives
+   at one path per account, outside every run directory. Every worker checks
+   for it when it starts, and the order path checks before every send. Any
+   error other than "no such file" reads as pulled, so a switch that cannot be
+   read stops trading. Pulling it, per the owner's ruling on
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the
+   file, journals the halt, raises the alarm, and launches the order path to
+   cancel every resting order under the account's lock, journaling each cancel
+   first. Only the owner's or the operator's command clears it, and the
+   clearing is journaled.
+
+### A worker works through a span of sessions
 
 The cost of starting a process decides how a backtest keeps
 [one runtime](#one-runtime). On the owner's M1 Max under Python 3.12, a launch
 that imports only the standard library took about 0.05 seconds, one that
-imports pyarrow about 0.2 seconds, and one that imports pandas about 1 second.
-Each figure is the mean of 20 to 50 launches on one machine, so read it as a
-scale rather than a pin. Test 1's backtest runs 1,480 sessions through seven
-modules, which is 10,360 stage runs. One launch per stage per session would
-take about 9 minutes at the standard library's cost, 35 minutes at pyarrow's
-and 3 hours at pandas'.
+imports pyarrow 0.2 to 0.3 seconds, and one that imports pandas about 1
+second. Each figure is the mean of 20 to 50 launches on one machine, and a
+review rerun on a busy machine measured pyarrow higher, so read the figures as
+a scale rather than a pin. The backtest that test 1 runs covers 1,480
+sessions, the span quantitative-trading pins for the strategy [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) proposes
+on [#6](https://github.com/l3a0/ithildin-runtime/issues/6). Through seven
+modules that is 10,360 worker runs. One launch per worker per session would
+take about 9 minutes at the standard library's cost, 35 to 52 minutes at
+pyarrow's and 3 hours at pandas'.
 
-So a stage is given a span of sessions rather than one. In shadow, paper and
+So a worker is given a span of sessions rather than one. In shadow, paper and
 live the span is one session. In a backtest it is the whole history: each
-stage starts once, and for each session it waits for its inputs, writes its
-output and moves to the next. The launch is paid once per stage, and the
-stages run as a pipeline. The alpha stage can run ahead through every
-session's snapshot while portfolio construction waits on each day's book. The
-code is the same in every mode, and only the span differs.
+worker starts once, and for each session it waits for its inputs, writes its
+output and moves to the next. A worker carries nothing from one session to the
+next except through files, so a long span runs the same steps as a span of
+one. A restarted worker begins at its first session with no successful
+output. The launch is paid once per worker, and the workers run as a
+pipeline. The alpha worker can run ahead through every session's snapshot
+while portfolio construction waits on each day's book.
 
-A stage waiting on a file that a failed stage upstream will never write must
-not wait forever. The supervisor watches every stage it launched, and when one
-exits with a failure or a halt, it stops the run and every stage still
-waiting.
+The clock adapter is read at two edges only. The data worker reads it to
+decide when a session's snapshot is written, which is as fast as possible
+under the history clock and at the session's time under the wall clock. The
+supervisor reads wall time for deadlines in every mode, because a deadline
+guards against a hung process rather than shaping what a strategy sees. The
+workers between those edges read no clock and move on only when files appear.
 
-The price of this section is three things.
+A halt ends its session's chain, and the span goes on to the next session, the
+way the next day's live run starts after a halted one. A failure, meaning a
+worker that crashes or misses its deadline, stops the whole run and every
+worker still waiting.
+
+The price of this section is four things.
 
 1. Every value that crosses from one module to another needs a file format,
    and a test that writes it and reads it back unchanged.
-2. A stage notices a new file by watching the directory or by polling it, so
+2. A worker notices a new file by watching the directory or by polling it, so
    each step waits a little longer than a function call would.
 3. A backtest writes several files per session, a few tens of thousands for
-   test 1, into a run directory it deletes when it ends.
+   test 1. It may delete its outputs after a clean exit, keeping its manifests
+   and its report, and keeps everything after a halt or a failure. Shadow,
+   paper and live run directories are kept, and leave the machine with the
+   journal.
+4. The locks, the manifests and the supervisor's records add machinery that a
+   single process would not need, and each of their alarms has to fire in a
+   drill before the paper gate.
 
 ## How work is cut and ordered
 
@@ -202,9 +273,12 @@ glossing it.
 | **target portfolio** | The positions portfolio construction asks for. The difference between it and the current positions is what execution trades |
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
-| **stage** | One action run as its own process, which reads only files and its configuration and writes only files. [Processes and files](#processes-and-files) gives its rules |
-| **run directory** | The directory that holds every file one run's stages read and write, including each stage's manifest and halt record |
-| **manifest** | The record a stage writes beside each output, naming every input file by path and SHA-256, the release commit, a hash of the configuration, the start and end times, and how the stage exited |
+| **worker** | One action run as its own process. It takes its inputs from files, writes its outputs to files, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
+| **supervisor** | The process that launches each worker, watches it, writes the halt record when an input is missing, and stops the run. It keeps no state outside the run directory |
+| **run directory** | The directory that holds every file one run's workers write, including each manifest and halt record. The journal and marketlake's lake live outside it |
+| **manifest** | The record written beside each output, naming every input by path and SHA-256, the release commit, a hash of the configuration, the session, when the output was written, and how the worker exited. An output counts only once its manifest records success |
+| **halt record** | The file the supervisor writes when a worker halts or an input is missing, naming the file and the reason. It is final for its session until the owner or the operator clears it |
+| **span** | The sessions one worker is given to work through: one in shadow, paper and live, and the whole history in a backtest |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
 | **registered** | A result whose hypothesis was committed in writing before the number was seen. Only a registered result can promote a strategy |
@@ -234,9 +308,9 @@ once rather than re-argued.
 | --- | --- |
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per action, passing files](#processes-and-files) |
-| A message queue, a socket or a database between stages | Each needs a server or a live peer that can itself fail, and a message consumed from a queue leaves nothing behind to audit. A file needs neither, and stays as the record. The price is that a stage polls or watches a directory instead of being sent its input |
-| One process launch per stage per session in a backtest | Test 1 would make 10,360 launches, about 35 minutes at pyarrow's measured import cost. A stage takes a span of sessions instead, as [A stage works through a span of sessions](#a-stage-works-through-a-span-of-sessions) says |
-| One order path process per order | The risk gate checks limits across all of a run's orders, so two gates in parallel could each approve orders that together breach one |
+| A message queue that deletes what it delivers, or a database server, between workers | A queue of that kind leaves nothing behind to audit, and a server is one more process that can fail. A file needs neither, and stays as the record. The price is that a worker polls or watches a directory instead of being sent its input |
+| One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
+| One order path process per order, or more than one per account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |
