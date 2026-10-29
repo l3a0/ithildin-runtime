@@ -181,14 +181,16 @@ two versions of the truth, as when the broker's positions differ from the
 journal's book, the step halts and a person resolves it, the way a git merge
 conflict waits for a person. Nothing ever forces a change over state it has
 not fetched: no blob is replaced, no entry is rewritten, and no order is sent
-on a book that was not just brought up to date. Five places apply it.
+on a book not brought up to date at the start of the send stage. Five places
+apply it.
 
-1. **Every write** first asks storage for its key, and an existing blob sends
-   the step down rule 3's resume path rather than a second write.
-2. **Every journal append** reads the journal's end first, and a refusal
-   because another writer moved it on is the git push refused for being
-   behind: the writer reads what is new, decides again, and appends after it,
-   as rule 8 says.
+1. **Every write** is conditional, so storage refuses it when the key exists,
+   and a resuming worker checks its keys first, which sends it down rule 3's
+   resume path rather than a second write.
+2. **Every journal append** goes at the next number after the last one the
+   writer knows, and a refusal because another writer moved the journal on is
+   the git push refused for being behind: the writer reads what is new,
+   decides again, and appends after it, as rule 8 says.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
    fills made at the start of execution's send stage, as rule 9 says, and on
    the kill switch and the journal's end just before the broker call.
@@ -229,7 +231,10 @@ Ten rules make the blobs something a worker can trust.
    own. Equal means an earlier attempt already did this work. Different means
    the stage is not deterministic, which is a bug, so it halts. Two stages
    capture something that may not come again: data's snapshot, and
-   execution's recover stage, which reads the broker. For those the first
+   execution's recover stage, which reads the broker. Execution's send stage
+   reads the broker again, but as a fresh read on every attempt, which ruling
+   6 asks for, and it records what it read in the journal rather than as a
+   capture. For those the first
    capture wins. A resumed capturing stage reads its stored capture and
    derives every remaining output from it, never from a fresh read, and a
    fresh read that differs from the stored one is stored too, under its own
@@ -381,18 +386,24 @@ Ten rules make the blobs something a worker can trust.
    1. Execution journals each fill under the broker's own fill id, and skips
       a fill whose id is already journaled.
    2. At the start of its send stage, before it plans, execution fetches the
-      broker's positions, open orders and fills again, journals any fill that
-      arrived since its recover stage, and compares the result with the book
-      it replays from the journal. A fill of one of its own orders brings the
-      book up to date. Any other difference halts the session for a person,
-      because the broker moved in a way the platform did not ask for. Only
-      then does it plan, and it journals the planned orders, each with its
-      client order id, in the same entry as the whole target portfolio, before
-      its first send. A rerun in the same session reuses that list and never
+      broker's positions, open orders and fills again, a fresh read on every
+      attempt rather than a capture that the first one wins. It settles each
+      order in doubt by its client order id, journals any fill that arrived
+      since its recover stage, and compares the result with the book it
+      replays from the journal. An open order at the broker that matches a
+      `sending` entry, and a fill within that order's quantity, are the
+      platform's own and bring the book up to date. Any other difference
+      halts the session for a person, because the broker moved in a way the
+      platform did not ask for. Only then does it plan. It journals the
+      planned orders, each with its client order id, in the same entry as the
+      whole target portfolio, along with the journal entry it synced through
+      and a hash and the time of the broker state it fetched, before its first
+      send. A rerun in the same session reuses that list and never
       plans again, so an order's id never shifts between attempts.
-   3. Its account file names the journal entry it replayed through. Before it
-      plans, execution halts if an entry that changes the book, and that it
-      did not write in its own order loop, lies past that one.
+   3. Its account file names the journal entry it replayed through, and the
+      send stage's sync names the entry it synced through. Before it plans,
+      execution halts if an entry that changes the book, and that neither its
+      sync nor its own order loop wrote, lies past the entry its sync names.
 
    No other worker's output can loosen the gate, because its hard caps come
    from a blob the bucket's policy lets only the owner's credential write,
