@@ -2,7 +2,9 @@
 #
 # Copied into l3a0/ithildin-runtime from scripts/setup-repo.sh in
 # l3a0/repo-template at commit 4bb3f7f301300ed3f86a4992e6792fba3f7d3ed7,
-# the merge of l3a0/repo-template#26, with only this paragraph added.
+# the merge of l3a0/repo-template#26. Two changes are local: this paragraph,
+# and the closing note naming repo-template's README.md, since this repo's
+# README has no seeding section.
 # .github/labels.json comes unchanged from the same commit. "This template"
 # below means l3a0/repo-template.
 #
@@ -259,6 +261,6 @@ fi
 # that no longer exists.
 cat <<'NOTES'
 
-Done with the GitHub side. The rest is in README.md, under
+Done with the GitHub side. The rest is in repo-template's README.md, under
 "Starting a repo from it". Nothing here can guess those.
 NOTES

@@ -168,5 +168,5 @@ Say which candidates only the owner can act on, and which a new session can star
 
 This section is not in the template's copy. It holds what l3a0/ithildin-runtime adds.
 
-- **Where worktrees sit.** A session's worktree is `.claude/worktrees/<name>` inside the main checkout, on a branch named `claude/<name>`. `.gitignore` lists `.claude/worktrees/`, so the main checkout's `git status` never shows them. The main checkout is not always on `main` either, and step 1 then leaves it alone.
+- **Where worktrees sit.** Every worktree sits under `.claude/worktrees/` inside the main checkout. A session's is `.claude/worktrees/<name>` on a branch named `claude/<name>`. A sub-agent's is `.claude/worktrees/agent-<id>` on a branch named `worktree-agent-<id>`, and is locked while its host session runs. `.gitignore` lists `.claude/worktrees/`, so the main checkout's `git status` never shows them. The main checkout is not always on `main` either, and step 1 then leaves it alone.
 - **Merged branches stay on GitHub.** The repository's `delete_branch_on_merge` setting was off on 2026-10-28. So a merged pull request's branch keeps its `origin/<branch>` ref, and step 2's remote-branch test passes for its commits. Deleting those branches, or turning the setting on, is the owner's call.

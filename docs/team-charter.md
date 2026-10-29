@@ -211,8 +211,8 @@ read.
 | --- | --- |
 | Backlog | One GitHub issue per deliverable, with a milestone, a label and its blocked-by links. The issue is authoritative for scope |
 | Refinement | The `decompose-problem` loop: audit the plan against the code, compact it, split it when compaction stops paying |
-| Sprint planning | The delivery lead takes the next card from the build board's ranked view. A `band:1` label marks a card on the shortest path to a usable platform, and the board puts a card behind the open issues its "blocked by" links name |
-| Daily standup | A status round with the `sync-prune-next` skill: fetch, prune the worktrees and branches whose work merged, build the board from GitHub, and name what to take next from its ranked list |
+| Sprint planning | The delivery lead takes the next card from the build board's ranked view, which orders cards by their `band:N` labels and puts a card behind the open issues its "blocked by" links name. [CLAUDE.md](../CLAUDE.md)'s `## Keep the build board current` says what each band means |
+| Daily standup | A status round with the `sync-prune-next` skill: fetch, prune the worktrees and branches whose work is safe on GitHub, build the board from GitHub, and name what to take next from its ranked list |
 | Build | One session per issue in its own worktree, test-first against the test engineer's acceptance tests |
 | Sprint review | The pull request, reviewed before the owner reads it |
 | Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it |
@@ -313,10 +313,9 @@ a ranking made in advance.
 
 ## Definition of done
 
-An issue is done when its pull request merged, its acceptance tests pass under
-mutation, and its review is posted as a comment opening with `## Review`. The
-build board then shows it done by dropping its card, since the merge closes the
-issue and the board draws only open ones. The MVP is done when the
+An issue is done when its pull request merged and closed it, its acceptance
+tests pass under mutation, its review is posted as a comment opening with
+`## Review`, and its card has left the build board. The MVP is done when the
 team can answer Narang's due-diligence questions about it in writing, with each
 answer pointing at code or a test (L5568).
 
