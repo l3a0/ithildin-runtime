@@ -1596,7 +1596,8 @@ Nine rules hold the deployment to the premise and the hard limits.
       a public log.
 
    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
-   builds marketlake's side. Every remaining route needs the owner's approval
+   builds marketlake's side. Which account the runtime's bucket and VM live in
+   is question 11. Every remaining route needs the owner's approval
    or the owner's own credential: the owner's administrator session, and any
    approved apply or deploy in that account. An approved apply can edit a
    role's refusal, which its policy diff shows, and it holds enough of EC2 and
@@ -1969,3 +1970,62 @@ Each question has a recommendation, so a review can answer it with a yes.
     than the vendor's official candle. Whichever the owner chooses is the one
     schedule the strategy runs, and a missing input on a day halts that
     decision rather than switching to another choice.
+11. **Which AWS account holds the runtime's bucket and VM?** Rule 3 assumes
+    marketlake's account, where the owner ruled on 2026-10-29 that the broker
+    key lives. Three facts about that account matter. marketlake's plan role
+    holds AWS's `ReadOnlyAccess`, which reads every bucket and every parameter
+    in the account, and runs on pull requests of a public repository. Its
+    apply role holds `ec2:*`, so an approved apply can reach any VM in the
+    account as root. And a refusal added to one role protects nothing from a
+    role added later. Two choices follow.
+    1. **A separate AWS account for the bucket, the VM and the broker key.**
+       It refuses every marketlake role by default, the VM included, and
+       reads the lake through one read-only grant on marketlake's bucket. A
+       member account in AWS Organizations costs nothing, as the
+       [Organizations pricing page](https://docs.aws.amazon.com/organizations/latest/userguide/pricing.html)
+       says. The price is a second root login and recovery email to guard,
+       the setup hours, and moving the key out of marketlake's account, which
+       reverses part of the owner's ruling. The key cannot stay in
+       marketlake's account while the runtime runs elsewhere, because a
+       parameter encrypted under AWS's managed key cannot be shared across
+       accounts, as AWS's
+       [shared parameters page](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-shared-parameters.html)
+       says.
+    2. **marketlake's account, with the data behind lists of who may reach
+       it.** Three controls do the work.
+       1. The runtime's bucket policy refuses every S3 action to any
+          principal that is not one of the runtime's roles or the owner's,
+          matched on `aws:PrincipalArn`, and refuses changes to the policy
+          itself to all but the owner. An explicit refusal in a bucket policy
+          overrides any role's own grant, as AWS's
+          [policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
+          says, so a role marketlake adds later is refused without anyone
+          remembering it.
+       2. The broker key's parameter is encrypted under a KMS key of the
+          runtime's own, whose policy names only the execution user's
+          principal and the owner's, and leaves out the statement that lets
+          IAM policies grant access. Without that statement, "IAM policies
+          that allow access to the key are ineffective", as AWS's
+          [default key policy page](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)
+          says. The key costs $1 a month.
+       3. The VM cannot be listed that way, so marketlake's apply and deploy
+          roles carry explicit refusals of EC2 actions on instances tagged as
+          the runtime's, and of any change to that tag. That part is still a
+          list of refusals, and a check in marketlake's CI fails any role
+          that lacks it.
+
+       The price is that the VM stays behind a list someone has to keep
+       right, and that the account's root user can still edit every one of
+       these policies. Only a service control policy binds a root user, and
+       it does so only in a member account of an organization, as the
+       [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
+       says.
+
+    A board sitting on 2026-10-29 recommended the first, with one condition:
+    no role in the runtime's account can be assumed from a pull request on
+    either public repository, since ithildin-runtime is public too. It
+    weighed the separate account's setup hours against the second choice's
+    list of refusals that has to be kept right as marketlake grows, and
+    judged the journal, which cannot be recovered, worth the hours. When the
+    setup starts, now or after the candidate ranking due 2026-11-11, is the
+    owner's call.
