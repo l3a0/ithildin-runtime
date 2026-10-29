@@ -1,18 +1,22 @@
 name: Board
 
 # Copied into l3a0/ithildin-runtime from .github/workflows/board.yml in
-# l3a0/repo-template at commit 4bb3f7f301300ed3f86a4992e6792fba3f7d3ed7,
-# the merge of l3a0/repo-template#26. Apart from this paragraph, the only
-# change is the ref on the `uses:` line, pinned to that commit. In the
-# comments below, "here" and "the template itself" mean l3a0/repo-template.
-# To take a later fix, move the ref and re-copy both skills under
-# .claude/skills/ from the same commit, in one pull request.
+# l3a0/repo-template at commit 9c6d7e23d6381339c09102608c0958caca1401ce,
+# the merge of l3a0/repo-template#30. Apart from this paragraph, the only
+# changes are the ref on the `uses:` line, pinned to that commit, and the
+# `with:` block naming this repository's tab icon. In the comments below,
+# "here" and "the template itself" mean l3a0/repo-template. To take a later
+# fix, move the ref. The board's skills come from the owner's l3a0 Claude Code
+# plugin rather than from copies in this repository, and the Generator
+# compatibility section of its update-build-board skill says when a moved ref
+# also needs a plugin release.
 #
 # Starts the build board's rebuild, which the reusable workflow
 # .github/workflows/build-board.yml in l3a0/repo-template carries out. A
 # repository seeded from the template copies this file unchanged except for the
 # ref on the `uses:` line, which it pins to a full commit SHA of
-# l3a0/repo-template. The template itself calls `main`, so its own board runs
+# l3a0/repo-template, and a `with:` block for the inputs it sets, such as
+# `title` or `icon`. The template itself calls `main`, so its own board runs
 # the shared path before any seeded repository pins it.
 #
 # Provenance: the triggers, permissions and concurrency group of
@@ -91,4 +95,6 @@ jobs:
       pages: write
       id-token: write
       actions: read
-    uses: l3a0/repo-template/.github/workflows/build-board.yml@4bb3f7f301300ed3f86a4992e6792fba3f7d3ed7
+    uses: l3a0/repo-template/.github/workflows/build-board.yml@9c6d7e23d6381339c09102608c0958caca1401ce
+    with:
+      icon: .github/board/favicon.ico

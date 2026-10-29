@@ -198,21 +198,28 @@ reaches the owner already reviewed.
 Agile here means small vertical slices, shipped, used, and allowed to set the
 order of what comes next. The ceremonies map onto machinery that runs here.
 `decompose-problem`, `fast-mutation` and `loop-cost` are skills in the owner's
-`~/.claude/skills/`. The [build board](https://l3a0.github.io/ithildin-runtime/)
-is rebuilt from this repository's tracker by `.github/workflows/board.yml`,
-which calls a reusable workflow in
-[repo-template](https://github.com/l3a0/repo-template) at a pinned commit. The
-`update-build-board` and `sync-prune-next` skills under `.claude/skills/` are
-copies of repo-template's at that commit. [CLAUDE.md](../CLAUDE.md)'s
-`## Keep the build board current` says what a session sets for the board to
-read.
+`~/.claude/skills/`. `ask-team`, `ask-board`, `update-build-board` and
+`sync-prune-next` are skills in the owner's `l3a0` Claude Code plugin, from
+[l3a0/claude-plugins](https://github.com/l3a0/claude-plugins), and run as
+`/l3a0:<name>`. `/l3a0:ask-team` seats the eight roles below, from the
+architect to the security reviewer, as role agents, one per role, each run once
+for one review and then ended. Each agent reads this
+charter's section for its role first, and that section overrides the plugin's
+default definition. `/l3a0:ask-board` convenes the board of directors on the
+decisions that are the owner's, which [CLAUDE.md](../CLAUDE.md)'s
+`### The team and its lifecycle` lists. The
+[build board](https://l3a0.github.io/ithildin-runtime/) is rebuilt from this
+repository's tracker by `.github/workflows/board.yml`, which calls a reusable
+workflow in [repo-template](https://github.com/l3a0/repo-template) at a pinned
+commit. [CLAUDE.md](../CLAUDE.md)'s `## Keep the build board current` says
+what a session sets for the board to read.
 
 | Agile practice | What runs here |
 | --- | --- |
 | Backlog | One GitHub issue per deliverable, with a milestone, a label and its blocked-by links. The issue is authoritative for scope |
 | Refinement | The `decompose-problem` loop: audit the plan against the code, compact it, split it when compaction stops paying |
 | Sprint planning | The delivery lead takes the next card from the build board's ranked view, which orders cards by their `band:N` labels and puts a card behind the open issues its "blocked by" links name. [CLAUDE.md](../CLAUDE.md)'s `## Keep the build board current` says what each band means |
-| Daily standup | A status round with the `sync-prune-next` skill: fetch, prune the worktrees and branches whose work is safe on GitHub, build the board from GitHub, and name what to take next from its ranked list |
+| Daily standup | A status round with the `/l3a0:sync-prune-next` skill: fetch, prune the worktrees and branches whose work is safe on GitHub, build the board from GitHub, and name what to take next from its ranked list |
 | Build | One session per issue in its own worktree, test-first against the test engineer's acceptance tests |
 | Sprint review | The pull request, reviewed before the owner reads it |
 | Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it |
@@ -260,9 +267,17 @@ Push, open the pull request, send the owner the link, then review. Lenses run
 in parallel and blind to each other, one per relevant role, and a verifier then
 tries to refute each finding by executing code. Only findings that survive are
 acted on. Two lenses run on every pull request: completeness (the class fixed,
-not one instance) and over-reach (the change kept inside its class). The risk
-lens is required on anything touching the order path. Findings, and what was
-refuted, are posted on the pull request.
+not one instance) and over-reach (the change kept inside its class). The role
+lenses come from `/l3a0:ask-team` in its lens mode, which runs beside those two,
+seats the roles the change touches, verifies their findings and returns what
+survives without posting or fixing anything. The risk lens is required on
+anything touching the order path. A veto that survives verification blocks the
+pull request until it is fixed, or until the owner overrides it in writing on
+the pull request. Findings, the team's among them, and what was refuted, are
+posted on the pull request in one comment opening with `## Review`. A finding
+that turns on money, contracts or law goes to the owner under a
+`### For the owner` heading in that comment, for a board sitting through
+`/l3a0:ask-board` if the owner asks for one.
 
 ### 5. Release
 
@@ -274,7 +289,7 @@ evidence, not elapsed time.
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
-| Live | Real capital, small | **Owner only.** The owner sets the capital cap and switches it on |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 ### 6. Operate
 
