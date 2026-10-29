@@ -9,16 +9,17 @@ doc draws those shared pieces now, while disagreeing with them costs an edit.
 Slice 1 is the walking skeleton on
 [#4](https://github.com/l3a0/ithildin-runtime/issues/4): the first version of
 the platform in which every module exists in its simplest form and one
-strategy runs end to end, every trading day, on a broker's paper account. Each
+strategy runs end to end, every trading day, on a broker's paper account, a
+practice account that trades with no real money. Each
 module issue, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), still decides what
 its module must do. Where this doc and an issue disagree, the issue wins.
 
-The owner's part in reviewing it is two lists at the end.
+The owner's part in reviewing this doc is two sections at the end.
 
-1. [Decisions](#decisions), where each row says what this doc chose, what it
+1. [Decisions](#decisions), a table where each row says what this doc chose, what it
    turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), eight questions that
+2. [Questions for the owner](#questions-for-the-owner), nine questions that
    need an answer before the build starts. Each carries a recommendation, so a
    yes is enough.
 
@@ -71,8 +72,8 @@ Four facts make it the simplest candidate there.
 
 1. **Two liquid ETFs, daily closes only.** No minute data, no futures rolls, no
    stock panel.
-2. **One committed source.** `inputdata_etf/gld.csv` and
-   `inputdata_etf/uso.csv` were lifted from Chan's `inputData_ETF.mat`, cover
+2. **One committed source.** `data/inputdata_etf/gld.csv` and
+   `data/inputdata_etf/uso.csv` were lifted from Chan's `inputData_ETF.mat`, cover
    2006-04-26 to 2012-04-09, and each has a recorded SHA-256 checksum. Each
    file is a vintage, meaning one source's copy of a series stored once and
    never changed, as [design.md](design.md#vocabulary) defines it.
@@ -98,7 +99,8 @@ Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking
 the engine. Running it on paper promotes the platform's version, not the
 strategy, because the charter's backtest gate for a strategy also needs a
-registered out-of-sample test, which this one has not passed.
+registered out-of-sample test, which this one has not passed. Registered means
+the hypothesis was committed in writing before the number was seen.
 
 ## Context: what the platform talks to
 
@@ -218,7 +220,7 @@ adapter for each port.
 
 | Mode | Data source | Clock | Broker, and when it fills | Journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | Vintage replay | History clock | Simulated, at the signal's close | In memory, discarded | Recorded, not sent |
+| Backtest | Vintage replay | History clock | Simulated, at the signal's close | A temporary file, deleted when the run ends | Recorded, not sent |
 | Shadow | marketlake reader | Wall clock | Simulated, at the next open | Shadow journal | Sent |
 | Paper | marketlake reader | Wall clock | Paper broker, at the next open | Paper journal | Sent |
 | Live | marketlake reader | Wall clock | Live broker, at the next open | Live journal | Sent |
@@ -227,12 +229,17 @@ Shadow reads live bars and decides real orders, but fills them in the
 simulated broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
 
-[design.md](design.md#one-runtime) names three adapters: the data source, the
-clock and the broker. They are the ones that change what a strategy sees. The
-journal store and the alert channel also differ by mode, but they change only
-where records go. A backtest of 1,480 sessions must not append to the paper
-journal or page the owner. If the owner accepts this table,
-`## One runtime` in design.md gains those two as well.
+[design.md](design.md#one-runtime) names three adapters, the ones that change
+what a strategy sees.
+
+1. The data source.
+2. The clock.
+3. The broker.
+
+The journal store and the alert channel also differ by mode, but they change
+only where records go. A backtest of 1,480 sessions must not append to the
+paper journal or page the owner. The Decisions table proposes adding those two
+to design.md's `## One runtime`.
 
 A module that asks which mode it is in has broken the shape, because its
 backtest would then test a branch the paper run never takes. In slice 1 the
@@ -336,8 +343,10 @@ sequenceDiagram
     S->>R: start the session's run
     R->>R: kill switch off?
     Note over R,M: Phase 1, recover and reconcile
-    R->>X: bring the journal up to date
-    X->>B: fills since the last run, and any order in doubt
+    R->>X: settle orders in doubt
+    X-->>R: none in doubt
+    R->>X: journal fills since the last run
+    X->>B: fills since the last run
     B-->>X: last session's fills
     X->>J: each fill journaled
     R->>J: replay
@@ -364,7 +373,7 @@ sequenceDiagram
     O-->>R: order intents
     Note over R,G: Phase 4, send
     loop each order intent
-        R->>X: send
+        R->>X: send, with the book, snapshot and constraints
         X->>X: kill switch off?
         X->>J: intent journaled
         X->>G: check
@@ -382,9 +391,10 @@ sequenceDiagram
 
 The phases in order.
 
-1. **Recover and reconcile.** Fills arrive the morning after a run, so the run
-   opens by journaling them, replays the journal into the current book, and
-   checks the book against the broker's positions. A run that starts on a book
+1. **Recover and reconcile.** The run first settles any order a crash left in
+   doubt. Fills arrive the morning after a run, so it then journals them,
+   replays the journal into the current book, and checks the book against the
+   broker's positions. A run that starts on a book
    the broker disagrees with would trade the wrong difference.
 2. **Read the session's data.** Data records the bars before any model sees
    them.
@@ -456,12 +466,18 @@ sequenceDiagram
 
     Note over R: The process restarts mid-session
     R->>R: kill switch off?
-    R->>J: replay the journal
-    J-->>R: book, plus one order in doubt
-    R->>X: settle the order in doubt
+    R->>X: settle orders in doubt
+    X->>J: which orders were sending with no ack?
+    J-->>X: one
     X->>B: is there an order with this client order id?
     B-->>X: yes, acknowledged
     X->>J: ack journaled
+    R->>X: journal fills since the last run
+    X->>J: no new fills
+    R->>J: replay
+    J-->>R: current book
+    R->>M: reconcile against the broker's positions
+    M-->>R: match
     R->>D: is the snapshot recorded for this session?
     D-->>R: not yet
     R->>J: halt journaled, reason "data not ready"
@@ -469,9 +485,13 @@ sequenceDiagram
     Note over R: Execution never acts before data is ready
 ```
 
-The restart does two things. It first settles the order it left half-sent, by
-asking the broker about it rather than sending it again. It then finds the
-session's data not yet recorded and halts. The charter gives the operator the
+The restart runs the same phase 1 as any trading day, and then halts at
+phase 2.
+
+1. It settles the order it left half-sent, by asking the broker about it
+   rather than sending it again.
+2. It journals any fills, replays the journal and reconciles.
+3. It finds the session's data not yet recorded and halts. The charter gives the operator the
 startup order: execution may act only once every upstream module reports
 itself current for the session. "Not ready" is a halt, never an empty forecast.
 
@@ -536,16 +556,23 @@ trading systems engineer write it, so that role reviews it there.
 ```mermaid
 sequenceDiagram
     participant P as Owner or operator
-    participant R as Run controller
+    participant K as Kill switch command
     participant X as Order path
+    participant B as Broker
     participant J as Journal
+    participant M as Monitoring
     participant H as Heartbeat service
     participant A as Alert channel
 
-    P->>R: pull the kill switch
-    R->>J: halt journaled, reason "kill switch"
-    R->>A: alarm
-    Note over R,X: Every later run checks the switch first,<br/>and the order path checks it before every send
+    P->>K: pull the kill switch
+    K->>K: set the flag
+    K->>J: halt journaled, reason "kill switch"
+    K->>X: cancel resting orders, if question 7 says yes
+    X->>J: each cancel journaled
+    X->>B: cancel
+    K->>M: alarm
+    M->>A: owner alerted
+    Note over K,X: Every later run checks the flag first,<br/>and the order path checks it before every send
 
     Note over R,H: A day the run never finishes
     H->>H: no ping by the deadline
@@ -558,11 +585,13 @@ The two cover different failures.
    wants.
 2. **The dead-man check** is for a run that is not alive at all.
 
-The split of the kill switch work is on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). Orders sent in the
-evening rest at the broker overnight, so a switch pulled before the open stops
-nothing already sent unless pulling it also cancels resting orders. Question 7
-asks whether it does.
+The kill switch is a command, not a running process. It sets a flag that
+every run reads, and it can cancel resting orders through the order path, so
+the cancel is journaled like any other step. The split of the kill switch work
+is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Orders sent in
+the evening rest at the broker overnight, so a switch pulled before the open
+stops nothing already sent unless it also cancels them. Question 7 asks whether
+it does.
 
 ## Types and interfaces
 
@@ -570,7 +599,7 @@ A class diagram shows the types the modules pass to each other and the
 interfaces each one implements. Two diagrams follow, one for the data the
 modules pass and one for the interfaces.
 
-How to read the arrows.
+Three kinds of arrow appear.
 
 1. A plain arrow means one type refers to the other.
 2. A hollow diamond means the type holds one it was given.
@@ -704,9 +733,20 @@ classDiagram
     }
     class RiskGate {
         <<Protocol>>
-        +check(OrderIntent, Book, Snapshot) Verdict
+        +check(OrderIntent, Book, Snapshot, Constraints) Verdict
+    }
+    class JournalStore {
+        <<Protocol>>
+        +append_line(text)
+        +lines() list
+    }
+    class Alerts {
+        <<Protocol>>
+        +alarm(reason)
+        +heartbeat()
     }
     class Journal {
+        -JournalStore store
         +append(entry)
         +replay() Book
     }
@@ -714,11 +754,20 @@ classDiagram
         -Journal journal
         -RiskGate gate
         -Broker broker
-        +send(OrderIntent) Ack
         +settle_in_doubt() list
+        +journal_fills(since) list
         +broker_positions() dict
+        +send(OrderIntent, Book, Snapshot, Constraints) Ack
+        +cancel_resting() list
+    }
+    class Monitoring {
+        -Alerts alerts
+        +reconcile(Book, dict) bool
+        +report(run)
     }
 
+    Journal o-- JournalStore
+    Monitoring o-- Alerts
     OrderPath o-- Journal
     OrderPath o-- RiskGate
     OrderPath o-- Broker
@@ -744,22 +793,27 @@ Six choices in the two diagrams for a reviewer to check.
 2. **A bar carries where it came from.** `vintage_id` names the vintage it was
    read from, and `first_seen` is when the platform first held it. `basis`
    says which price the series carries, such as `raw` for as traded or
-   `adjusted` for split and dividend adjusted, as quantitative-trading records
-   it. These come from the data engineer's duty, in the charter, to store when
-   each value became available (L3884).
+   `adjusted` for split and dividend adjusted, as quantitative-trading's
+   vintage records do. `vintage_id` and `first_seen` come from the data
+   engineer's duty, in the charter, to store when each value became available
+   (L3884).
 3. **`Snapshot.require_fresh()` is how a module refuses a gap.** A snapshot is
    the set of bars one run read, each pointing at the vintage that holds it. A
    module calls `require_fresh()` before reading, and it raises `Halt` when any
    bar it needs is missing or stale. So the default when something is absent
    is to stop.
 4. **Only `OrderPath` holds a `Broker`.** Every call to the broker goes through
-   it: sending, settling orders in doubt, reading fills and reading positions.
+   it, one method per kind of call: settling orders in doubt, journaling fills,
+   reading positions, sending and cancelling.
    Nothing else in the package is given a broker. Test 3 checks that, as the
    section on the import rule says.
-5. **The risk gate holds no state of its own.** `RiskGate` is built with the
-   run's `Constraints`, and `check` reads prices from the snapshot to value the
-   book, which three of its six limits need: maximum gross, net exposure and
-   the loss stop.
+5. **The risk gate holds no state of its own.** `check` takes the order, the
+   book, the snapshot and the run's `Constraints`, so `send` passes all four
+   through. Three of the six limits need the snapshot's prices to value the
+   book.
+   1. Maximum portfolio size, the `max_gross` field.
+   2. Net exposure.
+   3. The loss stop.
 6. **The book comes from the journal.** `Journal.replay()` applies every entry
    in order to build a `Book`. The broker's positions are read only to
    reconcile.
@@ -767,7 +821,9 @@ Six choices in the two diagrams for a reviewer to check.
 ## The life of an order
 
 A state diagram shows the states one thing can be in and what moves it between
-them. Each transition is a journal entry written before the next step.
+them. Each transition is a journal entry written before the next step, except
+the two a crash causes, `Abandoned` and the crash half of `InDoubt`. The next
+run writes those when it finds the gap.
 
 ```mermaid
 stateDiagram-v2
@@ -787,6 +843,7 @@ stateDiagram-v2
     PartlyFilled --> Expired: rest not filled by the close
     Acknowledged --> Rejected: broker rejects
     Acknowledged --> Cancelled: kill switch cancels it
+    PartlyFilled --> Cancelled: kill switch cancels the rest
     Refused --> [*]
     Abandoned --> [*]
     Lost --> [*]
@@ -838,8 +895,8 @@ set or the cause is still there.
 ## What is stored
 
 An entity-relationship diagram shows what is kept and how the records point at
-each other. A pair of bars at a line's end means exactly one, a circle means
-zero or more, and a crow's foot means many.
+each other. A pair of bars at a line's end means exactly one, and a circle with a
+crow's foot means zero or more.
 
 ```mermaid
 erDiagram
@@ -912,8 +969,8 @@ The entities live in four stores, and each store keeps its own rule.
    journal entries rather than kept as files of their own. The writer only ever
    appends, one JSON object per line, and flushes each entry to disk with
    `fsync` before the step it records happens. Each entry carries the hash of
-   the one before it, so changing or deleting an entry breaks the link from the
-   entry after it. That catches an edit unless someone recomputes every later
+   the one before it, which makes the file a hash chain. Changing or deleting
+   an entry breaks the link from the entry after it. That catches an edit unless someone recomputes every later
    hash. Recording the latest hash off the machine each day, in the backup or
    the report, catches that case and a cut-off tail.
 4. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
@@ -1016,8 +1073,8 @@ An arrow means "may import". The diagram draws three rules.
    `OrderPath` alone.
 
 A test reads every module's imports with Python's `ast` module and fails on an
-arrow the diagram does not draw. A second test runs a day against a broker
-double that fails if anything but `OrderPath` calls it. Together they turn
+arrow the diagram does not draw. A second test runs a day against a fake broker
+that fails if anything but `OrderPath` calls it. Together they turn
 test 3's "no order reaches the broker adapter without passing the gate" into
 something executed rather than reviewed. The price is two more tests to keep
 in step with the diagram, and a module that needs a sibling has to argue for a
@@ -1029,7 +1086,7 @@ new arrow.
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | Vintage replay, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of position, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected | The orders on each day, and a halt with no orders on each faulted day |
-| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the broker double | Six refusals, no import of `execution.brokers` outside `runtime`, and no broker call from outside `OrderPath` |
+| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the fake broker | Six refusals, no import of `execution.brokers` outside `runtime`, and no broker call from outside `OrderPath` |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip a run's ping | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
@@ -1048,7 +1105,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | Piece | Written on |
 | --- | --- |
 | `Bar`, `Snapshot`, vintage replay, marketlake reader, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
-| Bollinger band alpha model, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
+| Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Flat and linear cost models | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction, `TargetPortfolio` | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
@@ -1059,12 +1116,16 @@ Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, which
 question 3 asks about.
 
-Three pieces belong to no single module: `core`, the import rule tests and the
-run controller. Where they are written is a question for
-[#4](https://github.com/l3a0/ithildin-runtime/issues/4), since
+Three pieces belong to no single module.
+
+1. `core`, with the shared types and every `Protocol`.
+2. The import rule tests.
+3. The run controller.
+
+Question 9 asks where they are written, since
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#8](https://github.com/l3a0/ithildin-runtime/issues/8) are both free to start
-first.
+first and both would need `core`.
 
 ## Decisions
 
@@ -1079,13 +1140,14 @@ accepted.
 | --- | --- | --- | --- |
 | Only the order path talks to the broker, for sends, lookups, fills and positions | Letting the run controller or reconciliation call the broker | One more method on `OrderPath` per broker read | This doc |
 | The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
+| The journal store and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Two more ports in `core`, and a change to design.md's `## One runtime` | This doc |
 | A missing, stale or empty input raises `Halt` | Defaulting a gap to the last value or to zero | A day with a data hiccup is a day with no trading | This doc, with the staleness rule on [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | One run per session after marketlake's evening capture, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The journal is JSON Lines with a hash chain, fsynced per entry | SQLite | No queries without loading the file, which slice 1 does not need. In return the file is readable in a terminal and simple to back up | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Share quantitative-trading's vintage code through the shared `ithildin-core` repository | A second copy here | A release of `ithildincore`, that repository's package, before [#5](https://github.com/l3a0/ithildin-runtime/issues/5) can use it | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
-| Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a stub, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 
 The vintage row rests on quantitative-trading's `CLAUDE.md`, which sends code
 both repositories use to `ithildin-core`, because two copies drift without
@@ -1125,11 +1187,19 @@ Each question has a recommendation, so a review can answer it with a yes.
    GitHub Actions schedule is not one, because quantitative-trading measured
    only about 11% of its scheduled board runs firing over 185 hours.
 7. **Does pulling the kill switch cancel orders resting at the broker?** The
-   recommendation is yes. Cancelling an order that has not filled sells
-   nothing, so it is still a stop and not a flatten, and without it a switch
-   pulled overnight stops nothing until after the open.
+   recommendation is yes, through the kill switch command, which cancels each
+   resting order through the order path and journals it. Cancelling an order
+   that has not filled sells nothing, so it is still a stop and not a flatten,
+   and without it a switch pulled overnight stops nothing until after the open.
 8. **Does the daily loss stop also unwind positions?** The recommendation is
    no for slice 1. Crossing the stop makes the risk gate refuse every new
    order. An unwind is a trade of its own, so it would need its own path
    through the gate and its own tests, and
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7) can add it later.
+9. **Where are `core`, the import rule tests and the run controller written?**
+   The recommendation is a new sub-issue of
+   [#4](https://github.com/l3a0/ithildin-runtime/issues/4), built first, which
+   every module issue waits on through a "blocked by" link. Every module
+   imports `core`, so the dependency is real. The price is one step before any
+   module starts. In return the shared shapes land once, reviewed on their own,
+   rather than inside whichever module happens to go first.
