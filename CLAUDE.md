@@ -135,7 +135,7 @@ This repo's prose surfaces are every tracked Markdown file, which `git ls-files 
 
 1. The hard limits, stated here and in [docs/team-charter.md](docs/team-charter.md). This file wins.
 2. The module table in the charter and the modules under `src/ithildinruntime`, once any exist. A module renamed in code is renamed in the charter, and on the slice issues that name it, in the same change.
-3. The two skills under `.claude/skills/` and the repo-template commit that `.github/workflows/board.yml` pins. A pin moved without re-copying the skills leaves a session following one version's rules on another version's board.
+3. The `l3a0` plugin's board skills and the repo-template commit that `.github/workflows/board.yml` pins. A pin moved past a change to what the generator reads, with no plugin release beside it, leaves a session following one version's rules on another version's board. [Keep the build board current](#keep-the-build-board-current) says how the two stay in step.
 
 Before reporting a code change done, sweep the prose surfaces for what the change could have invalidated, and end the response with a short **Consistency sweep** note listing what was checked, what was updated, and what is still stale. For a pure-internal refactor that moves no line numbers and changes no observable behavior, say "no prose-facing surfaces affected" so it is clear the check was considered rather than forgotten.
 
@@ -171,6 +171,8 @@ Review by fanning out independent lenses, then verifying each finding adversaria
 
 1. Fixing the instance rather than the class, such as a false claim corrected in one file while it still stands in three more.
 2. Fixing past the class, such as generalising a change into places it does not belong.
+
+**Every review also consults the team (owner directive, 2026-10-29).** The owner ruled that "the pr and blog review skills should also consult the ask build team skill for their feedback." So every pull request review runs `/l3a0:ask-team` in its lens mode beside the completeness and over-reach lenses. In that mode the skill seats the roles the change touches, runs them blind to the review's own two lenses, verifies their findings by executing, and returns what survives. It posts nothing and fixes nothing. The review applies what it accepts on its own branch and folds the team's findings into its one comment opening with `## Review`, so the board reads one review per round. Lens mode leaves out the skill's rule on vetoes, so the review carries it: a veto that survives verification blocks the pull request until it is fixed, or until the owner overrides it in writing on the pull request, and the review does not decline it. [The team and its lifecycle](#the-team-and-its-lifecycle) says which roles exist and where their definitions live.
 
 Verify by executing, not by reading. Mutate the code and confirm a test fails. A test that still passes under mutation does not cover what it claims to cover.
 
@@ -208,7 +210,15 @@ PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`
 
 The [build board](https://l3a0.github.io/ithildin-runtime/) is a page that answers what is in flight and what to take next. It lives on GitHub Pages, and a GitHub Action rebuilds it from GitHub on every issue, comment and pull request change and on a schedule. No session writes it. The Action is `.github/workflows/board.yml`, which calls a reusable workflow in [repo-template](https://github.com/l3a0/repo-template) pinned to one commit. What the board cannot read from GitHub on its own is judgement: which cards are ranked and in what order, which session holds a card, whether a plan is finished, and what a card waits on. A session that makes one of those calls and does not set it on GitHub has made the board wrong, and nothing else notices.
 
-So a session that starts or ends work on a card, finishes a decompose loop (the planning passes of the `decompose-problem` skill), posts a review, files an issue, or changes an issue's priority, its sub-issues or what it waits on sets the matching label, native "blocked by" link, marker line or comment opening with `## Review`. The `update-build-board` skill under `.claude/skills/` owns the formats, the full list of moments and the reasons behind each step. This section says that the rule exists and what the bands mean here, and the skill says what it covers and how.
+So a session that starts or ends work on a card, finishes a decompose loop (the planning passes of the `decompose-problem` skill), posts a review, files an issue, or changes an issue's priority, its sub-issues or what it waits on sets the matching label, native "blocked by" link, marker line or comment opening with `## Review`. Two skills in the owner's `l3a0` Claude Code plugin, from [l3a0/claude-plugins](https://github.com/l3a0/claude-plugins), cover the board. `/l3a0:update-build-board` owns the formats, the full list of moments and the reasons behind each step, and `/l3a0:sync-prune-next` runs the status round that prunes finished worktrees, builds the board and names what to take next. Each holds a section for this repository under `## In each repository`. This section says that the rule exists and holds what those sections leave to this repository, which is what the bands mean and what the tab icon is. The skills say what they cover and how.
+
+Both skills arrived in plugin 0.5.0, at l3a0/claude-plugins `37555c5`, which is the release this section was checked against. An older install has neither, and a repository checkout carries no copy.
+
+So `.claude/settings.json` declares the `l3a0` marketplace and enables `l3a0@l3a0`, as the owner approved on 2026-10-29. The marketplace lists the plugin by a relative path. Once a folder is trusted, Claude Code registers the marketplace and loads the plugin from its copy, with no install step. In a folder nobody has trusted, including a `-p` run there, it skips both without a message.
+
+The marketplace entry names no `ref`, so it follows the default branch of l3a0/claude-plugins rather than a tagged release. A machine gets the commit that branch held when it first registered the marketplace, and keeps it, because a marketplace outside Anthropic's own does not update on its own. `claude plugin marketplace update l3a0` moves that copy forward, and `claude plugin update l3a0@l3a0` with a restart moves an install made at user scope.
+
+A cloud session loads none of this, because Claude Code does not apply a repository's plugin settings in a cloud session. So a cloud session here runs without the board and team skills. A session that cannot load `/l3a0:sync-prune-next` removes no worktree, branch or ref, and says so in its report, because that skill's checks are what keep a status round from deleting work nobody pushed.
 
 A `band:N` label ranks a card under the directive in [Rank work by what makes the product usable](#rank-work-by-what-makes-the-product-usable), and a lower number is taken first.
 
@@ -217,11 +227,13 @@ A `band:N` label ranks a card under the directive in [Rank work by what makes th
 
 A card with no band is left out of the board's default view, and the page's Show all button still draws it. A card in flight, meaning one a session holds or an open pull request carries, shows either way.
 
+The page's tab icon is `.github/board/favicon.ico`, which `.github/workflows/board.yml` names through the reusable workflow's `icon` input. It holds the Ithildin glyph at 16, 32 and 48 pixels, rendered from the 32-pixel tab icon of the owner's Ithildin brand page. The usage sheet flattens the glyph to one silver at 32 pixels and below, so the 16 and 32 pixel images are that icon as drawn, and the 48 pixel image takes the brand's silver gradient. The page's icon draws the glyph larger in its square than the sheet's favicon row does, about four fifths of the height against about half, and the icon follows the page. A new icon is a new file at that path, with no move of the pin.
+
 Three limits are worth stating rather than leaving a reader to infer.
 
-1. A "blocked by" link and a sub-issue start no run of the Action, so the session that makes one dispatches the board itself with its own `gh` login, once its changes are in. The skill gives the command and the moments that need it. The Action's schedule cannot be relied on to catch these, because GitHub delays or drops a scheduled run under load.
+1. A "blocked by" link and a sub-issue start no run of the Action, so the session that makes one dispatches the board itself with its own `gh` login, once its changes are in. `/l3a0:update-build-board` gives the command and the moments that need it. The Action's schedule cannot be relied on to catch these, because GitHub delays or drops a scheduled run under load.
 2. The board deploys only from `main`, because the `github-pages` environment admits no other branch. So a change to the caller reaches the page only once its pull request merges.
-3. The two skills are repo-template's at the commit the caller pins, each with an `## In this repository` section added at its end, because they and the generator share label names and line formats. Moving the pin and re-copying both skills from the new commit happen in one pull request, and the re-copy keeps each skill's added section.
+3. The skills and the generator share label names and line formats, yet they move apart. The caller pins the generator to one repo-template commit, while the skills move with each plugin release. `/l3a0:update-build-board`'s `## Generator compatibility` names the generator commit whose formats it matches here, and a session on a commit it does not name follows the generator. So a pin moved past a change to what the generator reads also needs a plugin release, under that section's rules. A fact about this repository that a skill states wrongly is filed on l3a0/claude-plugins rather than patched here, as [l3a0/claude-plugins#31](https://github.com/l3a0/claude-plugins/issues/31) was for the pin and the icon on 2026-10-29.
 
 What argues for the rule is measured cost rather than a failure. In quantitative-trading, where the board began, writing it by hand cost about $51 a day in session turns and still missed every change no session saw, which [issue 531](https://github.com/l3a0/quantitative-trading/issues/531) there measured. Nothing has yet measured what a stale label costs a reader, so setting them is a convention this repo keeps rather than a cost it has priced.
 
@@ -230,6 +242,17 @@ What argues for the rule is measured cost rather than a failure. In quantitative
 ### The team and its lifecycle
 
 [docs/team-charter.md](docs/team-charter.md) defines the roles, each by what it protects and what it may veto, and the lifecycle from plan to operate. A session takes on one role for one piece of work. A review runs one lens per relevant role, and the risk lens is required on any change to the order path.
+
+The review lenses are the role agents of the `l3a0` plugin's `/l3a0:ask-team` skill, one agent for each of the charter's eight roles from the architect to the security reviewer, each run once for one review and then ended. The owner and the delivery lead are not agents. The plugin carries a default definition for each role, generalised from this repository's charter so other repositories can seat it. Here the charter's section for a role overrides that default, and each agent reads it first, so the trading definitions in the charter are the ones a review applies.
+
+Some decisions are the owner's rather than the team's, because they turn on money, contracts or law rather than on code. These go to the board of directors through `/l3a0:ask-board`.
+
+1. Any step toward live trading, such as leaving the paper stage, setting a capital cap, or approving a live deployment.
+2. Choosing a broker, a data vendor or a host, when the choice carries a cost or terms of use.
+3. Anything with legal or tax exposure, such as committing a vendor's data to this public repository.
+4. Whether a strategy, or the venture itself, is worth the owner's capital and hours at all.
+
+Switching to live trading is the one step the board sits on every time, because the charter's Live release gate puts a sitting before the owner switches. The other decisions go to the board when the owner asks for a sitting. A review that meets one of these lists it in its `## Review` comment under a `### For the owner` heading, and decides nothing. The board's seats can read only inside the session's working directory, so a sitting about this repository runs from this repository's folder. The owner's ruling goes on the issue as a dated line that names the decision and carries no figure from the board's brief or minutes, because this repository and its issues are public. The brief and minutes hold personal figures, so they stay under `~/.config/board/` and never enter this repository, an issue or a pull request.
 
 ### Research pins
 

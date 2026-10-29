@@ -6,8 +6,10 @@ name: Board
 # changes are the ref on the `uses:` line, pinned to that commit, and the
 # `with:` block naming this repository's tab icon. In the comments below,
 # "here" and "the template itself" mean l3a0/repo-template. To take a later
-# fix, move the ref and re-copy both skills under .claude/skills/ from the
-# same commit, in one pull request.
+# fix, move the ref. The board's skills come from the owner's l3a0 Claude Code
+# plugin rather than from copies in this repository, and the Generator
+# compatibility section of its update-build-board skill says when a moved ref
+# also needs a plugin release.
 #
 # Starts the build board's rebuild, which the reusable workflow
 # .github/workflows/build-board.yml in l3a0/repo-template carries out. A
