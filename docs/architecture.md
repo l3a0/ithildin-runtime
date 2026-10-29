@@ -149,15 +149,26 @@ stored durably there, and read by every mode through one query. The owner ruled
 so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
 bar.
 
-1. **Captured daily bars,** one per ETF per session, which paper trading reads.
+1. **Captured daily bars,** one per ETF per session, which shadow, paper and
+   live trading read. marketlake has captured GLD and USO since 2026-10-29,
+   under [l3a0/marketlake#928](https://github.com/l3a0/marketlake/issues/928).
 2. **quantitative-trading's committed vintages,** imported once, which the
    backtest reads.
-3. **A one-time vendor download** of the most recent sessions, imported once,
-   so the 20-session lookback has history before capture covers it.
+3. **A one-time vendor download** of the most recent sessions, imported once.
+   The strategy's first z-score needs about 39 sessions of closes: 20 to fit
+   the first hedge ratio, then 19 more spreads to fill the z-score's 20-day
+   window. This download covers them until capture does.
 
 Every bar says whether it was captured or imported, and where an imported one
 came from, so a consumer can refuse imported history where only captured data
 will do. Imported history never overwrites a captured partition.
+
+One marketlake rule has to change for this to hold. Its VM keeps 22 sessions on
+its own disk and deletes older bar partitions once its backup bucket holds
+them. The 2006 to 2012 history, and a lookback longer than 22 sessions, would
+then drop out of a read with no error, which is exactly the silent gap a halt
+exists for. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) therefore keeps imported history and the sessions a lookback
+needs readable, and says which copy of the lake each mode reads.
 
 It sends orders to one place, the broker's paper account.
 
@@ -234,10 +245,10 @@ adapter for each port.
 
 | Mode | Data source | Clock | Broker, and when it fills | Journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, imported history | History clock | Simulated, at the signal's close | A temporary file, deleted when the backtest ends | Recorded, not sent |
-| Shadow | marketlake reader, captured bars | Wall clock | Simulated, at the next open | Shadow journal | Sent |
-| Paper | marketlake reader, captured bars | Wall clock | Paper broker, at the next open | Paper journal | Sent |
-| Live | marketlake reader, captured bars | Wall clock | Live broker, at the next open | Live journal | Sent |
+| Backtest | marketlake reader, the bars a test names | History clock | Simulated, at the signal's close | A temporary file, deleted when the backtest ends | Recorded, not sent |
+| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, at the next open | Shadow journal | Sent |
+| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at the next open | Paper journal | Sent |
+| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at the next open | Live journal | Sent |
 
 Every mode reads bars through the same marketlake reader. The modes differ in
 which bars they read and which clock drives them, not in how they read. Shadow
@@ -414,8 +425,8 @@ The phases in order.
    replays the journal into the current book, and checks the book against the
    broker's positions. A run that starts on a book
    the broker disagrees with would trade the wrong difference.
-2. **Read the session's data.** Data records the bars before any model sees
-   them.
+2. **Read the session's data.** Data reads the session's bars from marketlake
+   and records which ones it read before any model sees them.
 3. **Decide.** The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them, and the
    order manager turns the difference from the book into order intents.
@@ -502,7 +513,7 @@ sequenceDiagram
     X-->>R: broker's view
     R->>M: reconcile book against broker
     M-->>R: match
-    R->>D: is the snapshot recorded for this session?
+    R->>D: has marketlake captured this session's bars?
     D-->>R: not yet
     R->>J: halt journaled, reason "data not ready"
     R->>M: alarm
@@ -515,7 +526,7 @@ phase 2.
 1. It settles the order it left half-sent, by asking the broker about it
    rather than sending it again.
 2. It journals any fills, replays the journal and reconciles.
-3. It finds the session's data not yet recorded and halts. The charter gives the operator the
+3. It finds the session's bars not yet captured in marketlake and halts. The charter gives the operator the
 startup order: execution may act only once every upstream module reports
 itself current for the session. "Not ready" is a halt, never an empty forecast.
 
@@ -827,7 +838,7 @@ Six choices in the two diagrams for a reviewer to check.
    engineer's duty, in the charter, to store when each value became available
    (L3884).
 3. **`Snapshot.require_fresh()` is how a module refuses a gap.** A snapshot is
-   the set of bars one run read, each pointing at the vintage that holds it. A
+   the set of bars one run read, each pointing at the partition that holds it. A
    module calls `require_fresh()` before reading, and it raises `Halt` when any
    bar it needs is missing or stale. So the default when something is absent
    is to stop.
@@ -941,6 +952,7 @@ erDiagram
 
     VINTAGE {
         string id
+        string origin
         string vendor
         string symbol
         string basis
@@ -991,13 +1003,15 @@ erDiagram
     }
 ```
 
-The entities live in five stores, one of them outside this repository, and
+The entities live in five stores, one of them kept by marketlake, and
 each keeps its own rule.
 
 1. **marketlake holds `VINTAGE` and `BAR`.** Every bar, captured or imported,
    lives there, written once and never changed, with its source and checksum
-   in marketlake's manifest. marketlake's lake is private and backed up off the
-   machine, which is what question 4 asks of captured bars. The checksums
+   in marketlake's manifest. Each marketlake partition is one vintage here, and
+   a bar's `vintage_id` is its partition's path. marketlake's lake is private
+   and backed up off the machine, which is what question 4 and the premise ask
+   of captured bars. The checksums
    question 4 asks to commit are the partition checksums a snapshot records,
    for any run a test or a report pins. Imported history
    from quantitative-trading arrives with that repository's own checksums,
@@ -1006,7 +1020,7 @@ each keeps its own rule.
 2. **Snapshots and signals, D1, hold `SNAPSHOT` and `SIGNAL`.** A snapshot lists
    the marketlake bars one run read, by partition and checksum. A signal record
    holds a value the run computed, such as the hedge ratio, the z-score or the
-   forecast, keyed by run, session and release. Both are regenerable from
+   forecast, keyed by run, session and name. Both are regenerable from
    marketlake and the code, so neither is a source of truth. They exist so a
    question such as "how did the backtest's z-score on a session differ from
    the shadow run's" is a lookup rather than a recomputation.
@@ -1229,14 +1243,14 @@ Each question has a recommendation, so a review can answer it with a yes.
    marketlake already reads, is not known to offer an API paper account, so
    confirm that before choosing it. Interactive Brokers has one, but it needs a
    gateway process running beside the platform.
-2. **Where do live GLD and USO bars come from?** The recommendation is to add
-   both to marketlake's `config/tickers.yaml`, which lists only SPY and QQQ
-   today. marketlake captures forward from the day a symbol is added and keeps
-   no history from before it. So the first 20 sessions, which the hedge ratio
-   and z-score need, come from a vintage recorded once from a vendor download,
-   or the paper run waits 20 sessions before its first trade. The owner ruled
-   on 2026-10-29 that every source goes through marketlake, so both live bars
-   and that download land there, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it.
+2. **Where do live GLD and USO bars come from?** The recommendation was to add
+   both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake#928](https://github.com/l3a0/marketlake/issues/928) did on 2026-10-29.
+   marketlake captures forward from the day a symbol is added and keeps no
+   history from before it. So the first z-score's 39 sessions come from a
+   vintage recorded once from a vendor download, or the paper run waits 39
+   sessions before its first trade. The owner ruled on 2026-10-29 that every
+   source goes through marketlake, so that download is imported there too, and
+   [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
 3. **How large is one unit on paper?** The replication has no capital account.
    The recommendation is to size one unit so the gross position is a fixed
    dollar amount the owner sets, recorded in the run's configuration. The owner
@@ -1247,7 +1261,9 @@ Each question has a recommendation, so a review can answer it with a yes.
    quantitative-trading's archive pattern: keep the files in a private store,
    and commit only their checksums, so a reader can still check that a run's
    inputs are the ones recorded. The owner accepted it on 2026-10-29, and the
-   ruling is on [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
+   ruling is on [#5](https://github.com/l3a0/ithildin-runtime/issues/5). The
+   owner's later ruling the same day made marketlake's private lake that
+   store.
 5. **Where does the platform run?** The recommendation is one machine the owner
    controls with a daily scheduler, either the owner's own machine or the VM
    marketlake runs on. The VM keeps the run beside the lake it reads, but it
