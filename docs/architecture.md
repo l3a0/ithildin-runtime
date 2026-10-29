@@ -156,7 +156,9 @@ flowchart LR
 The platform reads bars from one place, marketlake, the sibling repository
 that captures market data before anything computes on it. The sources differ
 in volume, cadence and shape, so each is transformed into marketlake once,
-stored durably there, and read by every mode through one query. The owner ruled
+stored durably there, and read by every mode through one query. The runtime
+runs on a VM of its own and reads a local mirror of the partitions it
+downloads from marketlake's bucket, as `## Where it runs` says. The owner ruled
 so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
 bar.
 
@@ -254,18 +256,17 @@ flowchart TB
     end
 
     snap[("snapshot stream")]
-    pos[("account stream<br/>book and broker account")]
-    book[("reconciled book stream")]
+    xs[("execution stream<br/>account events, send outcome events")]
+    book[("monitoring stream<br/>reconciled book, halts handled")]
     fc[("forecast stream")]
     cons[("constraints stream")]
     sched[("cost schedule stream")]
     target[("target portfolio stream")]
-    outcome[("send outcome stream")]
 
     ctl --> data
     ctl --> exec_recover
     data --> snap
-    exec_recover --> pos --> mon_recon --> book
+    exec_recover --> xs --> mon_recon --> book
     snap --> alpha --> fc
     snap --> risk
     book --> risk --> cons
@@ -277,10 +278,11 @@ flowchart TB
     target --> exec_send
     cons --> exec_send
     snap --> exec_send
-    exec_send --> outcome --> mon_report
+    exec_send --> xs
+    xs --> mon_report
 
     subgraph adapters["Adapters, built by each worker's entry point"]
-        lakesrc["marketlake reader"]
+        lakesrc["marketlake reader<br/>over the local mirror"]
         clock["History clock or wall clock"]
         broker["Simulated or paper broker"]
         journalstore["Journal store"]
@@ -300,8 +302,11 @@ Each cylinder is a stream in the run directory, an append-only file of events,
 and each event names the input events it came from. A solid arrow into a
 worker is a stream it watches: a new event there runs its processing loop, and
 the event it appends runs the next worker's. Every worker reads the control
-stream, which the diagram draws only into the two that start the day. Each
-dotted arrow from an adapter
+stream, which the diagram draws only into the two that start the day, and
+monitoring reads every stream, which the diagram leaves out to stay legible.
+Each worker writes one stream. Execution's holds its account events and its
+send outcome events, and monitoring's holds the reconciled book and an event
+for each halt it has handled. Each dotted arrow from an adapter
 is a port, labelled with its name, and each mode is one choice of adapter for
 each port. Execution and monitoring each appear twice because each does two
 things in one process. Execution recovers first and then, once the target
@@ -320,7 +325,7 @@ moment, not against an event.
 
 | Mode | Data source | Clock | Broker, and when it fills | Journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, the bars a test names | History clock | Simulated, at the signal's close | A temporary file, kept after a halt or a failure and deleted after a clean exit | Recorded, not sent |
+| Backtest | marketlake reader, the bars a test names | History clock | Simulated, at the signal's close | A journal of its own, kept with the run directory | Recorded, not sent |
 | Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, at the next open | Shadow journal | Sent |
 | Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at the next open | Paper journal | Sent |
 | Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at the next open | Live journal | Sent |
@@ -519,7 +524,7 @@ sequenceDiagram
     end
     X->>F: send outcome event
     F-->>M: send outcome event appears
-    M->>F: daily report
+    M->>M: daily report, to the reports store
     M->>M: ping the heartbeat service
 ```
 
@@ -537,7 +542,7 @@ The phases in order.
    it needs. The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them.
 3. **Send.** Execution, which has held the account's lock since phase 1, reads
-   the target portfolio event and journals its hash. A target portfolio names every
+   the target portfolio event and journals it whole, with a flush. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
    Its order manager turns the target minus the positions and the open orders
@@ -573,9 +578,11 @@ Every halt takes the same route.
    with the reason, in place of its output.
 2. Every worker downstream meets that halt event in its input, appends its own
    halt event naming it, skips the session and goes on to its next one. A
-   worker whose span is one session exits.
-3. Monitoring, which reads every stream, journals the halt, raises the alarm,
-   writes the day's report and pings the heartbeat service's failure address.
+   worker exits once it has handled every session before the control stream's
+   end-of-span event.
+3. Monitoring, which reads every stream, journals every halt event, raises
+   one alarm for the session on the halt that names no earlier one, writes the
+   day's report and pings the heartbeat service's failure address.
 
 The same route runs in a backtest, where the span goes on to the next session,
 and on paper, where the run ends. A failure, meaning a crash or a missed
@@ -609,7 +616,7 @@ The charter gives the risk engineer the halt on stale data, so
 [#7](https://github.com/l3a0/ithildin-runtime/issues/7) decides how old is too
 old. Data applies that rule.
 
-An empty answer halts the same way. If the alpha model writes a forecast file
+An empty answer halts the same way. If the alpha model appends a forecast event
 with no rows and no "trade nothing" mark, portfolio construction halts rather
 than reading the silence as a target of zero. A flat position is a forecast
 with direction 0, never a missing forecast.
@@ -642,7 +649,7 @@ sequenceDiagram
         X->>B: is there an order with this client order id?
         B-->>X: yes, acknowledged
         X->>J: ack journaled
-        X->>F: book, broker account
+        X->>F: account event
     and
         D->>D: is this session's close in marketlake?
         D->>F: halt event, reason "data not ready"
@@ -664,7 +671,8 @@ The order in which the processes come up no longer matters. Execution may
 start before data, as it does here, but it sends only what a target
 portfolio event asks for, and that event cannot exist until a snapshot event
 does. The charter gives the operator the startup order: execution may send an
-order only once every upstream worker has appended its event for the session.
+order only once every upstream worker has appended its output event, not a
+halt event, for the session.
 The pipeline makes that order something the platform cannot get wrong. "Not ready" is a halt, never an empty forecast.
 
 ### The risk gate refuses an order
@@ -712,7 +720,7 @@ sequenceDiagram
     X->>F: book holds 100 USO, broker holds 90 USO
     M->>M: reconcile, mismatch of 10 USO
     M->>F: halt event, with both positions
-    F-->>X: halt event, so it exits without sending
+    F-->>X: halt event, passed on through risk's constraints, so it exits without sending
     M->>J: halt journaled
     M->>L: alarm
     Note over X,L: No model reads a book until a person<br/>explains the difference
@@ -803,7 +811,10 @@ here, with the issue that builds its drill.
 | A second execution worker, or a second supervisor | The lock that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor on a different release | Both releases | Restart mid-run under another tag | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The scheduler's restart limit reached | The supervisor's last exit | Make the supervisor crash on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A journal entry that cannot be parsed | Its sequence number | Corrupt an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A stream line or journal entry that does not parse or does not chain, or two events with one sequence number | The stream and the sequence number | Corrupt a line in a copy of a stream and of the journal | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| An input event a restarted worker names is no longer there | The stream, the sequence number and the hash | Drop the last line of a stream a downstream worker has read | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A newer target portfolio appears for a session already sending | Both hashes | Append a second target event by hand | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A worker exits before handling every session of its span | The worker | A worker that exits after its first session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An event for the wrong session, or empty with no "trade nothing" mark | The stream, the event and the session | Append one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Dead-man | None. The heartbeat service raises it | Skip a run's ping, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
@@ -919,7 +930,19 @@ classDiagram
         +str worker
         +date session
         +str reason
-        +str cause
+        +EventRef cause
+    }
+    class ControlEvent {
+        +str kind
+        +date session
+        +str worker
+        +int exit_status
+        +str error_tail
+    }
+    class EventRef {
+        +str stream
+        +int seq
+        +str hash
     }
     class EventHeader {
         +str stream
@@ -929,6 +952,7 @@ classDiagram
         +str worker
         +date session
         +dict inputs
+        +EventRef supersedes
         +str release
         +str config_hash
         +datetime written_at
@@ -1097,7 +1121,9 @@ Eight choices in the two diagrams for a reviewer to check.
    event whose `EventHeader` names the input events it came from, and a test
    writes each one and reads it back unchanged. `Halt` stays an exception
    inside a worker, and at the worker's edge it becomes a `HaltEvent`, whose
-   `cause` names the halt event it met when it is passing one on.
+   `cause` names the halt event it met when it is passing one on, and is empty
+   when the worker found the problem itself. `ControlEvent` covers the control
+   stream's three kinds: a session, the end of the span, and a worker's exit.
 
 ## The life of an order
 
@@ -1187,8 +1213,9 @@ Both pass through `Reporting`, so a halted or failed day still writes its
 report and its journal entry, and monitoring pings the heartbeat service's
 failure address so the owner hears even if the alarm from the machine is lost.
 If monitoring itself is what failed, no ping arrives, and the dead-man check
-raises the alarm. A halt is final for its session, and the owner ruled on
-2026-10-29 that the owner or the operator clears it. The next session's
+raises the alarm. A halt is final for its session, which is this doc's choice.
+The owner ruled on 2026-10-29 that the owner or the operator clears it, and
+clearing never reruns the session. The next session's
 run starts fresh, and it halts again while the kill switch is set or the
 cause is still there.
 
@@ -1248,6 +1275,8 @@ erDiagram
         string stream
         int seq
         string prev_hash
+        int format
+        string supersedes
         string worker
         date session
         string inputs
@@ -1260,7 +1289,7 @@ erDiagram
         date session
         string worker
         string reason
-        string cause
+        string cause_ref
     }
     JOURNAL_ENTRY {
         int seq
@@ -1315,7 +1344,9 @@ each keeps its own rule.
    recomputation.
 3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
    that changes only through a pull request.
-4. **The journal, D3, holds `JOURNAL_ENTRY`.** `ORDER` and `FILL` are read from
+4. **The journal, D3, holds `JOURNAL_ENTRY`.** `Journal` appends through the
+   same stream contract every worker uses, with the lock switched on, and
+   `JournalStore` picks only the path, which is what differs by mode. `ORDER` and `FILL` are read from
    journal entries rather than kept as files of their own. The writer only ever
    appends, one JSON object per line, and flushes each entry to stable storage
    before the step it records happens, with `F_FULLFSYNC` on macOS, where plain
@@ -1326,7 +1357,7 @@ each keeps its own rule.
    an entry breaks the link from the entry after it. That catches an edit
    unless someone recomputes every later hash. Recording the latest hash off
    the machine each day, in the backup or the report, catches that case and a
-   cut-off tail. The kill switch command, the supervisor and execution can all
+   cut-off tail. The kill switch command, monitoring and execution can all
    write at once, so
    the writer takes an exclusive file lock for each append and, while holding
    it, reads the last entry's sequence number and hash before writing the new
@@ -1350,24 +1381,28 @@ the machine's edge.
 
 ```mermaid
 flowchart TB
-    subgraph host["One machine the owner controls"]
+    subgraph host["The runtime's VM, separate from marketlake's"]
         timer["Scheduler<br/>launchd or a systemd timer,<br/>once per session"]
         run["Supervisor and workers<br/>at a release the owner pinned"]
         keychain["Keychain<br/>broker paper key"]
         cfg["~/.config/ithildin-runtime/<br/>limits and hard caps, kill switch file"]
         store[("~/.local/share/ithildin-runtime/<br/>journal, run directories, reports")]
+        mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer --> run
+        mirror --> run
         keychain -. "execution worker only" .-> run
         cfg --> run
         run --> store
     end
-    lake[("marketlake lake")]
+    mlvm["marketlake's VM<br/>capture daemon"]
+    lake[("marketlake's bucket")]
     broker["Broker paper API"]
     backup[("Off-machine backup")]
     beat["Heartbeat service"]
     alerts["Alert channel"]
 
-    lake --> run
+    mlvm --> lake
+    lake -->|"download, checksum checked"| mirror
     run <--> broker
     store --> backup
     run --> beat
@@ -1375,7 +1410,7 @@ flowchart TB
     beat --> alerts
 ```
 
-Seven rules hold the deployment to the premise and the hard limits.
+Eight rules hold the deployment to the premise and the hard limits.
 
 1. **The owner pins the release.** The scheduler runs a tagged commit the owner
    merged and chose, so the code that traded is always known. Deploying is the
@@ -1399,15 +1434,27 @@ Seven rules hold the deployment to the premise and the hard limits.
    limit, which hard limit 1 keeps for the owner.
 5. **Every file lives on the machine's own disk,** for the reason
    design.md's rule 1 gives.
-6. **A rollback is a pin to the previous tag.** Every file carries a format
-   version, and each release reads the formats the release before it wrote, so
-   the old release can read what the new one left. A session in flight halts
+6. **A rollback is a pin to the previous tag.** Every event carries a format
+   version, and each release writes only formats the release before it can
+   read, so the old release reads what the new one left. A session in flight halts
    on the supervisor's release check, and the next session runs on the old
    release.
 7. **The scheduler restarts a supervisor that crashes, up to a limit.** That
    is systemd's `Restart=on-failure` with `StartLimitBurst`, or launchd's
    `KeepAlive` with `SuccessfulExit` set to false. Reaching the limit raises
    the alarm, and the dead-man check covers a scheduler that stops too.
+8. **The runtime has a VM of its own, apart from marketlake's.** The owner
+   ruled on 2026-10-29 that the runtime runs on a VM separate from the one
+   marketlake's capture daemon runs on, and downloads the parts of the lake its
+   strategies need. So a run on the runtime cannot starve capture, and a
+   failure on one VM leaves the other running. The data worker downloads each
+   partition a session's lookback names from marketlake's bucket into a local
+   mirror, checks it against the checksum in marketlake's manifest, and reads
+   it through the same bar query. A partition not yet in the bucket is "data
+   not ready", which halts. The mirror is a copy, so losing it costs only a
+   download. The runtime's credential for the bucket reads and never writes,
+   and it gets its row in design.md's `## Configuration` when [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first
+   reads it.
 
 `~/.local/share/ithildin-runtime/` is a new machine path. design.md's
 `## Configuration` names only `~/.config/ithildin-runtime/`, so the first
@@ -1556,13 +1603,15 @@ accepted.
 | Decision | Turned down | Price | Settled on |
 | --- | --- | --- | --- |
 | Each component runs as its own process, in parallel, passing files | One process calling every module in memory, or a process per action | A file format and a round-trip test for every type that crosses between modules | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
-| The platform is an event pipeline: each worker runs its processing loop on each new event in its input streams, and its appended events set the workers downstream running | A controller that calls each component in a fixed order, or one file per output per session | A worker watches or polls files, and a reader must stop at a final line cut short | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
-| A supervisor that starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, event headers and a control stream that one process would not need, and a person to clear every halt. The owner ruled on 2026-10-29 that the owner or the operator clears it | [design.md](design.md#processes-and-files) |
+| The platform is an event pipeline: each component runs its processing loop on each new event in its input files, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker watches or polls files instead of being called | Ruled by the owner on 2026-10-29 |
+| Each worker writes one append-only stream of chained, flushed events, a writer sets aside a line a crash cut short, and every event names the last input events it consumed | One file per output per session | Every worker shares a stream contract that has to handle torn writes | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
+| A supervisor that starts every worker at once and keeps no state, a control stream that ends the span, and a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, event headers and a control stream that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the stream contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
-| Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more stream, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution journals a fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise | Journaling every fill the broker reports | A fill from an order placed by hand at the broker halts the platform | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Execution reads one target portfolio per session, journals its hash, and halts if a newer one appears. Each client order id comes from the session, the instrument, that hash and the order's place in the plan, and the order manager subtracts open orders as well as positions | Ids from a counter, or planning from positions alone | A target rebuilt mid-session halts rather than trading | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution reads one target portfolio per session, journals it whole, and halts if a newer one appears. Each client order id comes from the session, the instrument, the target's hash and the order's place in the plan, and the order manager subtracts open orders as well as positions | Ids from a counter, or planning from positions alone | A target rebuilt mid-session halts rather than trading | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument the book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from execution's own configuration, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's events alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
@@ -1615,8 +1664,10 @@ Each question has a recommendation, so a review can answer it with a yes.
    can power itself off each day, so the run's time has to fit inside its
    window. The owner's machine needs no new host. The owner accepted one owner
    controlled machine with a daily scheduler on 2026-10-29, and the ruling is
-   on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Which of the
-   two machines is still the owner's pick.
+   on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Later the same
+   day the owner ruled that the runtime runs on a VM of its own, separate from
+   marketlake's, and downloads the parts of the lake it needs, as
+   `## Where it runs` says.
 6. **Which heartbeat service?** The recommendation is a hosted check that
    alarms when a ping is late, outside every machine the platform uses. A
    GitHub Actions schedule is not one, because quantitative-trading measured

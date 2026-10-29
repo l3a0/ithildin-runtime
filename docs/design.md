@@ -77,9 +77,9 @@ because a process per action was too granular. Two things follow from it.
    crash in the alpha model ends the run that also holds the order path. As
    separate processes, a failed component stops adding to its own output and
    nothing else. Every event upstream of it is already on disk, so recovering
-   means running one component again from those events rather than replaying
-   the day. When a failure has halted a session, the rerun waits for the owner
-   or the operator to clear the halt, as rule 5 says.
+   means starting one component again, which resumes from its own stream,
+   rather than replaying the day. A session that halted stays halted, and the
+   next session runs once the cause is gone.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is an event in a file, so auditing a decision
    means reading the events that produced it rather than rerunning code and
@@ -89,24 +89,29 @@ because a process per action was too granular. Two things follow from it.
 The owner added a second ruling the same day: the platform is an event
 pipeline. Each component watches its input files for new events, runs its
 processing loop on each one, and appends what it produces to its output file,
-which is what sets the components downstream of it running. Nothing calls a
-component and nothing schedules one step after another. A new event is the
-only trigger.
+which is what sets the components downstream of it running. Between
+components, a new event is the only trigger. The stream format and the rules
+below are this doc's design for that ruling, proposed to
+[#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), and not part of the
+ruling itself.
 
 Five terms carry the design.
 
 1. An **event** is one record a component appends, such as one session's
    snapshot or one session's forecast. It is one line of JSON.
 2. A **stream** is the append-only file that holds one component's events in
-   the order it wrote them. Each stream has exactly one writer.
+   the order it wrote them. Each stream in a run directory has exactly one
+   writer, its component.
 3. A **worker** is one component run as its own process. It reads its input
-   streams, writes its output stream, and reaches the outside world only
+   streams, appends to its own stream, and reaches the outside world only
    through the adapter at its edge, such as the broker or the data source. The
    alpha worker, for example, reads the snapshot stream and appends a forecast
    event for each snapshot event. A worker imports `core`, the shared types,
    and no sibling module, and shares no memory with any other worker.
 4. The **supervisor** is the process that starts a run's workers, writes the
-   run's control stream, watches the workers and stops the run.
+   run's **control stream**, which holds one event per session of the run and
+   then an end-of-span event, watches the workers and stops the run.
 5. A **run directory** holds every stream one run's workers write. A session
    here is one trading session.
 
@@ -114,71 +119,109 @@ Two stores sit outside every run directory, because they outlive any one run.
 
 1. marketlake's lake, which holds captured market data.
 2. The journal, at one path per broker account, which the book is replayed
-   from. It is a stream too, the one stream with more than one writer, so
-   each append takes an exclusive lock.
+   from. It follows the same append and read rules, and it is the one stream
+   with more than one writer, so each append takes an exclusive lock. Each
+   journal entry is flushed before the step it records happens, which is how
+   hard limit 4 holds on disk. Its entry format is
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s to settle.
 
 Seven rules make the streams something a worker can trust.
 
 1. **An event appears whole, in order, and only once.** A worker appends each
-   event as one line, carrying its stream's next sequence number and the hash
-   of the event before it, and flushes it to stable storage before appending
-   the next. On macOS that takes `fcntl(F_FULLFSYNC)`, because plain `fsync`
-   there does not ask the drive to empty its cache. A reader stops at the first
-   line that is incomplete or whose hash does not chain, so it never acts on
-   half an event. A reader can see an event before the flush finishes, so
-   nothing irreversible rests on an event alone: execution journals the target
-   event it acts on, with a flush, before its first send. A run's streams live
-   on one local filesystem, never on a network share, because there a reader
-   may not see an append at once and the flush may not reach the disk. Every
-   event carries a format version, and each release reads the events the
-   release before it wrote, so pinning back to an earlier release still reads
-   what is on disk.
-2. **An event is never changed after it is written.** A stream only grows. A
-   worker that runs again appends after what its earlier attempt wrote, and
-   an event that supersedes an earlier one says so, so a failed attempt stays
-   readable. A reader that finds an earlier line it cannot parse halts.
-3. **Each event names what made it.** Its header names every input event it
-   was computed from by stream, sequence number and hash, along with the
-   release commit, a hash of the configuration, the session it is for, and
-   when it was written. A worker keeps no cursor of its own. How far it has
-   read each input is the last input event its own stream names, so a
-   restarted worker resumes from its stream alone. A worker killed by a signal
-   or a crash writes nothing about itself, so the supervisor appends its exit
-   status or signal and the end of its error output to the control stream.
-   Each worker writes its process id and the path of its error output into a
-   lock file, so a supervisor started after a crash can do the same for a
-   worker it did not start.
+   event as one line ending in a newline, carrying its stream's next sequence
+   number and the hash of the event before it, and flushes it to stable
+   storage before appending the next. On macOS that takes `fcntl(F_FULLFSYNC)`,
+   because plain `fsync` there does not ask the drive to empty its cache. A
+   line counts as complete only once its newline is written. A reader waits at
+   a final line with no newline, because its writer may still be writing it.
+   Any complete line that does not parse or does not chain, wherever it sits,
+   halts the reader with the stream and the sequence number, and so do two
+   events with one sequence number. A run's streams live on one local
+   filesystem, never on a network share, because there a reader may not see an
+   append at once and the flush may not reach the disk.
+2. **A crash's torn line is set aside, never built on.** Before its first
+   append, a writer takes its lock and checks the end of its stream. If the
+   stream does not end in a newline, a crash cut the last line short. The
+   writer copies that fragment to a side file named by its byte offset,
+   flushes the copy, cuts the stream back to its last newline, flushes again,
+   and says in its next event that it did. No reader ever acted on the
+   fragment, because it was incomplete, so nothing recorded is lost. If the
+   last complete line does not chain, the writer halts rather than append. The
+   journal follows the same step, so a `sending` entry is never glued onto a
+   torn one and lost. An event is never changed after it is written. A worker
+   that runs again appends after its earlier attempt, and an event that
+   supersedes an earlier one names it, so a failed attempt stays readable.
+   The newest superseding event wins, and two events for one session with no
+   link between them halt the reader.
+3. **Each event names what made it.** Its header names the last event it
+   consumed from each input stream, the control stream included, by stream,
+   sequence number and hash, along with the release commit, a hash of the
+   configuration, the session it is for, when it was written, and its format
+   version. A worker keeps no cursor of its own. How far it has read each
+   input is the last event its own stream names from it, so a restarted worker
+   resumes from its stream alone, after first checking that each event it
+   names still sits at that sequence number with that hash, and halting if
+   one does not. That check matters because a reader can see an event before
+   the flush finishes, so a power loss can drop an event something downstream
+   already read. Nothing irreversible rests on such an event alone: execution
+   journals, with a flush, the whole target event it acts on before its first
+   send. Each release writes only event formats the release before it can
+   read, so pinning back to an earlier release still reads what is on disk.
+   A worker killed by a signal or a crash writes nothing about itself, so the
+   supervisor appends its exit status or signal and the end of its error
+   output to the control stream. Each worker writes its process id and the
+   path of its error output into a lock file, so a supervisor started after a
+   crash can do the same for a worker it did not start.
 4. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A worker waits for each session's input events. An input event
    that names the wrong session halts as stale. An event with no rows halts
    unless it carries an explicit "trade nothing" mark, and that mark means hold
    every position and send no order, never a target of zero. A worker that
    cannot process a session appends a **halt event** for it instead of an
-   output, with the reason. Hard limit 3 came from an execution server that
+   output, with the reason, and then exits cleanly or moves to its next
+   session, because a halt is not a crash. Hard limit 3 came from an execution server that
    read "no signals" as "hold nothing" (L4690). In a pipeline, "has today's
    forecast been written" is a check for one event and the session it names.
 5. **A halt flows down the pipeline, and the supervisor keeps no state of its
    own.** The scheduler starts the supervisor. The supervisor holds an
-   exclusive lock on the run directory, so two supervisors never share one,
-   appends one event per session of the run to the control stream, and starts
-   every worker at once. Every worker reads the control stream. A worker that
-   meets a halt event for a session in any input appends its own halt event,
-   naming the one it met, and goes on to its next session. A worker whose span
-   is one session then exits. The supervisor appends a halt event to the
-   control stream when a worker crashes or misses its deadline. That is a
-   failure, and it also stops every worker in the run but monitoring.
-   Monitoring, the one worker that reads every stream and holds the alert
-   channel, journals each halt with its reason and raises the alarm. On a
-   halted day it pings the heartbeat service's failure address, so the owner
-   hears even if the alarm sent from the machine is lost. A halt is final for
-   its session. The owner ruled on 2026-10-29 that the owner or the operator
-   clears it, with a command that journals who cleared it and why. Everything
-   the supervisor knows, it reads from the run directory, so a supervisor that
-   crashes and is started again starts each worker whose lock is free. A
-   worker that still holds its lock, because a child process outlives a
-   parent that crashes, is left to finish. Workers with no stream between them
-   run at the same time. Alpha and cost need only the snapshot stream, and
-   risk needs the snapshot and the reconciled book.
+   exclusive lock on the run directory, so two supervisors never share one.
+   Into an empty control stream it appends one event per session of the run
+   and then an end-of-span event, and only then starts every worker at once. A
+   restarted supervisor finds the control stream already written and appends
+   none of it again. Every worker reads the control stream, and every worker,
+   in every mode, exits once it has appended an output or a halt event for
+   each session before the end-of-span event. A worker that exits before then
+   has failed, and the reason names it.
+   - **A halt is passed on.** A worker that meets a halt event for a session
+     in any input appends its own halt event, naming the one it met, and goes
+     on to its next session.
+   - **A failure stops the run.** A worker that crashes, or misses its
+     deadline, has failed. Its deadline runs from the moment its last needed
+     input event for the session appears, so waiting on a slow upstream worker
+     never counts against it. The supervisor appends a halt event for that
+     session to the control stream and stops every worker in the run but
+     monitoring.
+   - **Monitoring tells the owner once.** Monitoring, the one worker that reads
+     every stream and holds the alert channel, journals every halt event with
+     its reason and raises one alarm per session, on the halt event that names
+     no earlier one. It journals before it alarms, and appends an event naming
+     each halt it has handled, so a restarted monitoring neither repeats nor
+     drops an alarm. On a halted day it pings the heartbeat service's failure
+     address, so the owner hears even if the alarm sent from the machine is
+     lost.
+   - **A halt is final for its session.** This finality is this doc's choice
+     rather than part of the ruling. The owner ruled on 2026-10-29 that the
+     owner or the operator clears a halt, with a command that journals who
+     cleared it, why, and any correction a person made, such as a journaled
+     override that explains a mismatch. Clearing never reruns the halted
+     session. The next session runs as usual.
+
+   Everything the supervisor knows, it reads from the run directory, so a
+   supervisor that crashes and is started again starts each worker whose lock
+   is free. A worker that still holds its lock, because a child process
+   outlives a parent that crashes, is left to finish. Workers with no stream
+   between them run at the same time. Alpha and cost need only the snapshot
+   stream, and risk needs the snapshot and the reconciled book.
 6. **One process at a time talks to each broker account.** The execution
    worker is the only one that holds the broker credential. It holds an
    exclusive lock on a file tied to the account, outside every run directory,
@@ -211,8 +254,9 @@ Seven rules make the streams something a worker can trust.
    journals each cancel first. Two workers run with the switch set, because
    neither sends an order. The cancelling execution worker waits for the
    account's lock up to a deadline and alarms if it passes. Monitoring writes
-   the day's report and says the switch is set. Only the owner's or the
-   operator's command clears the switch, and the clearing is journaled.
+   the day's report and says the switch is set. The owner ruled on 2026-10-29
+   that only the owner's or the operator's command clears the switch, and the
+   clearing is journaled.
 
 ### A worker works through a span of sessions
 
@@ -231,10 +275,10 @@ would take about 9 minutes at the standard library's cost, 35 to 52 minutes at
 pyarrow's and 3 hours at pandas'.
 
 The event pipeline makes the span cheap. A worker starts once and runs its
-processing loop for as long as events keep arriving. In shadow, paper and live
-the control stream holds one session, so each worker handles one event per
-input and exits. In a backtest it holds the whole history, so each worker
-works through every session in turn. A worker carries nothing from one session
+processing loop until it has handled every session before the end-of-span
+event. In shadow, paper and live the control stream holds one session. In a
+backtest it holds the whole history, so each worker works through every
+session in turn, and the exit rule is the same in both. A worker carries nothing from one session
 to the next except through streams, so a long span runs the same steps as a
 span of one. The launch is paid once per worker, and the workers run as a
 pipeline. The alpha worker can run ahead through every session's snapshot
@@ -259,8 +303,8 @@ The price of this section is four things.
 2. A worker notices a new event by watching its input files or by polling
    them, so each step waits a little longer than a function call would.
 3. A backtest appends several events per session, a few tens of thousands for
-   test 1. It may delete its streams after a clean exit, keeping its journal
-   and its report, and keeps everything after a halt or a failure.
+   test 1, and keeps them all, because the event headers are the record of
+   what ran and cannot be regenerated.
 4. The locks, the event headers and the supervisor's control stream add
    machinery that a single process would not need, and each of their alarms
    has to fire in a drill before the paper gate.
@@ -305,10 +349,11 @@ glossing it.
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It reads its input streams, appends to its output stream, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **event** | One record a component appends to its stream, such as one session's snapshot, carrying a header that names the input events it came from |
-| **stream** | The append-only file holding one component's events in the order it wrote them, with one writer. The journal is the one stream with several writers, under a lock |
+| **stream** | The append-only file holding one component's events in the order it wrote them. Each stream in a run directory has one writer. The journal follows the same rules with several writers, under a lock |
+| **control stream** | The stream the supervisor writes, holding one event per session of the run, then an end-of-span event, and a halt event for any worker that failed |
 | **supervisor** | The process that starts every worker of a run at once, writes the run's control stream, appends a halt event when a worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside the run directory |
 | **run directory** | The directory that holds every stream one run's workers write. The journal and marketlake's lake live outside it |
-| **halt event** | The event a worker appends instead of an output when it cannot process a session, naming the reason or the halt event it met. Every worker downstream passes it on and skips that session, and only the owner or the operator clears it |
+| **halt event** | The event a worker appends instead of an output when it cannot process a session, naming the reason or the halt event it met. Every worker downstream passes it on and skips that session. The owner or the operator clears it, and clearing never reruns the session |
 | **span** | The sessions in a run's control stream, which every worker works through: one in shadow, paper and live, and the whole history in a backtest |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
@@ -342,7 +387,7 @@ once rather than re-argued.
 | A message queue that deletes what it delivers, or a database server, between workers | A queue of that kind leaves nothing behind to audit, and a server is one more process that can fail. A file needs neither, and stays as the record. The price is that a worker watches or polls its input files instead of being sent its input |
 | One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
 | A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. An order fixed in a controller would state the dependencies a second time, beside the streams that already carry them |
-| One file per output per session, in place of a stream | A stream lets a worker resume from its own output alone and gives each input one file to watch. The price is that a reader must stop at a final line cut short |
+| One file per output per session, in place of a stream | A stream lets a worker resume from its own output alone and gives each input one file to watch. The price is that a writer must set aside a line a crash cut short before it appends again, and a reader must wait at one. This is this doc's design, proposed to [#22](https://github.com/l3a0/ithildin-runtime/issues/22), not part of the ruling |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |

@@ -181,6 +181,7 @@ reaches the owner already reviewed.
 - **Protects:** the system stops safely and says so.
 - **Does:** owns deployment, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the paper environment day to day.
+  Clears a halt or the kill switch, journaled, which the owner can do too.
 - **Vetoes:** a deploy without a rollback, and an alarm nobody has seen fire in
   a drill. An alarm reads zero while it is healthy, so count the cycles it
   watched rather than the times it fired.
@@ -296,8 +297,8 @@ evidence, not elapsed time.
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
   latency (L4973 to L5006).
-- **Startup** checks that every upstream worker has appended its event for the
-  session before execution may send an order. That is the safeguard the reboot
+- **Startup** checks that every upstream worker has appended its output event,
+  not a halt event, for the session before execution may send an order. That is the safeguard the reboot
   incident lacked (L4690). A worker is one component run as its own process,
   and the workers form an event pipeline, as the design doc's
   [Processes and files](design.md#processes-and-files) says.
