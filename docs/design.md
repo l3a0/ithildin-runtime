@@ -89,7 +89,7 @@ because a process per action was too granular. Two things follow from it.
    it reproduces. The journal already records every step of an order. The
    event logs extend that record to every step before the order.
 
-The owner ruled four more things about the shape the same day.
+The owner ruled six more things about the shape the same day.
 
 1. **An event pipeline.** A component runs its processing loop when there is
    something new for it, and what it produces is what sets the components
@@ -106,23 +106,35 @@ The owner ruled four more things about the shape the same day.
    database kept in a single file, with no server, and Python's standard
    library reads and writes it. A component resumes from a failure by reading
    the files that exist and retrying its SQLite write.
+5. **A stateless VM, with files as blobs in storage.** The VM keeps no state
+   that matters. Every file is a blob, an object in storage, and the event
+   logs point to the blobs.
+6. **The journal keeps its entries in its rows.** The owner answered yes on
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) to the journal keeping its content in its SQLite rows rather than
+   in blobs, because an entry is small and must be saved before the step it
+   records happens.
 
 The rules below are this doc's design for those rulings, proposed to
 [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and not part of the
-rulings themselves.
+rulings themselves. The storage is S3, which marketlake already uses. Keeping
+each SQLite event log on the VM's disk as a working copy, streamed to S3 and
+restored onto a fresh VM, is this doc's proposal for ruling 5 and waits on
+the owner's yes.
 
 Seven terms carry the design.
 
 1. An **output file** holds one thing a component produced for one session,
-   such as a snapshot or a forecast. It is written once and never changed.
+   such as a snapshot or a forecast. It is a blob in S3, written once and
+   never changed.
 2. An **event** is one row of an event log. Most events point to an output
    file. Others record a halt, a session or the end of the span in the
    control log, a halt monitoring has handled, or a journal entry.
 3. An **event log** is the SQLite database holding one component's events in
-   the order it wrote them, and it only ever grows. It is three files: the
-   database, and the `-wal` and `-shm` files SQLite keeps beside it. Each event
-   log in a run directory has exactly one writer, its component.
+   the order it wrote them, and it only ever grows. On the VM it is three
+   files: the database, and the `-wal` and `-shm` files SQLite keeps beside it.
+   S3 holds a continuous copy. Each event log in a run has exactly one writer,
+   its component.
 4. A **worker** is one component run as its own process. It listens on its
    queue, reads its input files through the events that point to them, writes
    its output files and appends to its own event log, and reaches the outside
@@ -135,43 +147,40 @@ Seven terms carry the design.
 6. The **supervisor** is the process that starts a run's workers, writes the
    run's **control log**, which holds one event per session of the run and
    then an end-of-span event, watches the workers and stops the run.
-7. A **run directory** holds every output file and event log one run's
-   workers write, and their queues. A session here is one trading session.
+7. A **run directory** is the VM's working directory for one run. It holds
+   the working copies of the run's event logs and its queues, and all of it
+   can be rebuilt from S3. The run's output files live under the run's own
+   prefix in S3. A session here is one trading session.
 
 Two stores sit outside every run directory, because they outlive any one run.
 
 1. marketlake's lake, which holds captured market data.
-2. The journal, at one path per broker account, which the book is replayed
-   from. This doc proposes to
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that it is a
-   SQLite event log with the same row shape, the one with more than one
-   writer, and the one that keeps its content in its rows rather than in
-   files, because an entry is small and must be committed before the step it
-   records happens. That commit is how hard limit 4 holds on disk. Keeping
-   content in the rows is the option the owner set aside for components, so
-   it is the owner's to confirm for the journal.
+2. The journal, one per broker account, which the book is replayed from. It
+   is a SQLite event log with the same row shape as every other, the one with
+   more than one writer, and the one that keeps its content in its rows, as
+   the owner ruled. Because the VM keeps no state, each entry is also written
+   to S3 as a blob of its own, refusing to replace an existing one, before the
+   step it records happens. That write, not the commit on the VM's disk, is
+   how hard limit 4 survives losing the VM. A fresh VM restores the journal
+   from S3 and appends any entry S3 holds beyond what it restored before
+   anything else runs.
 
 Nine rules make the files and the logs something a worker can trust.
 
-1. **An output file appears whole, once, and stays as written.** A worker
-   creates a temporary file at a name no other file has, refusing to open one
-   that exists, and read-only, so no later open can write through it. It
-   writes the output, flushes it to stable storage, publishes it at a name
-   fixed by the worker and the session with `link`, which refuses to replace
-   an existing name, unlinks the temporary name, and flushes the directory, so
-   the new name itself survives a power loss. A worker that starts and finds a
-   leftover temporary file unlinks it unopened. One function in `core` does
-   every flush, `fcntl(F_FULLFSYNC)` on macOS, because a plain `fsync` there
-   does not ask the drive to empty its cache, and `fsync` elsewhere, so the
-   one place that differs by operating system is tested on its own. Each
-   output file begins with a header naming the input events it consumed, the
-   release commit, a hash of the configuration, and when it was produced. A
-   run's files and logs live on one local filesystem, never on a network
-   share, because there a reader may not see a new file at once and SQLite's
+1. **An output file is a blob in S3, written once.** A worker uploads each
+   output to S3 at a key fixed by the run, the worker and the session, with a
+   condition that makes S3 refuse the upload if that key already exists, and
+   with the output's SHA-256, which S3 checks before it accepts the blob. So a
+   reader never sees half a blob, and no blob is ever replaced. The runtime's
+   S3 credential can create and read blobs under the runs' prefixes and can
+   never delete or replace one. Each output file begins with a header naming
+   the input events it consumed, the release commit, a hash of the
+   configuration, and when it was produced. An event log's working copy lives
+   on the VM's own disk, never on a network share, because SQLite's
    write-ahead mode needs memory shared on one machine.
-2. **The event log is the source of truth.** A file counts as an output only
-   once the worker's event log holds a row that points to it, by path and
-   SHA-256. A downstream reader never lists a directory to find inputs. It
+2. **The event log is the source of truth.** A blob counts as an output only
+   once the worker's event log holds a row that points to it, by S3 key and
+   SHA-256. A downstream reader never lists a prefix to find inputs. It
    follows the rows. Every event log, the journal included, has one row
    shape: a sequence number, the event's exact serialized body in one text
    column, so SQLite never rewrites a value, a hash of that body, and the hash
@@ -199,19 +208,27 @@ Nine rules make the files and the logs something a worker can trust.
    cannot. A link that does not chain, a hash that does not match, or a log
    that fails SQLite's quick integrity check, which a writer runs when it
    opens, halts the reader or the writer with the log and the sequence number.
+   Each event log is streamed continuously to S3 with Litestream, a separate
+   program that copies SQLite's write-ahead file to object storage as it
+   grows, and a fresh VM restores every log from S3 before any worker starts.
+   Litestream copies a commit about a second after it lands, so a VM lost in
+   that window loses the newest rows. Rule 3 rebuilds them, because each lost
+   row's blob is still in S3 with the header the row copies from.
 3. **A worker resumes by reading what exists and retrying the log.** For each
    session, a worker first looks in its own event log. If a row for the
-   session is there, the work is done. If not, it looks for the output file
-   at the session's name. A file there was published whole by an earlier
-   attempt that crashed before its commit, so the worker reads its header,
+   session is there, the work is done. If not, it asks S3 for the blob at the
+   session's key. A blob there was uploaded whole by an earlier attempt that
+   crashed before its commit, or by one whose row the VM lost, so the worker
+   reads its header,
    halts if the header names a different release or configuration from the
    run's, and otherwise hashes it and retries the SQLite append, copying the
    inputs, release, configuration hash and production time from the file's
-   header into the row, so the row records what made the file rather than
-   what resumed it. With no file either, it computes the output, publishes
-   the file and appends the row. A SQLite append that fails, for example
-   because another writer holds the lock, is retried until a deadline. A file
-   no row points to is never read by a downstream worker. A worker writes at
+   header into the row, so the row records what made the blob rather than
+   what resumed it. With no blob either, it computes the output, uploads the
+   blob and appends the row. A SQLite append that fails, for example
+   because another writer holds the lock, is retried until a deadline, and so
+   is an upload S3 does not answer. A blob no row points to is never read by a
+   downstream worker. A worker writes at
    most one output event per session, because a halt is final and clearing
    one never reruns the session, so a second event for one session halts the
    reader.
@@ -305,20 +322,23 @@ Nine rules make the files and the logs something a worker can trust.
      override that explains a mismatch. Clearing never reruns the halted
      session. The next session runs as usual.
 
-   Everything the supervisor knows, it reads from the run directory, so a
+   Everything the supervisor knows, it reads from the run's event logs, so a
    supervisor that crashes and is started again starts each worker whose lock
    is free. A worker that still holds its lock, because a child process
    outlives a parent that crashes, is left to finish. Workers with no log
    between them run at the same time. Alpha and cost need only the snapshot,
    and risk needs the snapshot and the reconciled book.
 8. **One process at a time talks to each broker account.** The execution
-   worker is the only one that holds the broker credential. It holds an
-   exclusive lock on a file tied to the account, outside every run directory,
-   for its whole life, and a second execution worker that would send and
-   cannot take the lock halts. The order manager, the risk gate, the journal
+   worker is the only one that holds the broker credential. Because the VM
+   keeps no state, the account's lock is a lease blob in S3, at one key per
+   account, which the execution worker creates with the condition that it not
+   exist, and deletes when it exits. A second execution worker that would send
+   and cannot create the lease halts, on this VM or any other. A lease a dead
+   VM left behind is cleared by the owner or the operator, the same way a halt
+   is. The order manager, the risk gate, the journal
    and the order path all run inside it, because the gate checks each order
    against every order and position in the account's journal just before the
-   order is sent, and a check passed through a file could be stale by then.
+   order is sent, and a check passed through a blob could be stale by then.
    This is the one place a risk engineer's piece runs in another component's
    process. Running a worker again is safe everywhere except here, because a
    sent order cannot be unsent. So execution sends an order only when the
@@ -331,19 +351,19 @@ Nine rules make the files and the logs something a worker can trust.
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7),
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to settle.
-9. **The kill switch is a file, and pulling it is a command.** The owner or
-   the operator pulls it from outside any run, so it is a file at one path per
-   broker account rather than an event in a run's log. Every worker checks for
+9. **The kill switch is a blob, and pulling it is a command.** The owner or
+   the operator pulls it from outside any run, so it is a blob in S3 at one
+   key per broker account rather than an event in a run's log. Every worker checks for
    it when it starts and whenever a message wakes it, and execution checks it
    before every send. This doc adds one step to the owner's ruling on the
    switch, because workers no longer check on a timer: pulling it sends a
    message to every worker's queue, so a worker that is waiting wakes and sees
-   it. Each supervisor records its run directory beside the account's lock
-   file, which is how the command finds the queues of every run open on that
-   account. Any error other than
-   "no such file" reads as pulled, with a reason that says the file could not
-   be read. Pulling it, per the owner's ruling on
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the file,
+   it. Each supervisor records its VM and run directory in a blob beside the
+   account's lease, which is how the command finds the queues of every run
+   open on that account. Any answer from S3 other than "no such blob" reads as
+   pulled, with a reason that says the switch could not be read. Pulling it,
+   per the owner's ruling on
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the blob,
    journals the halt, raises the alarm, and starts an execution worker in
    cancel mode, which cancels every resting order and journals each cancel
    first. Two workers run with the switch set, because neither sends an
@@ -391,7 +411,7 @@ A halt ends its session's chain, and the span goes on to the next session, the
 way the next day's live run starts after a halted one. A failure stops the
 whole run.
 
-The price of this section is four things.
+The price of this section is five things.
 
 1. Every value that crosses from one module to another needs a file format,
    and a test that writes it and reads it back unchanged.
@@ -403,18 +423,25 @@ The price of this section is four things.
    from a backup copy when it sits on read-only media.
 3. A backtest writes several files and events per session, a few tens of
    thousands for test 1, and keeps them all, because the event logs are the
-   record of what ran and cannot be regenerated. An event log is always copied
-   with SQLite's backup command, never as raw files, and its `-wal` and `-shm`
-   files are never deleted or moved apart from it. After a crash the `-wal`
-   file can hold every committed event, and a review's copy of the database
-   file alone held no table at all. The output files it points to go with
-   it. Each commit and each published file also waits for the disk. One
+   record of what ran and cannot be regenerated. An event log leaves the VM
+   only through Litestream or SQLite's backup command, never as raw files, and
+   its `-wal` and `-shm` files are never deleted or moved apart from it. After
+   a crash the `-wal` file can hold every committed event, and a review's copy
+   of the database file alone held no table at all. Each commit also waits for
+   the disk. One
    exploratory measurement on the owner's Mac put a committed append at about
    8 ms with `fullfsync` against 0.2 ms without, so a backtest of test 1's
    size spends a few minutes syncing.
 4. The locks, the event logs, the queues and the supervisor's control log add
    machinery that a single process would not need, and each of their alarms
    has to fire in a drill before the paper gate.
+5. A stateless VM costs two dependencies and a round trip per blob. boto3,
+   Amazon's Python library, talks to S3, and Litestream runs beside the
+   workers on the VM. Each upload and each read waits on S3, tens of
+   milliseconds rather than a local disk's fraction of one, which a backtest
+   of test 1's size pays a few thousand times. A backtest may keep its blobs
+   in a local folder with the same refuse-to-replace rule, through the same
+   port, so only the adapter differs by mode.
 
 ## How work is cut and ordered
 
@@ -455,13 +482,13 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It listens on its queue, reads its input files through the events that point to them, writes its output files and appends to its event log, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
-| **output file** | One thing a component produced for one session, written once and never changed. [Processes and files](#processes-and-files) says how it is published |
+| **output file** | One thing a component produced for one session, a blob in S3 written once and never replaced. [Processes and files](#processes-and-files) says how it is uploaded |
 | **event** | One row of an event log. Most point to an output file by path and SHA-256 and name the events it came from. Others record a halt, a session, the end of a span, a halt monitoring handled, or a journal entry |
 | **event log** | The SQLite database holding one component's events in the order it wrote them, which only ever grows and is the source of truth for what the component produced. Each event log in a run directory has one writer. The journal is an event log with several writers, which SQLite's write lock takes one at a time |
 | **control log** | The event log the supervisor writes, holding one event per session of the run, then an end-of-span event, and a halt event for any worker that failed |
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the event log stays the record |
 | **supervisor** | The process that starts every worker of a run at once, writes the run's control log, appends a halt event when a worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside the run directory |
-| **run directory** | The directory that holds every output file, event log and queue one run's workers use. The journal and marketlake's lake live outside it |
+| **run directory** | The VM's working directory for one run, holding the working copies of its event logs and its queues, all of which can be rebuilt from S3. The run's output files live under the run's prefix in S3, and the journal and marketlake's lake live outside both |
 | **halt event** | The event a worker appends instead of an output when it cannot process a session, naming the reason or the halt event it met. Every worker downstream passes it on and skips that session. The owner or the operator clears it, and clearing never reruns the session |
 | **span** | The sessions in a run's control log, which every worker works through: one in shadow, paper and live, and the whole history in a backtest |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
@@ -503,6 +530,7 @@ once rather than re-argued.
 | A worker waking on file notifications through `watchdog`, or by polling its input logs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency and no polling. The price is that each writer sends a message to every reader of its event log, which one table in `runtime` wires |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 8 takes a lock |
+| Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs a restore from S3 rather than data. The price is a round trip to S3 per blob, Litestream's second of lag on each log, which rule 3 covers, and journal entries written to S3 before each step |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |
