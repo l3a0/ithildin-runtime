@@ -298,7 +298,8 @@ flowchart TB
     sup -. "starts" .-> workers
 ```
 
-Each cylinder is a stream in the run directory, an append-only file of events,
+Each cylinder is a stream in the run directory, a SQLite file of events that
+only grows,
 and each event names the input events it came from. A solid arrow into a
 worker is a stream it watches: a new event there runs its processing loop, and
 the event it appends runs the next worker's. Every worker reads the control
@@ -542,7 +543,7 @@ The phases in order.
    it needs. The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them.
 3. **Send.** Execution, which has held the account's lock since phase 1, reads
-   the target portfolio event and journals it whole, with a flush. A target portfolio names every
+   the target portfolio event and journals it whole, in a committed entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
    Its order manager turns the target minus the positions and the open orders
@@ -811,7 +812,7 @@ here, with the issue that builds its drill.
 | A second execution worker, or a second supervisor | The lock that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor on a different release | Both releases | Restart mid-run under another tag | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The scheduler's restart limit reached | The supervisor's last exit | Make the supervisor crash on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A stream line or journal entry that does not parse or does not chain, or two events with one sequence number | The stream and the sequence number | Corrupt a line in a copy of a stream and of the journal | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A stream row or journal entry whose hash does not match, or a stream that fails SQLite's integrity check | The stream and the sequence number | Alter a row in a copy of a stream and of the journal | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An input event a restarted worker names is no longer there | The stream, the sequence number and the hash | Drop the last line of a stream a downstream worker has read | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A newer target portfolio appears for a session already sending | Both hashes | Append a second target event by hand | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker exits before handling every session of its span | The worker | A worker that exits after its first session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -947,7 +948,7 @@ classDiagram
     class EventHeader {
         +str stream
         +int seq
-        +str prev_hash
+        +str hash
         +int format
         +str worker
         +date session
@@ -1274,7 +1275,7 @@ erDiagram
     EVENT {
         string stream
         int seq
-        string prev_hash
+        string hash
         int format
         string supersedes
         string worker
@@ -1344,25 +1345,22 @@ each keeps its own rule.
    recomputation.
 3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
    that changes only through a pull request.
-4. **The journal, D3, holds `JOURNAL_ENTRY`.** `Journal` appends through the
-   same stream contract every worker uses, with the lock switched on, and
-   `JournalStore` picks only the path, which is what differs by mode. `ORDER` and `FILL` are read from
-   journal entries rather than kept as files of their own. The writer only ever
-   appends, one JSON object per line, and flushes each entry to stable storage
-   before the step it records happens, with `F_FULLFSYNC` on macOS, where plain
-   `fsync` does not reach the disk. It lives at one path per broker account,
-   outside every run directory, because the book is replayed from it across
-   runs. Each entry carries the hash of
-   the one before it, which makes the file a hash chain. Changing or deleting
-   an entry breaks the link from the entry after it. That catches an edit
-   unless someone recomputes every later hash. Recording the latest hash off
-   the machine each day, in the backup or the report, catches that case and a
-   cut-off tail. The kill switch command, monitoring and execution can all
-   write at once, so
-   the writer takes an exclusive file lock for each append and, while holding
-   it, reads the last entry's sequence number and hash before writing the new
-   entry. Without that, two writers could both chain from the same last entry,
-   giving two entries one sequence number and splitting the chain.
+4. **The journal, D3, holds `JOURNAL_ENTRY`.** It is a SQLite stream like
+   every other, and `Journal` appends through the same stream contract.
+   `JournalStore` picks only the path, which is what differs by mode. `ORDER`
+   and `FILL` are read from journal entries rather than kept as tables of their
+   own. Each entry is committed before the step it records happens. It lives
+   at one path per broker account, outside every run directory, because the
+   book is replayed from it across runs. Each entry carries the hash of the
+   one before it, which makes the journal a hash chain. Changing an entry
+   breaks the link from the entry after it, even past the triggers that refuse
+   an update. That catches an edit unless someone recomputes every later
+   hash. Recording the latest hash off the machine each day, in the backup or
+   the report, catches that case and a cut-off tail. The kill switch command,
+   monitoring and execution can all write, so each append runs in one
+   transaction that first takes SQLite's write lock, then reads the last
+   entry's sequence number and hash, and inserts the new entry. Two writers
+   therefore never chain from the same entry.
 5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run keeps it for
    the owner to read, not as a record.
@@ -1499,8 +1497,8 @@ An arrow means "may import". The diagram draws three rules.
    modules, such as `Forecast`, `Constraints` and `TargetPortfolio`, and every
    `Protocol`, including `RiskGate`, live in `core` for that reason. So do
    `Journal`, which three processes append to, and the stream contract every
-   worker uses: the chained, flushed append of one event, the event header,
-   and the halt event.
+   worker uses: the SQLite append of one event, the event header, and the
+   halt event.
 2. Only `runtime` imports the modules together. Each worker's entry point
    lives there. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
@@ -1515,7 +1513,7 @@ arrow the diagram does not draw. A second test runs a day under the supervisor
 against a fake broker that fails on three things.
 
 1. An order whose client order id has no approval in the journal.
-2. An order whose `sending` entry is not yet flushed to the journal.
+2. An order whose `sending` entry is not yet committed to the journal.
 3. A client order id it has already received. Together they turn
 test 3's "no order reaches the broker adapter without passing the gate" into
 something executed rather than reviewed. The price is two more tests to keep
@@ -1557,7 +1555,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | Piece | Written on |
 | --- | --- |
 | Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) |
-| `core`'s shared types and every `Protocol`, the event form of each type, `Journal`, the stream contract of chained and flushed appends, the event header and the halt event, the import rule test, as proposed below | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| `core`'s shared types and every `Protocol`, the event form of each type, `Journal`, the stream contract of SQLite appends, the event header and the halt event, the import rule test, as proposed below | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -1576,8 +1574,8 @@ question 3 settles.
 Two pieces belong to no single module.
 
 1. `core`, with the shared types, every `Protocol`, and the stream contract
-   every worker uses: the chained, flushed append, the event header and the
-   halt event.
+   every worker uses: the SQLite append, the event header and the halt
+   event.
 2. The import rule test, which reads every module's imports.
 
 Both are written on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), which every module issue waits on, as question 9
@@ -1604,7 +1602,8 @@ accepted.
 | --- | --- | --- | --- |
 | Each component runs as its own process, in parallel, passing files | One process calling every module in memory, or a process per action | A file format and a round-trip test for every type that crosses between modules | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
 | The platform is an event pipeline: each component runs its processing loop on each new event in its input files, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker watches or polls files instead of being called | Ruled by the owner on 2026-10-29 |
-| Each worker writes one append-only stream of chained, flushed events, a writer sets aside a line a crash cut short, and every event names the last input events it consumed | One file per output per session | Every worker shares a stream contract that has to handle torn writes | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| Each stream is a SQLite file, one per stream | A JSON Lines file per stream, one file per output per session, or a messaging server such as NATS JetStream | A stream is read with `sqlite3` rather than `cat`, and copied off the machine with SQLite's backup command | Ruled by the owner on 2026-10-29 |
+| Each worker writes one stream that only grows, with each event's content hashed and every event naming the last input events it consumed | Streams that may be edited in place, or a cursor kept apart from the output | Triggers on every table, and a check on restart that each named input is still there | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
 | A supervisor that starts every worker at once and keeps no state, a control stream that ends the span, and a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, event headers and a control stream that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the stream contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -1622,7 +1621,7 @@ accepted.
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | One run per session after marketlake's evening sweep, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming. Which close the run reads that evening is question 10 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The journal is JSON Lines with a hash chain, fsynced per entry | SQLite | No queries without loading the file, which slice 1 does not need. In return the file is readable in a terminal and simple to back up | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The journal is a SQLite stream like every other, with a hash chain on its entries | JSON Lines fsynced per entry, which a crash partway through an append could tear | It is read with `sqlite3` rather than in a terminal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), following the owner's ruling of 2026-10-29 that every stream is SQLite |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more store, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |

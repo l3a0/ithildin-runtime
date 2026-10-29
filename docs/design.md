@@ -90,19 +90,21 @@ The owner added a second ruling the same day: the platform is an event
 pipeline. Each component watches its input files for new events, runs its
 processing loop on each one, and appends what it produces to its output file,
 which is what sets the components downstream of it running. Between
-components, a new event is the only trigger. The stream format and the rules
-below are this doc's design for that ruling, proposed to
-[#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
+components, a new event is the only trigger. The owner then ruled, the same
+day, that each stream is a SQLite database, one file per stream. SQLite is a
+database kept in a single file, with no server, and Python's standard library
+reads and writes it. The rules below are this doc's design for those rulings,
+proposed to [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and not part of the
-ruling itself.
+rulings themselves.
 
 Five terms carry the design.
 
 1. An **event** is one record a component appends, such as one session's
-   snapshot or one session's forecast. It is one line of JSON.
-2. A **stream** is the append-only file that holds one component's events in
-   the order it wrote them. Each stream in a run directory has exactly one
-   writer, its component.
+   snapshot or one session's forecast. It is one row of a stream's table.
+2. A **stream** is the SQLite file that holds one component's events in the
+   order it wrote them, and only ever grows. Each stream in a run directory
+   has exactly one writer, its component.
 3. A **worker** is one component run as its own process. It reads its input
    streams, appends to its own stream, and reaches the outside world only
    through the adapter at its edge, such as the broker or the data source. The
@@ -113,42 +115,40 @@ Five terms carry the design.
    run's **control stream**, which holds one event per session of the run and
    then an end-of-span event, watches the workers and stops the run.
 5. A **run directory** holds every stream one run's workers write. A session
-   here is one trading session.
+   here is one trading session. Each stream is audited with the `sqlite3`
+   command line tool, which macOS includes, rather than read as text.
 
 Two stores sit outside every run directory, because they outlive any one run.
 
 1. marketlake's lake, which holds captured market data.
 2. The journal, at one path per broker account, which the book is replayed
-   from. It follows the same append and read rules, and it is the one stream
-   with more than one writer, so each append takes an exclusive lock. Each
-   journal entry is flushed before the step it records happens, which is how
-   hard limit 4 holds on disk. Its entry format is
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s to settle.
+   from. It is a stream too, and the one with more than one writer. SQLite's
+   own write lock lets one writer at a time append, so two writers never take
+   the same sequence number. Each journal entry is committed before the step
+   it records happens, which is how hard limit 4 holds on disk. The fields an
+   entry carries are [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s
+   to settle.
 
 Seven rules make the streams something a worker can trust.
 
 1. **An event appears whole, in order, and only once.** A worker appends each
-   event as one line ending in a newline, carrying its stream's next sequence
-   number and the hash of the event before it, and flushes it to stable
-   storage before appending the next. On macOS that takes `fcntl(F_FULLFSYNC)`,
-   because plain `fsync` there does not ask the drive to empty its cache. A
-   line counts as complete only once its newline is written. A reader waits at
-   a final line with no newline, because its writer may still be writing it.
-   Any complete line that does not parse or does not chain, wherever it sits,
-   halts the reader with the stream and the sequence number, and so do two
-   events with one sequence number. A run's streams live on one local
-   filesystem, never on a network share, because there a reader may not see an
-   append at once and the flush may not reach the disk.
-2. **A crash's torn line is set aside, never built on.** Before its first
-   append, a writer takes its lock and checks the end of its stream. If the
-   stream does not end in a newline, a crash cut the last line short. The
-   writer copies that fragment to a side file named by its byte offset,
-   flushes the copy, cuts the stream back to its last newline, flushes again,
-   and says in its next event that it did. No reader ever acted on the
-   fragment, because it was incomplete, so nothing recorded is lost. If the
-   last complete line does not chain, the writer halts rather than append. The
-   journal follows the same step, so a `sending` entry is never glued onto a
-   torn one and lost. An event is never changed after it is written. A worker
+   event as one row in one transaction, which SQLite commits whole or not at
+   all, so a crash partway through leaves the stream as it was before the
+   append. The row's sequence number is the table's key, so two events can
+   never share one. Each stream runs in SQLite's write-ahead mode, which lets
+   readers read while the writer appends, with `synchronous=FULL`, so a commit
+   reaches the disk before the writer goes on. On macOS it also sets
+   `fullfsync`, because a plain flush there does not ask the drive to empty its
+   cache. A reader opens a stream read-only and reads the rows past the last
+   sequence number it handled. A run's streams live on one local filesystem,
+   never on a network share, because write-ahead mode shares memory between
+   readers and the writer, which works only on one machine's disk.
+2. **An event is never changed after it is written.** Each stream's table
+   carries triggers that refuse any update or delete, so a stream only grows.
+   Each row also carries a hash of its own content, which a reader checks,
+   and a writer runs SQLite's quick integrity check when it opens a stream.
+   A row whose hash does not match, or a stream that fails the check, halts
+   the reader or the writer with the stream and the sequence number. A worker
    that runs again appends after its earlier attempt, and an event that
    supersedes an earlier one names it, so a failed attempt stays readable.
    The newest superseding event wins, and two events for one session with no
@@ -161,11 +161,10 @@ Seven rules make the streams something a worker can trust.
    input is the last event its own stream names from it, so a restarted worker
    resumes from its stream alone, after first checking that each event it
    names still sits at that sequence number with that hash, and halting if
-   one does not. That check matters because a reader can see an event before
-   the flush finishes, so a power loss can drop an event something downstream
-   already read. Nothing irreversible rests on such an event alone: execution
-   journals, with a flush, the whole target event it acts on before its first
-   send. Each release writes only event formats the release before it can
+   one does not. That check guards against an upstream stream that was lost
+   or rebuilt after something downstream read it. Nothing irreversible rests
+   on an upstream event alone: execution journals the whole target event it
+   acts on, in a committed entry, before its first send. Each release writes only event formats the release before it can
    read, so pinning back to an earlier release still reads what is on disk.
    A worker killed by a signal or a crash writes nothing about itself, so the
    supervisor appends its exit status or signal and the end of its error
@@ -301,10 +300,13 @@ The price of this section is four things.
 1. Every value that crosses from one module to another needs an event format,
    and a test that writes it and reads it back unchanged.
 2. A worker notices a new event by watching its input files or by polling
-   them, so each step waits a little longer than a function call would.
+   them, so each step waits a little longer than a function call would. A
+   stream is also read with `sqlite3` rather than `cat`.
 3. A backtest appends several events per session, a few tens of thousands for
    test 1, and keeps them all, because the event headers are the record of
-   what ran and cannot be regenerated.
+   what ran and cannot be regenerated. A stream is copied off the machine
+   with SQLite's backup command, never as raw files while a writer has it
+   open, because a raw copy can miss what the write-ahead file still holds.
 4. The locks, the event headers and the supervisor's control stream add
    machinery that a single process would not need, and each of their alarms
    has to fire in a drill before the paper gate.
@@ -348,8 +350,8 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It reads its input streams, appends to its output stream, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
-| **event** | One record a component appends to its stream, such as one session's snapshot, carrying a header that names the input events it came from |
-| **stream** | The append-only file holding one component's events in the order it wrote them. Each stream in a run directory has one writer. The journal follows the same rules with several writers, under a lock |
+| **event** | One row a component appends to its stream, such as one session's snapshot, carrying a header that names the input events it came from and a hash of its own content |
+| **stream** | The SQLite file holding one component's events in the order it wrote them, which only ever grows. Each stream in a run directory has one writer. The journal is a stream with several writers, which SQLite's write lock takes one at a time |
 | **control stream** | The stream the supervisor writes, holding one event per session of the run, then an end-of-span event, and a halt event for any worker that failed |
 | **supervisor** | The process that starts every worker of a run at once, writes the run's control stream, appends a halt event when a worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside the run directory |
 | **run directory** | The directory that holds every stream one run's workers write. The journal and marketlake's lake live outside it |
@@ -388,6 +390,8 @@ once rather than re-argued.
 | One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
 | A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. An order fixed in a controller would state the dependencies a second time, beside the streams that already carry them |
 | One file per output per session, in place of a stream | A stream lets a worker resume from its own output alone and gives each input one file to watch. The price is that a writer must set aside a line a crash cut short before it appends again, and a reader must wait at one. This is this doc's design, proposed to [#22](https://github.com/l3a0/ithildin-runtime/issues/22), not part of the ruling |
+| A JSON Lines file per stream | It reads with `cat`, but a crash partway through an append tears a line. That needed rules to set the fragment aside and to make a reader wait at it, and a review found three ways a writer appending after a torn line lost events, a journal entry among them. The owner ruled on 2026-10-29 for SQLite, whose transactions make an append whole or absent. The price is that a stream is read with `sqlite3` |
+| A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about seven events a session on one VM |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
