@@ -979,12 +979,13 @@ The entities live in four stores, and each store keeps its own rule.
    appends, one JSON object per line, and flushes each entry to disk with
    `fsync` before the step it records happens. Each entry carries the hash of
    the one before it, which makes the file a hash chain. Changing or deleting
-   an entry breaks the link from the entry after it. That catches an edit unless someone recomputes every later
-   hash. The writer takes an exclusive file lock for each append, because the
-   kill switch command and a run can both write at once, and two interleaved
-   writers would break the sequence numbers and the chain. Recording the latest
-   hash off the machine each day, in the backup or
-   the report, catches that case and a cut-off tail.
+   an entry breaks the link from the entry after it. That catches an edit
+   unless someone recomputes every later hash. Recording the latest hash off
+   the machine each day, in the backup or the report, catches that case and a
+   cut-off tail. The kill switch command and a run can both write at once, so
+   the writer takes an exclusive file lock for each append and, while holding
+   it, reads the last entry's sequence number and hash before writing the new
+   entry. Without that, two writers would each chain from a stale entry.
 4. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run keeps it for
    the owner to read, not as a record.
@@ -1122,7 +1123,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | Flat and linear cost models | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction, `TargetPortfolio` | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | Order manager, `OrderPath`, `Journal`, journal store adapters, simulated and paper brokers | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| `Monitoring`, reconciliation, daily report, alert channel adapter, dead-man check, kill switch, the run controller and its startup order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| `Monitoring`, reconciliation, daily report, alert channel adapter, dead-man check, kill switch, startup order, and the run controller as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, which
@@ -1131,14 +1132,16 @@ question 3 asks about.
 Two pieces belong to no single module.
 
 1. `core`, with the shared types and every `Protocol`.
-2. The import rule tests.
+2. The import rule test, which reads every module's imports.
 
 Question 9 asks where they are written, since
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#8](https://github.com/l3a0/ithildin-runtime/issues/8) are both free to start
 first and both would need `core`. The run controller imports every module, so
-it is built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-which already owns the startup order and waits on every other module.
+it is built last. This doc proposes building it on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which owns the
+startup order and waits on every other module, along with the fake-broker test,
+since that test runs a whole day. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) does not name the run controller today,
+so the Decisions table lists it as a proposal.
 
 ## Decisions
 
@@ -1151,11 +1154,12 @@ accepted.
 
 | Decision | Turned down | Price | Settled on |
 | --- | --- | --- | --- |
-| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels | Letting the run controller or reconciliation call the broker | One more method on `OrderPath` per broker read | This doc |
+| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels | Letting the run controller or reconciliation call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
 | The journal store and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Two more ports in `core`, and a change to design.md's `## One runtime` | This doc |
 | A missing, stale or empty input raises `Halt` | Defaulting a gap to the last value or to zero | A day with a data hiccup is a day with no trading | This doc, with the staleness rule on [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
+| The run controller and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the run controller with `core`, which cannot work because it imports every module, or a separate issue | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | One run per session after marketlake's evening capture, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The journal is JSON Lines with a hash chain, fsynced per entry | SQLite | No queries without loading the file, which slice 1 does not need. In return the file is readable in a terminal and simple to back up | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -1209,7 +1213,7 @@ Each question has a recommendation, so a review can answer it with a yes.
    order. An unwind is a trade of its own, so it would need its own path
    through the gate and its own tests, and
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7) can add it later.
-9. **Where are `core` and the import rule tests written?** The
+9. **Where are `core` and the import rule test written?** The
    recommendation is a new sub-issue of
    [#4](https://github.com/l3a0/ithildin-runtime/issues/4), built first, which
    every module issue waits on through a "blocked by" link. Every module
