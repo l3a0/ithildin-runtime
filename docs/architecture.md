@@ -1128,7 +1128,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 
 Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, which
-question 3 asks about.
+question 3 settles.
 
 Two pieces belong to no single module.
 
@@ -1192,7 +1192,9 @@ Each question has a recommendation, so a review can answer it with a yes.
    or the paper run waits 20 sessions before its first trade.
 3. **How large is one unit on paper?** The replication has no capital account.
    The recommendation is to size one unit so the gross position is a fixed
-   dollar amount the owner sets, recorded in the run's configuration.
+   dollar amount the owner sets, recorded in the run's configuration. The owner
+   accepted it on 2026-10-29, and the ruling is on
+   [#9](https://github.com/l3a0/ithildin-runtime/issues/9).
 4. **May captured bars be committed to this public repository?** Vendor terms
    can forbid redistributing data. The recommendation follows
    quantitative-trading's archive pattern: keep the files in a private store,
