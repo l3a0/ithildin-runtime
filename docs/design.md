@@ -109,9 +109,8 @@ The owner ruled five more things about the shape the same day.
    kept the journal's entries in SQLite rows. This ruling replaced all three.
    This doc's reason for the shape is that only the journal records actions
    that cannot be repeated, so only the journal needs numbering.
-5. **An in-memory store for backtests.** The owner proposed that a backtest
-   swap S3 for a store in memory, through the same port, and the design takes
-   it up. Its standing as a ruling waits on the owner's yes.
+5. **An in-memory store for backtests.** A backtest swaps S3 for a store in
+   memory, through the same port.
 
 Every worker is its own process, so this doc takes the in-memory store as a
 memory-backed folder, such as `tmpfs` on Linux or a RAM disk on macOS, which
@@ -388,11 +387,14 @@ Ten rules make the blobs something a worker can trust.
     and alarms if it passes. Monitoring writes the day's report and says the
     switch is set. The runtime's credential can create the switch but never
     delete it. The owner ruled on 2026-10-29 that only the owner's or the
-    operator's command clears the switch, and the clearing is journaled. This
-    doc adds that the credential that clears it never sits on the VM. When the VM or S3 cannot be
-    reached, the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person create the switch from anywhere,
-    cancel at the broker's own console, and journal both as a human override
-    once the VM is back.
+    operator's command clears the switch, and the clearing is journaled, and
+    then ruled the same day that on a live account only the owner's command
+    clears it. On a paper or shadow account the operator's may too. This doc
+    adds that the credential that clears it never sits on the VM. When the VM
+    or S3 cannot be reached, the runbook on
+    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person
+    create the switch from anywhere, cancel at the broker's own console, and
+    journal both as a human override once the VM is back.
 
 ### A worker works through a span of sessions
 
@@ -526,21 +528,23 @@ glossing it.
 
 ## Configuration
 
-Machine-local config lives under `~/.config/ithildin-runtime/`. Nothing
-tracked in this repository carries a secret or a machine-specific path.
+The runtime's VM keeps no state, so it keeps no configuration that matters on
+its own disk. A setting comes from the release the owner pins or from a blob
+in the runtime's bucket. The owner ruled on 2026-10-29 that the runtime keeps
+its secrets in the same store marketlake does: AWS Systems Manager Parameter
+Store, as a `SecureString` parameter encrypted under KMS, under the
+runtime's own path. Each credential is readable only by the user that needs
+it, through a credential the VM's provisioning gives that user alone, and
+never sits in a file tracked in this repository.
+[architecture.md](architecture.md#where-it-runs) lists each credential the
+design needs and what it may do. The owner's own machine may still keep
+developer settings under `~/.config/ithildin-runtime/`. `CLAUDE.md`'s
+`## Secrets and machine paths` still names the machine's keychain, and is the
+owner's to update.
 
 No setting exists yet. The first broker or data-vendor credential gets a row
 here in the change that first reads it, naming where it lives and what reads
-it. A credential lives in the environment of the run or in the machine's
-keychain, and never in a file. The table takes the columns Setting, Secret,
-Lives in and Read by.
-
-The stateless VM in [Processes and files](#processes-and-files) proposes a
-change to this rule that waits on the owner's choice of secret store: settings
-from the pinned release or a blob in the runtime's bucket, and credentials
-from a secret store or from the VM's provisioning, readable only by the user
-that needs each one. [architecture.md](architecture.md#where-it-runs) lists
-each credential the proposal needs and what it may do.
+it. The table takes the columns Setting, Secret, Lives in and Read by.
 
 ## Considered and rejected
 
@@ -569,7 +573,7 @@ once rather than re-argued.
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
-| S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner proposed an in-memory store on 2026-10-29, which this doc takes as a memory-backed folder |
+| S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
 | One result per component per session | Execution and monitoring each act at two points in a session, and a single result written last put execution's account file behind its own send, a cycle a review's simulation showed. Each now has two stages with a result each |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |

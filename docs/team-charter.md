@@ -181,7 +181,8 @@ reaches the owner already reviewed.
 - **Protects:** the system stops safely and says so.
 - **Does:** owns deployment, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the paper environment day to day.
-  Clears a halt or the kill switch, journaled, which the owner can do too.
+  Clears a halt, and a paper or shadow account's kill switch, journaled, which
+  the owner can do too. Only the owner clears a live account's kill switch.
 - **Vetoes:** a deploy without a rollback, and an alarm nobody has seen fire in
   a drill. An alarm reads zero while it is healthy, so count the cycles it
   watched rather than the times it fired.

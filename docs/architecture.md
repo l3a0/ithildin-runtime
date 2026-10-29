@@ -203,6 +203,23 @@ The owner ruled on 2026-10-29 to make that window configurable, and
 marketlake refuses a window below what its own readers need, and a
 configuration that would not fit the VM's disk.
 
+The owner ruled on 2026-10-29 that the runtime may read the day's data before
+marketlake seals it. marketlake's capture daemon already writes a segment
+each cycle and never rewrites it once its manifest entry lands, so marketlake
+uploads each segment to its bucket as soon as that entry lands, refusing to
+replace an existing key. The data worker reads the segments up to the
+decision minute, as a provisional read, because marketlake's validation
+battery runs only when it seals a day. So the data worker runs its own
+minimum checks before anything decides: a fresh quote at the decision minute,
+and a flag on a price spike. The snapshot names each segment it read by key
+and SHA-256 and marks the read provisional. Once marketlake seals the day,
+monitoring compares the sealed partition with what the snapshot read, and
+journals and alarms any difference. This is the same check question 10
+recommends for the provisional close, and it is proposed for
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#16](https://github.com/l3a0/ithildin-runtime/issues/16), with marketlake's
+uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943).
+
 It sends orders to one place, the broker's paper account.
 
 Two switches come from outside the loop.
@@ -1484,12 +1501,18 @@ Nine rules hold the deployment to the premise and the hard limits.
    which is hard limit 5. A drill on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a worker other than execution
    try each route to the key, the metadata service, the start-up data, another
    process's environment and the unit's settings, and expects every one to
-   fail. Which secret store is the owner's choice, since it carries a cost.
+   fail. The owner ruled on 2026-10-29 that the store is the one marketlake
+   uses, AWS Systems Manager Parameter Store, holding the key as a
+   `SecureString` parameter encrypted under KMS, under the runtime's own
+   path. Only the execution user's credential may read that parameter and
+   use its key to decrypt it.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
-   can create the switch, which pulls it, and can never delete it. Clearing it
-   takes the owner's or the operator's credential, which never sits on the VM,
-   and the bucket's policy exempts those two from its refusal of deletes on
-   the switch's key. The hard caps blob can be written or deleted only by the
+   can create the switch, which pulls it, and can never delete it. The owner
+   ruled on 2026-10-29 that only the owner's credential clears a live
+   account's switch, and that the operator's may also clear a paper or shadow
+   account's. Neither credential sits on the VM, and the bucket's policy
+   exempts only those principals, account by account, from its refusal of
+   deletes on the switch's key. The hard caps blob can be written or deleted only by the
    owner's credential, which an explicit refusal in the bucket's policy for
    every other principal enforces, because raising a cap raises a capital
    limit, which hard limit 1 keeps for the owner. Copying an older version
@@ -1692,7 +1715,7 @@ accepted.
 | The platform is an event pipeline: each component runs its processing loop when there is something new for it, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker waits for a message on its queue instead of being called | Ruled by the owner on 2026-10-29 |
 | Pure steps write create-only blobs at session keys, data's first write wins, a halt is a blob at the same kind of key, and the journal is the only numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
 | A session result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per session, which put execution's account file behind its own send | Two more result keys a session, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
-| A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Proposed by the owner on 2026-10-29 and waiting on the owner's yes, the folder this doc's reading of it |
+| A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Ruled by the owner on 2026-10-29, the folder this doc's reading of it |
 | Each component keeps a queue, listens for events on it, and reads its inputs from files and writes its outputs to files. A message is sent to a component's queue whenever there is something new for it | File notifications through `watchdog`, or polling | A message has to reach every component with something new | Ruled by the owner on 2026-10-29 |
 | Each queue is a named pipe in the VM's working directory, written without waiting. The storage contract sends each message after a session result is written, to the readers one table in `runtime` declares, and again for the newest result when a worker starts, and a starting worker opens its pipe before it catches up | A socket, a queue server, or every write messaging every queue | A message is skipped when its reader is down or its pipe is full, so a starting worker catches up by checking its keys | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
@@ -1700,6 +1723,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
+| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for the evening upload, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
