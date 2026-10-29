@@ -580,7 +580,9 @@ The runtime's VM keeps no state, so it keeps no configuration that matters on
 its own disk. A setting comes from the release the owner pins or from a blob
 in the runtime's bucket. The owner ruled on 2026-10-29 that the broker key
 lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
-as a `SecureString` parameter encrypted under KMS. This doc proposes the rest:
+as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
+account, with marketlake's VM role narrowed so it cannot read it. This doc
+proposes the rest:
 the key sits under the runtime's own path, a grant on that parameter alone
 lets only the execution user read it, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
