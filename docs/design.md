@@ -387,9 +387,9 @@ Ten rules make the blobs something a worker can trust.
     and alarms if it passes. Monitoring writes the day's report and says the
     switch is set. The runtime's credential can create the switch but never
     delete it. The owner ruled on 2026-10-29 that only the owner's or the
-    operator's command clears the switch, and the clearing is journaled, and
-    then ruled the same day that on a live account only the owner's command
-    clears it. On a paper or shadow account the operator's may too. This doc
+    operator's command clears the switch, and that the clearing is journaled.
+    Later that day the owner narrowed it: on a live account only the owner's
+    command clears it. On a paper or shadow account the operator's may too. This doc
     adds that the credential that clears it never sits on the VM. When the VM
     or S3 cannot be reached, the runbook on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person
@@ -530,12 +530,14 @@ glossing it.
 
 The runtime's VM keeps no state, so it keeps no configuration that matters on
 its own disk. A setting comes from the release the owner pins or from a blob
-in the runtime's bucket. The owner ruled on 2026-10-29 that the runtime keeps
-its secrets in the same store marketlake does: AWS Systems Manager Parameter
-Store, as a `SecureString` parameter encrypted under KMS, under the
-runtime's own path. Each credential is readable only by the user that needs
-it, through a credential the VM's provisioning gives that user alone, and
-never sits in a file tracked in this repository.
+in the runtime's bucket. The owner ruled on 2026-10-29 that the broker key
+lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
+as a `SecureString` parameter encrypted under KMS. This doc proposes the rest:
+the key sits under the runtime's own path, a grant on that parameter alone
+lets only the execution user read it, and every other credential is readable
+only by the user that needs it, through a credential the VM's provisioning
+gives that user alone. Nothing here sits in a file tracked in this
+repository.
 [architecture.md](architecture.md#where-it-runs) lists each credential the
 design needs and what it may do. The owner's own machine may still keep
 developer settings under `~/.config/ithildin-runtime/`. `CLAUDE.md`'s

@@ -207,11 +207,16 @@ The owner ruled on 2026-10-29 that the runtime may read the day's data before
 marketlake seals it. marketlake's capture daemon already writes a segment
 each cycle and never rewrites it once its manifest entry lands, so marketlake
 uploads each segment to its bucket as soon as that entry lands, refusing to
-replace an existing key. The data worker reads the segments up to the
-decision minute, as a provisional read, because marketlake's validation
-battery runs only when it seals a day. So the data worker runs its own
-minimum checks before anything decides: a fresh quote at the decision minute,
-and a flag on a price spike. The snapshot names each segment it read by key
+replace an existing key. The decision minute is the one
+[#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for shadow
+running, ten minutes before the close. The data worker reads the segments up
+to that minute, as a provisional read, because marketlake's validation
+battery runs only when it seals a day at the close plus fifteen minutes. So
+the data worker runs its own minimum checks before anything decides. A
+missing or stale quote at the decision minute halts the session, and a price
+spike is flagged in the snapshot without halting. The evening run that
+`## One trading day` draws starts after marketlake has sealed and uploaded
+the day, so it reads sealed partitions and needs none of this. The snapshot names each segment it read by key
 and SHA-256 and marks the read provisional. Once marketlake seals the day,
 monitoring compares the sealed partition with what the snapshot read, and
 journals and alarms any difference. This is the same check question 10
@@ -846,6 +851,7 @@ here, with the issue that builds its drill.
 | A deterministic step that writes different bytes for the same inputs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker exits before it has a result for every session in the plan | The worker | A worker that exits after its first session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A blob for the wrong session, or an output file with no entries and no "trade nothing" mark | The key and the session | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| The sealed day differs from what a provisional read saw | The segment's key and both SHA-256s | Change a sealed partition after a run read its segments | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | Skip a run's ping, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -1503,9 +1509,14 @@ Nine rules hold the deployment to the premise and the hard limits.
    process's environment and the unit's settings, and expects every one to
    fail. The owner ruled on 2026-10-29 that the store is the one marketlake
    uses, AWS Systems Manager Parameter Store, holding the key as a
-   `SecureString` parameter encrypted under KMS, under the runtime's own
-   path. Only the execution user's credential may read that parameter and
-   use its key to decrypt it.
+   `SecureString` parameter encrypted under KMS. As in marketlake, the
+   parameter uses AWS's managed `aws/ssm` key, so the read is limited by a
+   grant of `ssm:GetParameter` on that parameter alone, given only to the
+   execution user's credential. That holds only if no other principal can
+   read every parameter in the account. marketlake's VM role carries AWS's
+   managed policy `AmazonSSMManagedInstanceCore`, which reads every
+   parameter, so which AWS account holds the runtime's parameter is the
+   owner's to decide.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
    can create the switch, which pulls it, and can never delete it. The owner
    ruled on 2026-10-29 that only the owner's credential clears a live
@@ -1552,7 +1563,9 @@ Nine rules hold the deployment to the premise and the hard limits.
    partition a session's lookback names from marketlake's bucket into a local
    mirror, checks it against the checksum in marketlake's manifest, and reads
    it through the same bar query. A partition not yet in the bucket is "data
-   not ready", which halts. The mirror is a copy, so losing it costs only a
+   not ready", which halts. A capture segment read before sealing is checked
+   the same way, against its own manifest entry, and the read credential
+   covers the segments' prefix too. The mirror is a copy, so losing it costs only a
    download. The runtime's credential for marketlake's bucket reads and never
    writes, and it gets its row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it.
@@ -1723,7 +1736,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
-| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for the evening upload, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
+| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
