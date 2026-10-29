@@ -218,7 +218,17 @@ So `.claude/settings.json` declares the `l3a0` marketplace and enables `l3a0@l3a
 
 The marketplace entry names no `ref`, so it follows the default branch of l3a0/claude-plugins rather than a tagged release. A machine gets the commit that branch held when it first registered the marketplace, and keeps it, because a marketplace outside Anthropic's own does not update on its own. `claude plugin marketplace update l3a0` moves that copy forward, and `claude plugin update l3a0@l3a0` with a restart moves an install made at user scope.
 
-A cloud session loads none of this, because Claude Code does not apply a repository's plugin settings in a cloud session. So a cloud session here runs without the board and team skills. A session that cannot load `/l3a0:sync-prune-next` removes no worktree, branch or ref, and says so in its report, because that skill's checks are what keep a status round from deleting work nobody pushed.
+A cloud session loads none of this, because Claude Code does not apply a repository's plugin settings in a cloud session. The route for a cloud session is the cloud environment's setup script, which the owner chose on 2026-10-29 and keeps in the environment rather than in this repository. A setup script runs as root before Claude Code starts, and a script that exits non-zero stops the session from starting, so each command ends in `|| true`.
+
+```bash
+#!/bin/bash
+claude plugin marketplace add l3a0/claude-plugins || true
+claude plugin install l3a0@l3a0 || true
+```
+
+Claude Code's documentation names server-managed settings as the plugin route that reaches a cloud session. Its install page suggests running `claude plugin install` from a setup script, and says an install loads the next time Claude Code starts, which implies the plugin loads. Neither page says so outright for a cloud session. So a cloud session that finds no report yet on [#20](https://github.com/l3a0/ithildin-runtime/issues/20) checks that `/l3a0:update-build-board` loads, and reports there with the setup step's output. The output matters because `|| true` makes a missing `claude` command, a refused clone and a failed install all look the same.
+
+The environment caches what the script installs for about seven days. So a cloud session starts from a commit of the plugin's default branch up to about a week old, and older when its VM was restored after being idle, because a restore skips the setup script. Changing the setup script rebuilds the cache, which is how to drop a bad plugin commit from new cloud sessions before the cache expires. A session that already exists keeps its copy until its VM is reclaimed, or until it runs `claude plugin marketplace update l3a0` and `claude plugin update l3a0@l3a0` itself. A session that cannot load `/l3a0:ask-team` says in its `## Review` comment that the team's lenses did not run, rather than reporting a full review. A session that cannot load `/l3a0:sync-prune-next` removes no worktree, branch or ref, and says so in its report, because that skill's checks are what keep a status round from deleting work nobody pushed.
 
 A `band:N` label ranks a card under the directive in [Rank work by what makes the product usable](#rank-work-by-what-makes-the-product-usable), and a lower number is taken first.
 
