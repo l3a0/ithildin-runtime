@@ -88,7 +88,7 @@ because a process per action was too granular. Two things follow from it.
    step of an order. The blobs extend that record to every step before the
    order.
 
-The owner ruled five more things about the shape the same day.
+The owner ruled six more things about the shape the same day.
 
 1. **An event pipeline.** A component runs its processing loop when there is
    something new for it, and what it produces is what sets the components
@@ -111,6 +111,10 @@ The owner ruled five more things about the shape the same day.
    that cannot be repeated, so only the journal needs numbering.
 5. **An in-memory store for backtests.** A backtest swaps S3 for a store in
    memory, through the same port.
+6. **Fetch and sync before changing state, and resolve conflicts first.** As
+   in git, any step that changes state first fetches the latest state from
+   where it is kept, brings its own view up to date, and resolves any
+   conflict before it changes anything.
 
 Every worker is its own process, so this doc takes the in-memory store as a
 memory-backed folder, such as `tmpfs` on Linux or a RAM disk on macOS, which
@@ -165,6 +169,33 @@ Three stores sit outside every run, because they outlive any one run.
    per session, which the simulated broker's adapter reads and writes through
    the storage port, so a shadow order sent one evening is still resting at
    the next open, in another run.
+
+Ruling 6 runs through every rule below, and this doc applies it the same way
+in each place. A step fetches what it is about to change, or what its change
+depends on, immediately before it acts. When the state it fetched has moved on
+in a way the step can work from, as when another writer has appended to the
+journal or an earlier attempt already stored a blob, the step brings itself up
+to date and carries on, the way git fast-forwards. When the fetched state
+disagrees with the step's own view in a way that would mean choosing between
+two versions of the truth, as when the broker's positions differ from the
+journal's book, the step halts and a person resolves it, the way a git merge
+conflict waits for a person. Nothing ever forces a change over state it has
+not fetched: no blob is replaced, no entry is rewritten, and no order is sent
+on a book that was not just brought up to date. Five places apply it.
+
+1. **Every write** first asks storage for its key, and an existing blob sends
+   the step down rule 3's resume path rather than a second write.
+2. **Every journal append** reads the journal's end first, and a refusal
+   because another writer moved it on is the git push refused for being
+   behind: the writer reads what is new, decides again, and appends after it,
+   as rule 8 says.
+3. **Every order** waits on a fetch of the broker's positions, open orders and
+   fills made at the start of execution's send stage, as rule 9 says, and on
+   the kill switch and the journal's end just before the broker call.
+4. **Every lease** is fetched before it is taken, and one another VM holds is
+   resolved by a person, as rule 9 says.
+5. **Every read of marketlake** fetches the manifest entry before the data it
+   names, and a checksum that differs halts, as `## Where it runs` says.
 
 Ten rules make the blobs something a worker can trust.
 
@@ -349,10 +380,16 @@ Ten rules make the blobs something a worker can trust.
    rerun from doubling anything.
    1. Execution journals each fill under the broker's own fill id, and skips
       a fill whose id is already journaled.
-   2. It journals the planned orders, each with its client order id, in the
-      same entry as the whole target portfolio, before its first send. A
-      rerun in the same session reuses that list and never plans again, so an
-      order's id never shifts between attempts.
+   2. At the start of its send stage, before it plans, execution fetches the
+      broker's positions, open orders and fills again, journals any fill that
+      arrived since its recover stage, and compares the result with the book
+      it replays from the journal. A fill of one of its own orders brings the
+      book up to date. Any other difference halts the session for a person,
+      because the broker moved in a way the platform did not ask for. Only
+      then does it plan, and it journals the planned orders, each with its
+      client order id, in the same entry as the whole target portfolio, before
+      its first send. A rerun in the same session reuses that list and never
+      plans again, so an order's id never shifts between attempts.
    3. Its account file names the journal entry it replayed through. Before it
       plans, execution halts if an entry that changes the book, and that it
       did not write in its own order loop, lies past that one.

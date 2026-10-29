@@ -539,7 +539,11 @@ sequenceDiagram
     P->>F: target portfolio and portfolio construction's result
     Note over X,J: Phase 3, send, in the execution worker still running
     F-->>X: a message: portfolio construction's result
-    X->>J: the whole target portfolio journaled
+    X->>B: positions, open orders and fills since recover
+    B-->>X: the broker's state now
+    X->>J: any new fill journaled, under its fill id
+    X->>X: book from the journal agrees with the broker?
+    X->>J: the whole target portfolio and its planned orders journaled
     loop each order the order manager plans
         X->>X: kill switch blob absent?
         X->>J: intent journaled
@@ -571,8 +575,13 @@ The phases in order.
    it needs. The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them.
 3. **Send.** Execution, which has held the account's lease since phase 1, reads
-   the target portfolio its result lists and journals it whole, with the
-   planned orders and their client order ids, in one stored entry. A target portfolio names every
+   the target portfolio its result lists. Following the owner's ruling to
+   fetch and sync before changing state, it first fetches the broker's
+   positions, open orders and fills again, journals any fill that arrived
+   since phase 1, and checks the journal's book against the broker. A fill of
+   its own order brings the book up to date, and any other difference halts
+   for a person. Only then does it journal the target whole, with the planned
+   orders and their client order ids, in one stored entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
    Its order manager turns the target minus the positions and the open orders
@@ -832,6 +841,7 @@ here, with the issue that builds its drill.
 | Data not ready | "data not ready" | A run started before marketlake's sweep, test 2 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Risk gate refusal | The limit and the value | One order over each limit, test 3 | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Book and broker disagree | Both positions, or both sets of open orders | A simulated broker account edited by hand | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The broker moved between execution's recover and send stages in a way the platform did not ask for | Both positions, or both sets of open orders, at the send stage | A simulated broker account edited by hand between the stages | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A fill with no `sending` entry, or past its order's quantity | The client order id | A simulated broker that reports an unknown fill | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio that leaves out an instrument the book holds | The instrument | A target portfolio file written without one leg | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | A bad constraints file or hard cap | The field and its value | A file with a missing field, a NaN and a wrong sign | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -1742,6 +1752,7 @@ accepted.
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution journals a fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise | Journaling every fill the broker reports | A fill from an order placed by hand at the broker halts the platform | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Fetch and sync before any step that changes state, bring the step up to date when the fetched state moved on in a way it can work from, and halt for a person on any conflict between two versions of the truth | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Ruled by the owner on 2026-10-29, applied as [design.md](design.md#processes-and-files) says |
 | Execution journals the whole target portfolio and its planned orders, each with its client order id, in one entry before its first send, reuses that list on a rerun in the same session, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book lies past the one its account file names | Planning again on a rerun, ids from the order's place in a fresh plan, or fills matched by order and quantity alone | A rerun cannot catch up on a changed target within a session | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument the book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
