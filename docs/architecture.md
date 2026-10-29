@@ -166,12 +166,27 @@ came from, so a consumer can refuse imported history where only captured data
 will do. Imported history never overwrites a captured partition.
 
 For every mode to read the bars it needs through one query, one marketlake
-rule has to change. Its VM keeps 22 sessions on
-its own disk and deletes older bar partitions once its backup bucket holds
-them. The 2006 to 2012 history, and a lookback longer than 22 sessions, would
-then drop out of a read with no error, which is exactly the silent gap a halt
-exists for. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) therefore keeps imported history and the sessions a lookback
-needs readable, and says which copy of the lake each mode reads.
+rule has to change. Its VM keeps 22 sessions on its own disk and deletes older
+partitions of every kind at one cutoff once its backup bucket holds them. The
+2006 to 2012 history, and a lookback longer than 22 sessions, would then drop
+out of a read with no error, which is exactly the silent gap a halt exists
+for.
+
+The owner ruled on 2026-10-29 to make that window configurable, and
+[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it in three parts.
+
+1. **A default per kind of data.** Option chains, quotes and bars each keep 22
+   sessions unless set otherwise, so nothing changes until an override is set.
+2. **An override per kind.** Bars are set to keep every session, which keeps
+   both the runtime's lookback and the imported history readable. Bars add
+   about 0.1 MB a session, against about 564 MB for option chains, as
+   [l3a0/marketlake#786](https://github.com/l3a0/marketlake/issues/786)
+   measured.
+3. **An override per ticker and kind,** for a later strategy that needs one
+   ticker's data kept longer.
+
+marketlake refuses a window below what its own readers need, and a
+configuration that would not fit the VM's disk.
 
 It sends orders to one place, the broker's paper account.
 
