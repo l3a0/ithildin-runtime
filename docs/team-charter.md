@@ -297,10 +297,11 @@ evidence, not elapsed time.
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
   latency (L4973 to L5006).
-- **Startup** checks that every upstream worker has appended its output event,
-  not a halt event, for the session before execution may send an order. That is the safeguard the reboot
-  incident lacked (L4690). A worker is one component run as its own process,
-  and the workers form an event pipeline, as the design doc's
+- **Startup** checks that every upstream worker has written a session result
+  that lists outputs, not a halt, for the session before execution may send an
+  order. That is the safeguard the reboot incident lacked (L4690). A worker is
+  one component run as its own process, and the workers form an event
+  pipeline, as the design doc's
   [Processes and files](design.md#processes-and-files) says.
 - **Reconciliation** compares journaled positions and open orders with the
   broker's every day, and a mismatch halts trading.

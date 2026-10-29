@@ -311,8 +311,8 @@ worker reads the plan, which the diagram draws only into the two that start
 the day, and monitoring reads every component's results, which the diagram
 leaves out to stay legible. Each dotted arrow from an adapter is a port,
 labelled with its name, and each mode is one choice of adapter for each port.
-Execution and monitoring each appear twice because each does two things in
-one process. Execution recovers first and then, once the target portfolio
+Execution and monitoring each appear twice because each has two stages in one
+process, and each stage writes its own session result. Execution recovers first and then, once the target portfolio
 exists, sends. Monitoring reconciles first and reports last.
 
 Two groups of workers run at the same time.
@@ -498,10 +498,10 @@ sequenceDiagram
         X->>J: each fill journaled
         X->>B: positions and open orders
         B-->>X: positions and open orders
-        X->>F: account file, the book replayed from the journal and the broker's account
+        X->>F: account file, naming the journal entry it replayed through, and execution's recover result
     end
-    F-->>M: a message: the account file is there
-    M->>F: reconciled book and monitoring's first result
+    F-->>M: a message: execution's recover result
+    M->>F: reconciled book and monitoring's reconcile result
     Note over V,P: Phase 2, decide
     par
         F-->>A: a message: data's result
@@ -529,9 +529,9 @@ sequenceDiagram
         B-->>X: ack
         X->>J: ack journaled
     end
-    X->>F: send outcome and execution's result
+    X->>F: send outcome and execution's send result
     F-->>M: a message: execution's result
-    M->>M: daily report, to the reports store
+    M->>F: daily report and monitoring's report result
     M->>M: ping the heartbeat service
 ```
 
@@ -549,8 +549,8 @@ The phases in order.
    it needs. The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them.
 3. **Send.** Execution, which has held the account's lease since phase 1, reads
-   the target portfolio its result lists and journals it whole, in a
-   committed entry. A target portfolio names every
+   the target portfolio its result lists and journals it whole, with the
+   planned orders and their client order ids, in one stored entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
    Its order manager turns the target minus the positions and the open orders
@@ -609,7 +609,8 @@ sequenceDiagram
 
     D->>D: GLD fresh, USO missing
     D->>F: a halt as data's result, reason "USO missing for the session"
-    F-->>X: a message: data's result is a halt, so it skips the session
+    F-->>X: a message: data's result is a halt
+    X->>F: a halt as execution's send result, naming data's
     F-->>M: a message: data's result is a halt
     M->>J: halt journaled
     M->>L: alarm
@@ -655,12 +656,13 @@ sequenceDiagram
         X->>B: is there an order with this client order id?
         B-->>X: yes, acknowledged
         X->>J: ack journaled
-        X->>F: account file
+        X->>F: account file and execution's recover result
     and
         D->>D: is this session's close in marketlake?
         D->>F: a halt as data's result, reason "data not ready"
     end
-    F-->>X: a message: data's result is a halt, so it exits without sending
+    F-->>X: a message: data's result is a halt
+    X->>F: a halt as execution's send result, naming data's, without sending
     F-->>M: a message: data's result is a halt
     M->>J: halt journaled
     M->>L: alarm
@@ -726,7 +728,8 @@ sequenceDiagram
     X->>F: book holds 100 USO, broker holds 90 USO
     M->>M: reconcile, mismatch of 10 USO
     M->>F: a halt as monitoring's result, with both positions
-    F-->>X: a message: risk passed the halt on, so it exits without sending
+    F-->>X: a message: a halt passed on from monitoring's
+    X->>F: a halt as execution's send result, without sending
     M->>J: halt journaled
     M->>L: alarm
     Note over X,L: No model reads a book until a person<br/>explains the difference
@@ -940,6 +943,11 @@ classDiagram
         +str key
         +str sha256
     }
+    class StoredBlob {
+        +BlobRef ref
+        +str etag
+        +datetime stored_at
+    }
     class BlobHeader {
         +int format
         +str run
@@ -967,6 +975,7 @@ classDiagram
     }
     class JournalEntry {
         +int seq
+        +datetime built_at
         +str body
         +str hash
         +str prev_hash
@@ -1028,15 +1037,11 @@ classDiagram
     }
     class BlobStore {
         <<Protocol>>
-        +create(key, data, sha256)
+        +create(key, data, sha256) str
         +get(key) bytes
-        +head(key) BlobRef
+        +head(key) StoredBlob
         +list(prefix, after) list
-        +delete_if_match(key, version)
-    }
-    class JournalStore {
-        <<Protocol>>
-        +prefix(account) str
+        +delete_if_match(key, etag)
     }
     class Alerts {
         <<Protocol>>
@@ -1044,7 +1049,8 @@ classDiagram
         +heartbeat()
     }
     class Journal {
-        -JournalStore store
+        -BlobStore store
+        -str account
         +append(entry)
         +in_doubt() list
         +replay() Book
@@ -1063,10 +1069,10 @@ classDiagram
         -Alerts alerts
         +reconcile(Book, BrokerAccount) bool
         +alarm(reason)
-        +report(run_directory)
+        +report(run)
     }
 
-    Journal o-- JournalStore
+    Journal o-- BlobStore
     Monitoring o-- Alerts
     OrderPath o-- Journal
     OrderPath o-- RiskGate
@@ -1151,7 +1157,10 @@ Eight choices in the two diagrams for a reviewer to check.
    `JournalEntry` is the one numbered record, chained to the entry before it.
    `BlobStore` is the storage port, S3 in shadow, paper and live and a
    memory-backed folder in a backtest, and one contract test suite runs
-   against both.
+   against both. `create` returns the stored blob's tag and `head` its stored
+   time, so a lease can be deleted only by the tag its creator got. `Journal`
+   writes through `BlobStore` too, for the account the broker adapter names,
+   so the journal has no storage port of its own.
 
 ## The life of an order
 
@@ -1325,6 +1334,7 @@ erDiagram
         int seq
         string hash
         string body
+        datetime built_at
         datetime stored_at
         string kind
         string client_order_id
@@ -1364,8 +1374,8 @@ each keeps its own rule.
    a key fixed by the run, the component, the session and, for an output
    file, its name. A snapshot lists the marketlake bars one session read, by
    partition and checksum. A signal record holds a value the run computed,
-   such as the hedge ratio, the z-score or the forecast, keyed by run, session
-   and name. Each blob's header names the blobs it came from, and a halt says
+   such as the hedge ratio, the z-score or the forecast, keyed by run,
+   component, session and name. Each blob's header names the blobs it came from, and a halt says
    why a session stopped. A deterministic component's blobs are regenerable
    from marketlake, the journal and the code, but data's snapshots and
    execution's account files capture what was true at the moment, and the
@@ -1380,8 +1390,12 @@ each keeps its own rule.
    one per broker account, outside every run, because the book is replayed
    from it across runs. Each entry is a blob at a key fixed by the account and
    its sequence number, holding the entry's body, its hash and the hash of the
-   entry before it, so the entry itself is the record, as the owner ruled.
-   `JournalStore` picks only the prefix, which is what differs by mode.
+   entry before it, and the time it was built, to the microsecond, so the
+   entry itself is the record. The owner's ruling that the journal is the only
+   numbered log, when SQLite was dropped, replaced the earlier ruling on
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that kept entries
+   in SQLite rows. `Journal` writes through `BlobStore` for the account the
+   broker adapter names.
    `ORDER` and `FILL` are read from journal entries rather than kept as
    records of their own. Each entry is stored before the step it records
    happens. The kill switch command, monitoring and execution can all write,
@@ -1393,14 +1407,15 @@ each keeps its own rule.
 5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
    owner to read, not as a record.
-6. **The simulated broker's account, an output file per session per simulated
-   account,** holds the resting orders and positions the simulator keeps, and
-   execution writes it like the account file it reads from a real broker.
-   Backtest and shadow use the same form, so an order a shadow run sends one
-   evening is still resting at the next open, in a new process or on a new
-   VM. Each simulated account has its own lease and kill switch, so a backtest
-   never shares the paper account's. This is a proposal for
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+6. **The simulated broker's account, one blob per simulated account per
+   session, outside every run,** holds the resting orders and positions the
+   simulator keeps. The simulated broker's adapter reads and writes it
+   through a `BlobStore` the entry point hands it, so execution's own outputs
+   are the same whichever broker it holds. Backtest and shadow use the same
+   form, so an order a shadow run sends one evening is still resting at the
+   next open, in another run or on a new VM. Each simulated account has its
+   own lease and kill switch, so a backtest never shares the paper account's.
+   This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 ## Where it runs
 
@@ -1413,7 +1428,7 @@ new one from the pinned release.
 ```mermaid
 flowchart TB
     subgraph host["The runtime's VM, separate from marketlake's, holding no state"]
-        start["Start unit<br/>takes the deployment's lease"]
+        start["Start unit<br/>starts the scheduler"]
         timer["Scheduler<br/>a systemd timer, once per session"]
         run["Supervisor and workers<br/>at a release the owner pinned"]
         work[("Working directory<br/>queues, lock files, error output")]
@@ -1433,7 +1448,6 @@ flowchart TB
     mlvm --> lake
     lake -->|"download, checksum checked"| mirror
     run <-->|"create-only writes, reads"| bucket
-    start <-->|"lease"| bucket
     secrets -. "execution worker's user only" .-> run
     run <--> broker
     run --> beat
@@ -1446,7 +1460,8 @@ Nine rules hold the deployment to the premise and the hard limits.
 1. **The owner pins the release.** The scheduler runs a tagged commit the owner
    merged and chose, so the code that traded is always known. Deploying is the
    owner's under hard limit 6. The release also pins boto3, from a version
-   recent enough to send S3's refuse-if-it-exists condition.
+   whose botocore, 1.35.67 or later, sends both S3's refuse-if-it-exists
+   condition and its conditional delete.
 2. **Nothing the platform must keep lives only on the VM.** Every blob a run
    writes and every journal entry is created in the runtime's bucket before
    anything relies on it. The VM's working directory holds only queues, lock
@@ -1455,30 +1470,48 @@ Nine rules hold the deployment to the premise and the hard limits.
    not take it. Captured bars, another of the three, live in marketlake,
    which backs up its own lake.
 3. **The broker key lives in a secret store, and only execution can read it.**
-   The execution worker runs as a Unix user of its own, and only that user can
-   obtain the credential that reads the secret store. The VM's shared S3
-   credential cannot read the secret, so another worker cannot reach the key
-   even by fetching the VM's own credentials. The key is read into the
-   execution process's environment and never into a file. It is a paper key
-   with no withdrawal or transfer permission, which is hard limit 5. A drill
-   on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a worker other than execution try to read it and fail. Which
-   secret store is the owner's choice, since it carries a cost.
+   The execution worker runs as a Unix user of its own, started by a systemd
+   unit with that user, never by a process that keeps root. Only root and one
+   provisioning user can reach the VM's instance metadata service, which a
+   firewall rule matched on the process's owner enforces across reboots,
+   because any process that can reach that service can fetch the VM's
+   credentials. At boot the provisioning step writes each worker user a
+   credential file only that user can read, never carried in the VM's start-up
+   data. Only the execution user's credential can read the secret store.
+   Execution reads the key from the store into its own memory, never into its
+   environment, which other processes and child processes can see, and never
+   into a file. It is a paper key with no withdrawal or transfer permission,
+   which is hard limit 5. A drill on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a worker other than execution
+   try each route to the key, the metadata service, the start-up data, another
+   process's environment and the unit's settings, and expects every one to
+   fail. Which secret store is the owner's choice, since it carries a cost.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
    can create the switch, which pulls it, and can never delete it. Clearing it
-   takes the owner's or the operator's credential, which never sits on the VM.
-   The hard caps blob can be written only by the owner's credential, because
-   raising a cap raises a capital limit, which hard limit 1 keeps for the
-   owner. Pulling the switch needs no deploy.
+   takes the owner's or the operator's credential, which never sits on the VM,
+   and the bucket's policy exempts those two from its refusal of deletes on
+   the switch's key. The hard caps blob can be written or deleted only by the
+   owner's credential, which an explicit refusal in the bucket's policy for
+   every other principal enforces, because raising a cap raises a capital
+   limit, which hard limit 1 keeps for the owner. Copying an older version
+   back counts as a write, so the same refusal covers it. Pulling the switch
+   needs no deploy.
 5. **The runtime's credential does only what the rules need.** It can create
-   and read blobs under the runs' prefixes and the journal's, create and read
-   the leases and delete one only with the condition naming its version,
-   create but not delete the switch, read the hard caps, and list each of
-   those prefixes, without which S3 answers a missing key with "access
-   denied" rather than "no such blob". It holds no permission to change the
-   bucket's policy, versioning or lifecycle. The bucket's policy refuses any
-   write on the runs' and journal's prefixes that lacks the refuse-if-it-exists
-   condition, and any delete outside the leases, and the bucket keeps every
-   version.
+   and read blobs under the runs', the journal's and the simulated accounts'
+   prefixes, create and read the leases, create but not delete the switch,
+   read the hard caps, and list each of those prefixes, without which S3
+   answers a missing key with "access denied" rather than "no such blob". A
+   drill reads an absent switch with that list right and expects "no such
+   blob". Only the supervisor's and execution's credentials may delete a
+   lease, and only with the tag the creator got, which leaves a delete marker
+   so the lease's history survives. No credential the runtime holds can delete
+   a version, or change the bucket's policy, versioning or lifecycle. The
+   bucket's policy, whose refusals name the runtime's principals, refuses any
+   write on those prefixes that lacks the refuse-if-it-exists condition, any
+   delete outside the leases, and any lease delete without the tag condition.
+   The release writes every blob with one single-part upload, never a
+   multipart one, which S3 cannot make conditional, and the policy marks a
+   multipart start so a stray one fails when it completes rather than
+   halfway.
 6. **A rollback is a pin to the previous tag.** Every blob carries a format
    version, and each release writes only formats the release before it can
    read, so the old release reads what the new one left. A session in flight
@@ -1500,9 +1533,10 @@ Nine rules hold the deployment to the premise and the hard limits.
    download. The runtime's credential for marketlake's bucket reads and never
    writes, and it gets its row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it.
-9. **A replacement VM takes the lease, then runs.** A start unit takes the
-   deployment's lease before the scheduler may start a supervisor. If another
-   VM holds it, the new VM halts and alarms, and starts nothing. Once it holds
+9. **A replacement VM's supervisor takes the lease, then runs.** The
+   supervisor takes the deployment's lease before it writes the plan or starts
+   a worker, the same in every mode. If another VM holds it, the supervisor
+   halts and alarms, and starts nothing. Once it holds
    the lease, there is nothing to restore, because every worker finds its
    place by checking its own keys in S3. Who starts a replacement VM, from
    which image, and how a person confirms the old VM is gone before clearing
@@ -1555,8 +1589,10 @@ An arrow means "may import". The diagram draws three rules.
    execution worker's entry point hands the risk module's `RiskGate` to the
    order path. The supervisor lives there too, and imports only `core`. It
    starts each worker as its own process, by name, and writes nothing but the
-   plan, the halts of workers that crashed, and its own lock, which `core`'s
-   storage contract covers.
+   plan, the deployment's lease, crash records and the halts of workers that
+   crashed, which `core`'s storage contract covers, besides its own lock on
+   the VM. Only the entry points read the plan's mode, and a module is handed
+   only the sessions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
 
@@ -1565,7 +1601,7 @@ arrow the diagram does not draw. A second test runs a day under the supervisor
 against a fake broker that fails on three things.
 
 1. An order whose client order id has no approval in the journal.
-2. An order whose `sending` entry is not yet committed to the journal.
+2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received. Together they turn
 test 3's "no order reaches the broker adapter without passing the gate" into
 something executed rather than reviewed. The price is two more tests to keep
@@ -1613,7 +1649,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Flat and linear cost models, `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction, `TargetPortfolio` naming every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| Order manager, `OrderPath`, journal store adapters, writing each journal entry to S3 before its step, simulated and paper brokers, the simulated broker's account log, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Order manager, `OrderPath`, the journal written through `BlobStore`, each entry stored before its step, fills keyed by the broker's fill id, simulated and paper brokers, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, daily report, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each module issue also writes its own worker's entry point under `runtime`,
@@ -1654,8 +1690,9 @@ accepted.
 | --- | --- | --- | --- |
 | Each component runs as its own process, in parallel, passing files | One process calling every module in memory, or a process per action | A file format and a round-trip test for every type that crosses between modules | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
 | The platform is an event pipeline: each component runs its processing loop when there is something new for it, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker waits for a message on its queue instead of being called | Ruled by the owner on 2026-10-29 |
-| Blobs keyed by the run, the component and the session, with a session result that lists a component's outputs or halts it, and the journal the one numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
-| A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Ruled by the owner on 2026-10-29, the folder this doc's reading of it |
+| Pure steps write create-only blobs at session keys, data's first write wins, a halt is a blob at the same kind of key, and the journal is the only numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
+| A session result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per session, which put execution's account file behind its own send | Two more result keys a session, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Proposed by the owner on 2026-10-29 and waiting on the owner's yes, the folder this doc's reading of it |
 | Each component keeps a queue, listens for events on it, and reads its inputs from files and writes its outputs to files. A message is sent to a component's queue whenever there is something new for it | File notifications through `watchdog`, or polling | A message has to reach every component with something new | Ruled by the owner on 2026-10-29 |
 | Each queue is a named pipe in the VM's working directory, written without waiting. The storage contract sends each message after a session result is written, to the readers one table in `runtime` declares, and again for the newest result when a worker starts, and a starting worker opens its pipe before it catches up | A socket, a queue server, or every write messaging every queue | A message is skipped when its reader is down or its pipe is full, so a starting worker catches up by checking its keys | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
@@ -1668,19 +1705,19 @@ accepted.
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution journals a fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise | Journaling every fill the broker reports | A fill from an order placed by hand at the broker halts the platform | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Execution reads the one target portfolio its session has and journals it whole before its first send. Each client order id comes from the session, the instrument, the target's hash and the order's place in the plan, and the order manager subtracts open orders as well as positions | Ids from a counter, or planning from positions alone | A deterministic portfolio construction, so a rerun gives the same target and the same ids | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution journals the whole target portfolio and its planned orders, each with its client order id, in one entry before its first send, reuses that list on a rerun in the same session, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book lies past the one its account file names | Planning again on a rerun, ids from the order's place in a fresh plan, or fills matched by order and quantity alone | A rerun cannot catch up on a changed target within a session | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument the book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| The gate's hard caps come from execution's own configuration, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
-| The journal store and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Two more ports in `core`, and a change to design.md's `## One runtime` | This doc |
+| The blob store, which holds the journal, and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Two more ports in `core`, and a change to design.md's `## One runtime` | This doc |
 | A missing, stale or empty input raises `Halt` | Defaulting a gap to the last value or to zero | A day with a data hiccup is a day with no trading | This doc, with the staleness rule on [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | One run per session after marketlake's evening sweep, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming. Which close the run reads that evening is question 10 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
-| Each run records the signals it computed | Recomputing them whenever two runs are compared | One more store, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per session, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 
 ## Questions for the owner
