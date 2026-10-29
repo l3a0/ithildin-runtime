@@ -298,7 +298,7 @@ evidence, not elapsed time.
   latency (L4973 to L5006).
 - **Startup** checks that every upstream worker has written its output for the
   session, with a manifest recording success, before execution may act. That is
-  the safeguard the reboot incident lacked (L4690). A worker is one action run
+  the safeguard the reboot incident lacked (L4690). A worker is one component run
   as its own process, as the design doc's
   [Processes and files](design.md#processes-and-files) says.
 - **Reconciliation** compares journaled positions with the broker's every day,

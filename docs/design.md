@@ -66,15 +66,18 @@ a session's input files, on disk.
 
 ## Processes and files
 
-The owner ruled on 2026-10-29 that each action runs as its own process, in
+The owner ruled on 2026-10-29 that each component runs as its own process, in
 parallel wherever the data allows, and that processes pass everything to each
-other through the filesystem. Two things follow from that.
+other through the filesystem. A component is one module of the charter's
+module table, such as data, the alpha model or execution. The ruling first
+said each action, and the owner narrowed it to each component the same day,
+because a process per action was too granular. Two things follow from it.
 
 1. **A failure stays where it happened.** In one process, an exception or a
    crash in the alpha model ends the run that also holds the order path. As
-   separate processes, a failed action leaves its own output missing and
+   separate processes, a failed component leaves its own output missing and
    nothing else. Every output upstream of it is already on disk, so recovering
-   means running one action again on those files rather than replaying the
+   means running one component again on those files rather than replaying the
    day.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is a file, so auditing a decision means reading
@@ -82,7 +85,7 @@ other through the filesystem. Two things follow from that.
    reproduces. The journal already records every step of an order. Files
    extend that record to every step before the order.
 
-A **worker** is one action run as its own process. It takes its inputs from
+A **worker** is one component run as its own process. It takes its inputs from
 files and writes its outputs to files, and reaches the outside world only
 through the adapter at its edge, such as the broker or the data source. The
 alpha worker, for example, reads a session's snapshot file and writes that
@@ -122,7 +125,8 @@ Seven rules make the files something a worker can trust.
    parse halts.
 3. **Each output names what made it.** The manifest names every input file by
    path and SHA-256, the release commit, a hash of the configuration, the
-   session the output is for, when it was written, and how the worker exited.
+   session the output is for, when it was written, and how the worker exited,
+   with the reason when it halted.
    The journal grows, so a manifest names it by the sequence number and hash
    of the last entry read rather than by a hash of the whole file. A worker
    killed by a signal or a crash writes nothing about itself, so the
@@ -143,45 +147,49 @@ Seven rules make the files something a worker can trust.
    that crashes is started again, reads the directory, and launches a worker
    only when its output is missing and no earlier copy of it still holds the
    worker's lock, because a child process outlives a parent that crashes. A
-   halt record is final for its session: a restarted supervisor launches
-   nothing more for that session, and only the owner or the operator clears
-   it. On any halt or failure, the supervisor journals the halt with its
+   halt record is final for its session: a restarted supervisor launches no
+   worker for that session again except monitoring, which writes the day's
+   report, and only the owner or the operator clears it. On any halt or failure, the supervisor journals the halt with its
    reason and raises the alarm. It records the release commit when a run
    starts, and a supervisor started on a different release halts rather than
    finish the run with mixed code. The dead-man check catches a supervisor
    that dies. Workers with no file between them run at the same time: once
-   the snapshot and the reconciled book exist, the alpha and risk workers run
-   in parallel.
-6. **One process at a time talks to each broker account.** The order path is
-   the only worker that holds the broker credential, and it holds an exclusive
-   lock on a file tied to the account, outside every run directory, for its
-   whole life. A second order path that cannot take the lock halts without
-   sending. It is not split into one process per order, because the risk gate
-   checks limits across every order and position in the account's journal,
-   such as the number of open orders and the net exposure. Two gates running
-   at once could each approve an order that together breach a limit, so rule 6
-   is the one place the ruling's "in parallel" gives way.
-   - **Recovery comes first.** The order path settles orders in doubt,
-     journals fills and reconciles before any model runs, then writes the
-     session's book file that the risk worker and portfolio construction read.
-     A mismatch halts there.
-   - **A rerun never sends twice.** The order path reads exactly one intents
-     file per session and journals its SHA-256 before the first send. It sends
-     an intent only when the intent's client order id has no journal entry,
-     and asks the broker about any order in doubt by that id. Running a worker
-     again is safe everywhere else, because a sent order cannot be unsent.
-   - **The gate trusts no other worker for its caps.** The order path reads
-     the hard caps on its limits from its own configuration, and a constraints
-     file from the risk worker can only tighten them.
+   the snapshot and the reconciled book exist, the alpha, risk and cost
+   workers run in parallel.
+6. **One process at a time talks to each broker account.** The execution
+   worker is the only one that holds the broker credential, and it holds an
+   exclusive lock on a file tied to the account, outside every run directory,
+   for its whole life. A second execution worker that cannot take the lock
+   halts without sending. The order manager, the risk gate, the journal and
+   the order path all run inside it, because the gate checks each order
+   against every order and position in the account's journal just before the
+   order is sent, and a check passed through a file could be stale by then.
+   The journal records each order the order manager plans, so they stay
+   readable without a file of their own.
+   - **Recovery comes first.** The execution worker settles orders in doubt,
+     journals fills, and writes the journal's book and the broker's positions
+     before any model runs. The monitoring worker reconciles the two and
+     writes the reconciled book that the risk worker and portfolio
+     construction read. A mismatch halts there.
+   - **A rerun never sends twice.** The execution worker reads exactly one
+     target portfolio per session and journals its SHA-256 before the first
+     send. Each client order id is derived from the session, the instrument
+     and that hash, so a rerun computes the same ids. It sends an order only
+     when its client order id has no journal entry, and asks the broker about
+     any order in doubt by that id. Running a worker again is safe everywhere
+     else, because a sent order cannot be unsent.
+   - **The gate trusts no other worker for its caps.** It reads the hard caps
+     on its limits from the execution worker's own configuration, and a
+     constraints file from the risk worker can only tighten them.
 7. **The kill switch is a file, and pulling it is a command.** The file lives
    at one path per account, outside every run directory. Every worker checks
-   for it when it starts, and the order path checks before every send. Any
+   for it when it starts, and the execution worker checks before every send. Any
    error other than "no such file" reads as pulled, so a switch that cannot be
    read stops trading. Pulling it, per the owner's ruling on
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11), creates the
-   file, journals the halt, raises the alarm, and launches the order path to
-   cancel every resting order under the account's lock, journaling each cancel
-   first. Only the owner's or the operator's command clears it, and the
+   file, journals the halt, raises the alarm, and launches the execution
+   worker to cancel every resting order under the account's lock, journaling
+   each cancel first. Only the owner's or the operator's command clears it, and the
    clearing is journaled.
 
 ### A worker works through a span of sessions
@@ -274,7 +282,7 @@ glossing it.
 | **target portfolio** | The positions portfolio construction asks for. The difference between it and the current positions is what execution trades |
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
-| **worker** | One action run as its own process. It takes its inputs from files, writes its outputs to files, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
+| **worker** | One component, meaning one module of the charter's module table, run as its own process. It takes its inputs from files, writes its outputs to files, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **supervisor** | The process that launches each worker, watches it, writes the halt record when an input is missing, and stops the run. It keeps no state outside the run directory |
 | **run directory** | The directory that holds every file one run's workers write, including each manifest and halt record. The journal and marketlake's lake live outside it |
 | **manifest** | The record written beside each output, naming every input by path and SHA-256, the release commit, a hash of the configuration, the session, when the output was written, and how the worker exited. An output counts only once its manifest records success |
@@ -308,10 +316,11 @@ once rather than re-argued.
 | Cut | Why |
 | --- | --- |
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
-| One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per action, passing files](#processes-and-files) |
+| One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
 | A message queue that deletes what it delivers, or a database server, between workers | A queue of that kind leaves nothing behind to audit, and a server is one more process that can fail. A file needs neither, and stays as the record. The price is that a worker polls or watches a directory instead of being sent its input |
 | One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
-| One order path process per order, or more than one per account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
+| One process per action, such as the order manager, the risk gate and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role. Splitting one would turn checks that must happen just before a send, such as the risk gate's, into files that can be stale by the time the order goes |
+| More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 6 takes a lock |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |
