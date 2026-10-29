@@ -19,7 +19,7 @@ The owner's part in reviewing this doc is two sections at the end.
 
 1. [Decisions](#decisions), a table where each row says what this doc chose, what it
    turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), nine questions that
+2. [Questions for the owner](#questions-for-the-owner), ten questions that
    need an answer before the build starts. Each carries a recommendation, so a
    yes is enough.
 
@@ -149,21 +149,23 @@ stored durably there, and read by every mode through one query. The owner ruled
 so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
 bar.
 
-1. **Captured daily bars,** one per ETF per session, which shadow, paper and
-   live trading read. marketlake has captured GLD and USO since 2026-10-29,
-   under [l3a0/marketlake#928](https://github.com/l3a0/marketlake/issues/928).
+1. **Captured bars,** daily and minute, which shadow, paper and live trading
+   read. [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) added GLD and USO to marketlake's roster on 2026-10-29.
+   Capture starts once the owner onboards them on marketlake's VM.
 2. **quantitative-trading's committed vintages,** imported once, which the
    backtest reads.
 3. **A one-time vendor download** of the most recent sessions, imported once.
-   The strategy's first z-score needs about 39 sessions of closes: 20 to fit
-   the first hedge ratio, then 19 more spreads to fill the z-score's 20-day
-   window. This download covers them until capture does.
+   The strategy's first z-score needs about 40 sessions of closes: 20 to fit
+   the first hedge ratio, which Chan's script then drops with the first 20
+   rows, and 20 more spreads to fill the z-score's 20-day window. Without the
+   drop it is 39. This download covers them until capture does.
 
 Every bar says whether it was captured or imported, and where an imported one
 came from, so a consumer can refuse imported history where only captured data
 will do. Imported history never overwrites a captured partition.
 
-One marketlake rule has to change for this to hold. Its VM keeps 22 sessions on
+For every mode to read the bars it needs through one query, one marketlake
+rule has to change. Its VM keeps 22 sessions on
 its own disk and deletes older bar partitions once its backup bucket holds
 them. The 2006 to 2012 history, and a lookback longer than 22 sessions, would
 then drop out of a read with no error, which is exactly the silent gap a halt
@@ -348,9 +350,14 @@ Three things the diagram rules out.
 ## One trading day
 
 A sequence diagram shows the same pieces in time order. This is one paper
-session with nothing wrong. The run starts after marketlake has captured the
-day's closing bars each evening, and the orders it sends fill at the next
-open. The notes split it into four phases.
+session with nothing wrong. The run starts each evening after marketlake's
+18:30 sweep, and the orders it sends fill at the next open. The notes split it
+into four phases.
+
+That sweep holds the session's minute bars but not its daily bar, because
+marketlake fetches a session's daily bar only once the next session has
+sealed. So which bar the evening run reads for the session's close is open, as
+question 10 asks.
 
 ```mermaid
 sequenceDiagram
@@ -425,8 +432,9 @@ The phases in order.
    replays the journal into the current book, and checks the book against the
    broker's positions. A run that starts on a book
    the broker disagrees with would trade the wrong difference.
-2. **Read the session's data.** Data reads the session's bars from marketlake
-   and records which ones it read before any model sees them.
+2. **Read the session's data.** Data reads the bars the session's lookback
+   needs from marketlake, about 40 sessions of each ETF, and records which ones
+   it read before any model sees them.
 3. **Decide.** The risk model sets the constraints, meaning the limits for this
    run. Portfolio construction builds the target portfolio within them, and the
    order manager turns the difference from the book into order intents.
@@ -513,7 +521,7 @@ sequenceDiagram
     X-->>R: broker's view
     R->>M: reconcile book against broker
     M-->>R: match
-    R->>D: has marketlake captured this session's bars?
+    R->>D: are this session's bars in marketlake?
     D-->>R: not yet
     R->>J: halt journaled, reason "data not ready"
     R->>M: alarm
@@ -526,7 +534,7 @@ phase 2.
 1. It settles the order it left half-sent, by asking the broker about it
    rather than sending it again.
 2. It journals any fills, replays the journal and reconciles.
-3. It finds the session's bars not yet captured in marketlake and halts. The charter gives the operator the
+3. It finds the session's bars not yet in marketlake and halts. The charter gives the operator the
 startup order: execution may act only once every upstream module reports
 itself current for the session. "Not ready" is a halt, never an empty forecast.
 
@@ -1228,7 +1236,7 @@ accepted.
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | The run controller and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the run controller with `core`, which cannot work because it imports every module, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the run controller exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
-| One run per session after marketlake's evening capture, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| One run per session after marketlake's evening sweep, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming. Which close the run reads that evening is question 10 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The journal is JSON Lines with a hash chain, fsynced per entry | SQLite | No queries without loading the file, which slice 1 does not need. In return the file is readable in a terminal and simple to back up | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more store, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
@@ -1244,11 +1252,12 @@ Each question has a recommendation, so a review can answer it with a yes.
    confirm that before choosing it. Interactive Brokers has one, but it needs a
    gateway process running beside the platform.
 2. **Where do live GLD and USO bars come from?** The recommendation was to add
-   both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake#928](https://github.com/l3a0/marketlake/issues/928) did on 2026-10-29.
-   marketlake captures forward from the day a symbol is added and keeps no
-   history from before it. So the first z-score's 39 sessions come from a
-   vintage recorded once from a vendor download, or the paper run waits 39
-   sessions before its first trade. The owner ruled on 2026-10-29 that every
+   both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) did on
+   2026-10-29. Capture starts once the owner onboards them on marketlake's VM.
+   marketlake captures forward from that day and keeps no history from before
+   it. So the first z-score's 40 or so sessions come from a vintage recorded
+   once from a vendor download, or the paper run waits that long before its
+   first trade. The owner ruled on 2026-10-29 that every
    source goes through marketlake, so that download is imported there too, and
    [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
 3. **How large is one unit on paper?** The replication has no capital account.
@@ -1300,3 +1309,19 @@ Each question has a recommendation, so a review can answer it with a yes.
    module starts. In return the shared shapes land once, reviewed on their own,
    rather than inside whichever module happens to go first. The owner accepted
    it on 2026-10-29, and the work is [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
+10. **Which bar does the evening run read for the session's close?**
+    marketlake fetches a session's official daily bar only at the next
+    evening's sweep, once the following session has sealed. Two choices follow.
+    1. **Wait for the official daily bar.** The run for session D reads D's
+       daily bar on the evening of D+1, and its orders fill at the open of
+       D+2, two sessions after the close the signal used rather than one.
+    2. **Read the close marketlake captures that evening.** marketlake records
+       each session's 16:15 quote and its minute bars the same evening, and it
+       already judges the daily bar against that quote's close when the bar
+       lands. The run reads that close and trades the next open, one session
+       after the signal, as shadow and paper assume above.
+
+    The recommendation is the second, with the next evening's daily bar
+    checked against the close the run used, and a disagreement journaled and
+    reported. The price is a close that is marketlake's capture rather than
+    the vendor's official candle.
