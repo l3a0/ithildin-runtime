@@ -757,9 +757,8 @@ gives that user alone. Nothing here sits in a file tracked in this
 repository.
 [architecture.md](architecture.md#where-it-runs) lists each credential the
 design needs and what it may do. The owner's own machine may still keep
-developer settings under `~/.config/ithildin-runtime/`. `CLAUDE.md`'s
-`## Secrets and machine paths` still names the machine's keychain, and is the
-owner's to update.
+developer settings under `~/.config/ithildin-runtime/`. The owner updated
+`CLAUDE.md`'s `## Secrets and machine paths` on 2026-10-29 to match.
 
 No setting exists yet. The first broker or data-vendor credential gets a row
 here in the change that first reads it, naming where it lives and what reads
