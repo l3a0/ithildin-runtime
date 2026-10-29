@@ -120,14 +120,16 @@ flowchart LR
         loop["The live loop<br/>data, alpha, risk, cost,<br/>portfolio, execution, monitoring"]
     end
     qt[("quantitative-trading<br/>committed vintages")]
-    lake[("marketlake<br/>daily bars, captured")]
+    vendor[("Vendor download<br/>recent sessions, once")]
+    lake[("marketlake<br/>captured and imported bars")]
     broker["Broker<br/>paper account"]
     alerts["Alert channel"]
     heartbeat["Heartbeat service<br/>outside the machine"]
     github["GitHub<br/>code, issues, board"]
 
-    qt -->|"history for the backtest"| loop
-    lake -->|"one bar per ETF per session"| loop
+    qt -->|"imported once"| lake
+    vendor -->|"imported once"| lake
+    lake -->|"bars, through one query"| loop
     loop -->|"orders"| broker
     broker -->|"acks, fills, positions"| loop
     loop -->|"daily report, alarms"| alerts
@@ -140,13 +142,22 @@ flowchart LR
     github -->|"pinned release"| loop
 ```
 
-The platform reads history from two places.
+The platform reads bars from one place, marketlake, the sibling repository
+that captures market data before anything computes on it. The sources differ
+in volume, cadence and shape, so each is transformed into marketlake once,
+stored durably there, and read by every mode through one query. The owner ruled
+so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
+bar.
 
-1. **Committed vintages from quantitative-trading,** which the backtest
-   replays.
-2. **marketlake,** the sibling repository that captures market data before
-   anything computes on it. Paper trading reads one new bar per ETF from it
-   each session.
+1. **Captured daily bars,** one per ETF per session, which paper trading reads.
+2. **quantitative-trading's committed vintages,** imported once, which the
+   backtest reads.
+3. **A one-time vendor download** of the most recent sessions, imported once,
+   so the 20-session lookback has history before capture covers it.
+
+Every bar says whether it was captured or imported, and where an imported one
+came from, so a consumer can refuse imported history where only captured data
+will do. Imported history never overwrites a captured partition.
 
 It sends orders to one place, the broker's paper account.
 
@@ -177,7 +188,6 @@ adapters for its mode when a run starts.
 ```mermaid
 flowchart TB
     subgraph adapters_in["Adapters in"]
-        replay["Vintage replay"]
         lakesrc["marketlake reader"]
         histclock["History clock"]
         wallclock["Wall clock"]
@@ -210,7 +220,6 @@ flowchart TB
         alertsink["Alerts and heartbeat"]
     end
 
-    replay -. "DataSource" .-> data
     lakesrc -. "DataSource" .-> data
     histclock -. "Clock" .-> modules
     wallclock -. "Clock" .-> modules
@@ -225,13 +234,15 @@ adapter for each port.
 
 | Mode | Data source | Clock | Broker, and when it fills | Journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | Vintage replay | History clock | Simulated, at the signal's close | A temporary file, deleted when the backtest ends | Recorded, not sent |
-| Shadow | marketlake reader | Wall clock | Simulated, at the next open | Shadow journal | Sent |
-| Paper | marketlake reader | Wall clock | Paper broker, at the next open | Paper journal | Sent |
-| Live | marketlake reader | Wall clock | Live broker, at the next open | Live journal | Sent |
+| Backtest | marketlake reader, imported history | History clock | Simulated, at the signal's close | A temporary file, deleted when the backtest ends | Recorded, not sent |
+| Shadow | marketlake reader, captured bars | Wall clock | Simulated, at the next open | Shadow journal | Sent |
+| Paper | marketlake reader, captured bars | Wall clock | Paper broker, at the next open | Paper journal | Sent |
+| Live | marketlake reader, captured bars | Wall clock | Live broker, at the next open | Live journal | Sent |
 
-Shadow reads live bars and decides real orders, but fills them in the
-simulated broker, so no order reaches any broker. The diagram leaves out the
+Every mode reads bars through the same marketlake reader. The modes differ in
+which bars they read and which clock drives them, not in how they read. Shadow
+reads live bars and decides real orders, but fills them in the simulated
+broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
 
 [design.md](design.md#one-runtime) names three adapters, the ones that change
@@ -259,7 +270,7 @@ numbers name the processes, not their order. The next section gives the order.
 
 ```mermaid
 flowchart LR
-    vendor(["marketlake or a<br/>committed vintage"])
+    vendor(["marketlake"])
     brokerx(["Broker"])
     ownerx(["Owner"])
 
@@ -273,17 +284,18 @@ flowchart LR
     p8["8 Reconcile"]
     p9["9 Report and alarm"]
 
-    d1[("D1 Vintages")]
+    d1[("D1 Snapshots<br/>and signals")]
     d2[("D2 Security master")]
     d3[("D3 Journal")]
     d4[("D4 Run reports")]
 
     vendor -->|"bars"| p1
-    p1 -->|"bars as first seen"| d1
+    p1 -->|"which bars were read"| d1
     d2 -->|"instrument ids"| p1
     p1 -->|"snapshot"| p2
     p1 -->|"snapshot"| p3
     p2 -->|"forecast"| p5
+    p2 -->|"hedge ratio, z-score, forecast"| d1
     p3 -->|"constraints"| p5
     p4 -->|"cost estimate"| p5
     d3 -->|"current book"| p5
@@ -316,10 +328,11 @@ Three things the diagram rules out.
    record of what it holds and what orders are open. The broker's positions are
    used only at process 8, where a disagreement halts trading rather than
    quietly replacing the platform's record.
-3. **Bars reach the models only after process 1 has stored them.** A model
-   never reads a feed directly, so every number it acted on can be read back
-   later. Captured market data is the first of the three things
-   [design.md](design.md#premise) says cannot be recovered.
+3. **Bars reach the models only after process 1 has recorded which ones were
+   read.** A model never reads a feed directly, so every number it acted on can
+   be read back later from marketlake. Captured market data is the first of the
+   three things [design.md](design.md#premise) says cannot be recovered, and
+   marketlake is where it is kept.
 
 ## One trading day
 
@@ -635,6 +648,7 @@ classDiagram
         +float close
         +int volume
         +str basis
+        +str origin
         +str vintage_id
         +datetime first_seen
     }
@@ -804,9 +818,10 @@ Six choices in the two diagrams for a reviewer to check.
    forecast is per instrument, so this is a proposal for
    [#6](https://github.com/l3a0/ithildin-runtime/issues/6) rather than a
    decision here.
-2. **A bar carries where it came from.** `vintage_id` names the vintage it was
-   read from, and `first_seen` is when the platform first held it. `basis`
-   says which price the series carries, such as `raw` for as traded or
+2. **A bar carries where it came from.** `origin` says whether marketlake
+   captured it or imported it, `vintage_id` names the vintage it was read
+   from, and `first_seen` is when the platform first held it. `basis` says
+   which price the series carries, such as `raw` for as traded or
    `adjusted` for split and dividend adjusted, as quantitative-trading's
    vintage records do. `vintage_id` and `first_seen` come from the data
    engineer's duty, in the charter, to store when each value became available
@@ -922,6 +937,7 @@ erDiagram
     JOURNAL_ENTRY }o--|| ORDER : "records a step of"
     ORDER ||--o{ FILL : "fills by"
     RUN ||--|| REPORT : "ends with"
+    RUN ||--o{ SIGNAL : "records"
 
     VINTAGE {
         string id
@@ -946,6 +962,13 @@ erDiagram
         string release
         string outcome
     }
+    SIGNAL {
+        string run_id
+        date session
+        string name
+        float value
+        string release
+    }
     JOURNAL_ENTRY {
         int seq
         datetime at
@@ -968,21 +991,28 @@ erDiagram
     }
 ```
 
-The entities live in four stores, and each store keeps its own rule.
+The entities live in five stores, one of them outside this repository, and
+each keeps its own rule.
 
-1. **Vintages, D1, hold `VINTAGE`, `BAR` and `SNAPSHOT`.** They are written once
-   and never changed. The format, the file names, the manifest and the refusal
-   to overwrite are quantitative-trading's, from `src/chan/vintage.py` there.
-   That module opens a new file with `open(path, "xb")`, which fails if the
-   file exists, so an overwrite raises `VintageRefused` instead of happening. A
-   paper run's captured bars are vintages too, and the snapshot is the list of
-   bars the run read. Their files live in a private store and only their
-   checksums are committed, as question 4 settles, the way
-   quantitative-trading's `src/chan/archive.py` keeps vendor bars it may not
-   publish.
-2. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
+1. **marketlake holds `VINTAGE` and `BAR`.** Every bar, captured or imported,
+   lives there, written once and never changed, with its source and checksum
+   in marketlake's manifest. marketlake's lake is private and backed up off the
+   machine, which is what question 4 asks of captured bars. The checksums
+   question 4 asks to commit are the partition checksums a snapshot records,
+   for any run a test or a report pins. Imported history
+   from quantitative-trading arrives with that repository's own checksums,
+   from its `data/vintages.jsonl`, so the import can prove it read the
+   recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
+2. **Snapshots and signals, D1, hold `SNAPSHOT` and `SIGNAL`.** A snapshot lists
+   the marketlake bars one run read, by partition and checksum. A signal record
+   holds a value the run computed, such as the hedge ratio, the z-score or the
+   forecast, keyed by run, session and release. Both are regenerable from
+   marketlake and the code, so neither is a source of truth. They exist so a
+   question such as "how did the backtest's z-score on a session differ from
+   the shadow run's" is a lookup rather than a recomputation.
+3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
    that changes only through a pull request.
-3. **The journal, D3, holds `JOURNAL_ENTRY`.** `ORDER` and `FILL` are read from
+4. **The journal, D3, holds `JOURNAL_ENTRY`.** `ORDER` and `FILL` are read from
    journal entries rather than kept as files of their own. The writer only ever
    appends, one JSON object per line, and flushes each entry to disk with
    `fsync` before the step it records happens. Each entry carries the hash of
@@ -995,7 +1025,7 @@ The entities live in four stores, and each store keeps its own rule.
    it, reads the last entry's sequence number and hash before writing the new
    entry. Without that, two writers could both chain from the same last entry,
    giving two entries one sequence number and splitting the chain.
-4. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
+5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run keeps it for
    the owner to read, not as a record.
 
@@ -1011,7 +1041,7 @@ flowchart TB
         run["ithildin-runtime<br/>at a release the owner pinned"]
         keychain["Keychain<br/>broker paper key"]
         cfg["~/.config/ithildin-runtime/<br/>limits, kill switch flag"]
-        store[("~/.local/share/ithildin-runtime/<br/>journal, vintages, reports")]
+        store[("~/.local/share/ithildin-runtime/<br/>journal, snapshots, signals, reports")]
         timer --> run
         keychain -.-> run
         cfg --> run
@@ -1036,9 +1066,10 @@ Four rules hold the deployment to the premise and the hard limits.
 1. **The owner pins the release.** The scheduler runs a tagged commit the owner
    merged and chose, so the code that traded is always known. Deploying is the
    owner's under hard limit 6.
-2. **The journal and vintages leave the machine every day.** They are two of
-   the three things the premise says cannot be recovered, so a disk failure
-   must not take them.
+2. **The journal leaves the machine every day.** It is one of the three things
+   the premise says cannot be recovered, so a disk failure must not take it.
+   Captured bars, another of the three, live in marketlake, which backs up its
+   own lake.
 3. **The broker key lives in the keychain.** The run reads it into its own
    environment and never into a file, tracked or not. It is a paper key with
    no withdrawal or transfer permission, which is hard limit 5.
@@ -1106,7 +1137,7 @@ new arrow.
 
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
-| 1. The backtest reproduces a replicated strategy | Backtest | Vintage replay, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
+| 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected | The orders on each day, and a halt with no orders on each faulted day |
 | 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the fake broker | Six refusals, no import of `execution.brokers` outside `runtime`, and no broker call from outside `OrderPath` |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip a run's ping | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
@@ -1136,8 +1167,9 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 
 | Piece | Written on |
 | --- | --- |
+| Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) |
 | `core`'s shared types and every `Protocol`, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| `Bar`, `Snapshot`, vintage replay, marketlake reader, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Flat and linear cost models | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
@@ -1184,13 +1216,9 @@ accepted.
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | One run per session after marketlake's evening capture, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The journal is JSON Lines with a hash chain, fsynced per entry | SQLite | No queries without loading the file, which slice 1 does not need. In return the file is readable in a terminal and simple to back up | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Share quantitative-trading's vintage code through the shared `ithildin-core` repository | A second copy here | A release of `ithildincore`, that repository's package, before [#5](https://github.com/l3a0/ithildin-runtime/issues/5) can use it | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
+| Each run records the signals it computed | Recomputing them whenever two runs are compared | One more store, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-
-The vintage row rests on quantitative-trading's `CLAUDE.md`, which sends code
-both repositories use to `ithildin-core`, because two copies drift without
-either looking wrong. This repository's README plans to share code with its
-siblings the same way.
 
 ## Questions for the owner
 
@@ -1206,7 +1234,9 @@ Each question has a recommendation, so a review can answer it with a yes.
    today. marketlake captures forward from the day a symbol is added and keeps
    no history from before it. So the first 20 sessions, which the hedge ratio
    and z-score need, come from a vintage recorded once from a vendor download,
-   or the paper run waits 20 sessions before its first trade.
+   or the paper run waits 20 sessions before its first trade. The owner ruled
+   on 2026-10-29 that every source goes through marketlake, so both live bars
+   and that download land there, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it.
 3. **How large is one unit on paper?** The replication has no capital account.
    The recommendation is to size one unit so the gross position is a fixed
    dollar amount the owner sets, recorded in the run's configuration. The owner
