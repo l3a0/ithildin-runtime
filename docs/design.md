@@ -61,8 +61,8 @@ module table, and three adapters at its edges.
 The price is that every module has to be written against an event from its
 first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
-lines of code. The next section says what that event is: a session result,
-one blob in storage that lists a component's outputs for a session. Only the
+lines of code. The next section says what that event is: a decision result,
+one blob in storage that lists a component's outputs for a decision. Only the
 data worker and the supervisor read the clock.
 
 ## Processes and files
@@ -79,8 +79,8 @@ because a process per action was too granular. Two things follow from it.
    separate processes, a failed component stops producing its own output and
    nothing else. Every output upstream of it is already stored, so recovering
    means starting one component again, which reads the blobs that exist and
-   writes the ones that are missing, rather than replaying the day. A session
-   that halted stays halted, and the next session runs once the cause is gone.
+   writes the ones that are missing, rather than replaying the day. A decision
+   that halted stays halted, and the next decision runs once the cause is gone.
 2. **Every input and output can be read afterwards.** Each value that passes
    from one module to another is a blob whose header names the blobs it was
    made from. Auditing a decision means reading those blobs rather than
@@ -88,7 +88,7 @@ because a process per action was too granular. Two things follow from it.
    step of an order. The blobs extend that record to every step before the
    order.
 
-The owner ruled six more things about the shape the same day.
+The owner ruled nine more things about the shape the same day.
 
 1. **An event pipeline.** A component runs its processing loop when there is
    something new for it, and what it produces is what sets the components
@@ -100,8 +100,8 @@ The owner ruled six more things about the shape the same day.
 3. **A stateless VM, with files as blobs in S3.** The VM keeps no state that
    matters. Every file is a blob, an object in storage, and the storage is
    S3, which marketlake already uses.
-4. **Blobs keyed by session, with the journal the only log.** Pure steps write
-   create-only blobs at session keys, with headers naming what each was made
+4. **Blobs keyed by decision, with the journal the only log.** Pure steps write
+   create-only blobs at decision keys, with headers naming what each was made
    from. Data's first write wins. A halt is a blob at the same kind of key.
    The journal is the only numbered log. Earlier rulings the same day had kept
    an event log per component, first in SQLite and then as numbered blobs, and
@@ -115,6 +115,14 @@ The owner ruled six more things about the shape the same day.
    in git, any step that changes state first fetches the latest state from
    where it is kept, brings its own view up to date, and resolves any
    conflict before it changes anything.
+7. **Trading at any time of day.** The platform fixes no time of day for a
+   decision. The ruling answered a draft that started every run in the
+   evening, after marketlake's 18:30 sweep, with orders filling at the next
+   open.
+8. **As often as a strategy needs.** A strategy decides as frequently as it
+   needs to, from once a day to many times a day.
+9. **Open to other strategies.** A later strategy plugs in without changing
+   the platform's shared modules.
 
 Every worker is its own process, so this doc takes the in-memory store as a
 memory-backed folder, such as `tmpfs` on Linux or a RAM disk on macOS, which
@@ -124,21 +132,21 @@ The rules below are this doc's design for those rulings, proposed to
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and not part of the
 rulings themselves.
 
-Seven entries define the design's terms.
+Ten entries define the design's terms.
 
 1. A **blob** is one object in storage, written once and never replaced. An
    **output file** is a blob that holds one thing a component produced for
-   one session, such as a snapshot or a forecast, at a key fixed by the run,
-   the component's stage, the session and the output's name.
-2. A **stage** is one step a component takes in a session. Most components
+   one decision, such as a snapshot or a forecast, at a key fixed by the run,
+   the component's stage, the decision and the output's name.
+2. A **stage** is one step a component takes in a decision. Most components
    take one. Execution takes two, recover and send, and monitoring takes two,
    reconcile and report, because each acts at two points in the day.
-3. A **session result** is the blob a stage writes last for a session, at a
-   key fixed by the run, the stage and the session. It either lists the
-   stage's output files for the session, by key and SHA-256, or it is a
-   **halt**, saying why the session cannot go on. A stage has one result key
-   per session, so it ends each session exactly once, with outputs or with a
-   halt. An **event** is the arrival of a session result, which a message on a
+3. A **decision result** is the blob a stage writes last for a decision, at a
+   key fixed by the run, the stage and the decision. It either lists the
+   stage's output files for the decision, by key and SHA-256, or it is a
+   **halt**, saying why the decision cannot go on. A stage has one result key
+   per decision, so it ends each decision exactly once, with outputs or with a
+   halt. An **event** is the arrival of a decision result, which a message on a
    queue announces.
 4. A **worker** is one component run as its own process. It listens on its
    queue, reads its input blobs, writes its output blobs, and reaches the
@@ -146,17 +154,31 @@ Seven entries define the design's terms.
    the data source. A worker imports `core`, the shared types, and no sibling
    module, and shares no memory with any other worker.
 5. The **supervisor** is the process that starts a run's workers, writes the
-   run's **plan**, a blob listing the run's mode and its sessions in order,
+   run's **plan**, a blob listing the run's mode and its decisions in order,
    watches the workers and stops the run.
 6. A **run** keeps all of its blobs under the run's own prefix in storage. The
    VM keeps only a working directory for the run, holding its queues, its lock
-   files and its workers' error output, and none of that is kept. A session
-   here is one trading session.
-7. A component's **listing** is its stages' blobs, listed by session. Each
-   blob's header names the run, the session, and every input blob it was made
+   files and its workers' error output, and none of that is kept. In shadow,
+   paper and live a run is one trading day of one deployment, and in a
+   backtest it is the whole span.
+7. A component's **listing** is its stages' blobs, listed by decision. Each
+   blob's header names the run, the decision, and every input blob it was made
    from, by key and SHA-256, along with the release commit and a hash of the
    configuration, so the listing is the component's record and each entry in
    it leads back to its inputs.
+8. A **decision** is one moment at which a deployment decides, such as 15:50
+   on one trading day for a daily strategy, or every five minutes through the
+   day for a faster one. Its key is the decision time in the exchange's time
+   zone, written so keys sort in time order. Every stage writes one result
+   per decision.
+9. A **strategy** is the part of the platform that differs from one way of
+   trading to the next: the instruments it trades, its **schedule** of
+   decision times, the data it needs, its alpha model, and its configuration.
+   Data, risk, cost, portfolio construction, execution and monitoring are
+   shared by every strategy.
+10. A **deployment** puts one or more strategies on one broker account in one
+    mode. It is what the deployment's lease covers, and every key a run
+    writes sits under the deployment's name.
 
 Three stores sit outside every run, because they outlive any one run.
 
@@ -166,7 +188,7 @@ Three stores sit outside every run, because they outlive any one run.
    stored before the step it records happens, which is how hard limit 4 holds
    through the loss of the VM.
 3. A simulated account's resting orders and positions, one blob per account
-   per session, which the simulated broker's adapter reads and writes through
+   per decision, which the simulated broker's adapter reads and writes through
    the storage port, so a shadow order sent one evening is still resting at
    the next open, in another run.
 
@@ -217,7 +239,7 @@ Ten rules make the blobs something a worker can trust.
    the entry was built, to the microsecond, beside the time S3 records, which
    holds whole seconds only. A write S3 refuses with a conflict, or does not
    answer, is retried until a deadline, and then halts. An S3 outage longer
-   than the deadline therefore loses that session's captures, which the halt
+   than the deadline therefore loses that decision's captures, which the halt
    reports.
 2. **Two kinds of stage, declared in one place.** The one table in `runtime`
    that declares each stage's inputs also declares its kind, and the storage
@@ -238,17 +260,17 @@ Ten rules make the blobs something a worker can trust.
    capture wins. A resumed capturing stage reads its stored capture and
    derives every remaining output from it, never from a fresh read, and a
    fresh read that differs from the stored one is stored too, under its own
-   attempt number, and named in the session result rather than discarded.
+   attempt number, and named in the decision result rather than discarded.
 3. **A worker resumes by reading what exists.** A worker reads the run's
-   plan, then for each session checks its stages' result keys. A result there
-   means the session is done. If none is there, the worker checks the result
-   keys of its inputs for the session. If every input has a result, it reads
+   plan, then for each decision checks its stages' result keys. A result there
+   means the decision is done. If none is there, the worker checks the result
+   keys of its inputs for the decision. If every input has a result, it reads
    the output files those results list, computes, writes each output file it
    does not find already stored, under rule 2, and writes its own result last.
    If an input has no result, it waits. A worker keeps what it has read in its
    own memory and nowhere else, so a replacement VM has nothing to restore,
    and a reader needs no cursor, because the keys it needs are fixed by the
-   session. Since a stage has one result key per session, a session can never
+   decision. Since a stage has one result key per decision, a decision can never
    end that stage with both outputs and a halt, or twice. A worker whose result
    write S3 refuses because the supervisor has already written a halt there,
    as rule 5 says, takes the halt as final.
@@ -257,7 +279,7 @@ Ten rules make the blobs something a worker can trust.
    and others write to, one per worker. One table in `runtime` is the only
    place a worker's inputs are declared. Each worker's entry point hands it
    its inputs from that table, and hands the storage contract the list of
-   workers that read its outputs. After a worker writes a session result, the
+   workers that read its outputs. After a worker writes a decision result, the
    contract sends a message to the queue of every worker on that list. A
    message names the result's key, or says the kill switch was pulled. Every send opens the
    pipe without waiting. A worker that is not running has no listener, and a
@@ -271,9 +293,9 @@ Ten rules make the blobs something a worker can trust.
    crashes between its result and its message has already stored the result,
    so when it starts again it sends a message for its newest result before
    anything else, and a deadline catches a writer that never starts again. A
-   woken worker checks every session it has not finished rather than only the
+   woken worker checks every decision it has not finished rather than only the
    one a message names, so a repeated or skipped message costs nothing.
-5. **Each blob names what made it.** Its header names its run, its session,
+5. **Each blob names what made it.** Its header names its run, its decision,
    its kind, output or halt, its format version, every input blob by key and
    SHA-256, the release commit and a hash of the configuration. A reader
    checks each input's SHA-256 against the header that named it and halts on
@@ -285,32 +307,32 @@ Ten rules make the blobs something a worker can trust.
    so the supervisor writes a crash record at a key of its own, fixed by the
    worker and its process, carrying the exit status or signal and the end of
    its error output, with anything shaped like a credential masked. If the
-   worker's stage has no result for the session, the supervisor then writes a
+   worker's stage has no result for the decision, the supervisor then writes a
    halt there that names the crash record and every output file it finds
-   under the session's prefix, so no stored capture is left unlisted. Each
+   under the decision's prefix, so no stored capture is left unlisted. Each
    worker writes its process id and the path of its error output into a lock
    file in the VM's working directory, so a supervisor started after a crash
    can do the same for a worker it did not start.
 6. **An absent, stale or empty input halts. It never reads as "trade
-   nothing".** A blob whose header names the wrong session halts as stale. An
+   nothing".** A blob whose header names the wrong decision halts as stale. An
    output file with no entries halts unless it carries an explicit "trade
    nothing" mark, and that mark means hold every position and send no order,
-   never a target of zero. A worker that cannot process a session writes a
-   halt as its result for the session, with the reason, and then exits cleanly or moves to its
-   next session, because a halt is not a crash. Hard limit 3 came from an
+   never a target of zero. A worker that cannot process a decision writes a
+   halt as its result for the decision, with the reason, and then exits cleanly or moves to its
+   next decision, because a halt is not a crash. Hard limit 3 came from an
    execution server that read "no signals" as "hold nothing" (L4690). Here,
-   "has today's forecast been written" is a check of one result key.
+   "has this decision's forecast been written" is a check of one result key.
 7. **A halt flows down the pipeline, and the supervisor keeps no state of its
    own.** The scheduler starts the supervisor, which first takes the
    deployment's lease, as rule 9 says. The supervisor holds an exclusive lock
    on the run's working directory, so two supervisors on one VM never share
    one. It writes the run's plan, which a restarted supervisor finds already
    there, and starts every worker at once. Every worker, in every mode, exits
-   once it has a result for every session in the plan. A
+   once it has a result for every decision in the plan. A
    worker that exits before then has failed, and the reason names it.
-   - **A halt is passed on.** A worker whose input's result for a session is a
+   - **A halt is passed on.** A worker whose input's result for a decision is a
      halt writes its own halt as its result, naming the one it found, and goes
-     on to its next session.
+     on to its next decision.
    - **A failure stops the run.** A worker that crashes, or misses its
      deadline, has failed. Its deadline runs from the moment its last needed
      input appears, so waiting on a slow upstream worker never counts against
@@ -318,18 +340,32 @@ Ten rules make the blobs something a worker can trust.
      and stops every worker in the run but monitoring.
    - **Monitoring tells the owner once.** Monitoring, the one worker that reads
      every component's results and holds the alert channel, journals every
-     halt with its reason and raises one alarm per session, on the halt that
-     names no earlier one. Before it alarms, it writes an output file naming
+     halt with its reason and raises one alarm per cause, on the halt that
+     names no earlier one. A halt that holds later decisions, and a run of
+     halts with the same reason, alarm once, and again only after a decision
+     succeeds or the halt is cleared. Before it alarms, it writes an output file naming
      the halt it is handling, so a restarted monitoring finds that file and
      neither repeats nor drops an alarm. On a halted day it pings
      the heartbeat service's failure address, so the owner hears even if the
      alarm sent from the machine is lost.
-   - **A halt is final for its session.** This finality is this doc's choice
+   - **A halt is final for its decision.** This finality is this doc's choice
      rather than part of the ruling. The owner ruled on 2026-10-29 that the
      owner or the operator clears a halt, with a command that journals who
      cleared it, why, and any correction a person made, such as a journaled
      override that explains a mismatch. Clearing never reruns the halted
-     session. The next session runs as usual.
+     decision.
+   - **A halt that needs a person holds every later decision on the
+     account.** A halt for one decision's input, such as a missing or stale
+     quote, ends that decision, and the next decision runs as usual. A halt
+     whose cause needs a person holds every later decision of every
+     deployment on the account until it is cleared: a book that disagrees with
+     the broker, a fill or a broker move the platform did not ask for, a
+     journal that fails its check, a lease another VM holds, and a refusal by
+     the risk gate. Execution reads the account's open halts before it plans.
+     Once a day the difference is small, because the next decision is a day
+     away. Every five minutes, the next decision would meet the same cause
+     before a person could look, and a gate refusal would be planned again
+     against the same book.
 
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again starts each worker whose lock is free. A
@@ -393,12 +429,12 @@ Ten rules make the blobs something a worker can trust.
       replays from the journal. An open order at the broker that matches a
       `sending` entry, and a fill within that order's quantity, are the
       platform's own and bring the book up to date. Any other difference
-      halts the session for a person, because the broker moved in a way the
+      halts the decision for a person, because the broker moved in a way the
       platform did not ask for. Only then does it plan. It journals the
       planned orders, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
       and a hash and the time of the broker state it fetched, before its first
-      send. A rerun in the same session reuses that list and never
+      send. A rerun in the same decision reuses that list and never
       plans again, so an order's id never shifts between attempts.
    3. Its account file names the journal entry it replayed through, and the
       send stage's sync names the entry it synced through. Before it plans,
@@ -444,7 +480,7 @@ Ten rules make the blobs something a worker can trust.
     create the switch from anywhere, cancel at the broker's own console, and
     journal both as a human override once the VM is back.
 
-### A worker works through a span of sessions
+### A worker works through a span of decisions
 
 The cost of starting a process decides how a backtest keeps
 [one runtime](#one-runtime). On the owner's M1 Max under Python 3.12, a launch
@@ -453,20 +489,21 @@ imports pyarrow 0.2 to 0.3 seconds, and one that imports pandas about 1
 second. These are exploratory measurements, the mean of 20 to 50 launches on
 one machine, outside the test suite, and a rerun on a busy machine measured
 pyarrow higher. Read them as a scale rather than a pin. The backtest that test
-1 runs covers 1,480 sessions, the span quantitative-trading pins for the
+1 runs covers 1,480 decisions, one per trading session of the span quantitative-trading pins for the
 strategy [architecture.md](architecture.md#the-strategy-the-skeleton-runs)
 proposes on [#6](https://github.com/l3a0/ithildin-runtime/issues/6). Through
-seven modules that is 10,360 worker runs. One launch per worker per session
+seven modules that is 10,360 worker runs. One launch per worker per decision
 would take about 9 minutes at the standard library's cost, 35 to 52 minutes at
 pyarrow's and 3 hours at pandas'.
 
 The event pipeline makes the span cheap. A worker starts once and runs its
-processing loop until it has a result for every session in the plan. In shadow, paper and live the plan holds one session. In a backtest
-it holds the whole history, so each worker works through every session in
-turn, and the exit rule is the same in both. A worker carries nothing from one
-session to the next except through blobs, so a long span runs the same steps
+processing loop until it has a result for every decision in the plan. In
+shadow, paper and live the plan holds one trading day's decisions. In a
+backtest it holds the whole history. Each worker works through every decision
+in turn, and the exit rule is the same in both. A worker carries nothing from one
+decision to the next except through blobs, so a long span runs the same steps
 as a span of one. The launch is paid once per worker, and the workers run as a
-pipeline. The alpha worker can run ahead through every session's snapshot
+pipeline. The alpha worker can run ahead through every decision's snapshot
 while portfolio construction waits on each day's book.
 
 A backtest swaps S3 for the memory-backed folder, through the same storage
@@ -484,16 +521,16 @@ allows, because a backtest can be regenerated from committed data and the
 pinned release.
 
 The clock adapter is read at two edges only. The data worker reads it to
-decide when a session's snapshot is written, which is as fast as possible
-under the history clock and at the session's time under the wall clock. The
+decide when a decision's snapshot is written, which is as fast as possible
+under the history clock and at the decision time under the wall clock. The
 supervisor reads wall time for deadlines in every mode, because a deadline
 guards against a hung process rather than shaping what a strategy sees. The
 workers between those edges read no clock and move on only when messages
 arrive.
 
-A halt ends its session, and the span goes on to the next session, the
-way the next day's live run starts after a halted one. A failure stops the
-whole run.
+A halt ends its decision, and the span goes on to the next decision unless
+the halt needs a person, in which case the account's later decisions halt
+too, as rule 7 says. A failure stops the whole run.
 
 The price of this section is five things.
 
@@ -507,7 +544,7 @@ The price of this section is five things.
    declares every worker's inputs hands it.
 3. Each write and each read in shadow, paper and live waits on S3, by an
    estimate 10 to 30 ms rather than a local disk's fraction of one. A live
-   session writes roughly 20 to 30 blobs, counting each stage's outputs and
+   decision writes roughly 20 to 30 blobs, counting each stage's outputs and
    result, the plan and the journal entries, so the wait is about a second. The
    backtest's memory-backed folder is why test 1's tens of thousands of
    writes and reads do not cost minutes.
@@ -518,6 +555,96 @@ The price of this section is five things.
    holds, and boto3, Amazon's Python library for S3, becomes a dependency,
    from a release whose botocore sends both the refuse-if-it-exists condition
    and the conditional delete.
+
+### Strategies, schedules and decisions
+
+The owner's rulings 7 to 9 take the time of day, the frequency and the
+strategy out of the platform and put them in the strategy. The first strategy
+trades once a day on daily closes, and a design shaped around it would bake
+in an evening run, a key per trading session and one strategy per account.
+Each of those would have to be undone for the next strategy, and since blobs
+are never rewritten, a key layout changed later leaves every reader handling
+two layouts. So the shape below is built in slice 1, and only what a second
+strategy needs on top of it waits.
+
+A strategy brings five things, each declared in the one table in `runtime`
+beside the workers' inputs, so adding a strategy adds rows rather than
+changing a shared module.
+
+1. The instruments it trades.
+2. Its schedule, a list of decision times on each trading day, at any time of
+   day and as often as it needs.
+3. The data it reads: the kinds, the bar length and the lookback.
+4. Its alpha model, which writes forecasts that each say until when they hold.
+5. Its configuration, whose hash every blob it touches records.
+
+A run in shadow, paper and live is one trading day of one deployment. The
+scheduler starts it before the deployment's first decision time, and the plan
+lists every decision time the deployment's schedules name that day, in order.
+The workers stay up all day and work through the decisions as they work
+through a backtest's span, and the data worker writes each decision's snapshot
+when the wall clock reaches its time. Live and backtest therefore run the
+same loop over a list of decisions, and a worker's launch is paid once a day.
+A daily strategy's plan holds one decision.
+
+Five rules keep frequent decisions safe.
+
+1. **Decisions send in order.** Execution sends for a decision only once it
+   has a result for the one before, so two decisions never share the order
+   path. Upstream stages may run ahead, as the alpha worker does in a
+   backtest. Every stage's deadline fits inside the gap to the next decision
+   time.
+2. **A late decision does not trade.** Each strategy sets how long after its
+   decision time an order may still be sent. Execution halts a decision whose
+   send stage starts later than that, as stale, rather than sending on a
+   picture of the market that has moved.
+3. **Orders still open at the next decision are netted.** The order manager
+   already trades the target minus the positions and the open orders, so an
+   order left resting is counted rather than sent again. Whether it is
+   cancelled and replaced instead is the order manager's choice, on
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+4. **A halt that needs a person holds the account**, as rule 7 says, so a
+   fault seen at 10:00 is not met again at 10:05 without anyone looking.
+5. **The dead-man check expects a ping per decision.** Monitoring pings after
+   each decision's report, so the heartbeat service's period is the
+   deployment's longest gap between decisions plus its grace period.
+
+Several strategies on one account meet in portfolio construction, which
+combines their forecasts into one target for the account, the place *Inside
+the Black Box* puts the combining of alpha models. Execution, the risk gate,
+the journal and the account's lease therefore stay one per account, and
+hard limit 2's single order path holds however many strategies trade. A
+strategy whose schedule does not name a decision time contributes its latest
+forecast while that forecast still holds, and one past that time halts the
+decision as stale, as rule 6 says. Slice 1 runs one strategy on one account,
+so the combining rule is not built. Every key carries the deployment and
+every forecast the strategy and the time it holds until, which is the part
+that would be costly to add later.
+
+Two limits come from marketlake rather than from this design.
+
+1. **About one decision a minute at the fastest.** marketlake captures quotes
+   once a minute, so a decision more often than that sees no new data. A
+   decision also waits on S3 for about a second, as the price below says. A
+   strategy that needs seconds would need data streamed to it rather than
+   read from marketlake's segments, which reopens ruling 3, and that is the
+   owner's call when such a strategy exists.
+2. **Fresh data from 09:30 to the option close.** marketlake captures from
+   09:30 to 16:15 on a full day and 13:15 on an early close. A decision
+   outside those hours reads the last sealed day, which suits a strategy that
+   trades on daily closes. One that needs fresh quotes then halts as stale,
+   until marketlake captures those hours too.
+
+The price of this subsection is four things.
+
+1. Every key holds a deployment and a decision time, which a run with one
+   daily strategy does not need.
+2. The workers run all trading day rather than for a few minutes each
+   evening, so the VM is up for the whole session.
+3. A halt that needs a person stops every strategy on the account, including
+   ones the fault did not touch.
+4. Each strategy sets a staleness limit for its sends and a validity time for
+   its forecasts, two more values to choose and test.
 
 ## How work is cut and ordered
 
@@ -559,17 +686,21 @@ glossing it.
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
-| **output file** | A blob holding one thing a stage produced for one session, at a key fixed by the run, the stage, the session and the output's name |
-| **stage** | One step a component takes in a session. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
-| **session result** | The blob a stage writes last for a session, at a key fixed by the run, the stage and the session, listing its output files by key and SHA-256 or saying the session halted. One key, so a stage ends each session exactly once |
-| **event** | The arrival of a session result, which a message on a queue announces |
-| **listing** | A component's stages' blobs, listed by session. Each blob's header names its run, session, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
-| **plan** | The blob the supervisor writes once per run, naming the run's mode and its sessions in order |
+| **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
+| **stage** | One step a component takes in a decision. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
+| **decision result** | The blob a stage writes last for a decision, at a key fixed by the run, the stage and the decision, listing its output files by key and SHA-256 or saying the decision halted. One key, so a stage ends each decision exactly once |
+| **event** | The arrival of a decision result, which a message on a queue announces |
+| **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
+| **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
 | **supervisor** | The process that writes a run's plan, starts every worker of the run at once, writes a halt as a worker's result when the worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside storage |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues, lock files and error output, none of which is kept |
-| **halt** | A session result saying why a session cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that session. The owner or the operator clears it, and clearing never reruns the session |
-| **span** | The sessions in a run's plan, which every worker works through: one in shadow, paper and live, and the whole history in a backtest |
+| **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. A halt that needs a person, such as a book that disagrees with the broker, also holds every later decision on the account until it is cleared |
+| **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
+| **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
+| **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
+| **schedule** | A strategy's list of decision times on each trading day, at any time of day and as often as it needs |
+| **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. The deployment's lease covers it |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
 | **registered** | A result whose hypothesis was committed in writing before the number was seen. Only a registered result can promote a strategy |
@@ -613,20 +744,23 @@ once rather than re-argued.
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
 | A queue as the carrier of events, or a database server, between workers | A queue that carries the events themselves deletes each one once it is read, so nothing is left to audit, and a server is one more process that can fail. A queue that only wakes a worker, with the blobs as the record, is what the owner ruled for. The price is that a worker reads its inputs from files rather than being handed them |
-| One process launch per worker per session in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of sessions instead, as [A worker works through a span of sessions](#a-worker-works-through-a-span-of-sessions) says |
-| A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. A controller would also fix an order the session results already carry. The one table in `runtime` that declares each worker's inputs is the only statement of the wiring, which the workers, the storage contract and the supervisor's deadlines all read |
-| A second attempt that supersedes an earlier output for the same session | A halt is final and clearing it never reruns the session, so no second attempt exists to supersede the first. A stage has one result key per session, so a second result cannot be written, and the fields and rules for superseding were cut |
-| An event log per component, as a SQLite file or as numbered blobs | The owner ruled on 2026-10-29 for blobs keyed by session, with the journal the only log. A numbered log per component needed sequence numbers, cursors, hash chains, rules for superseding, and a rebuild after a lost VM, and three review rounds each found holes in that machinery. A deterministic step needs none of it, because running it again writes the same bytes. The price is that every deterministic step's format must be canonical |
+| One process launch per worker per decision in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of decisions instead, as [A worker works through a span of decisions](#a-worker-works-through-a-span-of-decisions) says |
+| One run each evening after marketlake's sweep, as the platform's only schedule | The owner ruled on 2026-10-29 that the platform trades at any time of day and as often as a strategy needs. The time of a decision belongs to the strategy's schedule, as [Strategies, schedules and decisions](#strategies-schedules-and-decisions) says |
+| A process launch per decision in shadow, paper and live | A strategy deciding every few minutes would pay every worker's launch each time. One run per trading day keeps the workers up and works through the day's decisions, the way a backtest works through its span |
+| A strategy's logic spread through the shared modules, or a runtime per strategy | The owner ruled on 2026-10-29 that the platform stays open to other strategies. Spreading a strategy through the shared modules makes each new one a change to them, and a runtime per strategy would put two order paths on one account. A strategy is rows in the one table in `runtime`, and strategies on one account meet in portfolio construction |
+| A controller that calls each component in a fixed order | The owner ruled on 2026-10-29 that the platform is an event pipeline, so a new event in a component's input is the only trigger. A controller would also fix an order the decision results already carry. The one table in `runtime` that declares each worker's inputs is the only statement of the wiring, which the workers, the storage contract and the supervisor's deadlines all read |
+| A second attempt that supersedes an earlier output for the same decision | A halt is final and clearing it never reruns the decision, so no second attempt exists to supersede the first. A stage has one result key per decision, so a second result cannot be written, and the fields and rules for superseding were cut |
+| An event log per component, as a SQLite file or as numbered blobs | The owner ruled on 2026-10-29 for blobs keyed by decision, with the journal the only log. A numbered log per component needed sequence numbers, cursors, hash chains, rules for superseding, and a rebuild after a lost VM, and three review rounds each found holes in that machinery. A deterministic step needs none of it, because running it again writes the same bytes. The price is that every deterministic step's format must be canonical |
 | SQLite on the VM, as the record or as an index of S3 | Once S3 became the record, a SQLite file on the VM was only a copy to keep in step with it, and the owner dropped it on 2026-10-29 |
 | Litestream, streaming SQLite to S3 | It copies each write about a second after it lands, so a lost VM lost rows that no blob could rebuild, among them halts. It also needs to delete in the bucket, and two copies streaming to one path can leave the copy impossible to restore. A review found all three, and the owner made S3 the record instead |
 | A JSON Lines file per log | It reads with `cat`, but a crash partway through an append tears a line, and a review found that a writer appending after a torn line hid every event after it, a journal entry among them. Every write is now a blob that S3 creates whole or not at all |
-| A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about seven events a session on one VM |
+| A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about seven events a decision on one VM |
 | A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency and no polling. The price is that each writer sends a message to every reader of its outputs, which one table in `runtime` wires |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
 | S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
-| One result per component per session | Execution and monitoring each act at two points in a session, and a single result written last put execution's account file behind its own send, a cycle a review's simulation showed. Each now has two stages with a result each |
+| One result per component per decision | Execution and monitoring each act at two points in a decision, and a single result written last put execution's account file behind its own send, a cycle a review's simulation showed. Each now has two stages with a result each |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning. The `l3a0` plugin's `/l3a0:ask-team` role agents are not standing agents, because each runs once for one review and then ends |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
 | A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |

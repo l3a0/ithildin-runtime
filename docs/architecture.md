@@ -23,7 +23,7 @@ calling each module in turn. The owner added the same day that the platform
 is an event pipeline with a queue per component: each component listens for
 events on its queue, and a message reaches a component's queue whenever there
 is something new for it. Every file is a blob in S3, written once at a key
-fixed by the run, the component and the session, and the VM keeps no state.
+fixed by the run, the component and the decision, and the VM keeps no state.
 The journal is the one numbered log.
 [design.md](design.md#processes-and-files)'s `## Processes and files` carries
 the rules the workers follow.
@@ -207,16 +207,17 @@ The owner ruled on 2026-10-29 that the runtime may read the day's data before
 marketlake seals it. marketlake's capture daemon already writes a segment
 each cycle and never rewrites it once its manifest entry lands, so marketlake
 uploads each segment to its bucket as soon as that entry lands, refusing to
-replace an existing key. The decision minute is the one
+replace an existing key. Any decision time inside marketlake's capture
+hours reads those segments, and the decision minute
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for shadow
-running, ten minutes before the close. The data worker reads the segments up
-to that minute, as a provisional read, because marketlake's validation
+running, ten minutes before the close, is one such time. The data worker reads
+the segments up to the decision time, as a provisional read, because marketlake's validation
 battery runs only when it seals a day at the close plus fifteen minutes. So
 the data worker runs its own minimum checks before anything decides. A
-missing or stale quote at the decision minute halts the session, and a price
-spike is flagged in the snapshot without halting. The evening run that
-`## One trading day` draws starts after marketlake has sealed and uploaded
-the day, so it reads sealed partitions and needs none of this. The snapshot names each segment it read by key
+missing or stale quote at the decision time halts the decision, and a price
+spike is flagged in the snapshot without halting. A decision after
+marketlake has sealed and uploaded the day, such as the evening decision
+`## One trading day` draws, reads sealed partitions and needs none of this. The snapshot names each segment it read by key
 and SHA-256 and marks the read provisional. Once marketlake seals the day,
 monitoring compares the sealed partition with what the snapshot read, and
 journals and alarms any difference. This is the same check question 10
@@ -256,16 +257,16 @@ event pipeline. [design.md](design.md#processes-and-files)'s
 `## Processes and files` gives the reasoning and the rules. So each module
 here runs as one worker, a process of its own. The supervisor writes the
 run's plan and starts every worker at once, and each one listens on its own
-queue. A message there names an input's session result, and the worker then
+queue. A message there names an input's decision result, and the worker then
 reads the output files that result lists, writes its own output files, and
-writes its own session result last. A worker's entry point builds the
+writes its own decision result last. A worker's entry point builds the
 adapters for the mode it is given and hands them to the module, so the module
 never learns which mode it is in.
 
 ```mermaid
 flowchart TB
     sup["Supervisor<br/>writes the plan, starts every worker,<br/>keeps no state of its own"]
-    plan[("plan<br/>the run's sessions")]
+    plan[("plan<br/>the run's decisions")]
     sup --> plan
 
     subgraph workers["Workers, one process per module, identical in every mode"]
@@ -324,17 +325,17 @@ flowchart TB
     sup -. "starts" .-> workers
 ```
 
-Each cylinder is one component's output files for a session, and the session
+Each cylinder is one component's output files for a decision, and the decision
 result that lists them, each a blob written once at a key fixed by the run,
-the component and the session. A solid arrow into a worker is an output it
-reads. When a worker writes its session result, a message goes to the queue
+the component and the decision. A solid arrow into a worker is an output it
+reads. When a worker writes its decision result, a message goes to the queue
 of each worker that reads it, which runs that worker's processing loop. Every
 worker reads the plan, which the diagram draws only into the two that start
 the day, and monitoring reads every component's results, which the diagram
 leaves out to stay legible. Each dotted arrow from an adapter is a port,
 labelled with its name, and each mode is one choice of adapter for each port.
 Execution and monitoring each appear twice because each has two stages in one
-process, and each stage writes its own session result. Execution recovers first and then, once the target portfolio
+process, and each stage writes its own decision result. Execution recovers first and then, once the target portfolio
 exists, sends. Monitoring reconciles first and reports last.
 
 Two groups of workers run at the same time.
@@ -351,9 +352,9 @@ moment, not against a blob.
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
 | Backtest | marketlake reader, the bars a test names | History clock | Simulated, at the signal's close | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
-| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, at the next open | S3, the shadow journal | Sent |
-| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at the next open | S3, the paper journal | Sent |
-| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at the next open | S3, the live journal | Sent |
+| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, at the open of the next bar after the order | S3, the shadow journal | Sent |
+| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own fill | S3, the paper journal | Sent |
+| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | S3, the live journal | Sent |
 
 Every mode reads bars through the same marketlake reader. The modes differ in
 which bars they read and which clock drives them, not in how they read. Shadow
@@ -369,7 +370,7 @@ what a strategy sees.
 3. The broker.
 
 The blob store, which holds the journal too, and the alert channel also differ
-by mode, but they change only where records go. A backtest of 1,480 sessions
+by mode, but they change only where records go. A backtest of 1,480 decisions
 must not append to the paper journal or page the owner. The Decisions table
 proposes adding those two to design.md's `## One runtime`.
 
@@ -378,11 +379,12 @@ backtest would then test a branch the paper run never takes. The account a
 worker's lease and kill switch belong to comes from its broker adapter, so a
 backtest's simulated account never shares the paper account's lease. The
 simulated broker keeps its resting orders and positions as an output file per
-session, so a shadow order sent one evening is still there to fill at the
+decision, so a shadow order sent one evening is still there to fill at the
 next open, in a new process or on a new VM. The event that design.md says
-modules are written against is one session result. In a backtest each worker
-works through every session in turn, and in the other modes through one, as
-design.md's `### A worker works through a span of sessions` says.
+modules are written against is one decision result. In a backtest each worker
+works through every decision of the span in turn, and in the other modes
+through one trading day's decisions, as design.md's
+`### A worker works through a span of decisions` says.
 
 ## Data flow
 
@@ -407,7 +409,7 @@ flowchart LR
     p8["8 Execution: plan, gate,<br/>journal and send orders"]
     p9["9 Monitoring: report and alarm"]
 
-    d1[("D1 The run's blobs in S3,<br/>keyed by component and session")]
+    d1[("D1 The run's blobs in S3,<br/>keyed by component and decision")]
     d2[("D2 Security master")]
     d3[("D3 Journal")]
     d4[("D4 Run reports")]
@@ -435,7 +437,7 @@ flowchart LR
     p8 -->|"approved orders"| brokerx
     brokerx -->|"acks"| p8
     p8 -->|"send outcome"| d1
-    d1 -->|"session results, halts, send outcome"| p9
+    d1 -->|"decision results, halts, send outcome"| p9
     d3 -->|"orders and fills"| p9
     p9 -->|"report"| d4
     p9 -->|"alarms"| ownerx
@@ -472,16 +474,23 @@ Three things the diagram rules out.
 ## One trading day
 
 A sequence diagram shows the same pieces in time order. This is one paper
-session with nothing wrong. The run starts each evening after marketlake's
-18:30 sweep, and the orders it sends fill at the next open. The notes split it
-into three phases. The supervisor starts every worker at the start, and a
+decision with nothing wrong, for the skeleton's daily strategy. The owner
+ruled on 2026-10-29 that the platform trades at any time of day and as often
+as a strategy needs, so the time comes from the strategy's schedule, as
+design.md's `### Strategies, schedules and decisions` says. The diagram draws
+the evening decision, after marketlake's 18:30 sweep, with orders that fill at
+the next open. A strategy that decides during the day runs the same three
+phases on segments read before sealing, and one that decides several times a
+day runs them once per decision, with the workers left running between. The
+notes split it into three phases. The supervisor starts every worker at the start, and a
 `par` block marks workers working at the same time. Each dashed arrow from
 the blob store to a worker is a message on that worker's queue.
 
 That sweep holds the session's minute bars but not its daily bar, because
 marketlake fetches a session's daily bar only once the next session has
-sealed. So which bar the evening run reads for the session's close is open, as
-question 10 asks.
+sealed. So which bar an evening decision reads for the session's close, and
+whether the skeleton decides in the evening at all, is open, as question 10
+asks.
 
 ```mermaid
 sequenceDiagram
@@ -499,7 +508,7 @@ sequenceDiagram
     participant C as Cost model
     participant P as Portfolio construction
 
-    S->>V: start the session's run
+    S->>V: start the day's run
     V->>F: the deployment's lease taken, the release recorded
     V->>V: kill switch blob absent?
     V->>F: the run's plan
@@ -512,11 +521,11 @@ sequenceDiagram
     V->>P: start
     Note over V,M: Phase 1, read the data and recover, in parallel
     par
-        D->>F: snapshot, naming each bar read, and data's session result
+        D->>F: snapshot, naming each bar read, and data's decision result
     and
         X->>X: create the account's lease
         X->>B: orders in doubt, fills since the last run
-        B-->>X: last session's fills
+        B-->>X: fills since the last decision
         X->>J: each fill journaled
         X->>B: positions and open orders
         B-->>X: positions and open orders
@@ -563,7 +572,7 @@ sequenceDiagram
 
 The phases in order.
 
-1. **Read the data and recover.** Data reads the bars the session's lookback
+1. **Read the data and recover.** Data reads the bars the decision's lookback
    needs from marketlake, about 40 sessions of each ETF, and records which ones
    it read before any model sees them. At the same time, execution takes the
    broker account's lease, settles any order a crash left in doubt, journals
@@ -614,16 +623,16 @@ orders and the positions left as they were.
 
 Every halt takes the same route.
 
-1. The worker that finds the problem writes a halt as its session result,
+1. The worker that finds the problem writes a halt as its decision result,
    with the reason, in place of its outputs.
 2. Every worker downstream finds that halt as its input's result, writes its
-   own halt naming it, skips the session and goes on to its next one. A
-   worker exits once it has a result for every session in the plan.
+   own halt naming it, skips the decision and goes on to its next one. A
+   worker exits once it has a result for every decision in the plan.
 3. Monitoring, which reads every component's results, journals every halt,
-   raises one alarm for the session on the halt that names no earlier one,
+   raises one alarm for the decision on the halt that names no earlier one,
    writes the day's report and pings the heartbeat service's failure address.
 
-The same route runs in a backtest, where the span goes on to the next session,
+The same route runs in a backtest, where the span goes on to the next decision,
 and on paper, where the run ends. A failure, meaning a crash or a missed
 deadline, takes it too. The supervisor writes the halt as the failed worker's
 result and stops every worker but monitoring.
@@ -640,7 +649,7 @@ sequenceDiagram
     participant L as Alert channel
 
     D->>D: GLD fresh, USO missing
-    D->>F: a halt as data's result, reason "USO missing for the session"
+    D->>F: a halt as data's result, reason "USO missing for the decision"
     F-->>X: a message: data's result is a halt
     X->>F: a halt as execution's send result, naming data's
     F-->>M: a message: data's result is a halt
@@ -649,9 +658,9 @@ sequenceDiagram
     Note over D,M: No model reads a snapshot. No order is sent.<br/>Positions stay as they are.
 ```
 
-A stale bar takes the same path. Stale means the newest close is older than the
-session the clock says it is, which is how a feed that stopped looks when it
-keeps answering. Data reports the gap and never fills it with the last close.
+A stale bar takes the same path. Stale means the newest bar is older than the
+decision time allows, which is how a feed that stopped looks when it keeps
+answering. Data reports the gap and never fills it with the last close.
 The charter gives the risk engineer the halt on stale data, so
 [#7](https://github.com/l3a0/ithildin-runtime/issues/7) decides how old is too
 old. Data applies that rule.
@@ -711,8 +720,8 @@ The order in which the processes come up no longer matters. Execution may
 start before data, as it does here, but it sends only what a target
 portfolio asks for, and that cannot exist until a snapshot does. The charter
 gives the operator the startup order: execution may send an order only once
-every upstream worker has written a session result that lists outputs, not a
-halt, for the session.
+every upstream worker has written a decision result that lists outputs, not a
+halt, for the decision.
 The pipeline makes that order something the platform cannot get wrong. "Not ready" is a halt, never an empty forecast.
 
 ### The risk gate refuses an order
@@ -739,8 +748,10 @@ sequenceDiagram
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
 go through. Nothing resizes the order to fit either, since an order cut down
-to pass the risk gate is a trade nobody chose. Clearing the halt sends nothing
-more for that session. The next session plans again from the book.
+to pass the risk gate is a trade nobody chose. A refusal needs a person, so it
+holds every later decision on the account until the owner or the operator
+clears it, as design.md's rule 7 says. Clearing sends nothing more for the
+refused decision, and the next decision plans again from the book.
 
 The daily loss stop works through the same gate. Once the day's loss passes the
 stop, the risk gate refuses every new order. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
@@ -852,17 +863,19 @@ here, with the issue that builds its drill.
 | A lease another VM holds, the deployment's or the account's | The holder's VM, boot, process and run | Start a second VM while the first runs | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A worker crashed | Its exit status or signal and the end of its error output | Kill a worker mid-session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker crashed | Its exit status or signal and the end of its error output | Kill a worker mid-decision | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A second execution worker, or a second supervisor on one VM | The lease or lock that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor on a different release | Both releases | Restart mid-run under another tag | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The scheduler's restart limit reached | The supervisor's last exit | Make the supervisor crash on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose hash or link does not match, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| An output file that is missing, or whose SHA-256 does not match the session result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A worker exits before it has a result for every session in the plan | The worker | A worker that exits after its first session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A blob for the wrong session, or an output file with no entries and no "trade nothing" mark | The key and the session | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A worker exits before it has a result for every decision in the plan | The worker | A worker that exits after its first decision | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The segment's key and both SHA-256s | Change a sealed partition after a run read its segments | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A decision whose send stage starts later than its strategy allows | The decision time and the start | A history clock that holds a decision's portfolio construction past the limit | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A forecast past the time it holds until | The strategy and the time | A deployment of two strategies where one stops writing forecasts | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | Dead-man | None. The heartbeat service raises it | Skip a run's ping, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -872,7 +885,7 @@ heartbeat's grace period, which has to exceed them.
 ## Types and interfaces
 
 A class diagram shows the types the workers pass to each other, each written
-as an output file that a session result lists, and the interfaces each module implements. Two diagrams follow, one
+as an output file that a decision result lists, and the interfaces each module implements. Two diagrams follow, one
 for the data the workers pass and one for the interfaces.
 
 Three kinds of arrow appear.
@@ -905,7 +918,7 @@ classDiagram
         +datetime first_seen
     }
     class Snapshot {
-        +date session
+        +datetime decision_at
         +dict bars
         +dict status
         +require_fresh()
@@ -914,9 +927,10 @@ classDiagram
         +dict legs
     }
     class Forecast {
+        +str strategy
         +Basket basket
         +int direction
-        +int horizon_sessions
+        +datetime valid_until
         +float confidence
     }
     class Constraints {
@@ -928,7 +942,7 @@ classDiagram
         +float loss_stop
     }
     class TargetPortfolio {
-        +date session
+        +datetime decision_at
         +dict shares
     }
     class Book {
@@ -969,7 +983,7 @@ classDiagram
         +list open_orders
     }
     class SendOutcome {
-        +date session
+        +datetime decision_at
         +str target_hash
         +list orders
     }
@@ -984,14 +998,15 @@ classDiagram
     }
     class BlobHeader {
         +int format
+        +str deployment
         +str run
         +str component
-        +date session
+        +datetime decision_at
         +dict inputs
         +str release
         +str config_hash
     }
-    class SessionResult {
+    class DecisionResult {
         +BlobHeader header
         +list outputs
         +HaltRecord halt
@@ -1003,9 +1018,10 @@ classDiagram
         +str error_tail
     }
     class Plan {
+        +str deployment
         +str run
         +str mode
-        +list sessions
+        +list decisions
     }
     class JournalEntry {
         +int seq
@@ -1037,12 +1053,12 @@ classDiagram
 
     class DataSource {
         <<Protocol>>
-        +snapshot(session) Snapshot
+        +snapshot(decision_at) Snapshot
     }
     class Clock {
         <<Protocol>>
-        +session() date
-        +next_session() date
+        +decision_at() datetime
+        +next_decision() datetime
     }
     class Broker {
         <<Protocol>>
@@ -1140,7 +1156,7 @@ Eight choices in the two diagrams for a reviewer to check.
    engineer's duty, in the charter, to store when each value became available
    (L3884).
 3. **`Snapshot.require_fresh()` is how a module refuses a gap.** A snapshot is
-   the set of bars one session read, each pointing at the partition that holds
+   the set of bars one decision read, each pointing at the partition that holds
    it. A
    module calls `require_fresh()` before reading, and it raises `Halt` when any
    bar it needs is missing or stale. So the default when something is absent
@@ -1173,21 +1189,21 @@ Eight choices in the two diagrams for a reviewer to check.
 7. **The cost model writes a schedule rather than answering calls.**
    Portfolio construction priced each candidate trade by calling the cost
    model. With each module in its own process, the cost model instead writes a
-   `CostSchedule` per session, a fixed and a per-share cost for each
+   `CostSchedule` per decision, a fixed and a per-share cost for each
    instrument, and portfolio construction evaluates it. Slice 1's flat or
    linear model fits that shape. This is a proposal for
    [#8](https://github.com/l3a0/ithildin-runtime/issues/8).
 8. **Every type that crosses between workers has a file form.** That
    includes `BrokerAccount` and `SendOutcome`. Each travels as an output file
    that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and
-   that its component's `SessionResult` lists. A test writes each one and reads
+   that its component's `DecisionResult` lists. A test writes each one and reads
    it back unchanged, and a deterministic component's format is canonical, so
    the same inputs give the same bytes. `Halt` stays an exception inside a
-   worker, and at the worker's edge it becomes a `SessionResult` that holds a
+   worker, and at the worker's edge it becomes a `DecisionResult` that holds a
    `HaltRecord`, whose `cause` names the halt it met when it is passing one on,
    and is empty when the worker found the problem itself. The supervisor
    writes the same record, with an exit status and the end of the error
-   output, for a worker that crashed. `Plan` holds the run's sessions, and
+   output, for a worker that crashed. `Plan` holds the run's decisions, and
    `JournalEntry` is the one numbered record, chained to the entry before it.
    `BlobStore` is the storage port, S3 in shadow, paper and live and a
    memory-backed folder in a backtest, and one contract test suite runs
@@ -1245,15 +1261,16 @@ order manager plans from the book as if it had never existed.
 
 ## The life of a run
 
-One session's chain moves through these states. In shadow, paper and live a
-run is one session. In a backtest it is every session of the span, and a halt
-ends only its own session's chain.
+One decision's chain moves through these states. In shadow, paper and live a
+run is one trading day's decisions. In a backtest it is every decision of the
+span. A halt ends only its own decision's chain, unless it needs a person, and
+then every later decision on the account halts until it is cleared.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Starting
     Starting --> Halted: kill switch set
-    Starting --> Preparing: workers waiting on the session's inputs
+    Starting --> Preparing: workers waiting on the decision's inputs
     Preparing --> Halted: data missing, stale or not ready, an unknown fill, or book and broker disagree
     Preparing --> Deciding: snapshot written, book reconciled
     Deciding --> Halted: a worker halts
@@ -1273,23 +1290,23 @@ stateDiagram-v2
 `Preparing` is the first phase of the trading day: data reads the snapshot
 while execution settles orders in doubt, journals fills and writes the book,
 and monitoring reconciles. The supervisor holds none of these states in
-memory. It reads them from storage: which components have a session result,
+memory. It reads them from storage: which components have a decision result,
 and whether a result is a halt. A restarted supervisor finds the state the
 same way, and starts every worker whose lock is free. Each one checks its own
-result key for each session, reads the blobs that exist, and writes the ones
+result key for each decision, reads the blobs that exist, and writes the ones
 that are missing.
 
-A halt and a failure differ in what they stop. A halt stops one session, and
+A halt and a failure differ in what they stop. A halt stops one decision, and
 in a backtest the span goes on to the next. A failure stops the whole run.
 Both pass through `Reporting`, so a halted or failed day still writes its
 report and its journal entry, and monitoring pings the heartbeat service's
 failure address so the owner hears even if the alarm from the machine is lost.
 If monitoring itself is what failed, no ping arrives, and the dead-man check
-raises the alarm. A halt is final for its session, which is this doc's choice.
+raises the alarm. A halt is final for its decision, which is this doc's choice.
 The owner ruled on 2026-10-29 that the owner or the operator clears it, and
-clearing never reruns the session. The next session's
-run starts fresh, and it halts again while the kill switch is set or the
-cause is still there.
+clearing never reruns the decision. The next decision starts fresh, and it
+halts again while the kill switch is set, while a halt that needs a person is
+still open, or while the cause is still there.
 
 ## What is stored
 
@@ -1301,15 +1318,15 @@ crow's foot means zero or more.
 erDiagram
     VINTAGE ||--o{ BAR : "holds"
     INSTRUMENT ||--o{ BAR : "is priced by"
-    RUN ||--|{ SNAPSHOT : "acts on, one per session"
+    RUN ||--|{ SNAPSHOT : "acts on, one per decision"
     SNAPSHOT }o--o{ BAR : "lists"
     RUN ||--o{ JOURNAL_ENTRY : "writes"
     JOURNAL_ENTRY }o--|| ORDER : "records a step of"
     ORDER ||--o{ FILL : "fills by"
-    RUN ||--|{ REPORT : "reports each session"
+    RUN ||--|{ REPORT : "reports each decision"
     RUN ||--o{ SIGNAL : "records"
-    RUN ||--|{ SESSION_RESULT : "ends each component's session with"
-    SESSION_RESULT ||--o{ OUTPUT_FILE : "lists"
+    RUN ||--|{ DECISION_RESULT : "ends each component's decision with"
+    DECISION_RESULT ||--o{ OUTPUT_FILE : "lists"
 
     VINTAGE {
         string id
@@ -1330,24 +1347,24 @@ erDiagram
     }
     RUN {
         string id
-        date first_session
-        date last_session
+        datetime first_decision
+        datetime last_decision
         string mode
         string release
         string outcome
     }
     SIGNAL {
         string run_id
-        date session
+        datetime decision_at
         string name
         float value
         string release
     }
-    SESSION_RESULT {
+    DECISION_RESULT {
         string key
         string sha256
         string component
-        date session
+        datetime decision_at
         string kind
         string halt_reason
         string halt_cause
@@ -1359,7 +1376,7 @@ erDiagram
         string key
         string sha256
         string component
-        date session
+        datetime decision_at
         string name
         string inputs
         datetime stored_at
@@ -1403,20 +1420,20 @@ each keeps its own rule.
    from quantitative-trading arrives with that repository's own checksums,
    from its `data/vintages.jsonl`, so the import can prove it read the
    recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
-2. **The run, D1, holds `SNAPSHOT`, `SIGNAL`, `SESSION_RESULT` and
+2. **The run, D1, holds `SNAPSHOT`, `SIGNAL`, `DECISION_RESULT` and
    `OUTPUT_FILE`,** as blobs in S3 under the run's prefix, each written once at
-   a key fixed by the run, the component, the session and, for an output
-   file, its name. A snapshot lists the marketlake bars one session read, by
+   a key fixed by the run, the component, the decision and, for an output
+   file, its name. A snapshot lists the marketlake bars one decision read, by
    partition and checksum. A signal record holds a value the run computed,
    such as the hedge ratio, the z-score or the forecast, keyed by run,
-   component, session and name. Each blob's header names the blobs it came from, and a halt says
-   why a session stopped. A deterministic component's blobs are regenerable
+   component, decision and name. Each blob's header names the blobs it came from, and a halt says
+   why a decision stopped. A deterministic component's blobs are regenerable
    from marketlake, the journal and the code, but data's snapshots and
    execution's account files capture what was true at the moment, and the
    halts the supervisor writes record exits, so none of them can be. A
    backtest's blobs sit in a memory-backed folder and vanish when it ends,
    because a backtest can be regenerated. The blobs also make a question such
-   as "how did the backtest's z-score on a session differ from the shadow
+   as "how did the backtest's z-score on a decision differ from the shadow
    run's" a lookup rather than a recomputation.
 3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
    that changes only through a pull request.
@@ -1442,7 +1459,7 @@ each keeps its own rule.
    journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
    owner to read, not as a record.
 6. **The simulated broker's account, one blob per simulated account per
-   session, outside every run,** holds the resting orders and positions the
+   decision, outside every run,** holds the resting orders and positions the
    simulator keeps. The simulated broker's adapter reads and writes it
    through a `BlobStore` the entry point hands it, so execution's own outputs
    are the same whichever broker it holds. Backtest and shadow use the same
@@ -1463,7 +1480,7 @@ new one from the pinned release.
 flowchart TB
     subgraph host["The runtime's VM, separate from marketlake's, holding no state"]
         start["Start unit<br/>starts the scheduler"]
-        timer["Scheduler<br/>a systemd timer, once per session"]
+        timer["Scheduler<br/>a systemd timer, once per trading day"]
         run["Supervisor and workers<br/>at a release the owner pinned"]
         work[("Working directory<br/>queues, lock files, error output")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
@@ -1587,8 +1604,8 @@ Nine rules hold the deployment to the premise and the hard limits.
    halfway.
 6. **A rollback is a pin to the previous tag.** Every blob carries a format
    version, and each release writes only formats the release before it can
-   read, so the old release reads what the new one left. A session in flight
-   halts on the supervisor's release check, and the next session runs on the
+   read, so the old release reads what the new one left. A decision in flight
+   halts on the supervisor's release check, and the next decision runs on the
    old release.
 7. **The scheduler restarts a supervisor that crashes, up to a limit.** That
    is systemd's `Restart=on-failure` with `StartLimitBurst`. Reaching the
@@ -1599,7 +1616,7 @@ Nine rules hold the deployment to the premise and the hard limits.
    marketlake's capture daemon runs on, and downloads the parts of the lake its
    strategies need. So a run on the runtime cannot starve capture, and a
    failure on one VM leaves the other running. The data worker downloads each
-   partition a session's lookback names from marketlake's bucket into a local
+   partition a decision's lookback names from marketlake's bucket into a local
    mirror, checks it against the checksum in marketlake's manifest, and reads
    it through the same bar query. A partition not yet in the bucket is "data
    not ready", which halts. A capture segment read before sealing is checked
@@ -1657,7 +1674,7 @@ An arrow means "may import". The diagram draws three rules.
    `Protocol`, including `RiskGate`, live in `core` for that reason. So do
    `Journal`, which three processes append to, and the storage contract every
    worker uses: the `BlobStore` port, writing a blob S3 refuses to replace,
-   the blob header, the session result and its halt, the plan, and the
+   the blob header, the decision result and its halt, the plan, and the
    message to each reader's queue.
 2. Only `runtime` imports the modules together. Each worker's entry point
    lives there. It picks the adapters for the mode it is given, and the
@@ -1667,7 +1684,7 @@ An arrow means "may import". The diagram draws three rules.
    plan, the deployment's lease, crash records and the halts of workers that
    crashed, which `core`'s storage contract covers, besides its own lock on
    the VM. Only the entry points read the plan's mode, and a module is handed
-   only the sessions.
+   only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
 
@@ -1718,7 +1735,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | Piece | Written on |
 | --- | --- |
 | Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) |
-| `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the session result, the plan and queue messages, the S3 and memory-backed folder adapters with one contract test suite, the import rule test, as proposed below | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the decision result, the plan and queue messages, the S3 and memory-backed folder adapters with one contract test suite, the import rule test, as proposed below | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -1737,7 +1754,7 @@ question 3 settles.
 Two pieces belong to no single module.
 
 1. `core`, with the shared types, every `Protocol`, and the storage contract
-   every worker uses: the create-only write, the blob header, the session
+   every worker uses: the create-only write, the blob header, the decision
    result and its halt, the plan and the queue message.
 2. The import rule test, which reads every module's imports.
 
@@ -1765,24 +1782,24 @@ accepted.
 | --- | --- | --- | --- |
 | Each component runs as its own process, in parallel, passing files | One process calling every module in memory, or a process per action | A file format and a round-trip test for every type that crosses between modules | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
 | The platform is an event pipeline: each component runs its processing loop when there is something new for it, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker waits for a message on its queue instead of being called | Ruled by the owner on 2026-10-29 |
-| Pure steps write create-only blobs at session keys, data's first write wins, a halt is a blob at the same kind of key, and the journal is the only numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
-| A session result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per session, which put execution's account file behind its own send | Two more result keys a session, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| Pure steps write create-only blobs at decision keys, data's first write wins, a halt is a blob at the same kind of key, and the journal is the only numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
+| A decision result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per decision, which put execution's account file behind its own send | Two more result keys a decision, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Ruled by the owner on 2026-10-29, the folder this doc's reading of it |
 | Each component keeps a queue, listens for events on it, and reads its inputs from files and writes its outputs to files. A message is sent to a component's queue whenever there is something new for it | File notifications through `watchdog`, or polling | A message has to reach every component with something new | Ruled by the owner on 2026-10-29 |
-| Each queue is a named pipe in the VM's working directory, written without waiting. The storage contract sends each message after a session result is written, to the readers one table in `runtime` declares, and again for the newest result when a worker starts, and a starting worker opens its pipe before it catches up | A socket, a queue server, or every write messaging every queue | A message is skipped when its reader is down or its pipe is full, so a starting worker catches up by checking its keys | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| Each queue is a named pipe in the VM's working directory, written without waiting. The storage contract sends each message after a decision result is written, to the readers one table in `runtime` declares, and again for the newest result when a worker starts, and a starting worker opens its pipe before it catches up | A socket, a queue server, or every write messaging every queue | A message is skipped when its reader is down or its pipe is full, so a starting worker catches up by checking its keys | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
-| A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its session | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
+| A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution journals a fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise | Journaling every fill the broker reports | A fill from an order placed by hand at the broker halts the platform | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
-| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same session, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a session, and a broker change during the order loop waits for the next recover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument the book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
@@ -1792,9 +1809,11 @@ accepted.
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
-| One run per session after marketlake's evening sweep, filling at the next open | Running just before the close and sending market-on-close orders | The paper fills differ from the backtest's by one night. In return the run never acts on a bar still forming. Which close the run reads that evening is question 10 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists every decision time the deployment's schedules name | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, and the fastest useful decision is about one a minute, which is marketlake's capture rate | Ruled by the owner on 2026-10-29. The run's shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and which time the skeleton's strategy decides at is question 10 |
+| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model and configuration. Several strategies on one account meet in portfolio construction, so execution, the risk gate and the journal stay one per account | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment, every forecast its strategy and the time it holds until, and a halt that needs a person stops every strategy on the account | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), and combining strategies is left for when a second one exists |
+| A halt that needs a person, such as a book that disagrees with the broker or a gate refusal, holds every later decision on the account until it is cleared. A halt for one decision's input ends only that decision | Every halt final for its own decision only | A fault on one strategy stops the others on the account | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
-| Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per session, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 
 ## Questions for the owner
@@ -1866,23 +1885,39 @@ Each question has a recommendation, so a review can answer it with a yes.
    module starts. In return the shared shapes land once, reviewed on their own,
    rather than inside whichever module happens to go first. The owner accepted
    it on 2026-10-29, and the work is [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
-10. **Which bar does the evening run read for the session's close?**
-    marketlake fetches a session's official daily bar only at the next
-    evening's sweep, once the following session has sealed. Two choices follow.
-    1. **Wait for the official daily bar.** The run for session D reads D's
+10. **When does the skeleton's strategy decide, and which close does it
+    read?** The owner ruled on 2026-10-29 that the platform trades at any time
+    of day, so the time is the strategy's to choose rather than the
+    platform's. The Bollinger band decides once a day on a close. Three
+    choices follow.
+    1. **Decide at 15:50 and trade the close.** The decision reads
+       marketlake's segments up to ten minutes before the close, as a
+       provisional read, the decision minute
+       [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for
+       shadow running, and sends market-on-close orders. The fill lands on the
+       close the signal stands in for, as the backtest assumes. The price is a
+       signal computed on a price ten minutes before the close rather than the
+       close itself. Alpaca lists market-on-close orders, and whether its paper
+       account fills them needs confirming before
+       [#10](https://github.com/l3a0/ithildin-runtime/issues/10) relies on it.
+    2. **Decide in the evening on the official daily bar.** marketlake fetches
+       a session's official daily bar only at the next evening's sweep, once
+       the following session has sealed. The decision for session D reads D's
        daily bar on the evening of D+1, and its orders fill at the open of
-       D+2, a session and two nights after the close the signal used, rather
-       than one night.
-    2. **Read the close marketlake captures that day.** marketlake records each
-       session's option-close quote, at 16:15 on a full day and 13:15 on an
-       early close, and seals it fifteen minutes later, at 16:30 or 13:30. It already judges the daily bar
-       against that quote's last price when the bar lands. The run reads that
-       close and trades the next open, one night after the signal, as the mode
-       table assumes above. So that every mode still reads one query,
-       [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) serves that close through the bar query as a provisional daily
-       bar, marked provisional until the official bar replaces it.
+       D+2, a session and two nights after the close the signal used.
+    3. **Decide in the evening on the close marketlake captures that day.**
+       marketlake records each session's option-close quote, at 16:15 on a
+       full day and 13:15 on an early close, and seals it fifteen minutes
+       later, at 16:30 or 13:30. It already judges the daily bar against that
+       quote's last price when the bar lands. The decision reads that close
+       and trades the next open, one night after the signal.
+       [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938)
+       serves that close through the bar query as a provisional daily bar,
+       marked provisional until the official bar replaces it.
 
-    The recommendation is the second, with the next evening's daily bar
-    checked against the close the run used, and a disagreement journaled and
-    reported. The price is a close that is marketlake's capture rather than
-    the vendor's official candle.
+    The recommendation is the first. Its fill matches the backtest's, which
+    fills at the signal's close, and it uses the provisional read the owner
+    has already ruled on. The next evening's daily bar is checked against the
+    price the decision used, and a disagreement is journaled and reported. The
+    second and third stay open as a fallback for a day the segments are
+    missing.
