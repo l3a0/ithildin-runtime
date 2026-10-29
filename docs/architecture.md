@@ -149,8 +149,9 @@ stored durably there, and read by every mode through one query. The owner ruled
 so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
 bar.
 
-1. **Captured bars,** daily and minute, which shadow, paper and live trading
-   read. [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) added GLD and USO to marketlake's roster on 2026-10-29.
+1. **Captured bars,** which shadow, paper and live trading read.
+   [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) added GLD and USO, with daily and minute bars, to
+   marketlake's roster on 2026-10-29.
    Capture starts once the owner onboards them on marketlake's VM.
 2. **quantitative-trading's committed vintages,** imported once, which the
    backtest reads.
@@ -395,7 +396,7 @@ sequenceDiagram
     M-->>R: match
     Note over R,D: Phase 2, read the session's data
     R->>D: snapshot for this session
-    D-->>R: fresh bars for GLD and USO, recorded
+    D-->>R: fresh closes for GLD and USO, recorded
     Note over R,O: Phase 3, decide
     R->>A: forecast from the snapshot
     A-->>R: spread forecast with its hedge ratio
@@ -478,7 +479,7 @@ sequenceDiagram
     Note over R: No model runs. No order is sent.<br/>Positions stay as they are.
 ```
 
-A stale bar takes the same path. Stale means the newest bar is older than the
+A stale bar takes the same path. Stale means the newest close is older than the
 session the clock says it is, which is how a feed that stopped looks when it
 keeps answering. Data reports the gap and never fills it with the last close.
 The charter gives the risk engineer the halt on stale data, so
@@ -521,7 +522,7 @@ sequenceDiagram
     X-->>R: broker's view
     R->>M: reconcile book against broker
     M-->>R: match
-    R->>D: are this session's bars in marketlake?
+    R->>D: is this session's close in marketlake?
     D-->>R: not yet
     R->>J: halt journaled, reason "data not ready"
     R->>M: alarm
@@ -534,7 +535,7 @@ phase 2.
 1. It settles the order it left half-sent, by asking the broker about it
    rather than sending it again.
 2. It journals any fills, replays the journal and reconciles.
-3. It finds the session's bars not yet in marketlake and halts. The charter gives the operator the
+3. It finds the session's close not yet in marketlake and halts. The charter gives the operator the
 startup order: execution may act only once every upstream module reports
 itself current for the session. "Not ready" is a halt, never an empty forecast.
 
@@ -1314,12 +1315,16 @@ Each question has a recommendation, so a review can answer it with a yes.
     evening's sweep, once the following session has sealed. Two choices follow.
     1. **Wait for the official daily bar.** The run for session D reads D's
        daily bar on the evening of D+1, and its orders fill at the open of
-       D+2, two sessions after the close the signal used rather than one.
-    2. **Read the close marketlake captures that evening.** marketlake records
-       each session's 16:15 quote and its minute bars the same evening, and it
-       already judges the daily bar against that quote's close when the bar
-       lands. The run reads that close and trades the next open, one session
-       after the signal, as shadow and paper assume above.
+       D+2, a session and two nights after the close the signal used, rather
+       than one night.
+    2. **Read the close marketlake captures that day.** marketlake records each
+       session's option-close quote, at 16:15 on a full day and 13:15 on an
+       early close, and seals it at 16:30. It already judges the daily bar
+       against that quote's last price when the bar lands. The run reads that
+       close and trades the next open, one night after the signal, as the mode
+       table assumes above. So that every mode still reads one query,
+       [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) serves that close through the bar query as a provisional daily
+       bar, marked provisional until the official bar replaces it.
 
     The recommendation is the second, with the next evening's daily bar
     checked against the close the run used, and a disagreement journaled and
