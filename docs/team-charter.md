@@ -201,8 +201,9 @@ order of what comes next. The ceremonies map onto machinery that runs here.
 `~/.claude/skills/`. `ask-team`, `ask-board`, `update-build-board` and
 `sync-prune-next` are skills in the owner's `l3a0` Claude Code plugin, from
 [l3a0/claude-plugins](https://github.com/l3a0/claude-plugins), and run as
-`/l3a0:<name>`. `/l3a0:ask-team` seats the roles below as role agents, one per
-role, each run once for one review and then ended. Each agent reads this
+`/l3a0:<name>`. `/l3a0:ask-team` seats the eight roles below, from the
+architect to the security reviewer, as role agents, one per role, each run once
+for one review and then ended. Each agent reads this
 charter's section for its role first, and that section overrides the plugin's
 default definition. `/l3a0:ask-board` convenes the board of directors on the
 decisions that are the owner's, which [CLAUDE.md](../CLAUDE.md)'s
@@ -270,10 +271,13 @@ not one instance) and over-reach (the change kept inside its class). The role
 lenses come from `/l3a0:ask-team` in its lens mode, which runs beside those two,
 seats the roles the change touches, verifies their findings and returns what
 survives without posting or fixing anything. The risk lens is required on
-anything touching the order path. Findings, the team's among them, and what was
-refuted, are posted on the pull request in one comment. A finding that turns on
-money, contracts or law goes to the owner under `### For the owner`, for a board
-sitting through `/l3a0:ask-board` if the owner asks for one.
+anything touching the order path. A veto that survives verification blocks the
+pull request until it is fixed, or until the owner overrides it in writing on
+the pull request. Findings, the team's among them, and what was refuted, are
+posted on the pull request in one comment opening with `## Review`. A finding
+that turns on money, contracts or law goes to the owner under a
+`### For the owner` heading in that comment, for a board sitting through
+`/l3a0:ask-board` if the owner asks for one.
 
 ### 5. Release
 
@@ -285,7 +289,7 @@ evidence, not elapsed time.
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 ### 6. Operate
 
