@@ -971,7 +971,10 @@ The entities live in four stores, and each store keeps its own rule.
    That module opens a new file with `open(path, "xb")`, which fails if the
    file exists, so an overwrite raises `VintageRefused` instead of happening. A
    paper run's captured bars are vintages too, and the snapshot is the list of
-   bars the run read.
+   bars the run read. Their files live in a private store and only their
+   checksums are committed, as question 4 settles, the way
+   quantitative-trading's `src/chan/archive.py` keeps vendor bars it may not
+   publish.
 2. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
    that changes only through a pull request.
 3. **The journal, D3, holds `JOURNAL_ENTRY`.** `ORDER` and `FILL` are read from
@@ -1199,12 +1202,16 @@ Each question has a recommendation, so a review can answer it with a yes.
    can forbid redistributing data. The recommendation follows
    quantitative-trading's archive pattern: keep the files in a private store,
    and commit only their checksums, so a reader can still check that a run's
-   inputs are the ones recorded.
+   inputs are the ones recorded. The owner accepted it on 2026-10-29, and the
+   ruling is on [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
 5. **Where does the platform run?** The recommendation is one machine the owner
    controls with a daily scheduler, either the owner's own machine or the VM
    marketlake runs on. The VM keeps the run beside the lake it reads, but it
    can power itself off each day, so the run's time has to fit inside its
-   window. The owner's machine needs no new host.
+   window. The owner's machine needs no new host. The owner accepted one owner
+   controlled machine with a daily scheduler on 2026-10-29, and the ruling is
+   on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Which of the
+   two machines is still the owner's pick.
 6. **Which heartbeat service?** The recommendation is a hosted check that
    alarms when a ping is late, outside every machine the platform uses. A
    GitHub Actions schedule is not one, because quantitative-trading measured
