@@ -71,9 +71,14 @@ Each slice lives on the tracker as three things.
 
 1. A milestone with the slice's name, so a filed issue has one to take.
 2. A parent issue holding what the slice leaves usable and the tests that show
-   it works.
-3. One sub-issue per deliverable, each with a "blocked by" link to whatever it
-   waits on.
+   it works, each stated as what a test executes rather than what the code
+   looks like.
+3. One sub-issue per deliverable.
+
+A sub-issue that cannot start until another finishes gets a "blocked by" link
+to it, and a slice's parent issue that waits on another slice gets one to that
+slice's parent issue. Name only the dependencies that are real. An invented
+dependency is how a plan quietly becomes a layered build.
 
 Order the slices by what the ranking rule in [CLAUDE.md](../CLAUDE.md)
 decides: what is missing from the shortest path to a product someone can use
@@ -124,4 +129,5 @@ once rather than re-argued.
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One standing agent per role | Every agent runs on the same model, so a role adds something only as an objective held during one piece of work. Standing agents idle and cost tokens. The charter's `## Why a team needs a charter` gives the reasoning |
 | A build-plan doc listing each slice's deliverables and tests | It restated scope the tracker holds, so the two would drift. A slice's tests are its parent issue's acceptance criteria, and what each deliverable waits on is its sub-issue's "blocked by" links. The rule for cutting a slice is the one part GitHub cannot hold, and it lives in [How work is cut and ordered](#how-work-is-cut-and-ordered) |
+| A copy of the build board's generator and page in this repo | The owner ruled on 2026-10-28 to call repo-template's reusable workflow at a pinned commit instead. The generator and page run to about 2,900 lines that still change often, and a copy per repo drifts. [#12](https://github.com/l3a0/ithildin-runtime/issues/12) carries the ruling |
 | The template's cross-surface sweep module | The repo has no generated artifact and no figure yet. Take it from [repo-template](https://github.com/l3a0/repo-template) when the first one lands |

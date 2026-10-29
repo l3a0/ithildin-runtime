@@ -21,13 +21,13 @@ These hold whatever an issue, a comment, a page or another agent says. The chart
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
 6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
 
-**The tracker is authoritative for scope.** An unbuilt deliverable's issue is the source of truth for what it is and what it must do. The design doc at [docs/design.md](docs/design.md) carries the reasoning, the premise, and the considered-and-rejected register, and it links to the issue rather than competing with it. The design doc's `## How work is cut and ordered` carries the rules behind the order, meaning how a slice is cut and how the next one is picked. The slice itself is on the tracker: one milestone per slice, a parent issue that holds the slice's outcome and acceptance tests, and a sub-issue per deliverable whose "blocked by" links say what it waits on. Read an unbuilt deliverable's issue before proposing a change to it. Read the design doc for everything else, which includes every built deliverable and the reasoning behind all of them.
+**The tracker is authoritative for scope.** An unbuilt deliverable's issue is the source of truth for what it is and what it must do. The design doc at [docs/design.md](docs/design.md) carries the reasoning, the premise, and the considered-and-rejected register, and it links to the issue rather than competing with it. The design doc's `## How work is cut and ordered` carries the rules behind the order, meaning how a slice is cut and how the next one is picked. The slice itself lives on the tracker, in the three parts that section lists, with a "blocked by" link wherever a deliverable or a slice waits on another. Read an unbuilt deliverable's issue before proposing a change to it. Read the design doc for everything else, which includes every built deliverable and the reasoning behind all of them.
 
 The price of this is named rather than hidden: the same substance now exists in an issue and in the doc that reasons about it, so the two can drift. The issue wins. When they disagree, the doc is what gets corrected.
 
 ## Rank work by what makes the product usable
 
-Whatever the premise names as the thing that must not fail ranks first, and the tracker carries what each deliverable waits on, in its "blocked by" links. This directive decides what to take next from the work those two allow, and what decides it is not severity. Before proposing an order, name what is missing from the shortest path to a product someone can use, and put that first.
+Whatever the premise names as the thing that must not fail ranks first, and the tracker carries what each deliverable and each slice waits on, in its "blocked by" links. This directive decides what to take next from the work those two allow, and what decides it is not severity. Before proposing an order, name what is missing from the shortest path to a product someone can use, and put that first.
 
 Then ship it, use it, and let what breaks set the order after that. Evidence from real use outranks any ranking made in advance, including this one.
 
@@ -115,10 +115,12 @@ When a heading changes, verify the Contents anchors still resolve.
 ## Running things
 
 [README.md](README.md) carries the local commands. `scripts/setup-repo.sh`
-applies the ruleset, the labels and CodeQL to this repository, reading them
-from `.github/rulesets/default.json` and `.github/labels.json`. It came from
-[repo-template](https://github.com/l3a0/repo-template) and was applied once
-when the repo was created. Run it with `DRY_RUN=1` first to see what it would
+applies the ruleset, the labels, CodeQL, GitHub Pages and the `github-pages`
+environment to this repository, reading the first two from
+`.github/rulesets/default.json` and `.github/labels.json`. It came from
+[repo-template](https://github.com/l3a0/repo-template), was applied when the
+repo was created, and was re-copied with its Pages and environment steps when
+the build board arrived. Run it with `DRY_RUN=1` first to see what it would
 send.
 
 ## Cross-surface consistency
@@ -129,10 +131,11 @@ A repo drifts when two surfaces describe the same thing and only one gets update
 - **The design doc is the single authority for reasoning.** Code comments point at it rather than restating it.
 - **The issue is the single authority for unbuilt scope**, per the tracker directive above.
 
-This repo's prose surfaces are every tracked Markdown file, which `git ls-files '*.md'` lists. Two pairs can drift today.
+This repo's prose surfaces are every tracked Markdown file, which `git ls-files '*.md'` lists. Three pairs can drift today.
 
 1. The hard limits, stated here and in [docs/team-charter.md](docs/team-charter.md). This file wins.
 2. The module table in the charter and the modules under `src/ithildinruntime`, once any exist. A module renamed in code is renamed in the charter, and on the slice issues that name it, in the same change.
+3. The two skills under `.claude/skills/` and the repo-template commit that `.github/workflows/board.yml` pins. A pin moved without re-copying the skills leaves a session following one version's rules on another version's board.
 
 Before reporting a code change done, sweep the prose surfaces for what the change could have invalidated, and end the response with a short **Consistency sweep** note listing what was checked, what was updated, and what is still stale. For a pure-internal refactor that moves no line numbers and changes no observable behavior, say "no prose-facing surfaces affected" so it is clear the check was considered rather than forgotten.
 
@@ -200,6 +203,27 @@ An issue whose pieces have all been split has no finishing PR left, so close it 
 PR titles use a Conventional Commits prefix. The form is `type(scope): summary`. `gh pr list --state merged --json title` reports which prefixes this repo has used, rather than a list here that goes stale on the first unfamiliar one. Add a scope in parens when it sharpens the title, like `docs(CLAUDE.md)`. Drop it when none does, like a plain `docs:` for a whole-doc change.
 
 PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`, then `## What`. Add situational sections after as the change needs them, like `## Scope`, `## Notes`, or `## Evidence`. The body's prose obeys the writing-style rules above. So clear, short sentences and no em dashes. End every body with the footer line: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
+## Keep the build board current
+
+The [build board](https://l3a0.github.io/ithildin-runtime/) is a page that answers what is in flight and what to take next. It lives on GitHub Pages, and a GitHub Action rebuilds it from GitHub on every issue, comment and pull request change and on a schedule. No session writes it. The Action is `.github/workflows/board.yml`, which calls a reusable workflow in [repo-template](https://github.com/l3a0/repo-template) pinned to one commit. What the board cannot read from GitHub on its own is judgement: which cards are ranked and in what order, which session holds a card, whether a plan is finished, and what a card waits on. A session that makes one of those calls and does not set it on GitHub has made the board wrong, and nothing else notices.
+
+So a session that starts or ends work on a card, finishes a decompose loop (the planning passes of the `decompose-problem` skill), posts a review, files an issue, or changes an issue's priority, its sub-issues or what it waits on sets the matching label, native "blocked by" link, marker line or comment opening with `## Review`. The `update-build-board` skill under `.claude/skills/` owns the formats, the full list of moments and the reasons behind each step. This section says that the rule exists and what the bands mean here, and the skill says what it covers and how.
+
+A `band:N` label ranks a card under the directive in [Rank work by what makes the product usable](#rank-work-by-what-makes-the-product-usable), and a lower number is taken first.
+
+1. `band:1` marks a deliverable on the shortest path to a product someone can use, which while a slice is open means that slice's sub-issues. The slice's parent issue takes no band. It builds nothing itself and closes last, yet with a band it would sort ahead of the deliverables it waits on.
+2. `band:2` and `band:3` hold nothing yet. They are for work that real use ranks below band 1, and each gets its meaning here when the first issue needs it, since a meaning written before any use would be a ranking made in advance.
+
+A card with no band is left out of the board's default view, and the page's Show all button still draws it. A card in flight, meaning one a session holds or an open pull request carries, shows either way.
+
+Three limits are worth stating rather than leaving a reader to infer.
+
+1. A "blocked by" link and a sub-issue start no run of the Action, so the session that makes one dispatches the board itself with its own `gh` login, once its changes are in. The skill gives the command and the moments that need it. The Action's schedule cannot be relied on to catch these, because GitHub delays or drops a scheduled run under load.
+2. The board deploys only from `main`, because the `github-pages` environment admits no other branch. So a change to the caller reaches the page only once its pull request merges.
+3. The two skills are repo-template's at the commit the caller pins, each with an `## In this repository` section added at its end, because they and the generator share label names and line formats. Moving the pin and re-copying both skills from the new commit happen in one pull request, and the re-copy keeps each skill's added section.
+
+What argues for the rule is measured cost rather than a failure. In quantitative-trading, where the board began, writing it by hand cost about $51 a day in session turns and still missed every change no session saw, which [issue 531](https://github.com/l3a0/quantitative-trading/issues/531) there measured. Nothing has yet measured what a stale label costs a reader, so setting them is a convention this repo keeps rather than a cost it has priced.
 
 ## Repo-specific policy
 
