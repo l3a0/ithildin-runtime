@@ -1215,7 +1215,10 @@ Each question has a recommendation, so a review can answer it with a yes.
 6. **Which heartbeat service?** The recommendation is a hosted check that
    alarms when a ping is late, outside every machine the platform uses. A
    GitHub Actions schedule is not one, because quantitative-trading measured
-   only about 11% of its scheduled board runs firing over 185 hours.
+   only about 11% of its scheduled board runs firing over 185 hours. The owner
+   chose healthchecks.io on 2026-10-29, in the project marketlake already runs,
+   with its ntfy push and email integrations as the alert channel. The ruling
+   is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 7. **Does pulling the kill switch cancel orders resting at the broker?** The
    recommendation is yes, through the kill switch command, which cancels each
    resting order through the order path and journals it. Cancelling an order
