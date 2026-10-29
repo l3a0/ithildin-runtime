@@ -530,7 +530,7 @@ to pass the risk gate is a trade nobody chose.
 The daily loss stop works through the same gate. Once the day's loss passes the
 stop, the risk gate refuses every new order. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
 lists the limit as "an automatic unwind and stop", and an unwind is itself a
-trade. Question 8 asks whether slice 1 stops only.
+trade. Slice 1 stops only, as question 8 settles.
 
 ### The book and the broker disagree
 
@@ -573,7 +573,7 @@ sequenceDiagram
     P->>K: pull the kill switch
     K->>K: set the flag
     K->>J: halt journaled, reason "kill switch"
-    K->>X: cancel resting orders, if question 7 says yes
+    K->>X: cancel resting orders
     X->>J: each cancel journaled
     X->>B: cancel
     K->>M: alarm
@@ -596,8 +596,8 @@ every run reads, and it can cancel resting orders through the order path, so
 the cancel is journaled like any other step. The split of the kill switch work
 is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Orders sent in
 the evening rest at the broker overnight, so a switch pulled before the open
-stops nothing already sent unless it also cancels them. Question 7 asks whether
-it does.
+stops nothing already sent unless it also cancels them, which is why it does,
+as question 7 settles.
 
 ## Types and interfaces
 
@@ -872,7 +872,7 @@ broker by client order id. Sending the order again is never a way out. An order
 that ends `Abandoned` or `Lost` never reached the broker, so the next run's
 order manager plans from the book as if it had never existed.
 
-`Cancelled` exists only if the owner answers yes to question 7.
+`Cancelled` is reached through the kill switch, as question 7 settles.
 
 ## The life of a run
 
@@ -1121,6 +1121,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 
 | Piece | Written on |
 | --- | --- |
+| `core`'s shared types and every `Protocol`, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Bar`, `Snapshot`, vintage replay, marketlake reader, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -1138,10 +1139,8 @@ Two pieces belong to no single module.
 1. `core`, with the shared types and every `Protocol`.
 2. The import rule test, which reads every module's imports.
 
-Question 9 asks where they are written, since
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
-[#8](https://github.com/l3a0/ithildin-runtime/issues/8) are both free to start
-first and both would need `core`.
+Both are written on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), which every module issue waits on, as question 9
+settles.
 
 The run controller imports every module, so it is built last. This doc
 proposes building it on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which owns the startup order and waits on every
@@ -1224,15 +1223,19 @@ Each question has a recommendation, so a review can answer it with a yes.
    resting order through the order path and journals it. Cancelling an order
    that has not filled sells nothing, so it is still a stop and not a flatten,
    and without it a switch pulled overnight stops nothing until after the open.
+   The owner accepted it on 2026-10-29, and the ruling is on
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 8. **Does the daily loss stop also unwind positions?** The recommendation is
    no for slice 1. Crossing the stop makes the risk gate refuse every new
    order. An unwind is a trade of its own, so it would need its own path
    through the gate and its own tests, and
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7) can add it later.
+   The owner accepted it on 2026-10-29, and the ruling is on [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
 9. **Where are `core` and the import rule test written?** The
    recommendation is a new sub-issue of
    [#4](https://github.com/l3a0/ithildin-runtime/issues/4), built first, which
    every module issue waits on through a "blocked by" link. Every module
    imports `core`, so the dependency is real. The price is one step before any
    module starts. In return the shared shapes land once, reviewed on their own,
-   rather than inside whichever module happens to go first.
+   rather than inside whichever module happens to go first. The owner accepted
+   it on 2026-10-29, and the work is [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
