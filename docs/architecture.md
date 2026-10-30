@@ -30,7 +30,7 @@ The owner's part in reviewing this doc is two sections at the end.
 
 1. [Decisions](#decisions), a table where each row says what this doc chose, what it
    turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depends on. Each carries a recommendation, so a yes is enough, and each says where the owner has already ruled.
+2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depends on. Each carries a recommendation and says how the owner ruled. The owner has answered all twelve, the last two on 2026-10-30.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
 what it shows and what to look for. Nothing here is built yet.
@@ -633,7 +633,7 @@ journaled before it is sent. If the execution worker dies after "sending
 journaled" and before the ack, the journal holds an order in doubt. The next
 execution worker asks the broker for it by its client order id, an id the
 platform chooses and sends with the order, rather than sending it again.
-Alpaca, the recommended paper broker,
+Alpaca, the paper broker the owner chose on 2026-10-30,
 accepts a client order id and can look an order up by it. Whether it refuses a
 second order with the same id needs confirming on the paper account before
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10) relies on it.
@@ -2305,7 +2305,7 @@ accepted.
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming the tag S3 returned when each was created. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
-| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
+| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2335,6 +2335,7 @@ accepted.
 | The risk gate counts every open order at its worst case, as filled on the side that grows exposure and unfilled on the other, until the broker confirms it | Counting open orders at their net | An order left resting can block a trade that would have fitted | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), as [design.md](design.md#processes-and-files) proposes |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| Alpaca's paper account is the paper broker | Schwab, which is not known to offer an API paper account, or Interactive Brokers, which needs a gateway process beside the platform | The adapter is written to one broker's API, and whether Alpaca refuses a second order with the same client order id still needs confirming on the paper account | Ruled by the owner on 2026-10-30, question 1. Built on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Talk to the paper broker over its REST API, with the HTTP client passed in as an argument | The broker's own SDK | A few more lines per call. In return tests replace the client with a fake that returns scripted answers, as quantitative-trading's Alpha Vantage fetcher does, and no SDK enters the dependency list | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 
 ## Questions for the owner
@@ -2345,7 +2346,9 @@ Each question has a recommendation, so a review can answer it with a yes.
    free, it has a REST API, and a paper key cannot move money. Schwab, which
    marketlake already reads, is not known to offer an API paper account, so
    confirm that before choosing it. Interactive Brokers has one, but it needs a
-   gateway process running beside the platform.
+   gateway process running beside the platform. The owner ruled for Alpaca's
+   paper account on 2026-10-30, and the ruling is on
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 2. **Where do live GLD and USO bars come from?** The recommendation was to add
    both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) did on
    2026-10-29. Capture starts once the owner onboards them on marketlake's VM.
@@ -2543,3 +2546,6 @@ Each question has a recommendation, so a review can answer it with a yes.
     real, no machine and no reach from marketlake's EC2 roles, and the
     evidence that would settle it is what running the VM costs: hours spent
     patching and restarting it, and any marketlake apply that touches it.
+    The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
+    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That
+    evidence is what would reopen the question.
