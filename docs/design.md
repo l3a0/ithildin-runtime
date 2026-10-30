@@ -652,12 +652,14 @@ Five rules keep a day of decisions safe.
       write S3 does not answer ends no later than the cutoff, so a slow write
       cannot carry a send past it.
    2. **A clock that cannot be trusted halts.** At the start of the send
-      stage, execution compares the VM's clock with the broker's own clock and
+      stage, execution compares the VM's clock with the broker's own clock,
+      Alpaca's `GET /v2/clock`, and
       halts when they differ by more than a tolerance, because a slow clock
       reads as "before the cutoff".
    3. **A pair is kept whole while cancels are still taken.** The cancel
       cutoff is the earlier of the broker's and the exchange's cutoff for
-      cancelling a closing-auction order. After the order loop, execution
+      cancelling a closing-auction order, which this doc takes as 15:50, as
+      architecture.md's kill switch section says. After the order loop, execution
       looks up each leg by its client order id until every leg is accepted or
       the cancel cutoff passes. When one leg is rejected, unsent or past the
       cutoff while another is accepted, execution cancels the accepted legs,

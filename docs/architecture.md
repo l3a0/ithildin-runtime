@@ -368,7 +368,7 @@ moment, not against a blob.
 | --- | --- | --- | --- | --- | --- |
 | Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
 | Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest, except that a market-on-close order fills at the last price of marketlake's 16:00 cycle, marked provisional until the official close arrives | S3, the shadow journal | Sent |
-| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own fill | S3, the paper journal | Sent |
+| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | S3, the paper journal | Sent |
 | Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | S3, the live journal | Sent |
 
 Every mode reads bars through the same marketlake reader. The modes differ in
@@ -875,9 +875,15 @@ pulled in that window stops nothing already sent unless it also cancels
 them, which is why it does, as question 7 settles. The exchange stops taking
 cancels of closing-auction orders some minutes before the close, so a switch
 pulled after that cannot stop the fill, and the cancelling worker's report
-says so. The cancel cutoff is the earlier of Alpaca's and the exchange's,
-and both, on NYSE Arca where GLD and USO list, need confirming on
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+says so. The cancel cutoff is the earlier of Alpaca's and the exchange's.
+NYSE Arca, where GLD and USO list, refuses cancels of closing-auction
+orders from 15:59, as a
+[Lightspeed guide](https://lightspeed.com/support/lightspeed-trader-on-close-and-on-open-guide)
+and an [SEC filing](https://www.sec.gov/files/rules/sro/nyse/2018/34-84804.pdf)
+on its closing freeze describe. Alpaca's
+[order page](https://docs.alpaca.markets/docs/orders-at-alpaca) names no
+separate cancel cutoff, so this doc takes 15:50, Alpaca's entry cutoff, as
+the cancel cutoff until Alpaca says otherwise.
 
 ### Every alarm and its drill
 
@@ -2016,10 +2022,17 @@ Each question has a recommendation, so a review can answer it with a yes.
     be rejected", so the decision runs at 15:40 and every market-on-close
     order goes out by 15:48, a cutoff the paper account's hard caps hold.
     Execution checks it before every send and again just before each broker
-    call. An early close needs its own times, and Alpaca's
-    cutoff on those days needs confirming on
-    [#10](https://github.com/l3a0/ithildin-runtime/issues/10), along with
-    whether its paper account fills market-on-close orders at all. The price
+    call. Alpaca's order page does not state a cutoff for an early-close
+    day, so on those days the plan drops the 15:40 decision, which falls
+    after the 13:00 close, and the strategy does not trade. Alpaca's paper
+    account accepts market-on-close orders, but its
+    [paper trading page](https://docs.alpaca.markets/docs/paper-trading)
+    says it fills "based on the real-time quotes" and gives "partial fills for
+    a random size 10% of the time", and Alpaca staff on its forum say paper
+    does not tell a market-on-close order from a market order. So paper fills
+    measure the quote near the close rather than the closing auction's
+    price, and the random partial fills exercise the path that keeps a pair
+    whole. The price
     is a signal computed twenty minutes before the close it trades, a pair
     whose second leg can be rejected after the first is accepted, which
     execution then cancels while the exchange still takes cancels, and a kill
