@@ -388,7 +388,10 @@ Ten rules make the blobs something a worker can trust.
      owner or the operator clears a halt, with a command that journals who
      cleared it, why, and any correction a person made, such as a journaled
      override that explains a mismatch. Clearing never reruns the halted
-     decision.
+     decision. The owner narrowed it on 2026-10-30: on a live account only
+     the owner clears a halt, a switch or a lease, or writes an override,
+     and the operator acts on paper and shadow accounts, plus pulling a live
+     account's switch.
 
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again reads the plan, the results and the
