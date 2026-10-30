@@ -1957,9 +1957,8 @@ Ten rules hold the deployment to the premise and the hard limits.
        the VM.
 
     CI builds the image on every pull request and runs the tests inside it,
-    in the job still named `test` that the ruleset requires: the suite, test
-    1's backtest and test 3's fake broker under the supervisor, with the
-    memory-backed folder inside the container. A branch of this repository
+    in the two required checks `### How CI runs them` describes. A branch of
+    this repository
     can change a workflow, so no control on a pull request can promise that
     it never publishes. The control is provenance. One job, run only on a
     push to `main` and never on `pull_request_target`, `workflow_run` or a
@@ -2143,46 +2142,62 @@ and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) build, in
 three levels, from fast to slow.
 
 1. **Module tests, in one process.** Each module's logic, the risk gate's
-   limits and the journal's replay run as ordinary tests, as the existing
-   suite does today.
-2. **Contract tests for the two swappable pieces.** One suite runs each
-   storage adapter, and one runs each queue adapter, against the same
-   rules. For the store: a write refused when its key exists, the SHA-256
-   check, keys listed in order, a lost reply on a write that landed. For
-   the queue: a message under the pipe's 512-byte limit never interleaves
-   with another, a send to a full or unread pipe is skipped rather than
-   blocking, and a reader that starts late finds what it missed by checking
-   its keys. Today each suite runs one adapter beside S3's or the pipe's
-   rules. A later SQS adapter joins the queue suite against a local SQS
-   emulator or a real test queue.
+   seven refusals, the import rule and the journal's replay run as ordinary
+   tests, as the existing suite does today.
+2. **Contract tests for the two swappable pieces.** Each runs every adapter
+   against the same rules.
+   - **The store suite** holds the list design.md's
+     `### A worker works through a span of decisions` gives, which stays the
+     one statement of it, including two processes racing one create, a read
+     during a write and a writer killed partway through. A store that checks
+     for a key and then writes passes a test of one refused write and fails a
+     racing create, and one that creates the key and then writes into it
+     shows a reader half a blob, as a review's experiments showed. The suite
+     runs against the memory-backed folder and against the S3 adapter, the
+     second through a local S3 emulator that honours the refuse-if-it-exists
+     condition, which the first build confirms, and against a real test
+     bucket on each push to `main`.
+   - **The queue suite** checks that one send is one write of at most 511
+     bytes with its newline, and that 512 is refused. It runs two writers of
+     at least a thousand messages each and finds no line mixed. A send with
+     no reader and a send to a full pipe are each skipped within a second,
+     and a send to a pipe being read arrives. A worker that starts late finds
+     what it missed, including a result written between its opening its
+     pipe and checking its keys, which is the order design.md's rule 4 sets.
+     A later SQS adapter joins this suite against a local SQS emulator or a
+     real test queue.
 3. **The runtime in containers.** CI builds the image once, and the test
    host in the harness, rule 10's item 5 of `## Where it runs`, starts every
-   component's container and the supervisor's on the runner. Every
-   container mounts two shared volumes: a folder for the queues' named
-   pipes, which works because the containers share the runner's kernel, and
-   a memory-backed folder standing in for S3, with the same create-only
-   rules. The simulated broker and the history clock make each run a
-   backtest. Tests 1 to 3 run this way, and the test host stands in for
-   systemd and the host's watchdog, so the drills that crash, freeze or
-   restart a worker run here too, among them the crash between a pair's
-   legs.
+   component's container and the supervisor's on the runner. It starts each
+   with the user, flags and pipe ownership its systemd unit gives it, read
+   from the same definition, and takes its restart policy from the unit
+   files, which a test pins. Every container mounts the pipe folder and one
+   memory-backed folder created on the runner standing in for S3, so a blob
+   written before every container stops is still there after. Tests 1 and 2
+   and test 3's fake-broker run go through this level, with the simulated
+   broker and the history clock, and so do the drills that crash, freeze or
+   restart a worker, among them the crash between a pair's legs. Tests show
+   that a message sent from one container arrives in another, and that a
+   container the input table does not list as a writer cannot open another
+   worker's pipe.
 
-The required `test` check runs the first two levels and the third level's
-tests 1 and 3, and a drill job runs the rest of the third level on the same
-image. If the third level makes `test` too slow to wait on, it moves to a
-required check of its own, which needs the ruleset in
-`.github/rulesets/default.json` to name it. How long it takes is measured on
-the first build rather than guessed here.
+The required `test` check runs the first two levels. A second required
+check, named in `.github/rulesets/default.json`, runs the third on the same
+image, test 2 and the restart drills included, because the restart path is
+what this design rests on. That check also runs the real unit files and the
+host's watchdog under the runner's own systemd, which hosted runners appear
+to allow with `sudo`, as the first build confirms, so the test host stands in
+for systemd only in a local backtest.
 
 What CI cannot cover runs on the VM, on a paper account, as drills on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11): the real systemd
-units, the host's watchdog and `OnFailure` handler, a Docker daemon restart,
-the instance metadata fence, and S3 itself with its bucket policy, which the
-memory-backed folder only imitates.
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11): the instance
+metadata fence against AWS's own service, S3's bucket policy and CloudTrail,
+and the account's real roles. The memory-backed folder and the emulator only
+imitate S3's rules, which the real test bucket checks.
 
 The price is a CI run that builds an image and starts several containers on
-every pull request, a test host to keep in step with what systemd does on
-the VM, and drills that only the VM can run.
+every pull request, a second required check, an S3 emulator and a test
+bucket to keep, and drills that only the VM can run.
 
 ## Decisions
 
@@ -2212,7 +2227,7 @@ accepted.
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail. The operator's credential acts on paper and shadow accounts only, plus a live pull, as the owner ruled on 2026-10-30 | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, each behind a hardware key | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 what a person runs. Only the owner resumes live trading, ruled by the owner on 2026-10-30 |
 | A component learns of a new blob from a message its writer sends, a timed check of the next key, and, once a writer or a component sits off the VM, S3's notifications to a queue, fanned out through SNS or EventBridge. Each is a hint, and anything that touches money re-reads the blob right before it acts | Watching S3 directly, which S3 does not offer, or trusting a notice as the change itself | A small read every few seconds for each reader that checks on a timer, which is execution, the supervisor and monitoring, and up to that interval's delay for a change nobody messaged | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how a component listens for changes |
-| CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, and the runtime's containers on the runner with shared volumes for the pipes and a memory-backed store, under a test host that restarts and kills containers as systemd would. What only the VM can show runs as paper drills | Testing the modules in one process only, or running the third level only on the VM | An image build and several containers per pull request, a test host to keep in step with systemd, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how CI works for containers that pass messages |
+| CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how CI works for containers that pass messages |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, messages every worker and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
