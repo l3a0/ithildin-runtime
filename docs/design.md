@@ -746,12 +746,15 @@ its own disk. A setting comes from the release the owner pins or from a blob
 in the runtime's bucket. The owner ruled on 2026-10-29 that the broker key
 lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
 as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
-account, with marketlake's VM role narrowed so it cannot read it. This doc
-proposes the rest:
-every role in that account with a broad parameter read refuses reads of the
-key's path, as [architecture.md](architecture.md#where-it-runs)'s rule 3
-lists, the key sits under the runtime's own path, a grant on that parameter alone
-lets only the execution user read it, and every other credential is readable
+account, with marketlake's VM role narrowed so it cannot read it. The owner
+ruled later that day that the runtime's bucket and VM live in that account
+too, with the key encrypted under a KMS key of the runtime's own whose policy
+names only the execution user and the owner, and with marketlake's plan role
+narrowed to what `tofu plan` reads, as
+[architecture.md](architecture.md#where-it-runs)'s rules 3 and 5 and its
+question 11 say. This doc proposes the rest: the key sits under the
+runtime's own path, the roles that keep a broad parameter read refuse that
+path as a backstop, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
 gives that user alone. Nothing here sits in a file tracked in this
 repository.

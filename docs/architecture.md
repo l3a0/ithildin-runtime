@@ -1561,64 +1561,60 @@ Nine rules hold the deployment to the premise and the hard limits.
    process's environment and the unit's settings, and expects every one to
    fail. The owner ruled on 2026-10-29 that the store is the one marketlake
    uses, AWS Systems Manager Parameter Store, holding the key as a
-   `SecureString` parameter encrypted under KMS. As in marketlake, the
-   parameter uses AWS's managed `aws/ssm` key, so the read is limited by a
-   grant of `ssm:GetParameter` on that parameter alone, given only to the
-   execution user's credential. That holds only if no other principal can
-   read every parameter in the account. marketlake's VM role carries AWS's
-   managed policy `AmazonSSMManagedInstanceCore`, which reads every
-   parameter. The owner ruled on 2026-10-29 that the runtime's parameter lives
-   in marketlake's AWS account, and that marketlake's VM role is narrowed so
-   it cannot read it. That role is not the only one with a broad read.
-   marketlake's two CI roles carry AWS's `ReadOnlyAccess`, which grants every
-   `ssm:Get` action, and the plan role runs on any pull request branch of a
-   public repository, so without a refusal one pushed branch could print the
-   key into a public Actions log. The owner chose on 2026-10-29 to fix the
-   plan role at the cause: its `ReadOnlyAccess` gives way to a policy listing
-   only what `tofu plan` reads, with no parameter read of any kind and object
-   reads on marketlake's state bucket alone. A refusal fails silently when a
-   bucket or parameter is added later, while a missing grant makes the next
-   plan stop on "access denied", in plain sight. This doc proposes a refusal
-   for the roles that keep a broad parameter read: marketlake's VM role and
-   its apply role, which runs only after the owner's approval, and the
-   runtime's own VM role.
-   1. Each refuses `ssm:GetParameter`, `ssm:GetParameters` and
-      `ssm:GetParameterHistory` on the broker key's path, because history also
-      returns decrypted values. The runtime's VM role refuses the same on
-      marketlake's own path, `/marketlake/config` and everything below it,
-      which holds marketlake's market data credentials and alert keys.
-   2. Each refuses `ssm:GetParametersByPath` on every path, because a
-      recursive read of a parent path returns every parameter below it and a
-      refusal on the child does not stop it. marketlake's apply role already
-      refuses it everywhere.
-   3. A drill reads the key with each of those roles' credentials and the
-      plan role's, directly,
-      by a recursive read from `/` and through its history, and reads
-      marketlake's path with the runtime's VM role, and expects "access
-      denied" every time.
-   4. The parameter lives in us-east-1, the region marketlake's refusals
+   `SecureString` parameter encrypted under KMS, and that the runtime's
+   parameter, bucket and VM all live in marketlake's AWS account, the second
+   choice of question 11. That account is shared with a public repository's
+   CI, so the ruling puts the key and the data behind lists of who may reach
+   them rather than behind refusals that every role must remember.
+   1. **A KMS key of the runtime's own encrypts the parameter.** Its key
+      policy names only the execution user's principal, for decrypting, and
+      the owner's, for managing the key. It leaves out the statement that
+      lets IAM policies grant use of the key, so no other role in the
+      account can decrypt the parameter, whatever its IAM policies allow.
+      The key costs $1 a month.
+   2. **marketlake's plan role reads only what `tofu plan` needs.** Its
+      `ReadOnlyAccess`, which reads every bucket and parameter and runs on
+      any pull request of a public repository, gives way to a policy that
+      lists the reads, with no parameter read of any kind and object reads on
+      marketlake's state bucket alone. The owner chose this fix at the cause
+      on 2026-10-29, because a missing grant stops the next plan in plain
+      sight, while a missing refusal exposes data silently.
+   3. **The roles that keep a broad read refuse the key's path as a
+      backstop.** marketlake's VM role, its apply role, which runs only after
+      the owner's approval, and the runtime's own VM role each refuse
+      `ssm:GetParameter`, `ssm:GetParameters` and `ssm:GetParameterHistory`
+      on the broker key's path, and `ssm:GetParametersByPath` on every path,
+      because a recursive read of a parent path returns every parameter below
+      it. The runtime's VM role refuses the same on `/marketlake/config` and
+      everything below it, which holds marketlake's market data credentials
+      and alert keys.
+   4. **marketlake's apply and deploy roles cannot touch the runtime's VM.**
+      The VM and its volume carry a tag of the runtime's own, and both roles
+      refuse every EC2 action on resources with that tag, and any change to
+      that tag or to marketlake's capture-host tag on them, so neither can
+      rewrite the VM, copy its disk or point marketlake's deploy document at
+      it. This one is a list of refusals, so a check in marketlake's CI fails
+      any role that lacks it. The worker credential files also live in
+      memory-backed storage, which a copy of the disk would not hold, and the
+      runtime uses no Run Command in that account, because marketlake's
+      deploy role can read every command's output there.
+   5. **The parameter lives in us-east-1**, the region marketlake's refusals
       name, and the owner writes its value by hand through standard input,
       as marketlake writes its own. No OpenTofu configuration, state or
-      variable ever holds it, because the plan role can print the state into
-      a public log.
+      variable ever holds it.
+   6. **A drill** reads the key with the plan, apply and VM roles'
+      credentials and the runtime's VM role's, directly, by a recursive read
+      from `/` and through its history, reads marketlake's path with the
+      runtime's VM role, and tries an EC2 action on the runtime's VM with the
+      apply and deploy roles, and expects "access denied" every time.
 
    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
-   builds marketlake's side. Which account the runtime's bucket and VM live in
-   is question 11. Every remaining route needs the owner's approval
-   or the owner's own credential: the owner's administrator session, and any
-   approved apply or deploy in that account. An approved apply can edit a
-   role's refusal, which its policy diff shows, and it holds enough of EC2 and
-   of the deploy document to reach the runtime's VM as root if that VM runs in
-   the account, for example by tagging it as marketlake's capture host and
-   rewriting the deploy document, or by copying its disk. The runtime's VM
-   carries no tag marketlake's deploy role targets today, and the worker
-   credential files live in memory-backed storage, which a copy of the disk
-   does not hold. The runtime uses no Run Command in that account, because
-   marketlake's deploy role can read every command's output there. A key of
-   the runtime's own in KMS, whose policy names only the execution user's
-   principal, would turn the read refusals into a list of who may read, at a
-   monthly fee, and is the owner's to choose. It would not close the routes
-   through an approved apply, which take that principal's credential itself.
+   builds marketlake's side. What remains needs the owner's approval or the
+   owner's own credential. An approved apply can edit a role's refusal,
+   which its policy diff shows. The owner's administrator session, and the
+   account's root user, can edit any of these policies, and only a service
+   control policy in an AWS organization binds a root user, which this
+   account does not use.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
    can create the switch, which pulls it, and can never delete it. The owner
    ruled on 2026-10-29 that only the owner's credential clears a live
@@ -1644,7 +1640,13 @@ Nine rules hold the deployment to the premise and the hard limits.
    bucket's policy, whose refusals name the runtime's principals, refuses any
    write on those prefixes that lacks the refuse-if-it-exists condition, any
    delete outside the leases, and any lease delete without the tag condition.
-   The release writes every blob with one single-part upload, never a
+   It also refuses every S3 action on the bucket to any principal that is not
+   one of the runtime's roles or the owner's, matched on `aws:PrincipalArn`,
+   and refuses changes to the policy itself to all but the owner. An explicit
+   refusal in a bucket policy overrides any role's own grant, so a role
+   marketlake adds later is refused without anyone remembering it, which
+   matters because the bucket lives in marketlake's account. The release
+   writes every blob with one single-part upload, never a
    multipart one, which S3 cannot make conditional, and the policy marks a
    multipart start so a stray one fails when it completes rather than
    halfway.
@@ -1848,6 +1850,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
+| The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy and a KMS key of the runtime's own name who may reach the data, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -1977,9 +1980,11 @@ Each question has a recommendation, so a review can answer it with a yes.
     than the vendor's official candle. Whichever the owner chooses is the one
     schedule the strategy runs, and a missing input on a day halts that
     decision rather than switching to another choice.
-11. **Which AWS account holds the runtime's bucket and VM?** Rule 3 assumes
-    marketlake's account, where the owner ruled on 2026-10-29 that the broker
-    key lives. Three facts about that account matter. marketlake's plan role
+11. **Which AWS account holds the runtime's bucket and VM?** The owner ruled
+    on 2026-10-29 for the second choice, marketlake's account with the four
+    controls, against the board's recommendation of the first. Rule 3 and
+    rule 5 now carry it. Rule 3 had assumed marketlake's account, where the
+    owner ruled earlier that day that the broker key lives. Three facts about that account matter. marketlake's plan role
     holds AWS's `ReadOnlyAccess`, which reads every bucket and every parameter
     in the account, and runs on pull requests of a public repository, which
     [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
