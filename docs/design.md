@@ -672,7 +672,29 @@ Five rules keep a day of decisions safe.
       alone against `max_position` and `max_net`, as rule 9 says, so that leg
       is no larger than the caps allow, and monitoring alarms after the close
       on any pair whose filled legs differ from the planned hedge. A cancel is
-      not a trade, so this stays inside hard limit 3.
+      not a trade, so this stays inside hard limit 3. The owner ruled on
+      2026-10-29 that `max_net` is set from the venture's loss limit rather
+      than from the size of a leg, because a cap equal to the strategy's own
+      leg would never refuse anything, and on a day the loss stop is crossed
+      the gate refuses the order that would repair a stranded leg, leaving
+      that cap the only bound.
+      1. **A stress move sets the cap.** One leg's stress move is derived from
+         a recorded data vintage by a calculation anyone can rerun, over at
+         least a weekend's hold. `max_net` is sized so one leg's loss under
+         that move fits the share of the loss limit the owner sets. The hard
+         caps blob stores the stress move beside the cap, with the hash of
+         the vintage it came from.
+      2. **A tally after each close.** Monitoring's report records every
+         stranded leg, its overnight profit or loss, and how many sessions it
+         stayed open, so the decision to go live rests on measured numbers.
+      3. **A simulator that strands legs.** The one simulator can fill one
+         leg of a pair in part, or not at all, on a seeded fault, so the
+         backtest replay runs the path paper trading will. A test shows the
+         next decision rebuilds the hedge when nothing halts, and is refused
+         on a day the loss stop is crossed.
+      4. **No unwind at the next open in slice 1**, as question 8 rules,
+         unless the tally shows a stranded leg still open after two
+         sessions.
    5. **A flagged price halts.** The 15:40 decision reads marketlake's
       segments before sealing, where a price spike is flagged in the snapshot
       rather than halting. The risk gate values three limits at the
