@@ -928,6 +928,7 @@ here, with the issue that builds its drill.
 | The sealed day differs from what a provisional read saw | The segment's key and both SHA-256s | Change a sealed partition after a run read its segments | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor restarted mid-run | The plan it found and the workers still running | Kill the supervisor between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An order the journal holds open that the broker no longer lists, in a state its time in force does not explain | The client order id and the broker's answer | A simulated broker that drops a good-till-cancelled order | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The Docker daemon stopped or restarted mid-run | The daemon's state and the run's last decision | Restart the daemon during a paper decision | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -1742,55 +1743,89 @@ Ten rules hold the deployment to the premise and the hard limits.
    halts and alarms, and starts nothing. Once it holds
    the lease, there is nothing to restore, because every worker finds its
    place by checking its own keys in S3. Who starts a replacement VM, from
-   which image, and how a person confirms the old VM is gone before clearing
+   which VM image, and how a person confirms the old VM is gone before clearing
    its lease, is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 10. **The release is one container image, and CI tests that image.** This
     is this doc's proposal, raised by the owner on 2026-10-30. One Docker
-    image holds the whole runtime: one Python version, every dependency at
-    a pinned version, and an entry point per worker. Each component runs as
-    its own container from that image, so backtest, CI and the VM all run
-    the same bytes. If adopted, it changes four of the rules above.
+    image holds the whole runtime: one Python version, every dependency
+    installed from `uv.lock` with its hashes enforced, and an entry point per
+    worker. Each run is one container from that image, holding the
+    supervisor and its workers as the processes and Unix users the rules
+    above describe, so a backtest, CI and the VM run the same bytes and the
+    same process tree.
+
+    A container per component was considered and turned down. With systemd
+    or Docker starting each worker, the supervisor stops being their
+    parent, so it no longer learns of a crash the moment it happens, and
+    starting execution in cancel mode for a stranded pair leg, stopping
+    every worker on a failure, or keeping a worker from starting before the
+    deployment's lease is held, would each need the Docker socket or a
+    systemd grant, and either one is root on the host. Process ids would
+    also stop naming a worker across containers. One container keeps every
+    rule above as written. If adopted, it changes these:
     1. **The pin is an image digest.** Rule 1's tagged commit becomes the
-       digest of the image built from it, and a rollback, rule 6, is a pin
-       to the previous digest.
-    2. **Each container is fenced off by itself.** Rule 3's worker users
-       become containers, each running as its own non-root user. Only the
-       execution container mounts the broker credential, on an in-memory
-       mount that never reaches disk. The instance requires IMDSv2, whose
-       token reply carries a hop limit of 1 by default, as AWS's
-       [IMDSv2 page](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-metadata-v2-how-it-works.html)
-       says, so a container on Docker's default bridge network cannot get a
-       token. No container uses host networking, which would undo that.
-       The firewall rule on process owners then guards only processes
-       outside the containers.
-    3. **The queues stay named pipes,** in a directory every container
-       mounts. Pipes are files, and the containers share the host's kernel,
-       which a drill confirms before relying on it.
-    4. **systemd starts the containers, and the supervisor does not.** The
-       Docker socket gives whoever holds it root on the host, so the
-       supervisor never mounts it. A systemd unit per container starts and
-       restarts each one, and the supervisor keeps the plan, the deadlines,
-       the halts and the crash records, reading each container's exit
-       status from systemd rather than as its parent. Rule 7's restart
-       settings move to those units.
+       digest of the image built from it. The plan records the digest, and
+       the supervisor halts with "release changed" if its own differs. A
+       rollback, rule 6, stops the run's unit, confirms with `docker ps`
+       that no container remains, and moves the pin to the previous digest,
+       which the VM keeps pulled.
+    2. **The container is unprivileged on the host.** Docker's user
+       namespace remapping makes the container's root an unprivileged user
+       on the host, so the supervisor can start each worker as its own Unix
+       user inside the container without root on the VM. The container
+       drops every capability but those that switching users and signalling
+       workers need, has a read-only root file system, and never runs
+       privileged, never shares the host's network, process ids or IPC, and
+       never mounts the Docker socket or the system D-Bus.
+    3. **Credentials reach the container as files, and the instance's
+       never do.** Rule 3's provisioning step, on the host, writes each
+       worker user's credential file to memory-backed storage, which the
+       container mounts read-only. Only execution's credential reads the
+       broker key, which is fetched into memory and never mounted. The
+       instance is launched with IMDSv2 required and a token hop limit of 1,
+       set explicitly, because AWS's own
+       [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
+       give 2 for an AMI that requires IMDSv2, and 2 lets a container
+       through. A `DOCKER-USER` firewall rule also drops traffic from
+       Docker's bridges to the metadata service's addresses. Rule 3's drill
+       adds, from inside the container, a token request and a tokenless
+       request to the metadata service, each expected to fail.
+    4. **systemd runs the one container.** Rule 7's unit starts the
+       container rather than the supervisor directly, with the same restart
+       limit, and stopping the unit stops the container, so a stop or
+       `RuntimeMaxSec` ends the whole run. Stopping the Docker daemon stops
+       the container, so a daemon restart is a failure of the run, which
+       gets an alarm row, and the daemon is never upgraded during a session.
 
-    CI builds the image on every pull request and runs the test suite
-    inside it, along with test 1's backtest and test 3's fake broker under
-    the supervisor, with the memory-backed folder as an in-memory mount. A
-    pull request in a public repository can be made to print what its job
-    holds, which is what marketlake's plan role showed, so pull request jobs
-    get no credential that can publish the image or reach AWS. A separate
-    job on `main` publishes the image tagged with its commit, to GitHub's
-    container registry with the workflow's own token. The base image is
-    pinned by digest, CI scans the built image, and the image holds no
-    secret, since this repository's image is as public as its code. Deploying
-    a digest stays the owner's, under hard limit 6.
+    CI builds the image on every pull request and runs the tests inside it,
+    in the job still named `test` that the ruleset requires: the suite, test
+    1's backtest and test 3's fake broker under the supervisor, with the
+    memory-backed folder inside the container. A branch of this repository
+    can change a workflow, so no control on a pull request can promise that
+    it never publishes. The control is provenance. One job, run only on a
+    push to `main` and never on `pull_request_target`, `workflow_run` or a
+    manual dispatch, rebuilds the image, runs the tests on it, publishes it
+    to GitHub's container registry tagged with its commit, and attests its
+    build provenance. That job alone holds `packages: write`,
+    `id-token: write` and `attestations: write`, and every other job
+    reads only. Before pinning a digest, the owner runs
+    `gh attestation verify` on it, requiring the publish workflow on
+    `refs/heads/main`, and the deploy runbook on
+    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a
+    digest that fails. Every action is pinned to a full commit hash. The
+    base image is pinned by digest, a bot proposes its updates, and a
+    scheduled job rescans the digest the owner pinned. A `.dockerignore`
+    keeps `.git`, `.venv`, `.env*` and `.claude/` out, and no secret enters
+    the build through an argument or an environment variable. The owner
+    makes the package public once after its first publish, so the VM pulls
+    by digest with no GitHub credential. Deploying a digest stays the
+    owner's, under hard limit 6.
 
-    The price is a Docker daemon on the VM, running as root, to patch and
-    restart, an image build on every pull request, and a supervisor that
-    hands starting and restarting processes to systemd. The same image runs
-    unchanged on Fargate, so question 12 becomes a choice of host rather
-    than a rewrite.
+    The price is a Docker daemon on the VM, running as root, to patch outside
+    sessions, an image build on every pull request, and a verification step
+    before each deploy. The image carries over to Fargate, though the queue
+    into execution, how execution starts and the kill switch's route still
+    change there, as question 12 says.
 
 ## Package layout and the import rule
 
@@ -1962,7 +1997,7 @@ accepted.
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
-| The release is one container image with an entry point per worker, pinned by digest, each component a container started by its own systemd unit, and CI testing the image on every pull request while only `main` publishes it | A Python environment installed on the VM, or the supervisor starting containers through the Docker socket | A Docker daemon to maintain, an image build per pull request, and process starts handed to systemd | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The release is one container image, pinned by digest, and each run is one unprivileged container holding the supervisor and its workers as today. CI tests the image on every pull request, and one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or a container per component started by systemd or the Docker socket | A Docker daemon to maintain and patch outside sessions, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
