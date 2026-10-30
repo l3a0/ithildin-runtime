@@ -569,6 +569,58 @@ Ten rules make the blobs something a worker can trust.
     create the switch from anywhere, cancel at the broker's own console, and
     journal both as a human override once the VM is back.
 
+### How a component learns of a change
+
+S3 has no call that holds a connection open and reports new objects, so no
+component can watch a prefix the way a process watches a local folder. A
+component learns of a new blob one of three ways, and this doc proposes
+using them in layers, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22)
+and [#11](https://github.com/l3a0/ithildin-runtime/issues/11). None of the
+three is trusted on its own. A notice only says where to look. The blob is
+what a component acts on, and anything that touches money reads it again
+right before it acts.
+
+1. **The writer sends a message.** After a worker writes a decision result,
+   the storage contract sends a message to the queue of every worker the
+   table in `runtime` lists as a reader, as rule 4 says. It is immediate and
+   costs nothing, but it reaches only readers the writer knows, on the same
+   host, and a message can be dropped. So a worker that wakes checks every
+   decision it has not finished, not only the one a message names.
+2. **The reader checks the next key.** Journal entries sit at keys numbered
+   in order, so whether anything is new is one request: does entry N+1
+   exist? The kill switch and a halt of the run are single keys, so each is
+   one request too. A reader that checks on a timer bounds how late it can
+   notice a change, whoever wrote it, including a person off the VM.
+   Execution checks the switch every few seconds while orders rest, and
+   checks the switch, a halt of the run and the journal's end right before
+   every broker call. The supervisor checks the switch and the heartbeats on
+   a timer, and monitoring checks the journal's end each time it wakes.
+3. **S3 tells a queue.** S3 can send an event for every object created
+   under a prefix to an SQS queue, an SNS topic or EventBridge. That reaches
+   readers the first route cannot: a person writing with `ithildin` from
+   their own machine, or components on separate machines once the queue
+   adapter becomes SQS, as rule 10 of architecture.md's `## Where it runs`
+   keeps open. AWS's
+   [event notifications page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
+   says they "are designed to be delivered at least once" and are
+   "typically" delivered "in seconds but can sometimes take a minute or
+   longer", and FIFO queues are not a destination, so events can repeat and
+   arrive out of order. Each event is therefore a hint, like a message, and
+   a reader that gets one checks the keys as the second route does. Slice 1
+   needs none of this while every writer but a person sits on one VM, and
+   the second route already covers a person. It waits for the first
+   component that runs elsewhere.
+
+In a backtest every writer is local and the store is the memory-backed
+folder, so messages alone wake each reader, and the timed checks find
+nothing new.
+
+The price is the timed checks' requests, one small read a few seconds apart
+per reader, and a notice delay of up to the check's interval for a change
+nobody messaged. What no route can give is a reader that sees a change the
+instant it is written, which is why nothing that changes money rests on a
+notice.
+
 ### A worker works through a span of decisions
 
 The cost of starting a process decides how a backtest keeps
