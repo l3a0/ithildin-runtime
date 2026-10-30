@@ -591,22 +591,32 @@ right before it acts.
    exist? The kill switch and a halt of the run are single keys, so each is
    one request too. A reader that checks on a timer bounds how late it can
    notice a change, whoever wrote it, including a person off the VM.
-   Execution checks the switch every few seconds while orders rest, and
-   checks the switch, a halt of the run and the journal's end right before
-   every broker call. The supervisor checks the switch and the heartbeats on
-   a timer, and monitoring checks the journal's end each time it wakes.
-3. **S3 tells a queue.** S3 can send an event for every object created
-   under a prefix to an SQS queue, an SNS topic or EventBridge. That reaches
-   readers the first route cannot: a person writing with `ithildin` from
-   their own machine, or components on separate machines once the queue
-   adapter becomes SQS, as rule 10 of architecture.md's `## Where it runs`
-   keeps open. AWS's
+   Execution checks the switch every few seconds while orders rest, makes
+   the checks rule 9's fourth item lists right before every broker call, and
+   finds any new journal entry when its append of the `sending` entry is
+   refused, as rule 8 says. The supervisor checks the switch and the
+   heartbeats on a timer. Monitoring wakes on a timer as well as on
+   messages, for the deadlines it keeps: the supervisor's heartbeat, the
+   kill switch's cancels, and a restart record a worker never uploaded.
+3. **S3 notifies a queue.** S3 can send a notification for every object
+   created under a prefix to an SQS queue, an SNS topic or EventBridge. That
+   announces changes the first route cannot: a person writing with
+   `ithildin` from their own machine, or components on separate machines
+   once the queue adapter becomes SQS, as rule 10 of architecture.md's
+   `## Where it runs` keeps open. S3 sends one prefix's notifications to one
+   destination, so several readers of a prefix take them through an SNS
+   topic or EventBridge that copies each to every reader's queue. AWS's
    [event notifications page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
    says they "are designed to be delivered at least once" and are
    "typically" delivered "in seconds but can sometimes take a minute or
-   longer", and FIFO queues are not a destination, so events can repeat and
-   arrive out of order. Each event is therefore a hint, like a message, and
-   a reader that gets one checks the keys as the second route does. Slice 1
+   longer", and its
+   [message structure page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
+   says they are not guaranteed to arrive in order. So a notification can
+   repeat, arrive late or arrive out of order, and is a hint like a
+   message: a reader that gets one checks the keys as the second route
+   does. The SQS adapter turns each notification into the queue port's own
+   message naming the key, under the same contract tests, and the bucket's
+   notification configuration is one more piece of infrastructure. Slice 1
    needs none of this while every writer but a person sits on one VM, and
    the second route already covers a person. It waits for the first
    component that runs elsewhere.
@@ -616,7 +626,8 @@ folder, so messages alone wake each reader, and the timed checks find
 nothing new.
 
 The price is the timed checks' requests, one small read a few seconds apart
-per reader, and a notice delay of up to the check's interval for a change
+for each reader that checks on a timer, which is execution, the supervisor
+and monitoring, and a notice delay of up to the check's interval for a change
 nobody messaged. What no route can give is a reader that sees a change the
 instant it is written, which is why nothing that changes money rests on a
 notice.
