@@ -1573,9 +1573,15 @@ Nine rules hold the deployment to the premise and the hard limits.
    marketlake's two CI roles carry AWS's `ReadOnlyAccess`, which grants every
    `ssm:Get` action, and the plan role runs on any pull request branch of a
    public repository, so without a refusal one pushed branch could print the
-   key into a public Actions log. This doc therefore proposes a refusal for
-   every role in the account that holds a broad parameter read: marketlake's
-   VM role, its plan and apply roles, and the runtime's own VM role.
+   key into a public Actions log. The owner chose on 2026-10-29 to fix the
+   plan role at the cause: its `ReadOnlyAccess` gives way to a policy listing
+   only what `tofu plan` reads, with no parameter read of any kind and object
+   reads on marketlake's state bucket alone. A refusal fails silently when a
+   bucket or parameter is added later, while a missing grant makes the next
+   plan stop on "access denied", in plain sight. This doc proposes a refusal
+   for the roles that keep a broad parameter read: marketlake's VM role and
+   its apply role, which runs only after the owner's approval, and the
+   runtime's own VM role.
    1. Each refuses `ssm:GetParameter`, `ssm:GetParameters` and
       `ssm:GetParameterHistory` on the broker key's path, because history also
       returns decrypted values. The runtime's VM role refuses the same on
@@ -1583,9 +1589,10 @@ Nine rules hold the deployment to the premise and the hard limits.
       which holds marketlake's market data credentials and alert keys.
    2. Each refuses `ssm:GetParametersByPath` on every path, because a
       recursive read of a parent path returns every parameter below it and a
-      refusal on the child does not stop it. marketlake's CI roles already
-      refuse it everywhere.
-   3. A drill reads the key with each of those roles' credentials, directly,
+      refusal on the child does not stop it. marketlake's apply role already
+      refuses it everywhere.
+   3. A drill reads the key with each of those roles' credentials and the
+      plan role's, directly,
       by a recursive read from `/` and through its history, and reads
       marketlake's path with the runtime's VM role, and expects "access
       denied" every time.
@@ -1974,7 +1981,9 @@ Each question has a recommendation, so a review can answer it with a yes.
     marketlake's account, where the owner ruled on 2026-10-29 that the broker
     key lives. Three facts about that account matter. marketlake's plan role
     holds AWS's `ReadOnlyAccess`, which reads every bucket and every parameter
-    in the account, and runs on pull requests of a public repository. Its
+    in the account, and runs on pull requests of a public repository, which
+    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
+    narrows to what `tofu plan` reads whichever choice the owner makes. Its
     apply role holds `ec2:*`, so an approved apply can reach any VM in the
     account as root. And a refusal added to one role protects nothing from a
     role added later. Two choices follow.
@@ -1992,8 +2001,12 @@ Each question has a recommendation, so a review can answer it with a yes.
        [shared parameters page](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-shared-parameters.html)
        says.
     2. **marketlake's account, with the data behind lists of who may reach
-       it.** Three controls do the work.
-       1. The runtime's bucket policy refuses every S3 action to any
+       it.** Four controls do the work.
+       1. The narrowed plan role reads no parameter and no object outside
+          marketlake's state bucket, so a pull request cannot print the
+          runtime's data, and a grant added by mistake later still meets
+          the next two controls.
+       2. The runtime's bucket policy refuses every S3 action to any
           principal that is not one of the runtime's roles or the owner's,
           matched on `aws:PrincipalArn`, and refuses changes to the policy
           itself to all but the owner. An explicit refusal in a bucket policy
@@ -2001,14 +2014,14 @@ Each question has a recommendation, so a review can answer it with a yes.
           [policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
           says, so a role marketlake adds later is refused without anyone
           remembering it.
-       2. The broker key's parameter is encrypted under a KMS key of the
+       3. The broker key's parameter is encrypted under a KMS key of the
           runtime's own, whose policy names only the execution user's
           principal and the owner's, and leaves out the statement that lets
           IAM policies grant access. Without that statement, "IAM policies
           that allow access to the key are ineffective", as AWS's
           [default key policy page](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)
           says. The key costs $1 a month.
-       3. The VM cannot be listed that way, so marketlake's apply and deploy
+       4. The VM cannot be listed that way, so marketlake's apply and deploy
           roles carry explicit refusals of EC2 actions on instances tagged as
           the runtime's, and of any change to that tag. That part is still a
           list of refusals, and a check in marketlake's CI fails any role
