@@ -219,8 +219,9 @@ apply it.
    the git push refused for being behind: the writer reads what is new,
    decides again, and appends after it, as rule 8 says.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
-   fills made at the start of execution's send stage, as rule 9 says, and on
-   the kill switch and the journal's end just before the broker call.
+   fills made at the start of execution's send stage, as rule 9 says, and,
+   just before the broker call, on the kill switch, the run's halt, the
+   account's lease and the journal's end, as rule 9's fourth item says.
 4. **Every lease** is fetched before it is taken, and one another VM holds is
    resolved by a person, as rule 9 says.
 5. **Every read of marketlake** fetches the manifest entry before the data it
@@ -278,7 +279,11 @@ Ten rules make the blobs something a worker can trust.
    decision. Since a stage has one result key per decision, a decision can never
    end that stage with both outputs and a halt, or twice. A worker whose result
    write S3 refuses because the supervisor has already written a halt there,
-   as rule 5 says, takes the halt as final.
+   as rule 5 says, takes the halt as final. Every instruction the supervisor
+   gives is a blob before it is a message: the plan, a halt of the whole
+   run, and the stop at the end of the run. A worker acts on a message only
+   after reading the blob it names, and checks those blobs whenever it
+   wakes, so a message that is dropped or never read loses nothing.
 4. **A worker listens on its queue, then reads its inputs.** Each queue is a
    named pipe in the VM's working directory, a file that one process reads
    and others write to, one per worker. One table in `runtime` is the only
@@ -286,7 +291,8 @@ Ten rules make the blobs something a worker can trust.
    its inputs from that table, and hands the storage contract the list of
    workers that read its outputs. After a worker writes a decision result, the
    contract sends a message to the queue of every worker on that list. A
-   message names the result's key, or says the kill switch was pulled. Every send opens the
+   message names the blob its reader should read: a decision result, the
+   plan, the run's halt or stop, or the kill switch. Every send opens the
    pipe without waiting. A worker that is not running has no listener, and a
    worker far behind may have a full pipe, which a long backtest can fill.
    Either way the send fails at once and is skipped, because a full pipe
@@ -309,17 +315,19 @@ Ten rules make the blobs something a worker can trust.
    its first send. Each release writes only formats the release before it can
    read, so pinning back to an earlier release still reads what storage
    holds. A worker killed by a signal or a crash writes nothing about itself
-   as it dies. The host that runs it, systemd on the VM today, restarts it,
-   and the restarted worker's first act is a restart record at a key of its
-   own, fixed by the worker and its restart count, carrying the reason the
-   host reports, an exit status or a signal, and the end of its previous
-   error output, with anything shaped like a credential masked. It then
-   resumes from storage, as rule 3 says. Each worker also writes a
-   heartbeat, a small blob at a key fixed by the worker and the time, at
-   least every fifteen seconds, so the supervisor can tell a live worker
-   from a hung or lost one without being its parent. The bucket's lifecycle
-   expires heartbeats after a week, the one prefix where anything is
-   removed.
+   as it dies. The host that runs it, systemd on the VM today, records the
+   exit status or signal and the end of the worker's error output in a file
+   of the worker's own when the worker stops, and restarts it. The restarted
+   worker uploads that file as a restart record at a key fixed by the worker
+   and its restart count, with anything shaped like a credential masked, and
+   monitoring uploads it instead if the worker does not come back. The
+   worker then resumes from storage, as rule 3 says. Each worker and the
+   supervisor also write a heartbeat, a small blob at a key fixed by the
+   writer and the time, from their main loop at least every fifteen seconds,
+   so the supervisor can tell a live worker from a hung or lost one without
+   being its parent, and monitoring can tell the same of the supervisor. The
+   bucket's lifecycle expires heartbeats after a week, the one prefix where
+   anything is removed.
 6. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A blob whose header names the wrong decision halts as stale. An
    output file with no entries halts unless it carries an explicit "trade
@@ -339,8 +347,10 @@ Ten rules make the blobs something a worker can trust.
    any plan exists, or finds a plan whose run the deployment's lease does
    not name, waits, so no worker acts before a supervisor holds the lease.
    Every worker, in every mode, finishes its decision loop once it has a
-   result for every decision in the plan, and the supervisor's last message
-   of the run tells each one to stop.
+   result for every decision in the plan. The supervisor then stores the
+   run's stop, messages each worker, which exits cleanly, and deletes the
+   deployment's lease. A timer on the host stops every unit after the close
+   as well, in case a stop is lost.
    - **A halt is passed on.** A worker whose input's result for a decision is a
      halt writes its own halt as its result, naming the one it found, and goes
      on to its next decision.
@@ -351,13 +361,17 @@ Ten rules make the blobs something a worker can trust.
      than a minute, or when it restarts more often in one run than the
      host's limit allows. Its deadline runs from the moment its last needed
      input appears, so waiting on a slow upstream worker never counts against
-     it. A worker that hangs answers no message, so the host's own watchdog
-     kills and restarts it when its heartbeat stops. On a failure the
-     supervisor writes the halt as that worker's result, naming its restart
-     records, writes a halt as every stage's result for every decision still
-     left in the plan, and sends every worker a message to halt the run. Each
-     halts itself, monitoring journals the failure, pings the failure address
-     and reports, and the supervisor's own unit is not restarted.
+     it. A worker that hangs answers no message, so a watchdog on the host
+     kills its container when its heartbeat is thirty seconds old, well
+     inside the one minute that counts as a failure, and the host restarts
+     it. On a failure the supervisor writes the halt as that worker's
+     result, naming its restart records and every output file it finds
+     under the decision's prefix, so no stored capture is left unlisted. It
+     stores a halt of the whole run, writes a halt as every stage's result
+     for every decision still left in the plan, and sends every worker a
+     message to halt. Each halts itself, monitoring journals the failure,
+     pings the failure address and reports, and the supervisor exits
+     cleanly, which its unit does not restart.
    - **Monitoring tells the owner once.** Monitoring, the one worker that reads
      every component's results and holds the alert channel, journals every
      halt with its reason and raises an alarm on the halt that names no
@@ -379,6 +393,9 @@ Ten rules make the blobs something a worker can trust.
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again reads the plan, the results and the
    heartbeats, and carries on, while the workers keep running without it.
+   Monitoring alarms when the supervisor's heartbeat stops, and a handler on
+   the host alarms when any unit reaches its restart limit, so a supervisor
+   that is gone does not leave the run unwatched in silence.
    Workers with no input between them
    run at the same time. Alpha and cost need only the snapshot, and risk needs
    the snapshot and the reconciled book.
@@ -413,11 +430,12 @@ Ten rules make the blobs something a worker can trust.
       life, and a second execution worker that would send and cannot take it
       halts.
 
-   A holder record names the VM, its boot and the worker's container rather
-   than a process id, which means nothing outside one container. A lease
-   whose holder is the same VM on an earlier boot, or whose holder's
-   heartbeat has stopped on this VM, is cleared by the next worker that
-   needs it, and the clearing is journaled. A lease held by another VM waits for the owner or
+   A holder record names the VM, its boot, the worker's container and its
+   restart count rather than a process id, which means nothing outside one
+   container. A lease whose holder is the same VM on an earlier boot, or a
+   container the host shows is gone, is cleared by the next process that
+   needs it, and the clearing is journaled. A stopped heartbeat alone never
+   clears a lease, because a frozen process can wake. A lease held by another VM waits for the owner or
    the operator, who first confirm that VM is gone. The order manager, the
    risk gate, the journal and the order path all run inside the execution
    worker, because the gate checks each order against every order and
@@ -427,7 +445,7 @@ Ten rules make the blobs something a worker can trust.
    worker again is safe everywhere except here, because a sent order cannot be
    unsent. So execution sends an order only when the journal holds no
    `sending` entry for its client order id, and asks the broker about any
-   order in doubt by that id, never by sending again. Three more rules keep a
+   order in doubt by that id, never by sending again. Five more rules keep a
    rerun from doubling anything.
    1. Execution journals each fill under the broker's own fill id, and skips
       a fill whose id is already journaled.
@@ -450,8 +468,9 @@ Ten rules make the blobs something a worker can trust.
       planned orders, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
       and a hash and the time of the broker state it fetched, before its first
-      send. A rerun in the same decision reuses that list and never
-      plans again, so an order's id never shifts between attempts. The id is
+      send. A rerun in the same decision never plans again, so an order's
+      id never shifts between attempts, and sends nothing more, as item 5
+      says. The id is
       built from the account, the decision time and the order's place in that
       list, so it is unique across the decisions of a day and the same on
       every rerun.
@@ -459,6 +478,35 @@ Ten rules make the blobs something a worker can trust.
       send stage's sync names the entry it synced through. Before it plans,
       execution halts if an entry that changes the book, and that neither its
       sync nor its own order loop wrote, lies past the entry its sync names.
+      A person's override that lands after the sync halts the decision the
+      same way before its next send, and applies from the next decision's
+      sync.
+   4. **Right before every broker call**, after the order's `sending` entry
+      is stored, execution checks four things: that the kill switch is
+      absent, that no halt of the run is stored, that its own send-stage
+      result key is still empty, and that the account's lease still carries
+      the tag execution got when it took it. Any one failing journals the
+      order `Abandoned`, sends nothing, and halts the decision. So a run the
+      supervisor has halted, a switch pulled mid-loop, or a lease another
+      execution has taken over stops the next send, even when the message
+      saying so is lost or unread.
+   5. **A restarted execution sends nothing more for a decision it was in
+      the middle of.** Its first acts on starting are, in order:
+      1. Take the account's lease, which it may only once the host shows
+         its earlier container is gone. Each worker runs under one fixed
+         container name, removed when it stops, so a gone container is a
+         fact the host reports, not a guess from a stopped heartbeat.
+      2. Check the kill switch, and if it is set cancel every resting order,
+         journaling each cancel first.
+      3. For a decision whose send stage has journaled planned orders and no
+         result, settle each order in doubt by its client order id, journal
+         every planned order without a `sending` entry as `Abandoned`,
+         cancel any accepted leg of a pair whose partner is not accepted,
+         before the cancel cutoff, and write a halt as that send stage's
+         result. It does this whether or not the supervisor has already
+         written a halt there.
+      4. Write its restart record and carry on with the next decision, which
+         plans again from the book.
 
    The gate counts every open order at its worst case, separately for each
    limit: for each limit, an order on the side that makes that limit worse
@@ -494,12 +542,19 @@ Ten rules make the blobs something a worker can trust.
     seconds and sends a message to every worker's queue when it finds it set.
     Execution, the one worker that holds the account's lease, then stops
     sending and cancels every resting order through the order path, and
-    alarms if a cancel fails. A starting execution that finds the switch set
-    does the same before anything else, so a switch pulled while execution is
-    down or restarting still cancels. Execution also checks the switch once
-    more after its `sending` entry is stored and before the broker call, and
-    journals the order `Abandoned` if the switch is set. No worker sends an
-    order with the switch set. Monitoring writes the decision's report and says the
+    alarms if a cancel fails. Execution does not wait for that message. It
+    reads the switch itself every few seconds whenever the account has a
+    resting order, and on every pass of the loop that watches a pair's legs,
+    so a pull reaches resting orders even with the supervisor down. A
+    starting execution takes the account's lease and then checks the switch
+    before anything else, as rule 9's fifth item says, so a switch pulled
+    while execution is down still cancels, and it alarms if it cannot take
+    the lease by a deadline. Execution checks the switch again right before
+    every broker call, as rule 9's fourth item says. When it has cancelled
+    every resting order it journals that the switch's cancels are done, and
+    monitoring alarms a second time if that entry has not appeared within a
+    deadline of the pull, naming the broker's own console as the next step.
+    No worker sends an order with the switch set. Monitoring writes the decision's report and says the
     switch is set. The runtime's credential can create the switch but never
     delete it. The owner ruled on 2026-10-29 that only the owner's or the
     operator's command clears the switch, and that the clearing is journaled.
@@ -582,7 +637,7 @@ The price of this section is five things.
    result, the plan and the journal entries, so the wait is about a second. The
    backtest's memory-backed folder is why test 1's tens of thousands of
    writes and reads do not cost minutes.
-4. The locks, the leases, the queues and the supervisor's plan add machinery
+4. The leases, the queues, the heartbeats, the restart records, a unit per worker and the supervisor's plan add machinery
    that a single process would not need, and each of their alarms has to fire
    in a drill before the paper gate.
 5. Two adapters for storage must behave alike, which the contract suite
@@ -618,8 +673,8 @@ function in `core` turns the deployment's schedules and the exchange's trading
 calendar into a list of decisions, each with its time and the strategies
 deciding at it. The supervisor calls it for one day, and a backtest calls it
 for the whole span, so both build their plans the same way, and an early close
-drops the decision times after it. The scheduler starts the run before the
-first decision time. The workers stay up all day and work through the
+drops the decision times after it. The host starts every unit of the run
+before the first decision time. The workers stay up all day and work through the
 decisions as they work through a backtest's span, and the data worker writes
 each decision's snapshot once the wall clock reaches its time. A worker's
 launch is therefore paid once a day. A daily strategy's plan holds one
@@ -662,8 +717,8 @@ Five rules keep a day of decisions safe.
    meets no cutoff. It applies to new orders only, and never stops a cancel.
    1. **Before every send, twice.** Execution reads the clock before it
       starts the order loop, before each order, and again after the order's
-      `sending` entry is stored and immediately before the broker call, next
-      to the kill switch. An order past the cutoff is journaled `Abandoned`
+      `sending` entry is stored and immediately before the broker call, with
+      rule 9's other checks. An order past the cutoff is journaled `Abandoned`
       and the decision halts. Inside the send stage, the retry deadline of a
       write S3 does not answer ends no later than the cutoff, so a slow write
       cannot carry a send past it.
@@ -680,9 +735,10 @@ Five rules keep a day of decisions safe.
       the cancel cutoff passes. When one leg is rejected, unsent or past the
       cutoff while another is accepted, execution cancels the accepted legs,
       journaling each cancel first. When execution crashes with its send stage
-      unfinished, the host restarts it within seconds, and its first act is
-      to look up that decision's legs and cancel any accepted leg whose
-      partner was not, before the cancel cutoff.
+      unfinished, the host restarts it within seconds, and the restarted
+      execution sends nothing more for that decision, cancels any accepted
+      leg whose partner was not accepted, before the cancel cutoff, and halts
+      the decision, as rule 9's fifth item says.
    4. **What stays open is bounded, not undone.** A cancel that arrives after
       the cancel cutoff, or a closing auction that fills a leg only in part,
       can leave a pair with one leg filled. The risk gate checks each leg
@@ -820,7 +876,7 @@ glossing it.
 | **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
-| **supervisor** | The process that takes the deployment's lease, writes a run's plan and messages every worker, writes a halt as a worker's result when the worker fails, and messages every worker to halt the run on such a failure. It starts, stops and watches no process, and keeps no state outside storage |
+| **supervisor** | The process that takes the deployment's lease, writes a run's plan and messages every worker, reads the workers' heartbeats, checks the kill switch on a timer, writes a halt as a worker's result when the worker fails, and stores and messages a halt of the run on such a failure. It starts, stops and watches no process, and keeps no state outside storage |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues and error output, none of which is kept |
 | **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
@@ -876,6 +932,8 @@ once rather than re-argued.
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
 | A queue as the carrier of events, or a database server, between workers | A queue that carries the events themselves deletes each one once it is read, so nothing is left to audit, and a server is one more process that can fail. A queue that only wakes a worker, with the blobs as the record, is what the owner ruled for. The price is that a worker reads its inputs from files rather than being handed them |
+| A supervisor that starts, watches and stops its workers as their parent | The owner asked on 2026-10-30 for a supervisor that sends messages and workers that handle them. Once each component runs in a container of its own, a parent supervisor needs the Docker socket or a systemd grant to start, stop and watch them, and either is root on the host. Crash records it wrote, lock files naming process ids, a cancelling worker it started, and a launcher seam all went with it. The host keeps workers running, and execution handles the kill switch and a stranded pair leg itself |
+| One container holding the supervisor and every worker as processes | A review's way out of the root problem above. It was set aside once the supervisor stopped needing to be a parent, because a container per component gives each one its own credential and keeps the path open to a machine or a function per component |
 | One process launch per worker per decision in a backtest | Test 1 would make 10,360 launches, 35 to 52 minutes at pyarrow's measured import cost. A worker takes a span of decisions instead, as [A worker works through a span of decisions](#a-worker-works-through-a-span-of-decisions) says |
 | One run each evening after marketlake's sweep, as the platform's only schedule | The owner ruled on 2026-10-29 that the platform trades at any time of day and as often as a strategy needs. The time of a decision belongs to the strategy's schedule, as [Strategies, schedules and decisions](#strategies-schedules-and-decisions) says |
 | A process launch per decision in shadow, paper and live | A strategy deciding every few minutes would pay every worker's launch each time. One run per trading day keeps the workers up and works through the day's decisions, the way a backtest works through its span |
