@@ -1718,7 +1718,7 @@ flowchart TB
     mlvm --> lake
     lake -->|"download, checksum checked"| mirror
     ctrs <-->|"create-only writes, reads"| bucket
-    secrets -. "execution's credential only" .-> exec
+    secrets -. "execution's credential only" .-> execw
     execw <--> broker
     mon --> beat
     mon --> alerts
