@@ -121,7 +121,10 @@ The owner ruled nine more things about the shape the same day.
    support trading at any time of day." The ruling answered a draft that
    started every run in the evening, after marketlake's 18:30 sweep, with
    orders filling at the next open.
-8. **As often as needed.** "And as frequently as needed."
+8. **As often as needed.** "And as frequently as needed." The owner made it
+   concrete on 2026-10-30: the architecture assumes the platform runs through
+   every session and trades continuously, at decisions as often as once a
+   minute, on the design below, with S3 holding everything.
 9. **Other strategies.** "It should be extensible to other strategies in the
    future."
 
@@ -732,7 +735,9 @@ finds it there.
 Two limits come from marketlake rather than from this design.
 
 1. **About one decision a minute at the fastest.** marketlake captures quotes
-   once a minute, so a decision more often than that sees no new data. A
+   once a minute, so a decision more often than that sees no new data. The
+   owner ruled on 2026-10-30 that this is the pace the architecture is built
+   for. A
    decision also waits on S3 for about a second, as the span's price says. A
    strategy that needs seconds would need data streamed to it rather than
    read from marketlake's segments, which reopens ruling 3, and that is the
