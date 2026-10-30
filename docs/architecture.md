@@ -222,13 +222,14 @@ the segments up to the decision time, as a provisional read, because marketlake'
 battery runs only when it seals a day at the close plus fifteen minutes. So
 the data worker runs its own minimum checks before anything decides. A
 missing or stale quote at the decision time halts the decision, and a price
-spike is flagged in the snapshot without halting. A decision after
-marketlake has sealed and uploaded the day, such as the evening decision
-`## One trading day` draws, reads sealed partitions and needs none of this. The snapshot names each segment it read by key
+spike is flagged in the snapshot without halting. The skeleton's strategy
+decides this way at 15:40, as the owner ruled on question 10. A decision
+after marketlake has sealed and uploaded the day reads sealed partitions and
+needs none of this. The snapshot names each segment it read by key
 and SHA-256 and marks the read provisional. Once marketlake seals the day,
 monitoring compares the sealed partition with what the snapshot read, and
-journals and alarms any difference. This is the same check question 10
-recommends for the provisional close, and it is proposed for
+the official daily bar with the price the decision used, and journals and
+alarms any difference. This is proposed for
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16), with marketlake's
 uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943).
@@ -326,6 +327,7 @@ flowchart TB
 
     lakesrc -. "DataSource" .-> data
     clock -. "Clock" .-> data
+    clock -. "Clock, for the cutoff" .-> exec_send
     broker -. "Broker" .-> exec_recover
     broker -. "Broker" .-> exec_send
     store -. "BlobStore" .-> workers
@@ -361,8 +363,8 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, the bars a test names | History clock | Simulated, at the signal's close | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
-| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, a market order at the next bar's open, which for daily bars is the next open | S3, the shadow journal | Sent |
+| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market-on-close order at the session's close, a market order at the next bar's open | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
+| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest | S3, the shadow journal | Sent |
 | Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own fill | S3, the paper journal | Sent |
 | Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | S3, the live journal | Sent |
 
@@ -389,8 +391,10 @@ backtest would then test a branch the paper run never takes. The account a
 worker's lease and kill switch belong to comes from its broker adapter, so a
 backtest's simulated account never shares the paper account's lease. The
 simulated broker keeps its resting orders and positions as an output file per
-decision, so a shadow order sent one evening is still there to fill at the
-next open, in a new process or on a new VM. The event that design.md says
+decision, so a shadow order still resting when one run ends is there to fill
+in the next, in a new process or on a new VM. One simulator serves backtest
+and shadow, and it fills by the order's type and time in force rather than
+by mode. The event that design.md says
 modules are written against is one decision result. In a backtest each worker
 works through every decision of the span in turn, and in the other modes
 through one trading day's decisions, as design.md's
@@ -487,20 +491,20 @@ A sequence diagram shows the same pieces in time order. This is one paper
 decision with nothing wrong, for the skeleton's daily strategy. The owner
 ruled on 2026-10-29 that the platform trades at any time of day and as often
 as a strategy needs, so the time comes from the strategy's schedule, as
-design.md's `### Strategies, schedules and decisions` says. The diagram draws
-the evening decision, after marketlake's 18:30 sweep, with orders that fill at
-the next open. A strategy that decides during the day runs the same three
-phases on segments read before sealing, and one that decides several times a
-day runs them once per decision, with the workers left running between. The
-notes split it into three phases. The supervisor starts every worker at the start, and a
+design.md's `### Strategies, schedules and decisions` says. The owner ruled on
+question 10 that the skeleton trades the close, so the diagram draws its
+decision at 15:40, on marketlake's segments read before sealing, with
+market-on-close orders that fill at the close. A strategy that decides
+several times a day runs the same three phases once per decision, with the
+workers left running between. The notes split it into three phases. The supervisor starts every worker at the start, and a
 `par` block marks workers working at the same time. Each dashed arrow from
 the blob store to a worker is a message on that worker's queue.
 
-That sweep holds the session's minute bars but not its daily bar, because
-marketlake fetches a session's daily bar only once the next session has
-sealed. So which bar an evening decision reads for the session's close, and
-whether the skeleton decides in the evening at all, is open, as question 10
-asks.
+Alpaca rejects a market-on-close order "submitted after 3:50pm but before
+7:00pm ET", so every order goes out by 15:48, a cutoff the owner's hard caps
+hold, as design.md's `### Strategies, schedules and decisions` says. The
+official daily bar arrives the next evening, and monitoring then compares it
+with the price the decision used.
 
 ```mermaid
 sequenceDiagram
@@ -849,10 +853,14 @@ lease, it sees the switch when the switch's message wakes it or before its
 next send and exits, and the cancelling worker takes the lease once it is
 free. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). Orders sent in
-the evening rest at the broker overnight, so a switch pulled before the open
-stops nothing already sent unless it also cancels them, which is why it does,
-as question 7 settles.
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close
+orders rest at the broker from about 15:48 until the close, so a switch
+pulled in that window stops nothing already sent unless it also cancels
+them, which is why it does, as question 7 settles. The exchange stops taking
+cancels of closing-auction orders some minutes before the close, so a switch
+pulled after that cannot stop the fill, and the cancelling worker's report
+says so. The exact cutoff on NYSE Arca, where GLD and USO list, needs
+confirming on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 ### Every alarm and its drill
 
@@ -871,6 +879,8 @@ here, with the issue that builds its drill.
 | A fill with no `sending` entry, or past its order's quantity | The client order id | A simulated broker that reports an unknown fill | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio that leaves out an instrument the book holds | The instrument | A target portfolio file written without one leg | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | A bad constraints file or hard cap | The field and its value | A file with a missing field, a NaN and a wrong sign | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| A send that would start after the market-on-close cutoff | The decision time, the cutoff and the clock's time | A test clock set past the cutoff before the order loop | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A pair with one leg accepted and another rejected or unsent | Each leg's client order id and state | A broker double that rejects the second leg | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Kill switch pulled | "kill switch" | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -1487,8 +1497,8 @@ each keeps its own rule.
    simulator keeps. The simulated broker's adapter reads and writes it
    through a `BlobStore` the entry point hands it, so execution's own outputs
    are the same whichever broker it holds. Backtest and shadow use the same
-   form, so an order a shadow run sends one evening is still resting at the
-   next open, in another run or on a new VM. Each simulated account has its
+   form, so an order still resting when a shadow run ends is there in the
+   next run, or on a new VM. Each simulated account has its
    own lease and kill switch, so a backtest never shares the paper account's.
    This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
@@ -1766,19 +1776,21 @@ new arrow.
 
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
-| 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling at the signal's close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
+| 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected. The restart kills the supervisor mid-run and starts execution before data | The orders on each day, and a halt with no orders on each faulted day |
 | 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the fake broker | Six refusals, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
-Chan's script assumes. A paper run cannot trade at a close it has already seen,
-so it fills at the next open. A paper order also needs whole shares, or a
-fractional order the broker accepts, while the backtest holds fractional dollar
-positions. So the two runs differ in two ways.
+Chan's script assumes. The owner ruled on question 10 that the paper run
+trades that close too, with market-on-close orders, so both fill at the same
+price. A paper order also needs whole shares, or a fractional order the
+broker accepts, while the backtest holds fractional dollar positions. So the
+two runs differ in two ways.
 
-1. **Timing.** One night of price movement separates the backtest's fill from
-   the paper fill.
+1. **Timing of the signal.** The paper decision computes its signal on the
+   price at 15:40, twenty minutes before the close the backtest's signal
+   uses, and a price that moves in those minutes can flip the unit.
 2. **Rounding.** Rounding each leg to whole shares moves it by at most half a
    share. Whether portfolio construction or the order manager rounds, and
    whether the broker allows a fractional short sale for the GLD leg, is open
@@ -1854,6 +1866,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
+| The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff in the owner's hard caps that execution checks before every send. One simulator fills by order type in backtest and shadow | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
@@ -1873,7 +1886,7 @@ accepted.
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | Ruled by the owner on 2026-10-29. The shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and which time the skeleton's strategy decides at is question 10 |
-| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account carries one deployment in each mode, and strategies on one account share it and meet in portfolio construction | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine, a limit on late sends, and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account carries one deployment in each mode, and strategies on one account share it and meet in portfolio construction | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The risk gate counts every open order at its worst case, as filled on the side that grows exposure and unfilled on the other, until the broker confirms it | Counting open orders at their net | An order left resting can block a trade that would have fitted | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), as [design.md](design.md#processes-and-files) proposes |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
@@ -1949,41 +1962,28 @@ Each question has a recommendation, so a review can answer it with a yes.
    rather than inside whichever module happens to go first. The owner accepted
    it on 2026-10-29, and the work is [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
 10. **When does the skeleton's strategy decide, and which close does it
-    read?** The owner ruled on 2026-10-29 that the architecture supports
-    trading at any time of day, so this is the strategy's choice rather than
-    the platform's. The Bollinger band decides once a day on a close. Three
-    choices follow.
-    1. **Decide in the evening on the official daily bar.** marketlake fetches
-       a session's official daily bar only at the next evening's sweep, once
-       the following session has sealed. The decision for session D reads D's
-       daily bar on the evening of D+1, and its orders fill at the open of
-       D+2, a session and two nights after the close the signal used.
-    2. **Decide in the evening on the close marketlake captures that day.**
-       marketlake records each session's option-close quote, at 16:15 on a
-       full day and 13:15 on an early close, and seals it fifteen minutes
-       later, at 16:30 or 13:30. It already judges the daily bar against that
-       quote's last price when the bar lands. The decision reads that close
-       and trades the next open, one night after the signal, as the mode
-       table assumes above. So that every mode still reads one query,
-       [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938)
-       serves that close through the bar query as a provisional daily bar,
-       marked provisional until the official bar replaces it.
-    3. **Decide before the close and trade it.** The decision reads
-       marketlake's segments before sealing and sends market-on-close orders,
-       so the fill lands on the close the backtest fills at. Alpaca's order
-       documentation says market-on-close orders "submitted after 3:50pm but
-       before 7:00pm ET will be rejected", so the decision has to finish
-       sending before 15:50, at about 15:40, on a price twenty minutes before
-       the close. It also needs a limit on how late a send may start, which
-       design.md defers, and a kill switch pulled after the exchange stops
-       taking cancels for the closing auction cannot stop the fill.
+    read?** The owner ruled on 2026-10-29 that it trades the close: it decides
+    before the close on marketlake's segments read before sealing, and sends
+    market-on-close orders, so the fill lands on the close the backtest fills
+    at. Two evening choices were turned down: deciding on the official daily
+    bar, which arrives a session later and fills two nights after the signal,
+    and deciding on marketlake's captured 16:15 close, which fills at the next
+    open, one night after the signal.
 
-    The recommendation is the second, with the next evening's daily bar
-    checked against the close the decision used, and a disagreement journaled
-    and reported. The price is a close that is marketlake's capture rather
-    than the vendor's official candle. Whichever the owner chooses is the one
-    schedule the strategy runs, and a missing input on a day halts that
-    decision rather than switching to another choice.
+    This doc proposes the times. Alpaca's order documentation says
+    market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
+    be rejected", so the decision runs at 15:40 and every order goes out by
+    15:48, a cutoff the owner's hard caps hold. Execution checks the cutoff
+    before every send. An early close needs its own times, and Alpaca's
+    cutoff on those days needs confirming on
+    [#10](https://github.com/l3a0/ithildin-runtime/issues/10), along with
+    whether its paper account fills market-on-close orders at all. The price
+    is a signal computed twenty minutes before the close it trades, a pair
+    whose second leg can be rejected after the first is accepted, which
+    execution then cancels while the exchange still takes cancels, and a kill
+    switch that cannot stop a closing-auction fill after the exchange's
+    cancel cutoff. A missing input on a day halts that decision rather than
+    switching to another time.
 11. **Which AWS account holds the runtime's bucket and VM?** The owner ruled
     on 2026-10-29 for the second choice, marketlake's account with the four
     controls, against the board's recommendation of the first. Rule 3 and

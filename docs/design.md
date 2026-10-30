@@ -63,7 +63,8 @@ first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
 lines of code. The next section says what that event is: a decision result,
 one blob in storage that lists a component's outputs for a decision. Only the
-data worker and the supervisor read the clock.
+data worker, the supervisor, and execution's send stage for its cutoff read
+the clock.
 
 ## Processes and files
 
@@ -189,8 +190,8 @@ Three stores sit outside every run, because they outlive any one run.
    through the loss of the VM.
 3. A simulated account's resting orders and positions, one blob per account
    per decision, which the simulated broker's adapter reads and writes through
-   the storage port, so a shadow order sent one evening is still resting at
-   the next open, in another run.
+   the storage port, so a shadow order still resting when one run ends is
+   there in the next.
 
 Ruling 6 runs through every rule below, and this doc applies it the same way
 in each place. A step fetches what it is about to change, or what its change
@@ -528,12 +529,16 @@ test. A backtest's blobs vanish when it ends, which the premise
 allows, because a backtest can be regenerated from committed data and the
 pinned release.
 
-The clock adapter is read at two edges only. The data worker reads it to
+The clock adapter is read in three places only. The data worker reads it to
 decide when a decision's snapshot is written, which is as fast as possible
 under the history clock and at the decision time under the wall clock. The
 supervisor reads wall time for deadlines in every mode, because a deadline
-guards against a hung process rather than shaping what a strategy sees. The
-workers between those edges read no clock and move on only when messages
+guards against a hung process rather than shaping what a strategy sees.
+Execution's send stage reads it before every send, to check the cutoff for
+the strategy's orders, as `### Strategies, schedules and decisions` says.
+Under the history clock that reading is the decision time, so a backtest
+never meets the cutoff, and a drill sets a test clock past it instead. The
+workers between those places read no clock and move on only when messages
 arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
@@ -598,7 +603,7 @@ each decision's snapshot once the wall clock reaches its time. A worker's
 launch is therefore paid once a day. A daily strategy's plan holds one
 decision.
 
-Four rules keep a day of decisions safe.
+Five rules keep a day of decisions safe.
 
 1. **Each decision starts from the broker's state at its own time.**
    Execution's recover stage for a decision waits for two inputs: its own send
@@ -622,6 +627,19 @@ Four rules keep a day of decisions safe.
    monitoring pings anyway. A period set to the longest gap between decisions
    would span a long weekend, so a run that died on a Tuesday would go
    unheard until Saturday.
+5. **Orders go out before the broker's cutoff, or not at all.** The owner
+   ruled on question 10 of [architecture.md](architecture.md) that the
+   skeleton trades the close with market-on-close orders, which Alpaca
+   rejects after 15:50. So the strategy carries a cutoff for its sends,
+   15:48, and the owner's hard caps blob carries the latest cutoff any
+   strategy may use, so a strategy can tighten it and never loosen it.
+   Execution checks the cutoff with the clock before it starts the order
+   loop and again before every send, next to the kill switch. Past the
+   cutoff it sends nothing more and halts the decision. When that, or a
+   broker rejection, leaves a pair with one leg accepted and another not,
+   execution cancels the accepted legs while the exchange still takes
+   cancels, journaling each cancel first. A cancel is not a trade, so this
+   stays inside hard limit 3: the book stays as it was before the decision.
 
 An account carries one deployment in each mode, and the supervisor refuses a
 plan whose account another deployment names. Execution, the risk gate, the
@@ -631,7 +649,7 @@ share an account share its deployment, and meet in portfolio construction,
 which combines their forecasts into one target, the place *Inside the Black
 Box* puts the combining of alpha models.
 
-Four things wait for the first strategy that needs them. Each is written on
+Three things wait for the first strategy that needs them. Each is written on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so the next reader
 finds it there.
 
@@ -640,20 +658,14 @@ finds it there.
    time contributes, waits for a second strategy. A forecast from an earlier
    decision names the wrong decision, so rule 6 halts on it until that rule
    is written.
-2. **A limit on how late a decision may send.** A strategy deciding minutes
-   apart needs execution to halt a send that starts too long after its
-   decision time. That needs execution to read the clock, a third reader
-   beside the data worker and the supervisor, and a cap the owner sets rather
-   than the strategy. An evening decision that fills at the next open needs
-   neither.
-3. **A halt that holds the account until a person clears it.** Once a day, a
+2. **A halt that holds the account until a person clears it.** Once a day, a
    persistent cause such as a book that disagrees with the broker halts the
    next decision again, because every decision checks again. A strategy
    deciding minutes apart would meet a gate refusal again before a person
    could look. Holding the account needs an open halt recorded in the
    journal, written by the stage that finds the cause before its halt result,
    and cleared only by the clear command's own entry.
-4. **Cancel and replace.** Whether the order manager cancels an order left
+3. **Cancel and replace.** Whether the order manager cancels an order left
    resting and sends a new one, rather than netting it, is
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s to decide.
 
@@ -671,7 +683,7 @@ Two limits come from marketlake rather than from this design.
    trades on daily closes. One that needs fresh quotes then halts as stale,
    until marketlake captures those hours too.
 
-The price of this subsection is three things.
+The price of this subsection is four things.
 
 1. Every key holds a deployment and a decision time, and every bar its end
    time and length, which a run with one daily strategy does not need.
@@ -679,6 +691,8 @@ The price of this subsection is three things.
    evening, so the VM is up for the whole session.
 3. Recover waits for data at every decision, so the first phase no longer
    runs both at once.
+4. Execution reads the clock for the cutoff, a reading that a backtest never
+   exercises and only a drill with a test clock does.
 
 ## How work is cut and ordered
 
