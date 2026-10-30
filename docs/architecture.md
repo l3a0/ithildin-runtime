@@ -1762,7 +1762,30 @@ Ten rules hold the deployment to the premise and the hard limits.
     deployment's lease is held, would each need the Docker socket or a
     systemd grant, and either one is root on the host. Process ids would
     also stop naming a worker across containers. One container keeps every
-    rule above as written. If adopted, it changes these:
+    rule above as written.
+
+    The owner said on 2026-10-30 that eventually each component's container
+    could run on a machine of its own, or serverless. One container per run
+    keeps that path open, because the image already has an entry point per
+    worker and every worker already reads and writes through S3. Two seams
+    in `runtime` would carry the move, and this doc proposes building them
+    with the supervisor on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
+    each with one adapter today.
+    1. **A launcher**, through which the supervisor starts, watches and stops
+       a worker. Today's adapter starts a child process. A later one could
+       start an ECS task, a container on another machine, or a function.
+    2. **A queue**, through which a worker's message reaches its readers.
+       Today's adapter is a named pipe. A later one could be SQS.
+
+    A contract test suite runs each port's adapters alike, as storage's
+    does, so moving a component changes an adapter and not the supervisor's
+    rules. What the review of a container per component found stays the
+    price of that move: a launcher that is not the parent has to report a
+    crash within the time the send stage allows, and starting a worker
+    elsewhere needs a credential scoped to the runtime's own workers, never
+    one that is root on a host.
+
+    If adopted, rule 10 changes these:
     1. **The pin is an image digest.** Rule 1's tagged commit becomes the
        digest of the image built from it. The plan records the digest, and
        the supervisor halts with "release changed" if its own differs. A
