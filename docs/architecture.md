@@ -1682,31 +1682,49 @@ new one from the pinned release.
 ```mermaid
 flowchart TB
     subgraph host["The runtime's VM, separate from marketlake's, holding no state"]
-        start["Start unit<br/>starts the scheduler"]
-        timer["Scheduler<br/>a systemd timer, once per trading day"]
-        run["Supervisor and workers<br/>a unit per container, at a release the owner pinned"]
-        work[("Working directory<br/>queues, error output")]
+        timer["Scheduler<br/>a systemd timer starts ithildin.target<br/>before the session, stops it after the close"]
+        docker["Docker daemon<br/>pulls the pinned image"]
+        guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
+        subgraph ctrs["A container per component, each its own unit and its own user"]
+            sup["Supervisor<br/>plan, messages, deadlines"]
+            data["Data"]
+            alpha["Alpha model"]
+            risk["Risk model"]
+            cost["Cost model"]
+            pc["Portfolio construction"]
+            execw["Execution<br/>the only reader of the broker key"]
+            mon["Monitoring"]
+        end
+        pipes[("Queue folder<br/>a named pipe per reader")]
+        creds[("Memory-backed storage<br/>a credential directory and an error<br/>directory per container")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
-        start --> timer --> run
-        run --> work
-        mirror --> run
+        timer --> docker --> ctrs
+        guard -.-> ctrs
+        ctrs <--> pipes
+        creds -. "each container mounts only its own" .-> ctrs
+        mirror --> data
     end
+    registry["GitHub's container registry<br/>image by digest, provenance verified"]
     mlvm["marketlake's VM<br/>capture daemon"]
     lake[("marketlake's bucket")]
-    bucket[("The runtime's S3 bucket<br/>run blobs, journal entries,<br/>leases, kill switch, hard caps")]
+    bucket[("The runtime's S3 bucket<br/>run blobs, journal entries, heartbeats,<br/>leases, kill switch, hard caps, overrides")]
     secrets["Secret store<br/>broker paper key"]
     broker["Broker paper API"]
     beat["Heartbeat service"]
     alerts["Alert channel"]
+    person["Owner or operator<br/>the ithildin tool, off the VM"]
 
+    registry --> docker
     mlvm --> lake
     lake -->|"download, checksum checked"| mirror
-    run <-->|"create-only writes, reads"| bucket
-    secrets -. "execution worker's user only" .-> run
-    run <--> broker
-    run --> beat
-    run --> alerts
+    ctrs <-->|"create-only writes, reads"| bucket
+    secrets -. "execution's credential only" .-> exec
+    execw <--> broker
+    mon --> beat
+    mon --> alerts
+    guard --> beat
     beat --> alerts
+    person <-->|"status, clears, overrides, the switch"| bucket
 ```
 
 Ten rules hold the deployment to the premise and the hard limits.
