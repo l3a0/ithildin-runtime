@@ -47,6 +47,7 @@ what it shows and what to look for. Nothing here is built yet.
 - [Data flow](#data-flow)
 - [One trading day](#one-trading-day)
 - [When something is wrong](#when-something-is-wrong)
+- [What a person runs](#what-a-person-runs)
 - [Types and interfaces](#types-and-interfaces)
 - [The life of an order](#the-life-of-an-order)
 - [The life of a run](#the-life-of-a-run)
@@ -934,6 +935,109 @@ here, with the issue that builds its drill.
 Each deadline that the supervisor enforces is set on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), beside the
 heartbeat's grace period, which has to exceed them.
+
+## What a person runs
+
+The platform halts rather than guess, so every halt that needs judgement
+waits for a person, and the person's actions are as much a part of the
+record as the platform's. The owner ruled on 2026-10-29 that the owner or
+the operator clears a halt, and that only the owner clears a live account's
+kill switch. Until now the docs said only that each is "a command". This
+section is this doc's proposal for what those commands are and how an alarm
+leads to one, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+### One command line tool, run off the VM
+
+A person acts through one command line tool, `ithildin`, run from the
+owner's or the operator's own machine with their own AWS credential, never
+on the runtime's VM. Its writes go through the same journal and storage
+contract in `core` that the workers use, so a person's entry is checked,
+chained and refused on a stale number exactly as a worker's is, and the
+tool fetches the journal's end before it writes, as ruling 6 asks. It reads
+and writes S3 only, so it needs nothing from the VM and works while the VM
+is down. Who acted is the caller's identity as AWS reports it, written into
+each entry, never a name the person types.
+
+Two credentials hold what the VM's credential deliberately cannot.
+
+1. **The owner's**, which may do everything below on any account.
+2. **The operator's**, which may do everything but clear a live account's
+   kill switch or write a live account's override. The bucket's policy
+   enforces that line, as rule 4 of `## Where it runs` says, so the tool
+   cannot be talked past it.
+
+Both sign in with a hardware key, because whoever holds either can send
+the platform back to trading.
+
+### The commands
+
+Reading commands change nothing.
+
+1. **`ithildin status`** shows, for every account: whether the kill switch
+   is set, who holds each lease, every open halt with its reason and age,
+   the latest decision's result for each stage, any pair leg left open
+   since the last close, and when the heartbeat service last heard a ping.
+2. **`ithildin explain <halt>`** shows one halt: its reason, the halt it
+   passed on, the blobs it was made from, and for a crash, the exit status
+   and the end of the error output.
+
+Writing commands each take a required `--reason`, print what they will do
+and to which account, show a live account's name in capitals, and for a
+live account make the person type the account's name to confirm. Each
+writes one journal entry and nothing else unless it says so. Each refuses
+quietly when there is nothing to do, so running one twice is safe.
+
+1. **`ithildin clear <halt>`** records that a person has looked at a halt
+   and why it may be left behind. It never reruns the halted decision, and
+   the next decision runs as usual.
+2. **`ithildin override --account <a>`** records a correction the book
+   cannot work out alone, such as a fill the broker shows and the journal
+   lacks after an outage. It names each position or open order it changes
+   and the broker evidence for it, and execution's next replay applies it.
+   It is the human override the charter keeps for information the model
+   cannot have, and it never sends an order.
+3. **`ithildin switch pull --account <a>`** creates the kill switch blob,
+   journals the pull and raises the alarm. The supervisor checks the switch
+   every few seconds as well as when a message wakes a worker, so a pull
+   from off the VM reaches a running run without a message on its queues.
+   It then starts execution in cancel mode, as rule 10 of `design.md`'s ten
+   rules says.
+4. **`ithildin switch clear --account <a>`** deletes the switch and journals
+   the clear. Only the owner's credential can, on a live account.
+5. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
+   and journals it. It first asks EC2 whether the holder's instance is
+   stopped or gone, and refuses while it still runs, unless the person says
+   with `--holder-gone` that they have confirmed it some other way.
+
+### From an alarm to a command
+
+Every alarm names the account, the mode, the decision and the reason in its
+first line, so a push on a phone says what happened without opening
+anything. Its second line is the command to run first, almost always
+`ithildin explain` on the halt, and its third names the alarm's row in
+`### Every alarm and its drill`, where the runbook on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) says, row by row,
+what to check and which writing command, if any, follows. Monitoring's
+report after each decision ends with the same summary `ithildin status`
+prints.
+
+Most alarms need no writing command at all. A missing bar, a gate refusal
+or a pair leg left open clears itself at the next decision, which plans
+again from the book, and the person's job is to read the reason and decide
+whether something larger is wrong. The writing commands are for the cases
+the platform cannot resolve alone: a book that disagrees with the broker, a
+kill switch, a lease left by a lost VM.
+
+Away from a computer, the fallback is the runbook's: cancel at the broker's
+own app, and journal it with `ithildin override` once back. A page or a
+phone app that runs these commands waits for evidence that the command line
+is not enough.
+
+The price is a tool to build and test, which every command drill in
+`### Every alarm and its drill` then exercises, a supervisor that checks
+the switch on a timer as well as on messages, and two credentials outside
+the VM that can resume trading, each guarded by a hardware key. Each
+writing command gets a drill on a paper account before the paper gate.
 
 ## Types and interfaces
 
@@ -2021,6 +2125,7 @@ accepted.
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
 | The release is one container image, pinned by digest, and each run is one unprivileged container holding the supervisor and its workers as today. CI tests the image on every pull request, and one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or a container per component started by systemd or the Docker socket | A Docker daemon to maintain and patch outside sessions, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A person acts through one command line tool, `ithildin`, run off the VM with their own credential, whose reading commands show status and explain a halt, and whose writing commands clear a halt, record an override, pull or clear the switch and clear a lease, each journaled through `core`. Each alarm carries the first command to run | Commands on the VM, a web page, or editing blobs by hand | A tool to build and drill, a timed switch check in the supervisor, and two credentials off the VM that can resume trading | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 what a person runs |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
