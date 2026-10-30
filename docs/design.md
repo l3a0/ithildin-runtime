@@ -62,9 +62,7 @@ The price is that every module has to be written against an event from its
 first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
 lines of code. The next section says what that event is: a decision result,
-one blob in storage that lists a component's outputs for a decision. Only the
-data worker, the supervisor, and execution's send stage for its cutoff read
-the clock.
+one blob in storage that lists a component's outputs for a decision. Only the data worker, the supervisor, and execution's send stage for its cutoff read the clock in a way that shapes what a strategy sees.
 
 ## Processes and files
 
@@ -75,12 +73,7 @@ module table, such as data, the alpha model or execution. The ruling first
 said each action, and the owner narrowed it to each component the same day,
 because a process per action was too granular. Two things follow from it.
 
-1. **A failure stays where it happened.** In one process, an exception or a
-   crash in the alpha model ends the run that also holds the order path. As
-   separate processes, a failed component stops producing its own output and
-   nothing else. Every output upstream of it is already stored, so recovering
-   means starting one component again, which reads the blobs that exist and
-   writes the ones that are missing, rather than replaying the day. A decision
+1. **A crash stays where it happened.** In one process, an exception or a crash in the alpha model ends the run that also holds the order path. As separate processes, a crashed component stops producing its own output and nothing else until the host restarts it. Every output upstream of it is already stored, so recovering means that one component starting again, reading the blobs that exist and writing the ones that are missing, rather than replaying the day. A decision
    that halted stays halted, and the next decision runs. If the cause is still
    there, that decision finds it again and halts too.
 2. **Every input and output can be read afterwards.** Each value that passes
@@ -220,12 +213,11 @@ apply it.
    decides again, and appends after it, as rule 8 says.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
    fills made at the start of execution's send stage, as rule 9 says, and,
-   just before the broker call, on the kill switch, the run's halt, the
-   account's lease and the journal's end, as rule 9's fourth item says.
+   just before the broker call, on the kill switch, the run's halt, its own send-stage result key and the account's lease's tag, as rule 9's fourth item says.
 4. **Every lease** is fetched before it is taken, and one another VM holds is
    resolved by a person, as rule 9 says.
 5. **Every read of marketlake** fetches the manifest entry before the data it
-   names, and a checksum that differs halts, as `## Where it runs` says.
+   names, and a checksum that differs halts, as rule 8 of architecture.md's `## Where it runs` says.
 
 Ten rules make the blobs something a worker can trust.
 
@@ -278,8 +270,7 @@ Ten rules make the blobs something a worker can trust.
    and a reader needs no cursor, because the keys it needs are fixed by the
    decision. Since a stage has one result key per decision, a decision can never
    end that stage with both outputs and a halt, or twice. A worker whose result
-   write S3 refuses because the supervisor has already written a halt there,
-   as rule 5 says, takes the halt as final. Every instruction the supervisor
+   write S3 refuses because the supervisor has already written a halt there, as rule 7 says, takes the halt as final. Every instruction the supervisor
    gives is a blob before it is a message: the plan, a halt of the whole
    run, and the stop at the end of the run. A worker acts on a message only
    after reading the blob it names, and checks those blobs whenever it
@@ -333,8 +324,7 @@ Ten rules make the blobs something a worker can trust.
    output file with no entries halts unless it carries an explicit "trade
    nothing" mark, and that mark means hold every position and send no order,
    never a target of zero. A worker that cannot process a decision writes a
-   halt as its result for the decision, with the reason, and then exits cleanly or moves to its
-   next decision, because a halt is not a crash. Hard limit 3 came from an
+   halt as its result for the decision, with the reason, and then moves to its next decision, because a halt is not a crash. Hard limit 3 came from an
    execution server that read "no signals" as "hold nothing" (L4690). Here,
    "has this decision's forecast been written" is a check of one result key.
 7. **A halt flows down the pipeline, and the supervisor only sends
@@ -396,8 +386,7 @@ Ten rules make the blobs something a worker can trust.
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again reads the plan, the results and the
    heartbeats, and carries on, while the workers keep running without it.
-   Monitoring alarms when the supervisor's heartbeat stops, and a handler on
-   the host alarms when any unit reaches its restart limit, so a supervisor
+   Monitoring alarms when the supervisor's heartbeat stops, and a handler on the host alarms when any unit, or the Docker daemon itself, reaches its restart limit or fails, so a supervisor
    that is gone does not leave the run unwatched in silence.
    Workers with no input between them
    run at the same time. Alpha and cost need only the snapshot, and risk needs
@@ -421,8 +410,7 @@ Ten rules make the blobs something a worker can trust.
    match, a link that does not chain, or a gap in the numbers.
 9. **Leases make one VM, and one sender, per account.** A lease is a blob a
    process creates with the condition that it not exist, recording its
-   holder: the VM, its boot, the process, the release, the run and when it was
-   created. It is deleted only with a condition naming the tag S3 returned
+   holder: the VM, its boot, the container and its restart count, the release, the run and when it was created. It is deleted only with a condition naming the tag S3 returned
    when it was created, so no stale holder deletes a successor's lease. Two
    leases matter.
    1. **The deployment's lease.** The supervisor takes it before it writes the
@@ -438,8 +426,7 @@ Ten rules make the blobs something a worker can trust.
    container. A lease whose holder is the same VM on an earlier boot, or a
    container the host shows is gone, is cleared by the next process that
    needs it, and the clearing is journaled. A stopped heartbeat alone never
-   clears a lease, because a frozen process can wake. A lease held by another VM waits for the owner or
-   the operator, who first confirm that VM is gone. The order manager, the
+   clears a lease, because a frozen process can wake. A lease held by another VM waits for the owner, or on a paper or shadow account the owner or the operator, who first confirm that VM is gone. The order manager, the
    risk gate, the journal and the order path all run inside the execution
    worker, because the gate checks each order against every order and
    position in the account's journal just before the order is sent, and a
@@ -567,7 +554,7 @@ Ten rules make the blobs something a worker can trust.
     or S3 cannot be reached, the runbook on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person
     create the switch from anywhere, cancel at the broker's own console, and
-    journal both as a human override once the VM is back.
+    journal both as a human override with `ithildin` once back at a computer.
 
 ### How a component learns of a change
 
@@ -680,9 +667,7 @@ guards against a hung process rather than shaping what a strategy sees.
 Execution's send stage reads it before every send, to check the cutoff for
 the strategy's orders, as `### Strategies, schedules and decisions` says.
 Under the history clock that reading is the decision time, so a backtest
-never meets the cutoff, and a drill sets a test clock past it instead. The
-workers between those places read no clock and move on only when messages
-arrive.
+never meets the cutoff, and a drill sets a test clock past it instead. Apart from those places, a worker reads wall time only to key its heartbeat and, in execution and monitoring, to run the timed checks of `### How a component learns of a change`, none of which shapes what a strategy sees. Otherwise the workers move on only when messages arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
 halts again if its cause is still there. A failure stops the whole run.
@@ -944,7 +929,7 @@ glossing it.
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
 | **supervisor** | The process that takes the deployment's lease, writes a run's plan and messages every worker, reads the workers' heartbeats, checks the kill switch on a timer, writes a halt as a worker's result when the worker fails, and stores and messages a halt of the run on such a failure. It starts, stops and watches no process, and keeps no state outside storage |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues and error output, none of which is kept |
-| **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. |
+| **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, except on a live account, where only the owner does, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
 | **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
 | **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
@@ -1010,8 +995,8 @@ once rather than re-argued.
 | SQLite on the VM, as the record or as an index of S3 | Once S3 became the record, a SQLite file on the VM was only a copy to keep in step with it, and the owner dropped it on 2026-10-29 |
 | Litestream, streaming SQLite to S3 | It copies each write about a second after it lands, so a lost VM lost rows that no blob could rebuild, among them halts. It also needs to delete in the bucket, and two copies streaming to one path can leave the copy impossible to restore. A review found all three, and the owner made S3 the record instead |
 | A JSON Lines file per log | It reads with `cat`, but a crash partway through an append tears a line, and a review found that a writer appending after a torn line hid every event after it, a journal entry among them. Every write is now a blob that S3 creates whole or not at all |
-| A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about seven events a decision on one VM |
-| A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency and no polling. The price is that each writer sends a message to every reader of its outputs, which one table in `runtime` wires |
+| A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about nine events a decision on one VM |
+| A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency, and only execution, the supervisor and monitoring also check keys on a timer, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. The price is that each writer sends a message to every reader of its outputs, which one table in `runtime` wires |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |

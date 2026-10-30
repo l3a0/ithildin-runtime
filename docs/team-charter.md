@@ -306,8 +306,7 @@ evidence, not elapsed time.
   one component run as its own process, and the workers form an event
   pipeline, as the design doc's
   [Processes and files](design.md#processes-and-files) says.
-- **Reconciliation** compares journaled positions and open orders with the
-  broker's every day, and a mismatch halts trading.
+- **Reconciliation** compares journaled positions and open orders with the broker's at every decision, and a mismatch halts trading.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it.
 - **Human override** stays the exception, for information the model cannot
