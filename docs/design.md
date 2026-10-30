@@ -426,7 +426,10 @@ Ten rules make the blobs something a worker can trust.
       platform's own and bring the book up to date. So is an order the journal
       holds as open that the broker no longer lists, once a lookup by its
       client order id finds it `Expired`, `Rejected` or cancelled at the close
-      as its time in force allows, which execution journals. Any other difference
+      as its time in force allows, or cancelled after a journaled cancel of
+      the platform's own, such as the kill switch's or the one that keeps a
+      pair whole. Execution journals each such outcome, in its recover stage
+      and in this sync. Any other difference
       halts the decision for a person, because the broker moved in a way the
       platform did not ask for. Only then does it plan. It journals the
       planned orders, each with its client order id, in the same entry as the
@@ -442,9 +445,12 @@ Ten rules make the blobs something a worker can trust.
       execution halts if an entry that changes the book, and that neither its
       sync nor its own order loop wrote, lies past the entry its sync names.
 
-   The gate counts every open order at its worst case: an order on the side
-   that grows exposure counts as filled, and one on the other side counts as
-   unfilled, until the broker confirms its fill, its cancel or its expiry. A
+   The gate counts every open order at its worst case, separately for each
+   limit: for each limit, an order on the side that makes that limit worse
+   counts as filled, and one on the other side counts as unfilled, until the
+   broker confirms its fill, its cancel or its expiry. For `max_net` that
+   means every leg of a pair must fit alone, which is also the bound on a leg
+   left open when its partner fails. A
    cancel is journaled before it is sent, and the order stays open in the
    book until the broker confirms it. Without this, an order left resting
    from one decision lets the next decision plan a trade that passes
@@ -627,19 +633,49 @@ Five rules keep a day of decisions safe.
    monitoring pings anyway. A period set to the longest gap between decisions
    would span a long weekend, so a run that died on a Tuesday would go
    unheard until Saturday.
-5. **Orders go out before the broker's cutoff, or not at all.** The owner
-   ruled on question 10 of [architecture.md](architecture.md) that the
-   skeleton trades the close with market-on-close orders, which Alpaca
-   rejects after 15:50. So the strategy carries a cutoff for its sends,
-   15:48, and the owner's hard caps blob carries the latest cutoff any
-   strategy may use, so a strategy can tighten it and never loosen it.
-   Execution checks the cutoff with the clock before it starts the order
-   loop and again before every send, next to the kill switch. Past the
-   cutoff it sends nothing more and halts the decision. When that, or a
-   broker rejection, leaves a pair with one leg accepted and another not,
-   execution cancels the accepted legs while the exchange still takes
-   cancels, journaling each cancel first. A cancel is not a trade, so this
-   stays inside hard limit 3: the book stays as it was before the decision.
+5. **Market-on-close orders go out before the broker's cutoff, or not at
+   all.** The owner ruled on question 10 of [architecture.md](architecture.md)
+   that the skeleton trades the close with market-on-close orders, which
+   Alpaca rejects after 15:50. The cutoff belongs to the broker account,
+   because it is the broker's rule: the hard caps blob of the paper account
+   holds 15:48 America/New_York on the decision's own session date, and a
+   simulated account's holds the close itself. A strategy can set an earlier
+   cutoff and never a later one. The cutoff applies to market-on-close orders
+   only, so a market order sent at another time, such as the shadow run on
+   [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at 15:50,
+   meets no cutoff. It applies to new orders only, and never stops a cancel.
+   1. **Before every send, twice.** Execution reads the clock before it
+      starts the order loop, before each order, and again after the order's
+      `sending` entry is stored and immediately before the broker call, next
+      to the kill switch. An order past the cutoff is journaled `Abandoned`
+      and the decision halts. Inside the send stage, the retry deadline of a
+      write S3 does not answer ends no later than the cutoff, so a slow write
+      cannot carry a send past it.
+   2. **A clock that cannot be trusted halts.** At the start of the send
+      stage, execution compares the VM's clock with the broker's own clock and
+      halts when they differ by more than a tolerance, because a slow clock
+      reads as "before the cutoff".
+   3. **A pair is kept whole while cancels are still taken.** The cancel
+      cutoff is the earlier of the broker's and the exchange's cutoff for
+      cancelling a closing-auction order. After the order loop, execution
+      looks up each leg by its client order id until every leg is accepted or
+      the cancel cutoff passes. When one leg is rejected, unsent or past the
+      cutoff while another is accepted, execution cancels the accepted legs,
+      journaling each cancel first. When execution fails with its send stage
+      unfinished, the supervisor starts execution in cancel mode, the route
+      the kill switch uses, scoped to that decision's accepted legs.
+   4. **What stays open is bounded, not undone.** A cancel that arrives after
+      the cancel cutoff, or a closing auction that fills a leg only in part,
+      can leave a pair with one leg filled. The risk gate checks each leg
+      alone against `max_position` and `max_net`, as rule 9 says, so that leg
+      is no larger than the caps allow, and monitoring alarms after the close
+      on any pair whose filled legs differ from the planned hedge. A cancel is
+      not a trade, so this stays inside hard limit 3.
+   5. **A flagged price halts.** The 15:40 decision reads marketlake's
+      segments before sealing, where a price spike is flagged in the snapshot
+      rather than halting. The risk gate values three limits at the
+      snapshot's prices, so a decision whose trades or holdings carry a
+      flagged price halts, naming the instrument and both prices.
 
 An account carries one deployment in each mode, and the supervisor refuses a
 plan whose account another deployment names. Execution, the risk gate, the

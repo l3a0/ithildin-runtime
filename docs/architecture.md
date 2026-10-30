@@ -83,8 +83,9 @@ trades when the spread leaves its band. Read at quantitative-trading's commit
 
 Four facts make it the simplest candidate there.
 
-1. **Two liquid ETFs, daily closes only.** No minute data, no futures rolls, no
-   stock panel.
+1. **Two liquid ETFs, daily closes.** The backtest reads daily closes only,
+   with no futures rolls and no stock panel. The paper decision also reads one
+   quote per ETF at 15:40, from marketlake's segments.
 2. **One committed source.** `data/inputdata_etf/gld.csv` and
    `data/inputdata_etf/uso.csv` were lifted from Chan's `inputData_ETF.mat`, cover
    2006-04-26 to 2012-04-09, and each has a recorded SHA-256 checksum. Each
@@ -228,8 +229,10 @@ after marketlake has sealed and uploaded the day reads sealed partitions and
 needs none of this. The snapshot names each segment it read by key
 and SHA-256 and marks the read provisional. Once marketlake seals the day,
 monitoring compares the sealed partition with what the snapshot read, and
-the official daily bar with the price the decision used, and journals and
-alarms any difference. This is proposed for
+journals and alarms any difference. It also reports the gap between the
+price the decision used and the official close, and between each
+market-on-close fill and that close, as report lines rather than alarms,
+since the two differ by design. This is proposed for
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16), with marketlake's
 uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943).
@@ -363,8 +366,8 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market-on-close order at the session's close, a market order at the next bar's open | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
-| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest | S3, the shadow journal | Sent |
+| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
+| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest, except that a market-on-close order fills at the last price of marketlake's 16:00 cycle, marked provisional until the official close arrives | S3, the shadow journal | Sent |
 | Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own fill | S3, the paper journal | Sent |
 | Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | S3, the live journal | Sent |
 
@@ -502,9 +505,11 @@ the blob store to a worker is a message on that worker's queue.
 
 Alpaca rejects a market-on-close order "submitted after 3:50pm but before
 7:00pm ET", so every order goes out by 15:48, a cutoff the owner's hard caps
-hold, as design.md's `### Strategies, schedules and decisions` says. The
-official daily bar arrives the next evening, and monitoring then compares it
-with the price the decision used.
+hold, as design.md's `### Strategies, schedules and decisions` says. That rule
+also checks the cutoff again just before each broker call, and keeps a pair
+whole by cancelling an accepted leg whose partner fails. The official daily
+bar arrives the next evening, and monitoring then reports how far the
+decision's price and the fills sat from it.
 
 ```mermaid
 sequenceDiagram
@@ -565,16 +570,23 @@ sequenceDiagram
     X->>J: any new fill journaled, under its fill id
     X->>X: book from the journal agrees with the broker?
     X->>J: the whole target portfolio and its planned orders journaled
+    X->>X: clock agrees with the broker's, and before the cutoff?
     loop each order the order manager plans
-        X->>X: kill switch blob absent?
+        X->>X: kill switch blob absent, and before the cutoff?
         X->>J: intent journaled
         X->>J: replay the book
         X->>X: risk gate check
         X->>J: approval journaled
         X->>J: sending journaled
+        X->>X: kill switch absent, and before the cutoff, again?
         X->>B: send, with its client order id
         B-->>X: ack
         X->>J: ack journaled
+    end
+    X->>B: is every leg accepted?
+    alt a leg rejected or unsent while another is accepted
+        X->>J: each cancel journaled
+        X->>B: cancel the accepted legs
     end
     X->>F: send outcome and execution's send result
     F-->>M: a message: execution's result
@@ -612,7 +624,10 @@ The phases in order.
    into orders. Each order goes through the order path alone. The order path
    checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval, journals that it is sending, and only then sends.
+   journals the approval, journals that it is sending, checks the switch and
+   the market-on-close cutoff once more, and only then sends. After the loop
+   it looks up each leg, and cancels any accepted leg whose partner was
+   rejected or never sent.
    Monitoring writes the decision's report and pings the heartbeat service
    last, so a decision that dies or hangs never pings.
 
@@ -715,7 +730,7 @@ sequenceDiagram
         X->>J: ack journaled
         X->>F: account file and execution's recover result
     and
-        D->>D: is this session's close in marketlake?
+        D->>D: are the segments up to the decision time in marketlake?
         D->>F: a halt as data's result, reason "data not ready"
     end
     F-->>X: a message: data's result is a halt
@@ -730,7 +745,8 @@ The restart runs the same first phase as any trading day.
 
 1. Execution settles the order the dead worker left half-sent, by asking the
    broker about it rather than sending it again.
-2. Data finds the session's close not yet in marketlake and halts.
+2. Data finds the segments up to the decision time not yet in marketlake and
+   halts.
 
 The order in which the processes come up no longer matters. Execution may
 start before data, as it does here, but it sends only what a target
@@ -859,8 +875,9 @@ pulled in that window stops nothing already sent unless it also cancels
 them, which is why it does, as question 7 settles. The exchange stops taking
 cancels of closing-auction orders some minutes before the close, so a switch
 pulled after that cannot stop the fill, and the cancelling worker's report
-says so. The exact cutoff on NYSE Arca, where GLD and USO list, needs
-confirming on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+says so. The cancel cutoff is the earlier of Alpaca's and the exchange's,
+and both, on NYSE Arca where GLD and USO list, need confirming on
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 ### Every alarm and its drill
 
@@ -872,15 +889,19 @@ here, with the issue that builds its drill.
 | Alarm | Reason it writes | Drill | Built on |
 | --- | --- | --- | --- |
 | Missing or stale bar | The instrument and its state | A replay with a bar removed or aged, test 2 | [#5](https://github.com/l3a0/ithildin-runtime/issues/5), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Data not ready | "data not ready" | A run started before marketlake's sweep, test 2 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Data not ready | "data not ready" | A run whose segments up to the decision time are missing, test 2 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Risk gate refusal | The limit and the value | One order over each limit, test 3 | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Book and broker disagree | Both positions, or both sets of open orders | A simulated broker account edited by hand | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The broker moved between execution's recover and send stages in a way the platform did not ask for | Both positions, or both sets of open orders, at the send stage | A simulated broker account edited by hand between the stages | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A fill with no `sending` entry, or past its order's quantity | The client order id | A simulated broker that reports an unknown fill | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio that leaves out an instrument the book holds | The instrument | A target portfolio file written without one leg | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | A bad constraints file or hard cap | The field and its value | A file with a missing field, a NaN and a wrong sign | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
-| A send that would start after the market-on-close cutoff | The decision time, the cutoff and the clock's time | A test clock set past the cutoff before the order loop | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A pair with one leg accepted and another rejected or unsent | Each leg's client order id and state | A broker double that rejects the second leg | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A send that would start after the market-on-close cutoff | The decision time, the cutoff and the clock's time | A test clock set past the cutoff before the order loop, and one that crosses it after the first leg's ack | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The VM's clock differs from the broker's by more than the tolerance | Both times | A test clock skewed by three minutes | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A pair with one leg accepted and another rejected or unsent | Each leg's client order id and state | A broker double that rejects the second leg on the submit, and one that rejects it after acknowledging it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution failed between a pair's legs | The decision and each leg's state | Kill execution after the first leg's ack | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| After the close, a pair whose filled legs differ from the planned hedge | Each leg's fill | A broker double that fills one leg in part | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A traded or held instrument whose price carries a spike flag | The instrument and both prices | A provisional segment with one spiked quote | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Kill switch pulled | "kill switch" | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -966,6 +987,7 @@ classDiagram
         +int max_open_orders
         +float max_net
         +float loss_stop
+        +time moc_cutoff
     }
     class TargetPortfolio {
         +datetime decision_at
@@ -1139,6 +1161,7 @@ classDiagram
         +journal_fills(since) list
         +broker_account() BrokerAccount
         +send(OrderIntent, Snapshot, Constraints) Ack
+        +cancel(client_order_id) Ack
         +cancel_resting() list
     }
     class Monitoring {
@@ -1200,16 +1223,20 @@ Eight choices in the two diagrams for a reviewer to check.
 5. **The risk gate holds no state of its own.** `check` takes the order, the
    book, the snapshot and the run's `Constraints`. `send` replays the book from
    the journal just before each check, so the gate counts every order already
-   approved or sending, including those of an earlier attempt. Three of the
-   six limits need the snapshot's prices to value the book.
+   approved or sending, including those of an earlier attempt, each at its
+   worst case for each limit. Three of the seven limits need the snapshot's
+   prices to value the book.
    1. Maximum portfolio size, the `max_gross` field.
    2. Net exposure.
    3. The loss stop.
    The `Constraints` come from the risk model's constraints file, so the order
    path first checks that every field of that file and every hard cap in the
    hard caps blob only the owner can write is present, finite and of the sign the field expects, and
-   halts otherwise. Then it takes the tighter of each pair: the smaller
-   maximum, and the smaller loss for the loss stop. A constraints file can
+   halts otherwise. `moc_cutoff` must be a time in the exchange's time zone,
+   applied on the decision's own session date. Then it takes the tighter of
+   each pair: the smaller maximum, the smaller loss for the loss stop, and
+   the earlier cutoff. The gate refuses a market-on-close order past the
+   cutoff, given the clock's reading. A constraints file can
    tighten a limit and never loosen it. This is a proposal for
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
 6. **The book comes from the journal.** `Journal.replay()` applies every entry
@@ -1265,11 +1292,13 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Acknowledged --> Expired: day order not filled
+    Approved --> Abandoned: switch set or cutoff passed before the broker call
+    Acknowledged --> Expired: day or market-on-close order not filled by the close
     PartlyFilled --> Expired: rest not filled by the close
+    Sending --> Rejected: broker refuses the submit
     Acknowledged --> Rejected: broker rejects
-    Acknowledged --> Cancelled: kill switch cancels it
-    PartlyFilled --> Cancelled: kill switch cancels the rest
+    Acknowledged --> Cancelled: kill switch, or its pair's other leg failed
+    PartlyFilled --> Cancelled: kill switch, or its pair's other leg failed
     Refused --> [*]
     Abandoned --> [*]
     Lost --> [*]
@@ -1289,7 +1318,10 @@ broker by client order id. Sending the order again is never a way out. An order
 that ends `Abandoned` or `Lost` never reached the broker, so the next decision's
 order manager plans from the book as if it had never existed.
 
-`Cancelled` is reached through the kill switch, as question 7 settles.
+`Cancelled` is reached two ways: through the kill switch, as question 7
+settles, and when one leg of a pair is accepted and the other fails, as
+design.md's `### Strategies, schedules and decisions` says. Either way the
+cancel is journaled first, and the sync then counts it as the platform's own.
 
 ## The life of a run
 
@@ -1778,13 +1810,21 @@ new arrow.
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected. The restart kills the supervisor mid-run and starts execution before data | The orders on each day, and a halt with no orders on each faulted day |
-| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the six limits, the import rule test, and the fake broker | Six refusals, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
+| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, the import rule test, and the fake broker | Seven refusals and the pair's, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
 Chan's script assumes. The owner ruled on question 10 that the paper run
 trades that close too, with market-on-close orders, so both fill at the same
-price. A paper order also needs whole shares, or a fractional order the
+price. The two still decide at different times. Test 1's deployment decides
+at the close, on the imported daily bars, through a simulated account whose
+cutoff is the close, because a 15:40 decision there would see only the day
+before's close and shift every signal a session. The paper deployment
+decides at 15:40, because no live decision can read a close that has not
+happened. Test 1 checks the engine against Chan's timing. A backtest of the
+deployed 15:40 schedule needs minute history at 15:40 that the imported
+vintages lack, so it waits for marketlake's captured minutes to cover a long
+enough span, and shadow running measures the gap until then. A paper order also needs whole shares, or a fractional order the
 broker accepts, while the backtest holds fractional dollar positions. So the
 two runs differ in two ways.
 
@@ -1866,7 +1906,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
-| The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff in the owner's hard caps that execution checks before every send. One simulator fills by order type in backtest and shadow | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
@@ -1885,7 +1925,7 @@ accepted.
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
-| The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | Ruled by the owner on 2026-10-29. The shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and which time the skeleton's strategy decides at is question 10 |
+| The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | Ruled by the owner on 2026-10-29. The shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and question 10 sets the skeleton's strategy at 15:40 |
 | A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account carries one deployment in each mode, and strategies on one account share it and meet in portfolio construction | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The risk gate counts every open order at its worst case, as filled on the side that grows exposure and unfilled on the other, until the broker confirms it | Counting open orders at their net | An order left resting can block a trade that would have fitted | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), as [design.md](design.md#processes-and-files) proposes |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
@@ -1944,7 +1984,8 @@ Each question has a recommendation, so a review can answer it with a yes.
    recommendation is yes, through the kill switch command, which cancels each
    resting order through the order path and journals it. Cancelling an order
    that has not filled sells nothing, so it is still a stop and not a flatten,
-   and without it a switch pulled overnight stops nothing until after the open.
+   and without it a switch pulled between 15:48 and the exchange's cancel
+   cutoff stops nothing already sent.
    The owner accepted it on 2026-10-29, and the ruling is on
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 8. **Does the daily loss stop also unwind positions?** The recommendation is
@@ -1972,9 +2013,10 @@ Each question has a recommendation, so a review can answer it with a yes.
 
     This doc proposes the times. Alpaca's order documentation says
     market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
-    be rejected", so the decision runs at 15:40 and every order goes out by
-    15:48, a cutoff the owner's hard caps hold. Execution checks the cutoff
-    before every send. An early close needs its own times, and Alpaca's
+    be rejected", so the decision runs at 15:40 and every market-on-close
+    order goes out by 15:48, a cutoff the paper account's hard caps hold.
+    Execution checks it before every send and again just before each broker
+    call. An early close needs its own times, and Alpaca's
     cutoff on those days needs confirming on
     [#10](https://github.com/l3a0/ithildin-runtime/issues/10), along with
     whether its paper account fills market-on-close orders at all. The price
