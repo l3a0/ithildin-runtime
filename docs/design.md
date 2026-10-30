@@ -748,8 +748,9 @@ lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
 as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
 account, with marketlake's VM role narrowed so it cannot read it. The owner
 ruled later that day that the runtime's bucket and VM live in that account
-too, with the key encrypted under a KMS key of the runtime's own whose policy
-names only the execution user and the owner, and with marketlake's plan role
+too, with the key under AWS's managed `aws/ssm` key, which the owner ruled
+fine, the bucket behind a policy that names who may reach it, and
+marketlake's plan role
 narrowed to what `tofu plan` reads, as
 [architecture.md](architecture.md#where-it-runs)'s rules 3 and 5 and its
 question 11 say. This doc proposes the rest: the key sits under the

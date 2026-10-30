@@ -1564,14 +1564,18 @@ Nine rules hold the deployment to the premise and the hard limits.
    `SecureString` parameter encrypted under KMS, and that the runtime's
    parameter, bucket and VM all live in marketlake's AWS account, the second
    choice of question 11. That account is shared with a public repository's
-   CI, so the ruling puts the key and the data behind lists of who may reach
-   them rather than behind refusals that every role must remember.
-   1. **A KMS key of the runtime's own encrypts the parameter.** Its key
-      policy names only the execution user's principal, for decrypting, and
-      the owner's, for managing the key. It leaves out the statement that
-      lets IAM policies grant use of the key, so no other role in the
-      account can decrypt the parameter, whatever its IAM policies allow.
-      The key costs $1 a month.
+   CI, so the ruling puts the data behind a list of who may reach it, the
+   bucket policy in rule 5, and narrows the one role that runs on public
+   pull requests.
+   1. **AWS's managed `aws/ssm` key encrypts the parameter.** The owner ruled
+      on 2026-10-29 that AWS's key is fine, rather than a KMS key of the
+      runtime's own. Every principal in the account may decrypt through SSM
+      under that key, so who can read the parameter is decided by IAM alone:
+      a grant of `ssm:GetParameter` on that parameter, given only to the
+      execution user's credential, and the refusals in item 3 for every role
+      that holds a broader read. The price is that a role added later with a
+      broad parameter read can read the key until someone refuses it, which
+      the drill in item 6 catches only when it runs.
    2. **marketlake's plan role reads only what `tofu plan` needs.** Its
       `ReadOnlyAccess`, which reads every bucket and parameter and runs on
       any pull request of a public repository, gives way to a policy that
@@ -1850,7 +1854,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming their version. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
-| The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy and a KMS key of the runtime's own name who may reach the data, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
+| The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -2025,7 +2029,9 @@ Each question has a recommendation, so a review can answer it with a yes.
           IAM policies grant access. Without that statement, "IAM policies
           that allow access to the key are ineffective", as AWS's
           [default key policy page](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)
-          says. The key costs $1 a month.
+          says. The key costs $1 a month. The owner later ruled AWS's
+          managed key fine instead, so the parameter rests on IAM grants and
+          refusals, as rule 3 says.
        4. The VM cannot be listed that way, so marketlake's apply and deploy
           roles carry explicit refusals of EC2 actions on instances tagged as
           the runtime's, and of any change to that tag. That part is still a
