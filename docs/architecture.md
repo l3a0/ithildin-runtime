@@ -267,9 +267,9 @@ The owner ruled on 2026-10-29 that each component runs as its own process,
 that processes pass everything through files, and that the platform is an
 event pipeline. [design.md](design.md#processes-and-files)'s
 `## Processes and files` gives the reasoning and the rules. So each module
-here runs as one worker, a process of its own. The supervisor writes the
-run's plan and starts every worker at once, and each one listens on its own
-queue. A message there names an input's decision result, and the worker then
+here runs as one worker, a process of its own that the host keeps running.
+The supervisor writes the run's plan and messages every worker, and each one
+listens on its own queue. A message there names an input's decision result, and the worker then
 reads the output files that result lists, writes its own output files, and
 writes its own decision result last. A worker's entry point builds the
 adapters for the mode it is given and hands them to the module, so the module
@@ -277,7 +277,7 @@ never learns which mode it is in.
 
 ```mermaid
 flowchart TB
-    sup["Supervisor<br/>writes the plan, starts every worker,<br/>keeps no state of its own"]
+    sup["Supervisor<br/>writes the plan, messages every worker,<br/>keeps no state of its own"]
     plan[("plan<br/>the run's decisions")]
     sup --> plan
 
@@ -501,7 +501,8 @@ question 10 that the skeleton trades the close, so the diagram draws its
 decision at 15:40, on marketlake's segments read before sealing, with
 market-on-close orders that fill at the close. A strategy that decides
 several times a day runs the same three phases once per decision, with the
-workers left running between. The notes split it into three phases. The supervisor starts every worker at the start, and a
+workers left running between. The notes split it into three phases. The host
+keeps every worker running, the supervisor's plan starts the decision, and a
 `par` block marks workers working at the same time. Each dashed arrow from
 the blob store to a worker is a message on that worker's queue.
 
@@ -533,13 +534,13 @@ sequenceDiagram
     V->>F: the deployment's lease taken, the release recorded
     V->>V: kill switch blob absent?
     V->>F: the run's plan
-    V->>D: start
-    V->>X: start
-    V->>M: start
-    V->>A: start
-    V->>K: start
-    V->>C: start
-    V->>P: start
+    V-->>D: a message: the plan
+    V-->>X: a message: the plan
+    V-->>M: a message: the plan
+    V-->>A: a message: the plan
+    V-->>K: a message: the plan
+    V-->>C: a message: the plan
+    V-->>P: a message: the plan
     Note over V,M: Phase 1, read the data, then recover
     X->>X: create the account's lease
     D->>F: snapshot, naming each bar read, and data's decision result
@@ -668,7 +669,8 @@ The same route runs in every mode, and the run goes on to its next decision,
 which halts again if the cause is still there. A failure, meaning a crash or
 a missed deadline, takes it too. The supervisor writes the halt as the failed
 worker's result, writes a halt for every decision left in the plan, and
-stops every worker but monitoring, which reports and exits.
+messages every worker to halt the run, and monitoring reports. A single crash
+is not a failure: the host restarts the worker, which resumes from storage.
 
 ### A missing or stale bar
 
@@ -719,9 +721,9 @@ sequenceDiagram
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after "sending journaled" and before the ack.
     V->>F: the deployment's lease, taken, and the run's plan
     V->>V: kill switch blob absent?
-    V->>X: start
-    V->>D: start
-    V->>M: start
+    V-->>X: a message: the plan
+    V-->>D: a message: the plan
+    V-->>M: a message: the plan
     par
         X->>F: the account's lease, clearing the one this VM's earlier boot left, journaled
         X->>J: which orders were sending with no ack?
@@ -836,15 +838,13 @@ sequenceDiagram
     K->>K: create the kill switch blob
     K->>J: halt journaled, reason "kill switch"
     K->>A: alarm
-    K->>K: a message on every worker's queue in each run open on the account
-    K->>X: start in cancel mode
-    X->>X: wait for the account's lease, up to a deadline
+    Note over K,X: The supervisor checks the switch every few seconds<br/>and messages every worker's queue
+    X->>X: stop sending
     X->>J: orders in doubt settled
     X->>J: each cancel journaled
     X->>B: cancel
-    X-->>K: orders cancelled, cancels failed
-    K->>A: second alarm if any cancel failed or the deadline passed
-    Note over K,X: Every other worker checks the file when it starts<br/>and whenever a message wakes it, and execution before every send
+    X->>A: second alarm if any cancel failed
+    Note over K,X: Every worker checks the switch when it starts<br/>and whenever a message wakes it, and execution before every send
 
     Note over H,A: A decision that never finishes
     H->>H: no ping by the deadline
@@ -861,15 +861,13 @@ The two cover different failures.
    to exceed the longest chain of worker deadlines plus the report, or a slow,
    healthy decision alarms.
 
-The kill switch is a command, not a running process. It creates a file at one
-path per broker account, which every worker reads, and it cancels resting
-orders through an execution worker it starts in cancel mode, so the cancel is
-journaled like any other step. Two workers run with the switch set, because
-neither sends an order: that cancelling worker, and monitoring, whose report
-says the switch is set. If a running execution worker holds the account's
-lease, it sees the switch when the switch's message wakes it or before its
-next send and exits, and the cancelling worker takes the lease once it is
-free. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
+The kill switch is a command, not a running process. It creates a blob at one
+key per broker account, which every worker reads, and the execution worker
+that already holds the account's lease cancels resting orders through the
+order path, so each cancel is journaled like any other step. A starting
+execution that finds the switch set cancels before anything else, so a
+switch pulled while execution is down still cancels once the host restarts
+it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close
 orders rest at the broker from about 15:48 until the close, so a switch
@@ -907,7 +905,7 @@ here, with the issue that builds its drill.
 | A send that would start after the market-on-close cutoff | The decision time, the cutoff and the clock's time | A test clock set past the cutoff before the order loop, and one that crosses it after the first leg's ack | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The VM's clock differs from the broker's by more than the tolerance | Both times | A test clock skewed by three minutes | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A pair with one leg accepted and another rejected or unsent | Each leg's client order id and state | A broker double that rejects the second leg on the submit, and one that rejects it after acknowledging it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Execution failed between a pair's legs | The decision and each leg's state | Kill execution after the first leg's ack | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution failed between a pair's legs | The decision and each leg's state | Kill execution after the first leg's ack, and expect the restarted execution to cancel that leg before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | After the close, a pair whose filled legs differ from the planned hedge | Each leg's fill | A broker double that fills one leg in part | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A traded or held instrument whose price carries a spike flag | The instrument and both prices | A provisional segment with one spiked quote | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Kill switch pulled | "kill switch" | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -916,11 +914,11 @@ here, with the issue that builds its drill.
 | A lease another VM holds, the deployment's or the account's | The holder's VM, boot, process and run | Start a second VM while the first runs | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A worker crashed | Its exit status or signal and the end of its error output | Kill a worker mid-decision | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A second execution worker, or a second supervisor on one VM | The lease or lock that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A second execution worker, or a second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor on a different release | Both releases | Restart mid-run under another tag | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The scheduler's restart limit reached | The supervisor's last exit | Make the supervisor crash on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker, and make one crash on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose hash or link does not match, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
@@ -1000,8 +998,8 @@ quietly when there is nothing to do, so running one twice is safe.
    journals the pull and raises the alarm. The supervisor checks the switch
    every few seconds as well as when a message wakes a worker, so a pull
    from off the VM reaches a running run without a message on its queues.
-   It then starts execution in cancel mode, as rule 10 of `design.md`'s ten
-   rules says.
+   Execution then cancels every resting order, as rule 10 of `design.md`'s
+   ten rules says.
 4. **`ithildin switch clear --account <a>`** deletes the switch and journals
    the clear. Only the owner's credential can, on a live account.
 5. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
@@ -1459,7 +1457,7 @@ stateDiagram-v2
     Preparing --> Failed: a worker crashes or misses its deadline
     Deciding --> Failed: a worker crashes or misses its deadline
     Sending --> Failed: a worker crashes or misses its deadline
-    Failed --> Reporting: every worker but monitoring stopped
+    Failed --> Reporting: every worker messaged to halt the run
 ```
 
 `Preparing` is the first phase of a decision: data reads the snapshot
@@ -1467,9 +1465,9 @@ while execution settles orders in doubt, journals fills and writes the book,
 and monitoring reconciles. The supervisor holds none of these states in
 memory. It reads them from storage: which components have a decision result,
 and whether a result is a halt. A restarted supervisor finds the state the
-same way, and starts every worker whose lock is free. Each one checks its own
-result key for each decision, reads the blobs that exist, and writes the ones
-that are missing.
+same way, while the workers keep running. A worker the host restarts checks its
+own result key for each decision, reads the blobs that exist, and writes the
+ones that are missing.
 
 A halt and a failure differ in what they stop. A halt stops one decision, and
 in a backtest the span goes on to the next. A failure stops the whole run.
@@ -1660,7 +1658,7 @@ flowchart TB
         start["Start unit<br/>starts the scheduler"]
         timer["Scheduler<br/>a systemd timer, once per trading day"]
         run["Supervisor and workers<br/>at a release the owner pinned"]
-        work[("Working directory<br/>queues, lock files, error output")]
+        work[("Working directory<br/>queues, error output")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         start --> timer --> run
         run --> work
@@ -1816,17 +1814,18 @@ Ten rules hold the deployment to the premise and the hard limits.
    stopped mid-send leaves an order in doubt, which the next recover stage
    settles by its client order id. The old release takes the next trading
    day's run.
-7. **The scheduler restarts a supervisor that crashes, up to a limit.** That
-   is systemd's `Restart=on-failure` with `StartLimitBurst`, and a
-   `StartLimitIntervalSec` of a whole trading day, since systemd's default of
-   ten seconds would never reach the limit for a supervisor that crashes once
-   a minute. The unit sets `KillMode=process`, so the workers outlive a
-   supervisor that crashes and the restarted one leaves them to finish, as
-   design.md's rule 7 says, and alarms that it restarted. `RuntimeMaxSec`
-   ends a run that is still going before the next day's timer fires, because
-   systemd leaves a timer's unit alone while it is still active. Reaching the
-   restart limit raises the alarm, and the dead-man check covers a scheduler
-   that stops too.
+7. **systemd keeps every process running, up to a limit.** The supervisor
+   and each worker have a unit of their own, with systemd's
+   `Restart=on-failure`, a `StartLimitBurst`, and a `StartLimitIntervalSec`
+   of a whole trading day, since systemd's default of ten seconds would never
+   reach the limit for a process that crashes once a minute. A worker's unit
+   also sets a watchdog that kills and restarts it when its heartbeat stops,
+   so a hung worker is treated like a crashed one. Each unit sets
+   `RuntimeMaxSec`, which ends a run still going before the next day's
+   timer fires, because systemd leaves a timer's unit alone while it is
+   still active. Reaching a worker's restart limit is a failure of the run,
+   as design.md's rule 7 says, a restarted supervisor alarms that it
+   restarted, and the dead-man check covers systemd stopping too.
 8. **The runtime has a VM of its own, apart from marketlake's.** The owner
    ruled on 2026-10-29 that the runtime runs on a VM separate from the one
    marketlake's capture daemon runs on, and downloads the parts of the lake its
@@ -1849,80 +1848,58 @@ Ten rules hold the deployment to the premise and the hard limits.
    place by checking its own keys in S3. Who starts a replacement VM, from
    which VM image, and how a person confirms the old VM is gone before clearing
    its lease, is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
-10. **The release is one container image, and CI tests that image.** This
-    is this doc's proposal, raised by the owner on 2026-10-30. One Docker
-    image holds the whole runtime: one Python version, every dependency
-    installed from `uv.lock` with its hashes enforced, and an entry point per
-    worker. Each run is one container from that image, holding the
-    supervisor and its workers as the processes and Unix users the rules
-    above describe, so a backtest, CI and the VM run the same bytes and the
-    same process tree.
+10. **The release is one container image, and each component runs in a
+    container of its own.** This is this doc's proposal, raised by the owner
+    on 2026-10-30. One Docker image holds the whole runtime: one Python
+    version, every dependency installed from `uv.lock` with its hashes
+    enforced, and an entry point per worker. Each component runs as its own
+    container from that image, and the supervisor as one more, so a
+    backtest, CI and the VM run the same bytes.
 
-    A container per component was considered and turned down. With systemd
-    or Docker starting each worker, the supervisor stops being their
-    parent, so it no longer learns of a crash the moment it happens, and
-    starting execution in cancel mode for a stranded pair leg, stopping
-    every worker on a failure, or keeping a worker from starting before the
-    deployment's lease is held, would each need the Docker socket or a
-    systemd grant, and either one is root on the host. Process ids would
-    also stop naming a worker across containers. One container keeps every
-    rule above as written.
-
-    The owner said on 2026-10-30 that eventually each component's container
-    could run on a machine of its own, or serverless. One container per run
-    keeps that path open, because the image already has an entry point per
-    worker and every worker already reads and writes through S3. Two seams
-    in `runtime` would carry the move, and this doc proposes building them
-    with the supervisor on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    each with one adapter today.
-    1. **A launcher**, through which the supervisor starts, watches and stops
-       a worker. Today's adapter starts a child process. A later one could
-       start an ECS task, a container on another machine, or a function.
-    2. **A queue**, through which a worker's message reaches its readers.
-       Today's adapter is a named pipe. A later one could be SQS.
-
-    A contract test suite runs each port's adapters alike, as storage's
-    does, so moving a component changes an adapter and not the supervisor's
-    rules. What the review of a container per component found stays the
-    price of that move: a launcher that is not the parent has to report a
-    crash within the time the send stage allows, and starting a worker
-    elsewhere needs a credential scoped to the runtime's own workers, never
-    one that is root on a host.
+    The supervisor only sends messages, as design.md's rule 7 says, so it
+    needs no power over containers. A systemd unit per container, under
+    rule 7, starts each one before the session, restarts it when it exits or
+    its heartbeat stops, and stops it after the close. No container holds the
+    Docker socket or the system D-Bus, because either one is root on the
+    host. The owner said on 2026-10-30 that eventually each component could
+    run on a machine of its own, or serverless. Messages, results and
+    heartbeats all pass through the queues and S3, so moving a component
+    changes only where its container runs and the queue adapter it uses.
+    The queue is the one seam built for that, a port in `runtime` with a
+    named pipe as its adapter today and a contract test suite that a later
+    adapter, such as SQS, has to pass.
 
     If adopted, rule 10 changes these:
     1. **The pin is an image digest.** Rule 1's tagged commit becomes the
        digest of the image built from it. The plan records the digest, and
-       the supervisor halts with "release changed" if its own differs. A
-       rollback, rule 6, stops the run's unit, confirms with `docker ps`
-       that no container remains, and moves the pin to the previous digest,
-       which the VM keeps pulled.
-    2. **The container is unprivileged on the host.** Docker's user
-       namespace remapping makes the container's root an unprivileged user
-       on the host, so the supervisor can start each worker as its own Unix
-       user inside the container without root on the VM. The container
-       drops every capability but those that switching users and signalling
-       workers need, has a read-only root file system, and never runs
-       privileged, never shares the host's network, process ids or IPC, and
-       never mounts the Docker socket or the system D-Bus.
-    3. **Credentials reach the container as files, and the instance's
-       never do.** Rule 3's provisioning step, on the host, writes each
-       worker user's credential file to memory-backed storage, which the
-       container mounts read-only. Only execution's credential reads the
-       broker key, which is fetched into memory and never mounted. The
-       instance is launched with IMDSv2 required and a token hop limit of 1,
-       set explicitly, because AWS's own
+       each worker halts with "release changed" if its own differs. A
+       rollback, rule 6, stops every unit, confirms with `docker ps` that no
+       container remains, and moves the pin to the previous digest, which the
+       VM keeps pulled.
+    2. **Each container is fenced off by itself.** Each runs as its own
+       non-root user, given by its unit, with every capability dropped, a
+       read-only root file system and no way to gain privileges, and none
+       runs privileged or shares the host's network, process ids or IPC.
+       Each mounts only its own worker credential file, read-only from
+       memory-backed storage, and only execution's credential reads the
+       broker key, which is fetched into memory and never mounted. The queue
+       directory's pipes are writable only by each pipe's writer's user.
+    3. **The instance's credentials never reach a container.** The instance
+       is launched with IMDSv2 required and a token hop limit of 1, set
+       explicitly, because AWS's own
        [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
        give 2 for an AMI that requires IMDSv2, and 2 lets a container
        through. A `DOCKER-USER` firewall rule also drops traffic from
        Docker's bridges to the metadata service's addresses. Rule 3's drill
-       adds, from inside the container, a token request and a tokenless
-       request to the metadata service, each expected to fail.
-    4. **systemd runs the one container.** Rule 7's unit starts the
-       container rather than the supervisor directly, with the same restart
-       limit, and stopping the unit stops the container, so a stop or
-       `RuntimeMaxSec` ends the whole run. Stopping the Docker daemon stops
-       the container, so a daemon restart is a failure of the run, which
-       gets an alarm row, and the daemon is never upgraded during a session.
+       adds, from inside each container, a token request and a tokenless
+       request to the metadata service, each expected to fail, and a read of
+       another container's mounts.
+    4. **A restart writes its own record.** systemd records why a container
+       exited, and the restarted worker writes that reason, with the end of
+       its previous error output from a file in the working directory, as
+       its restart record. Stopping the Docker daemon stops every container,
+       so a daemon restart is a failure of the run, which has an alarm row,
+       and the daemon is never upgraded during a session.
 
     CI builds the image on every pull request and runs the tests inside it,
     in the job still named `test` that the ruleset requires: the suite, test
@@ -1949,10 +1926,10 @@ Ten rules hold the deployment to the premise and the hard limits.
     owner's, under hard limit 6.
 
     The price is a Docker daemon on the VM, running as root, to patch outside
-    sessions, an image build on every pull request, and a verification step
-    before each deploy. The image carries over to Fargate, though the queue
-    into execution, how execution starts and the kill switch's route still
-    change there, as question 12 says.
+    sessions, a unit per container to keep in step, an image build on every
+    pull request, and a verification step before each deploy. On Fargate the
+    same containers become tasks, each with its own role, and only the queue
+    adapter changes, as question 12 says.
 
 ## Package layout and the import rule
 
@@ -2000,10 +1977,9 @@ An arrow means "may import". The diagram draws three rules.
    lives there. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
    order path. The supervisor lives there too, and imports only `core`. It
-   starts each worker as its own process, by name, and writes nothing but the
-   plan, the deployment's lease, crash records and the halts of workers that
-   crashed, which `core`'s storage contract covers, besides its own lock on
-   the VM. Only the entry points read the plan's mode, and a module is handed
+   starts no worker. It writes nothing but the plan, the deployment's lease,
+   its messages and the halts of workers that failed, which `core`'s storage
+   contract and queue cover. Only the entry points read the plan's mode, and a module is handed
    only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
@@ -2124,11 +2100,11 @@ accepted.
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29 |
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
-| The release is one container image, pinned by digest, and each run is one unprivileged container holding the supervisor and its workers as today. CI tests the image on every pull request, and one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or a container per component started by systemd or the Docker socket | A Docker daemon to maintain and patch outside sessions, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, whose reading commands show status and explain a halt, and whose writing commands clear a halt, record an override, pull or clear the switch and clear a lease, each journaled through `core`. Each alarm carries the first command to run | Commands on the VM, a web page, or editing blobs by hand | A tool to build and drill, a timed switch check in the supervisor, and two credentials off the VM that can resume trading | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 what a person runs |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11. marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
-| A supervisor that writes the plan, starts every worker at once and keeps no state, with a halt that flows down the pipeline and is final for its decision | A supervisor that holds the run's state in memory, or one that launches each worker only once its inputs exist, which would handle a halt one way on paper and another in a backtest | Locks, leases and a plan that one process would not need. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
+| A supervisor that writes the plan, messages every worker and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2349,17 +2325,16 @@ Each question has a recommendation, so a review can answer it with a yes.
        every container in the task, and its
        [task role page](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html)
        says "containers are not a security boundary", while each Fargate
-       task has its own. So execution moves into a task of its own, with the
-       only role that reads the broker key. Three things change with it: the
-       queue from portfolio construction to execution crosses tasks, through
-       a queue service such as SQS rather than a named pipe; the supervisor
-       starts execution's task rather than a process; and the kill switch
-       command reaches the run through ECS rather than a shell on the VM.
+       task has its own. With a container per component, as rule 10
+       proposes, each becomes a task with its own role, so only execution's
+       reads the broker key. The supervisor already only sends messages and
+       the kill switch is a blob read from anywhere, so the one change is the
+       queue: tasks do not share a folder, so the queue adapter becomes a
+       queue service such as SQS.
 
     The recommendation is the VM for slice 1. Its design is complete and has
     been reviewed, and the refusals that guard it are already ruled. Moving
-    to Fargate changes the queue into execution, how the supervisor starts
-    it, and the kill switch's route, each of which would need its own review
+    to Fargate changes the queue adapter, which needs its own contract tests
     and drills, on a path that has run zero times. The case for Fargate is
     real, no machine and no reach from marketlake's EC2 roles, and the
     evidence that would settle it is what running the VM costs: hours spent

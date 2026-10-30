@@ -157,12 +157,13 @@ Ten entries define the design's terms.
    outside world only through the adapter at its edge, such as the broker or
    the data source. A worker imports `core`, the shared types, and no sibling
    module, and shares no memory with any other worker.
-5. The **supervisor** is the process that starts a run's workers, writes the
-   run's **plan**, a blob listing the run's mode and its decisions in order,
-   watches the workers and stops the run.
+5. The **supervisor** is the process that writes the run's **plan**, a blob
+   listing the run's mode and its decisions in order, messages the workers,
+   watches their results and heartbeats, and halts the run. It starts and
+   stops no process.
 6. A **run** keeps all of its blobs under the run's own prefix in storage. The
-   VM keeps only a working directory for the run, holding its queues, its lock
-   files and its workers' error output, and none of that is kept. In shadow,
+   VM keeps only a working directory for the run, holding its queues and its
+   workers' error output, and none of that is kept. In shadow,
    paper and live a run is one trading day of one deployment, and in a
    backtest it is the whole span.
 7. A component's **listing** is its stages' blobs, listed by decision. Each
@@ -307,16 +308,18 @@ Ten rules make the blobs something a worker can trust.
    journals the whole target portfolio it acts on, in a journal entry, before
    its first send. Each release writes only formats the release before it can
    read, so pinning back to an earlier release still reads what storage
-   holds. A worker killed by a signal or a crash writes nothing about itself,
-   so the supervisor writes a crash record at a key of its own, fixed by the
-   worker and its process, carrying the exit status or signal and the end of
-   its error output, with anything shaped like a credential masked. If the
-   worker's stage has no result for the decision, the supervisor then writes a
-   halt there that names the crash record and every output file it finds
-   under the decision's prefix, so no stored capture is left unlisted. Each
-   worker writes its process id and the path of its error output into a lock
-   file in the VM's working directory, so a supervisor started after a crash
-   can do the same for a worker it did not start.
+   holds. A worker killed by a signal or a crash writes nothing about itself
+   as it dies. The host that runs it, systemd on the VM today, restarts it,
+   and the restarted worker's first act is a restart record at a key of its
+   own, fixed by the worker and its restart count, carrying the reason the
+   host reports, an exit status or a signal, and the end of its previous
+   error output, with anything shaped like a credential masked. It then
+   resumes from storage, as rule 3 says. Each worker also writes a
+   heartbeat, a small blob at a key fixed by the worker and the time, at
+   least every fifteen seconds, so the supervisor can tell a live worker
+   from a hung or lost one without being its parent. The bucket's lifecycle
+   expires heartbeats after a week, the one prefix where anything is
+   removed.
 6. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A blob whose header names the wrong decision halts as stale. An
    output file with no entries halts unless it carries an explicit "trade
@@ -326,27 +329,35 @@ Ten rules make the blobs something a worker can trust.
    next decision, because a halt is not a crash. Hard limit 3 came from an
    execution server that read "no signals" as "hold nothing" (L4690). Here,
    "has this decision's forecast been written" is a check of one result key.
-7. **A halt flows down the pipeline, and the supervisor keeps no state of its
-   own.** The scheduler starts the supervisor, which first takes the
-   deployment's lease, as rule 9 says. The supervisor holds an exclusive lock
-   on the run's working directory, so two supervisors on one VM never share
-   one. It writes the run's plan, which a restarted supervisor finds already
-   there, and starts every worker at once. Every worker, in every mode, exits
-   once it has a result for every decision in the plan. A
-   worker that exits before then has failed, and the reason names it.
+7. **A halt flows down the pipeline, and the supervisor only sends
+   messages.** The host keeps every worker running and restarts one that
+   exits: on the VM, a systemd unit per worker's container, as rule 10 of
+   architecture.md's `## Where it runs` says. The supervisor starts, stops
+   and watches no process. It takes the deployment's lease, as rule 9 says,
+   writes the run's plan, which a restarted supervisor finds already there,
+   and sends a message to every worker's queue. A worker that starts before
+   any plan exists, or finds a plan whose run the deployment's lease does
+   not name, waits, so no worker acts before a supervisor holds the lease.
+   Every worker, in every mode, finishes its decision loop once it has a
+   result for every decision in the plan, and the supervisor's last message
+   of the run tells each one to stop.
    - **A halt is passed on.** A worker whose input's result for a decision is a
      halt writes its own halt as its result, naming the one it found, and goes
      on to its next decision.
-   - **A failure stops the run.** A worker that crashes, or misses its
-     deadline, has failed. Its deadline runs from the moment its last needed
+   - **A crash is a restart, and a failure stops the run.** One crash is not
+     a failure: the host restarts the worker within seconds and it resumes
+     from storage, which rules 3 and 9 make safe to repeat. A worker has
+     failed when it misses its deadline, when its heartbeat stops for longer
+     than a minute, or when it restarts more often in one run than the
+     host's limit allows. Its deadline runs from the moment its last needed
      input appears, so waiting on a slow upstream worker never counts against
-     it. The supervisor writes the halt as the worker's result, as rule 5 says,
-     and stops every worker in the run but monitoring. A run's plan can hold a
-     whole trading day, so the supervisor then writes a halt naming the crash
-     record as every stage's result for every decision still left in the
-     plan. Monitoring reaches its exit rule, journals the failure, pings the
-     failure address and exits, and the supervisor exits with a status its
-     restart policy does not retry.
+     it. A worker that hangs answers no message, so the host's own watchdog
+     kills and restarts it when its heartbeat stops. On a failure the
+     supervisor writes the halt as that worker's result, naming its restart
+     records, writes a halt as every stage's result for every decision still
+     left in the plan, and sends every worker a message to halt the run. Each
+     halts itself, monitoring journals the failure, pings the failure address
+     and reports, and the supervisor's own unit is not restarted.
    - **Monitoring tells the owner once.** Monitoring, the one worker that reads
      every component's results and holds the alert channel, journals every
      halt with its reason and raises an alarm on the halt that names no
@@ -366,9 +377,9 @@ Ten rules make the blobs something a worker can trust.
      decision.
 
    Everything the supervisor knows, it reads from storage, so a supervisor
-   that crashes and is started again starts each worker whose lock is free. A
-   worker that still holds its lock, because a child process outlives a
-   parent that crashes, is left to finish. Workers with no input between them
+   that crashes and is started again reads the plan, the results and the
+   heartbeats, and carries on, while the workers keep running without it.
+   Workers with no input between them
    run at the same time. Alpha and cost need only the snapshot, and risk needs
    the snapshot and the reconciled book.
 8. **The journal is the one numbered log.** Its entries sit at keys fixed by
@@ -395,17 +406,18 @@ Ten rules make the blobs something a worker can trust.
    when it was created, so no stale holder deletes a successor's lease. Two
    leases matter.
    1. **The deployment's lease.** The supervisor takes it before it writes the
-      plan or starts a worker, in every mode, so a replacement VM started while
-      the old one still runs halts and alarms before any worker starts. Its
-      holder record names the run's working directory, which is how the kill
-      switch command finds every queue to message.
+      plan, in every mode, so a replacement VM started while the old one
+      still runs halts and alarms, and its workers, which find no plan under
+      a lease of theirs, wait.
    2. **The account's lease.** The execution worker takes it for its whole
       life, and a second execution worker that would send and cannot take it
       halts.
 
-   A lease whose holder is the same VM on an earlier boot, or a process that
-   no longer exists, is cleared by the next process that needs it, and the
-   clearing is journaled. A lease held by another VM waits for the owner or
+   A holder record names the VM, its boot and the worker's container rather
+   than a process id, which means nothing outside one container. A lease
+   whose holder is the same VM on an earlier boot, or whose holder's
+   heartbeat has stopped on this VM, is cleared by the next worker that
+   needs it, and the clearing is journaled. A lease held by another VM waits for the owner or
    the operator, who first confirm that VM is gone. The order manager, the
    risk gate, the journal and the order path all run inside the execution
    worker, because the gate checks each order against every order and
@@ -476,17 +488,18 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and starts an
-    execution worker in cancel mode, which cancels every resting order and
-    journals each cancel first. This doc adds two things: the command runs on
-    the runtime's VM, and it sends a message to every worker's queue in the
-    run the deployment's lease names, because workers no longer check on a
-    timer. Execution also checks the switch once more after its `sending`
-    entry is stored and before the broker call, and journals the order
-    `Abandoned` if the switch is set. Two
-    workers run with the switch set, because neither sends an order. The
-    cancelling execution worker waits for the account's lease up to a deadline
-    and alarms if it passes. Monitoring writes the decision's report and says the
+    creates the blob, journals the halt, raises the alarm, and cancels every
+    resting order, journaling each cancel first. This doc adds how. The
+    switch can be pulled from anywhere, so the supervisor checks it every few
+    seconds and sends a message to every worker's queue when it finds it set.
+    Execution, the one worker that holds the account's lease, then stops
+    sending and cancels every resting order through the order path, and
+    alarms if a cancel fails. A starting execution that finds the switch set
+    does the same before anything else, so a switch pulled while execution is
+    down or restarting still cancels. Execution also checks the switch once
+    more after its `sending` entry is stored and before the broker call, and
+    journals the order `Abandoned` if the switch is set. No worker sends an
+    order with the switch set. Monitoring writes the decision's report and says the
     switch is set. The runtime's credential can create the switch but never
     delete it. The owner ruled on 2026-10-29 that only the owner's or the
     operator's command clears the switch, and that the clearing is journaled.
@@ -666,9 +679,10 @@ Five rules keep a day of decisions safe.
       looks up each leg by its client order id until every leg is accepted or
       the cancel cutoff passes. When one leg is rejected, unsent or past the
       cutoff while another is accepted, execution cancels the accepted legs,
-      journaling each cancel first. When execution fails with its send stage
-      unfinished, the supervisor starts execution in cancel mode, the route
-      the kill switch uses, scoped to that decision's accepted legs.
+      journaling each cancel first. When execution crashes with its send stage
+      unfinished, the host restarts it within seconds, and its first act is
+      to look up that decision's legs and cancel any accepted leg whose
+      partner was not, before the cancel cutoff.
    4. **What stays open is bounded, not undone.** A cancel that arrives after
       the cancel cutoff, or a closing auction that fills a leg only in part,
       can leave a pair with one leg filled. The risk gate checks each leg
@@ -797,7 +811,7 @@ glossing it.
 | **target portfolio** | The positions portfolio construction asks for. The difference between it and the current positions is what execution trades |
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records |
-| **worker** | One component, meaning one module of the charter's module table, run as its own process. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
+| **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
 | **stage** | One step a component takes in a decision. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
@@ -806,8 +820,8 @@ glossing it.
 | **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
 | **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
-| **supervisor** | The process that writes a run's plan, starts every worker of the run at once, writes a halt as a worker's result when the worker crashes or misses its deadline, and stops the run on such a failure. It keeps no state outside storage |
-| **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues, lock files and error output, none of which is kept |
+| **supervisor** | The process that takes the deployment's lease, writes a run's plan and messages every worker, writes a halt as a worker's result when the worker fails, and messages every worker to halt the run on such a failure. It starts, stops and watches no process, and keeps no state outside storage |
+| **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues and error output, none of which is kept |
 | **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
 | **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
