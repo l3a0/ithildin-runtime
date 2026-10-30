@@ -30,7 +30,7 @@ The owner's part in reviewing this doc is two sections at the end.
 
 1. [Decisions](#decisions), a table where each row says what this doc chose, what it
    turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depends on. Each carries a recommendation and says how the owner ruled. The owner has answered all twelve, the last two on 2026-10-30.
+2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depends on. Each says what was recommended and how the owner ruled. The owner has answered all twelve, the last two on 2026-10-30.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
 what it shows and what to look for. Nothing here is built yet.
@@ -2305,7 +2305,7 @@ accepted.
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming the tag S3 returned when each was created. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
-| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
+| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2340,7 +2340,7 @@ accepted.
 
 ## Questions for the owner
 
-Each question has a recommendation, so a review can answer it with a yes.
+Each question says what was recommended and how the owner ruled.
 
 1. **Which paper broker?** The recommendation is Alpaca's paper account. It is
    free, it has a REST API, and a paper key cannot move money. Schwab, which
@@ -2518,8 +2518,7 @@ Each question has a recommendation, so a review can answer it with a yes.
     rules out a worker that lasts the session, and execution's watch over a
     pair's legs and over the kill switch while orders rest needs one. A
     message-driven supervisor would let the other components run as
-    functions triggered by their queues later, which rule 10 keeps open. Two
-    choices remain.
+    functions triggered by their queues later, which rule 10 keeps open. Two choices were weighed.
     1. **The VM, as `## Where it runs` draws it.** The workers run as Unix
        users of their own, the queues are named pipes, and only the
        execution user's credential reads the broker key. The price is a
