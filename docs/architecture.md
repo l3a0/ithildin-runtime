@@ -2114,3 +2114,42 @@ Each question has a recommendation, so a review can answer it with a yes.
     judged the journal, which cannot be recovered, worth the hours. When the
     setup starts, now or after the candidate ranking due 2026-11-11, is the
     owner's call.
+12. **What hosts the runtime: a VM, or a long-running Fargate service?** The
+    owner ruled on 2026-10-30 that the platform runs through every session
+    and trades continuously, at decisions as often as once a minute, so the
+    host keeps the supervisor and the workers running from before the open
+    until after the close. Lambda per component is turned down: about 390
+    decisions a day, each fanning out to every worker, would move the
+    supervisor's work into a second orchestrator such as Step Functions,
+    while a backtest keeps the local supervisor, so the two would orchestrate
+    differently. Lambda's
+    [15-minute limit](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html)
+    also rules out a worker that lasts the session. Two choices remain.
+    1. **The VM, as `## Where it runs` draws it.** The workers run as Unix
+       users of their own, the queues are named pipes, and only the
+       execution user's credential reads the broker key. The price is a
+       machine to patch and restart, the firewall rule that keeps worker
+       users off the instance metadata service, and the refusals that keep
+       marketlake's apply and deploy roles off the VM, as rule 3 says.
+    2. **A long-running ECS Fargate service**, started before the open and
+       stopped after the close, with the same supervisor and workers in a
+       container. There is no machine to patch, and marketlake's EC2
+       permissions have no VM to reach. But ECS hands a task's IAM role to
+       every container in the task, and its
+       [task role page](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html)
+       says "containers are not a security boundary", while each Fargate
+       task has its own. So execution moves into a task of its own, with the
+       only role that reads the broker key. Three things change with it: the
+       queue from portfolio construction to execution crosses tasks, through
+       a queue service such as SQS rather than a named pipe; the supervisor
+       starts execution's task rather than a process; and the kill switch
+       command reaches the run through ECS rather than a shell on the VM.
+
+    The recommendation is the VM for slice 1. Its design is complete and has
+    been reviewed, and the refusals that guard it are already ruled. Moving
+    to Fargate changes the queue into execution, how the supervisor starts
+    it, and the kill switch's route, each of which would need its own review
+    and drills, on a path that has run zero times. The case for Fargate is
+    real, no machine and no reach from marketlake's EC2 roles, and the
+    evidence that would settle it is what running the VM costs: hours spent
+    patching and restarting it, and any marketlake apply that touches it.
