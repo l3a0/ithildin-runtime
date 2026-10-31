@@ -2369,8 +2369,7 @@ Eleven rules keep the environments apart.
     policy, the key paths, the metadata fence, CloudTrail and the operator's
     grants. Shadow's and paper's drills run before paper's gate. Live's run
     before the owner switches, in a live session started with the kill
-    switch already set, and after the switch only while no live session is
-    open, until the owner rules otherwise. Drills that depend only on code
+    switch already set, and after the switch only while no live session is open, until the owner rules otherwise. The owner runs every live drill, and alone pulls and clears the live switch in one, as the owner ruled on 2026-10-31. No agent runs a drill on live. Drills that depend only on code
     run once, in test. Rule 3's drill grows to try each environment's roles
     against every other environment's bucket, key and VM, by each route rule
     3's item 6 lists and by assuming or passing another environment's role,
@@ -2389,8 +2388,7 @@ Eleven rules keep the environments apart.
     environment's drills run again after every apply.
 11. **The environments share marketlake's AWS account.** The owner ruled on
     question 11 that the runtime's resources live there, so the environments
-    are separated by ARN, path and policy rather than by AWS account. The
-    price is that one IAM mistake can still cross environments, which an
+    are separated by ARN, path and policy rather than by AWS account. The owner confirmed on 2026-10-31 that live stays in that account too, rather than moving to one of its own at the switch. The price is that one IAM mistake can still cross environments, which an
     account per environment would rule out, and rule 10's drill is what
     catches one.
 
