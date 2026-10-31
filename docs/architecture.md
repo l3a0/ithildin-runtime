@@ -964,6 +964,7 @@ here, with the issue that builds its drill.
 | A person's journal entry names an identity that differs from the one AWS recorded for its write | The entry and both identities | Write an entry with a forged name | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's release pin is missing or unreadable | "release pin missing or unreadable", from the host's handler | Boot a VM whose pin is deleted, and one whose role cannot read it, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The promotion job stopped running | None. Its own heartbeat check raises it | Disable the promotion schedule for a day | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A VM's pin names a digest without a valid attestation, or with no deploy record, promotion record or earlier run in that environment | "release pin not trusted" and the digest | Write an unattested digest to paper's pin with the operator's credential, directly, and expect the session to halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because a block record could not be read | The bucket and S3's answer | Deny the promotion role's read of one bucket's block records | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because paper is not clear | The open halt, set switch, pending override or held lease | Run a promotion with paper's switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4, run against each of shadow's, paper's and live's checks | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -995,8 +996,7 @@ is down.
 
 The tool writes the identity AWS reports for the caller into each entry,
 but S3 does not stop a caller writing any name it likes. So CloudTrail
-records every write to the journal, the switch, the leases and the
-overrides, in a bucket only the owner can change, and monitoring alarms when
+records every write to the journal, the switch, the leases, the overrides and `release/`, in a bucket only the owner can change, and monitoring alarms when
 an entry's named identity differs from the one CloudTrail recorded.
 
 Two credentials hold what the VM's credential deliberately cannot.
@@ -1055,8 +1055,9 @@ Writing commands take more friction the more they can resume trading.
    and journals it. It first asks EC2 whether the holder's instance is
    stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
 6. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
+7. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
-The last five each take a required `--reason`, print what they will do and
+The last six each take a required `--reason`, print what they will do and
 to which account, show a live account's name in capitals, and for a live
 account make the person type the account's name to confirm. When there is
 nothing to do, a command says what it found and who acted on it, rather
@@ -1087,7 +1088,7 @@ is not enough.
 The price is a tool to build and test, a drill for each writing command on
 a paper account before the paper gate, which the runbook on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11) adds to
-`### Every alarm and its drill`, CloudTrail's data events on four prefixes,
+`### Every alarm and its drill`, CloudTrail's data events on five prefixes,
 and two credentials outside the VM, each guarded by a hardware key.
 
 ## Types and interfaces
@@ -1905,7 +1906,7 @@ writer's, alarms, as `### Every alarm and its drill` lists.
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
 | A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
-| The release pin, block records, promotion records and pin changes | `release/pin.json`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json`, `release/changes/<UTC time>.json` |
+| The release pin, deploy records, block records, promotion records and pin changes | `release/pin.json`, `release/deploys/<digest>.json`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json`, `release/changes/<UTC time>.json` |
 
 `<run>` is the session date in shadow, paper and live, and the span's first
 and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by
@@ -2265,11 +2266,9 @@ Eleven rules keep the environments apart.
    the image, runs the tests again with the store suite's run against the
    test bucket, publishes the image and attests its provenance. A deploy
    job then confirms through GitHub's API that its commit belongs to a
-   merged pull request, verifies the attestation, and writes the digest as
-   shadow's pin. A promotion job runs on a schedule after each session,
+   merged pull request, verifies the attestation, writes a deploy record for the digest, which only the deploy role can write, and writes the digest as shadow's pin. A promotion job runs on a schedule after each session,
    with no manual trigger and no input naming a digest. It reads shadow's
-   records, and writes the digest as paper's pin once shadow is healthy on
-   it and paper is clear. Live's pin moves only by the owner's hand, which
+   records, verifies the digest's attestation, requires shadow's deploy record for it, and writes the digest as paper's pin once shadow is healthy on it and paper is clear. So a digest reaches paper only through an owner's merge. Live's pin moves only by the owner's hand, which
    is hard limit 1, and the board sits before the first switch to live. The
    owner pins live only a digest that has run on paper.
 2. **Healthy is counted, never read from silence.** Shadow is healthy on a
@@ -2287,8 +2286,15 @@ Eleven rules keep the environments apart.
    or restart-limit halt.
 4. **A pin is a bare digest, read once a session, and a rollback holds.**
    Each pin is a blob in its own environment's bucket holding only a `sha256:` digest in its `digest` field, and the VM builds `ghcr.io/l3a0/ithildin-runtime@`
-   and the digest itself, refusing anything else. When the timer starts a
-   session, it resolves the pin once into a session file in memory-backed
+      and the digest itself, refusing anything else. When the timer starts a
+   session, the VM checks the digest before anything runs: its attestation
+   names the publishing workflow on `refs/heads/main`, verified from the
+   bundle stored beside the image so the VM needs no GitHub credential, and
+   the environment holds a deploy record, a promotion record or an earlier
+   run for it. A digest that fails either check halts the session with
+   "release pin not trusted" and alarms. The checks run here because a pin
+   is a plain S3 write, so a check inside a tool can be skipped by writing
+   the pin directly. It then resolves the pin once into a session file in memory-backed
    storage, and every unit start and restart that session uses it. A
    replacement VM that reads a newer pin mid-session halts with "release
    changed", which is intended. A VM that finds its pin missing or
@@ -2301,7 +2307,7 @@ Eleven rules keep the environments apart.
    path, never by tag.** Each bucket's policy refuses every principal but
    that environment's own runtime, deploy and promotion roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 says. A
-   deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, block records and pin changes, through `ithildin pin set`, and none of live's. The promotion role
+   deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch, as the owner ruled, and read, which is
    this doc's proposal. Each broker key sits under its environment's
