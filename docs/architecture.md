@@ -619,9 +619,7 @@ The phases in order.
    account's lease when it started, waits for that snapshot, so it reads the
    broker at the decision's own time. It settles any order a crash left in
    doubt, journals the fills that arrived since the last decision, and writes
-   the book it replays
-   from the journal beside the broker's positions and open orders. Monitoring
-   then checks the two agree, position by position and order by order. A run that starts on a book the broker disagrees with would trade
+   the strategies' books it replays from the journal, and the outside book of hand trades, beside the broker's positions and open orders. Monitoring then checks they agree, position by position and order by order, and each stamped order's filled quantity against the journal's. A run that starts on a book the broker disagrees with would trade
    the wrong difference.
 2. **Decide.** The alpha, risk and cost models run at once, each on the blobs
    it needs. The risk model sets the constraints, meaning the limits for this
@@ -635,8 +633,7 @@ The phases in order.
    a hash of the broker state it fetched, in one stored entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
-   Its order manager turns the target minus the positions and the open orders
-   into orders. Each order goes through the order path alone. The order path
+   Its order manager turns the target minus that strategy's own positions and open orders into orders. Each order goes through the order path alone. The order path
    checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
    journals the approval and journals that it is sending. Right before the broker call it checks five things: the kill switch is absent, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision. After the loop
@@ -887,8 +884,7 @@ The two cover different failures.
    healthy decision alarms.
 
 The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and puts an event of its own onto the bus, whose rule delivers it to execution's queue, so the pull does not wait on S3's delivery, and the execution worker
-that already holds the account's lease cancels resting orders through the
-order path, so each cancel is journaled like any other step. A starting execution takes the account's lease and, finding the switch set, cancels before anything else, so a
+that already holds the account's lease cancels the resting orders it stamped through the order path, so each cancel is journaled like any other step. A starting execution takes the account's lease and, finding the switch set, cancels its own stamped orders before anything else, so a
 switch pulled while execution is down still cancels once the host restarts
 it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
@@ -919,9 +915,10 @@ here, with the issue that builds its drill.
 | Missing or stale bar | The instrument and its state | A replay with a bar removed or aged, test 2 | [#5](https://github.com/l3a0/ithildin-runtime/issues/5), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Data not ready | "data not ready" | A run whose segments up to the decision time are missing, test 2 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Risk gate refusal | The limit and the value | One order over each limit, test 3 | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The outside book in an instrument a strategy holds moves against the strategy's position past zero | The instrument and both positions | A simulated liquidation of a strategy's leg | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Book and broker disagree | Both positions, or both sets of open orders | A simulated broker account edited by hand | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The broker moved between execution's recover and send stages in a way the platform did not ask for | Both positions, or both sets of open orders, at the send stage | A simulated broker account edited by hand between the stages | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A stamped fill with no `sending` entry, or past its order's quantity | The client order id | A simulated broker that reports an unknown fill | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A stamped fill with no `sending` entry, past its order's quantity, or with no client order id, or an order the broker placed itself | The client order id or the broker's order id | A simulated broker that reports an unknown stamped fill, a fill with no client order id, and a liquidation, each expected to halt, and a hand fill expected not to | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio that leaves out an instrument the book holds | The instrument | A target portfolio file written without one leg | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | A bad constraints file or hard cap | The field and its value | A file with a missing field, a NaN and a wrong sign | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | A send that would start after the market-on-close cutoff | The decision time, the cutoff and the clock's time | A test clock set past the cutoff before the order loop, and one that crosses it after the first leg's ack | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -1038,7 +1035,7 @@ Writing commands take more friction the more they can resume trading.
    the next decision runs as usual.
 3. **`ithildin override --account <a>`** records a correction the book
    cannot work out alone, such as a fill the broker shows and the journal
-   lacks after an outage. It names each position or open order it changes,
+   lacks after an outage, or a hand position held before the journal began. It names the book it changes, a strategy's or the outside book, and each position or open order it changes,
    with the broker's evidence and, for a fill, the broker's fill id, and the
    book values it was built against. It writes the override's body under
    the overrides prefix and a journal entry naming that blob by its SHA-256.
@@ -1161,16 +1158,18 @@ classDiagram
     }
     class TargetPortfolio {
         +datetime decision_at
+        +str strategy
         +dict shares
     }
-        class Book {
-        +dict positions
+    class Book {
+                +dict positions_by_strategy
+        +dict open_orders_by_strategy
         +dict outside_positions
-        +list open_orders
+        +list outside_open_orders
         +Decimal realised_pnl
         +int replayed_through
     }
-        class OrderIntent {
+    class OrderIntent {
         +str client_order_id
         +str strategy
         +InstrumentId instrument
@@ -1180,6 +1179,7 @@ classDiagram
     }
     class Fill {
         +str fill_id
+        +str broker_order_id
         +str client_order_id
         +Decimal qty
         +Decimal price
@@ -1306,7 +1306,7 @@ classDiagram
         +now() datetime
         +wait_until(datetime)
     }
-            class Queue {
+    class Queue {
         <<Protocol>>
         +receive() Event
         +done(Event)
@@ -1535,7 +1535,7 @@ stateDiagram-v2
     [*] --> Starting
     Starting --> Halted: kill switch set, or a worker on another release halts with "release changed"
     Starting --> Preparing: workers waiting on the decision's inputs
-    Preparing --> Halted: data missing, stale or not ready, an unknown fill, or book and broker disagree
+    Preparing --> Halted: data missing, stale or not ready, an unknown stamped fill, a fill with no client order id, an order the broker placed itself, or book and broker disagree
     Preparing --> Deciding: snapshot written, book reconciled
     Deciding --> Halted: a worker halts
     Deciding --> Sending: target portfolio written
@@ -1649,7 +1649,7 @@ erDiagram
         string inputs
         datetime stored_at
     }
-        JOURNAL_ENTRY {
+    JOURNAL_ENTRY {
         int seq
         int format
         datetime built_at
@@ -1659,7 +1659,7 @@ erDiagram
         string client_order_id "read from body"
         datetime stored_at "S3's metadata"
     }
-        ORDER {
+    ORDER {
         string client_order_id
         string strategy
         string instrument
@@ -1668,6 +1668,7 @@ erDiagram
     }
     FILL {
         string fill_id
+        string broker_order_id
         string client_order_id
         decimal qty
         decimal price
@@ -1874,13 +1875,13 @@ otherwise. Every journal format ever written stays readable by every later
 release, because the book is replayed from the first entry, and each
 format has a committed fixture entry and a test that replays it.
 
-The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_fill`, `cancel`,
+The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `cancel`,
 `override`, `clear` or `switch_pull`, and that kind's fields. A writer builds
 an entry once and resends the same bytes on a retry, so a live process
 recognises its own earlier attempt by hash. A process that restarted builds
 new bytes, so before it appends it checks the field that names the step
 against the journal instead: the client order id for `intent`, `sending` and
-`cancel`, the broker's fill id for `fill`, the override blob's SHA-256 for
+`cancel`, the broker's fill id for `fill` and `outside_fill` together, the broker's order id for `outside_order`, the override blob's SHA-256 for
 `override`, and the halt's id for `clear`. A switch already pulled makes
 `switch_pull` say so rather than journal it twice.
 
@@ -2626,10 +2627,10 @@ accepted.
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Every order carries the platform's stamp, a client order id naming its strategy and decision. Execution journals a stamped fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise. An unstamped order or fill is the owner's, journaled as an outside entry and reconciled, never a halt | Journaling every fill the broker reports into the book, or halting on any fill the journal did not send | The account can hold a hand position no strategy planned, which the risk gate counts against the account's hard caps and the report shows. Ruled by the owner on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Every order carries the platform's stamp, a client order id naming its strategy and decision. Execution journals a stamped fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise. An unstamped order or fill is the owner's, journaled as an outside entry and reconciled, never a halt | Journaling every fill the broker reports into the book, or halting on any fill the journal did not send | The account can hold a hand position no strategy planned, which the risk gate's second check counts so it can only tighten a cap, and the report shows | The stamp and ignoring unstamped orders were ruled by the owner on 2026-10-31. Sorting by the broker's order id, the outside book, the gate's two checks and a switch that cancels only stamped orders are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
 | Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill, or an unstamped order or fill of the owner's. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A target portfolio names every instrument the book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
+| A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
@@ -2639,7 +2640,7 @@ accepted.
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries the strategy's quirks, such as no capital account and a daily resize of one leg | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
 | The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the architecture runs through every session and trades continuously, at decisions as often as once a minute, with S3 holding everything. The shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and question 10 sets the skeleton's strategy at 15:40 |
-| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account belongs to one environment and carries one deployment there, and strategies on one account share it and meet in portfolio construction | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account belongs to one environment and carries one deployment there, and strategies on one account share it and meet in portfolio construction, one target per strategy until combining is settled, | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The risk gate counts every open order at its worst case, as filled on the side that grows exposure and unfilled on the other, until the broker confirms it | Counting open orders at their net | An order left resting can block a trade that would have fitted | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), as [design.md](design.md#processes-and-files) proposes |
 | marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
@@ -2704,8 +2705,7 @@ Each question says what was recommended and how the owner ruled.
    that has not filled sells nothing, so it is still a stop and not a flatten,
    and without it a switch pulled between 15:48 and the exchange's cancel
    cutoff stops nothing already sent.
-   The owner accepted it on 2026-10-29, and the ruling is on
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+   The owner accepted it on 2026-10-29, and the ruling is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The owner's ruling of 2026-10-31 that the platform ignores unstamped orders leads this doc to cancel only the platform's stamped orders and list the rest for the owner, a narrowing the owner confirms.
 8. **Does the daily loss stop also unwind positions?** The recommendation is
    no for slice 1. Crossing the stop makes the risk gate refuse every new
    order. An unwind is a trade of its own, so it would need its own path
