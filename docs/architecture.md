@@ -47,7 +47,8 @@ what it shows and what to look for. Nothing here is built yet.
 - [Types and interfaces](#types-and-interfaces)
 - [The life of an order](#the-life-of-an-order)
 - [The life of a run](#the-life-of-a-run)
-- [What is stored](#what-is-stored)
+- [What is stored](#what-is-stored), with [File formats and keys](#file-formats-and-keys)
+
 - [Where it runs](#where-it-runs), with [Four environments](#four-environments)
 
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
@@ -1114,10 +1115,10 @@ classDiagram
     class Bar {
         +InstrumentId instrument
         +date session
-        +float open
-        +float high
-        +float low
-        +float close
+        +Decimal open
+        +Decimal high
+        +Decimal low
+        +Decimal close
         +int volume
         +str basis
         +str origin
@@ -1138,9 +1139,9 @@ classDiagram
     class Quote {
         +InstrumentId instrument
         +datetime at
-        +float bid
-        +float ask
-        +float last
+        +Decimal bid
+        +Decimal ask
+        +Decimal last
     }
     class Basket {
         +dict legs
@@ -1150,15 +1151,15 @@ classDiagram
         +Basket basket
         +int direction
         +int horizon_sessions
-        +float confidence
+        +Decimal confidence
     }
     class Constraints {
-        +float max_order_qty
-        +float max_position
-        +float max_gross
+        +Decimal max_order_qty
+        +Decimal max_position
+        +Decimal max_gross
         +int max_open_orders
-        +float max_net
-        +float loss_stop
+        +Decimal max_net
+        +Decimal loss_stop
         +time moc_cutoff
     }
     class TargetPortfolio {
@@ -1168,21 +1169,21 @@ classDiagram
     class Book {
         +dict positions
         +list open_orders
-        +float realised_pnl
+        +Decimal realised_pnl
         +int replayed_through
     }
     class OrderIntent {
         +str client_order_id
         +InstrumentId instrument
-        +float qty
+        +Decimal qty
         +str type
         +str time_in_force
     }
     class Fill {
         +str fill_id
         +str client_order_id
-        +float qty
-        +float price
+        +Decimal qty
+        +Decimal price
         +datetime at
     }
     class Ack {
@@ -1193,12 +1194,12 @@ classDiagram
     class Verdict {
         +bool approved
         +str limit
-        +float value
+        +Decimal value
     }
     class CostSchedule {
         +dict per_share
         +dict fixed
-        +estimate(instrument, qty) float
+        +estimate(instrument, qty) Decimal
     }
     class BrokerAccount {
         +dict positions
@@ -1270,9 +1271,9 @@ classDiagram
     class JournalEntry {
         +int seq
         +datetime built_at
-        +str body
-        +str hash
+                +dict body
         +str prev_hash
+        +hash() str
     }
     class Halt {
         +str reason
@@ -1456,8 +1457,7 @@ Eight choices in the two diagrams for a reviewer to check.
    includes `BrokerAccount` and `SendOutcome`. Each travels as an output file
    that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and
    that its component's `DecisionResult` lists. A test writes each one and reads
-   it back unchanged, and a deterministic component's format is canonical, so
-   the same inputs give the same bytes. `Halt` stays an exception inside a
+   it back unchanged, and a deterministic component's format is canonical, so the same inputs give the same bytes, as `### File formats and keys` defines. Prices and quantities cross between workers as decimals, never floats, for the same reason. `Halt` stays an exception inside a
    worker, and at the worker's edge it becomes a `DecisionResult` that holds a
    `HaltRecord`, whose `cause` names the halt it met when it is passing one on,
    and is empty when the worker found the problem itself. The supervisor
@@ -1609,7 +1609,7 @@ erDiagram
         date session
         datetime end
         string interval
-        float close
+        decimal close
         datetime first_seen
     }
     RUN {
@@ -1626,7 +1626,7 @@ erDiagram
         datetime decision_at
         string strategy
         string name
-        float value
+        decimal value
         string release
     }
     DECISION_RESULT {
@@ -1664,14 +1664,14 @@ erDiagram
     ORDER {
         string client_order_id
         string instrument
-        float qty
+        decimal qty
         string state
     }
     FILL {
         string fill_id
         string client_order_id
-        float qty
-        float price
+        decimal qty
+        decimal price
         datetime at
     }
     PLAN {
@@ -1736,10 +1736,7 @@ each keeps its own rule.
    that changes only through a pull request.
 4. **The journal, D3, holds `JOURNAL_ENTRY`.** It is the one numbered log:
    one per broker account, outside every run, because the book is replayed
-   from it across runs. Each entry is a blob at a key fixed by the account and
-   its sequence number, holding the entry's body, its hash and the hash of the
-   entry before it, and the time it was built, to the microsecond, so the
-   entry itself is the record. The owner's ruling that the journal is the only
+   from it across runs. Each entry is a blob at a key fixed by the account and its sequence number, holding its number, the time it was built, to the microsecond, its body and the hash of the entry before it, so the entry itself is the record. Its own hash is the SHA-256 of those bytes, as `### File formats and keys` says. The owner's ruling that the journal is the only
    numbered log, when SQLite was dropped, replaced the earlier ruling on
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that kept entries
    in SQLite rows. `Journal` writes through `BlobStore` for the account the
@@ -1771,6 +1768,90 @@ each keeps its own rule.
    sit under prefixes of their own, keyed by writer and time and by worker
    and restart count, and heartbeats are the one prefix the bucket's
    lifecycle expires.
+
+### File formats and keys
+
+Two rules lean on exact bytes. A deterministic stage that is run again must
+write the same bytes, because S3 refuses the second write and the worker
+then compares SHA-256s, alarming on a difference. And the journal chains each
+entry to the hash of the one before it. Both fail if the same values can be
+written two ways, such as a different key order, a float printed with one
+more digit, or a time in another zone. This subsection is this doc's
+proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), where `core` defines the file form of every type.
+
+**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON
+Canonicalization Scheme, in five ways.
+
+1. UTF-8, with no byte order mark and no whitespace outside strings.
+2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
+3. No JSON floats. RFC 8785 prints a number in its shortest double form,
+   which cannot hold most decimal prices exactly. So every decimal quantity,
+   such as a price, a share count, a dollar amount, a hedge ratio or a
+   z-score, is a JSON string in plain decimal notation, such as `"123.4500"`,
+   rounded half to even to a number of places `core` declares once beside
+   the field's type. Integers below 2⁵³, such as a sequence number or a
+   count, are JSON integers.
+4. Times are strings in RFC 3339 with six fractional digits and an offset. A
+   decision's time is in the exchange's time zone, as the vocabulary keys
+   it, such as `"2026-11-02T15:40:00.000000-05:00"`, and every other time is
+   in UTC, such as `"2026-11-02T20:40:01.123456Z"`. A session date is
+   `"2026-11-02"`.
+5. A field with no value is `null`, never left out, so a reader can tell an
+   empty field from a format that lacks it. A list keeps its order when the
+   order means something, such as a plan's decisions, and is sorted by its
+   key when it does not, such as a header's inputs.
+
+Every output file is one object with two members, `header`, the `BlobHeader`,
+and `body`. The header's `format` is a number per kind, raised when that
+kind's fields change, under `## Where it runs` rule 6's rule that a release
+reads the format the release before it wrote. Each hash is lowercase hex
+SHA-256.
+
+The price is that a worker computes in floats and rounds at its edge, so a
+value that falls exactly on a rounding boundary can round differently under
+another release's numeric library. A run never mixes releases, because a
+worker on another release halts with "release changed", so the difference
+can appear only between runs, where the header's `release` explains it.
+
+**A journal entry hashes its whole blob.** Each entry is one blob holding
+`seq`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those
+canonical bytes, which S3 checks on upload, and the next entry carries it as
+its `prev_hash`. The first entry of an account carries sixty-four zeros. A
+hash of the body alone would leave an entry's number and its link outside
+what the next entry vouches for. The hash is not stored inside the entry,
+because a blob cannot hold its own hash, so `JournalEntry.hash()` computes
+it from the bytes. The `body` holds a `kind`, such as `intent`, `sending`,
+`fill`, `cancel`, `override`, `clear` or `switch_pull`, and that kind's
+fields. A writer builds an entry once and resends the same bytes on a retry,
+which is what lets it recognise its own earlier attempt by hash. A reader
+checks that each key's number equals the `seq` inside it.
+
+**Keys.** Every key below sits in its environment's bucket, as
+`### Four environments` says. Accounts and deployments appear by the alias
+the release's table gives them, never by a broker's account number.
+
+| Store | Key |
+| --- | --- |
+| A run's plan | `runs/<deployment>/<session date>/plan.json` |
+| A stage's decision result | `runs/<deployment>/<session date>/<decision>/<stage>/result.json` |
+| A stage's output file | `runs/<deployment>/<session date>/<decision>/<stage>/<name>.json` |
+| A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
+| The simulated account | `sim/<account>/<decision>.json` |
+| The deployment's lease | `leases/deployments/<deployment>.json` |
+| The account's lease | `leases/accounts/<account>.json` |
+| The kill switch | `accounts/<account>/switch.json` |
+| The hard caps | `accounts/<account>/caps.json` |
+| An override | `accounts/<account>/overrides/<sha256>.json` |
+| A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
+| A restart record | `restarts/<deployment>/<session date>/<worker>/<count>.json`, with the count padded to six digits |
+| The release pin, block records and promotion records | `release/pin`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json` |
+
+`<decision>` is the decision's time in the exchange's zone in the compact
+form `20261102T154000-0500`, so a day's decisions sort in order. Twelve
+digits of sequence number cover a million million entries, which at even a
+decision a minute and thirty entries a decision lasts longer than any
+account. The prefixes are the ones `## Where it runs` rule 5's grants and the
+bucket's lifecycle name.
 
 ## Where it runs
 
@@ -2490,6 +2571,7 @@ accepted.
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11, with AWS's managed key ruled fine. The key's path, the grant to the execution user and the refusals for broad readers are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the runtime turns the segments into quote rows itself with marketlake's package. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, messages every worker and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt, and on 2026-10-30 that only the owner clears a live account's | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
+| Every blob is canonical JSON after RFC 8785, with decimals as strings at places `core` declares, times in RFC 3339 with their offset, and a journal entry's hash taken over its whole blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |

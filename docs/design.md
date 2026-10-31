@@ -393,8 +393,7 @@ Ten rules make the blobs something a worker can trust.
    the snapshot and the reconciled book.
 8. **The journal is the one numbered log.** Its entries sit at keys fixed by
    the account and a sequence number, written with leading zeros so they sort
-   in order. Each entry holds its exact serialized body, a hash of that body,
-   and the hash of the entry before it. To append, a writer takes the last
+   in order. Each entry is one canonical blob holding its number, the time it was built, its body and the hash of the entry before it, and its own hash is the SHA-256 of those bytes, which S3 checks on upload, as architecture.md's `### File formats and keys` says. To append, a writer takes the last
    sequence number it knows, builds the next entry chained to the last one,
    and creates it at the next number's key. If S3 refuses because that key
    exists, the writer reads that entry first. If its hash equals the entry the
@@ -676,8 +675,7 @@ The price of this section is five things.
 
 1. Every value that crosses from one module to another needs a file format,
    and a test that writes it and reads it back unchanged. A deterministic
-   component's format also has to be canonical, with fixed field order and
-   number formatting, so the same inputs give the same bytes.
+   component's format also has to be canonical, with fixed field order and number formatting, so the same inputs give the same bytes. architecture.md's `### File formats and keys` proposes canonical JSON for it.
 2. A worker wakes on a message rather than a call, so each step waits a
    little longer than a function call would, and every writer has to know
    which workers read its outputs, which the one table in `runtime` that
