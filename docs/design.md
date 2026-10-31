@@ -825,7 +825,7 @@ Five rules keep a day of decisions safe.
       snapshot's prices, so a decision whose trades or holdings carry a
       flagged price halts, naming the instrument and both prices.
 
-An account carries one deployment in each mode, and the supervisor refuses a
+An account belongs to one environment and carries one deployment there, and the supervisor refuses a
 plan whose account another deployment names. Execution, the risk gate, the
 journal and the account's lease therefore stay one per account, and hard limit
 2's single order path holds however many strategies trade. Strategies that
@@ -934,8 +934,8 @@ glossing it.
 | **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
 | **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
 | **schedule** | A strategy's list of decision times on each trading day. One function in `core` turns the schedules and the trading calendar into a plan's decisions |
-| **environment** | Everything one of test, shadow, paper and live needs to run on its own: its machine, bucket, roles, broker credential, heartbeat check and release pin. Nothing in one environment can reach another's |
-| **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. An account carries one deployment in each mode, and the deployment's lease covers it |
+| **environment** | A set of resources one of test, shadow, paper and live runs on: a machine, a bucket, roles, a broker credential, a heartbeat check and a release pin. Shadow, paper and live each run the mode of the same name. Test is GitHub's CI, which runs backtest mode among its checks |
+| **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. An account belongs to one environment and carries one deployment there, whose keys and lease sit in that environment's bucket |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
 | **registered** | A result whose hypothesis was committed in writing before the number was seen. Only a registered result can promote a strategy |
@@ -943,8 +943,7 @@ glossing it.
 ## Configuration
 
 The runtime's VM keeps no state, so it keeps no configuration that matters on
-its own disk. A setting comes from the release the owner pins or from a blob
-in the runtime's bucket. The owner ruled on 2026-10-30 that test, shadow, paper and live each run in an environment of their own, so each has its own bucket, VM, roles and broker credential, and a setting belongs to one environment, as [architecture.md](architecture.md#four-environments)'s `### Four environments` says. The owner ruled on 2026-10-29 that the broker key
+its own disk. A setting comes from the release the pin names, from a blob in the environment's bucket, or, for which environment a VM is in, from the provisioning step at boot. The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments. This doc proposes that each has its own bucket, VM, roles and broker credential, that the release carries one table of the environments, and that the provisioning step at boot tells a VM which environment it is in, as [architecture.md](architecture.md#four-environments)'s `### Four environments` says. The owner ruled on 2026-10-29 that the broker key
 lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
 as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
 account, with marketlake's VM role narrowed so it cannot read it. The owner
@@ -954,8 +953,7 @@ fine, the bucket behind a policy that names who may reach it, and
 marketlake's plan role
 narrowed to what `tofu plan` reads, as
 [architecture.md](architecture.md#where-it-runs)'s rules 3 and 5 and its
-question 11 say. This doc proposes the rest: the key sits under the
-runtime's own path, the roles that keep a broad parameter read refuse that
+question 11 say. This doc proposes the rest: each environment's key sits under a path of its own below `/ithildin/`, the roles that keep a broad parameter read refuse that
 path as a backstop, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
 gives that user alone. Nothing here sits in a file tracked in this
@@ -1011,4 +1009,4 @@ once rather than re-argued.
 | A script that renders the board's tab icon | It reads the owner's brand folder, which lives outside the repo, and it needs Cairo, a dependency nothing else here uses. The icon changes only when the brand does, so `.github/board/favicon.ico` is committed as a finished file and a new icon is a new file. [PR #17](https://github.com/l3a0/ithildin-runtime/pull/17) carries how it was made |
 | Schwab or Interactive Brokers as the paper broker | Schwab is not known to offer an API paper account, and Interactive Brokers' needs a gateway process running beside the platform. The owner ruled on 2026-10-30 for Alpaca's paper account, which is free, has a REST API, and holds a paper key that cannot move money |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its queue adapter has run zero times, while the VM's design is reviewed and its refusals are ruled. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
-| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for an environment per mode, as [architecture.md](architecture.md#four-environments) says |
+| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, as [architecture.md](architecture.md#four-environments) says |
