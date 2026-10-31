@@ -249,7 +249,7 @@ bar. [l3a0/marketlake#952](https://github.com/l3a0/marketlake/issues/952) is clo
 and [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) fetches each bar at its own
 session's 18:30 sweep, still checked against that session's 16:15 quote.
 Once it ships, the 15:40 decision reads the previous session's official bar
-through `load_bars`, so a 15:40 decision needs [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) to have shipped. That bar
+through `load_bars`, so a 15:40 decision needs [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) to have shipped. [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run reads the previous session's official close the same way, and waits on it. That bar
 is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
@@ -2443,9 +2443,16 @@ Each question says what was recommended and how the owner ruled.
     read?** The owner ruled on 2026-10-29 that it trades the close: it decides
     before the close on marketlake's segments read before sealing, and sends
     market-on-close orders, so the fill lands on the close the backtest fills
-    at. Two evening choices were turned down: deciding on the official daily
-    bar, which arrives a session later and fills two nights after the signal,
-    and deciding on marketlake's captured 16:15 close, which fills at the next open, one night after the signal.
+    at. Two evening choices were turned down. When the owner ruled, the
+    official daily bar arrived a session later, so deciding on it filled two
+    nights after the signal. Deciding on marketlake's captured 16:15 close
+    fills at the next open, one night after the signal. Once
+    [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962)
+    ships, the official bar arrives at the 18:30 sweep the same evening, so
+    deciding on it would also fill at the next open, one night after the
+    signal. Either evening choice fills at an open rather than at the close
+    the backtest fills at, which is the reason the ruling rests on, as the
+    owner asked this doc to record on 2026-10-30.
 
     This doc proposes the times. Alpaca's order documentation says
     market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
