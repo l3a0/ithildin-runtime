@@ -48,7 +48,8 @@ what it shows and what to look for. Nothing here is built yet.
 - [The life of an order](#the-life-of-an-order)
 - [The life of a run](#the-life-of-a-run)
 - [What is stored](#what-is-stored)
-- [Where it runs](#where-it-runs)
+- [Where it runs](#where-it-runs), with [Four environments](#four-environments)
+
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
 - [How the four acceptance tests exercise it](#how-the-four-acceptance-tests-exercise-it)
 - [Decisions](#decisions)
@@ -262,9 +263,7 @@ It sends orders to one place, the broker's paper account.
 
 Two switches come from outside the loop.
 
-1. **The live switch** moves the broker from the paper account to a real one.
-   Only the owner holds it, which is hard limit 1 in
-   [CLAUDE.md](../CLAUDE.md).
+1. **The live switch** is the live environment, which only the owner builds, gives the live key and pins a release in, which is hard limit 1 in [CLAUDE.md](../CLAUDE.md). Paper and live never share a VM, a bucket or a key, as `### Four environments` says.
 2. **The kill switch** halts trading. The owner ruled on 2026-10-28 that the
    risk engineer builds it and writes when to pull it, and the operator pulls
    it by that guidance. The owner can pull it too.
@@ -388,10 +387,10 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends | Recorded, not sent |
-| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest, except that a market-on-close order fills at the last price of marketlake's 16:00 cycle, marked provisional until the official close arrives | S3, the shadow journal | Sent |
-| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | S3, the paper journal | Sent |
-| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | S3, the live journal | Sent |
+| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest, except that a market-on-close order fills at the last price of marketlake's 16:00 cycle, marked provisional until the official close arrives | The shadow environment's bucket, with the shadow journal | Sent |
+| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
+| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through the same marketlake reader. The modes differ in
 which bars they read and which clock drives them, not in how they read. Shadow
@@ -415,7 +414,7 @@ A module that asks which mode it is in has broken the shape, because its
 backtest would then test a branch the paper run never takes. The account a
 worker's lease and kill switch belong to comes from its broker adapter, so a
 backtest's simulated account never shares the paper account's lease. The
-simulated broker keeps its resting orders and positions as one blob per account per decision, outside any run's prefix,, so a shadow order still resting when one run ends is there to fill
+simulated broker keeps its resting orders and positions as one blob per account per decision, outside any run's prefix, so a shadow order still resting when one run ends is there to fill
 in the next, in a new process or on a new VM. One simulator serves backtest
 and shadow, and it fills by the order's type and time in force rather than
 by mode. It can also fill one leg of a pair in part, or not at all, on a
@@ -1776,15 +1775,14 @@ each keeps its own rule.
 
 ## Where it runs
 
-A deployment diagram shows which machine each piece runs on and what crosses
-the machine's edge. The owner ruled on 2026-10-29 that the VM keeps no state
+A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has a VM, a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
 that matters, and that the storage is S3, so everything the platform must
 keep sits in the runtime's bucket, and the VM can be replaced by starting a
 new one from the pinned release.
 
 ```mermaid
 flowchart TB
-    subgraph host["The runtime's VM, separate from marketlake's, holding no state"]
+    subgraph host["One environment's VM, shadow, paper or live,<br/>separate from marketlake's, holding no state"]
         timer["Scheduler<br/>a systemd timer starts ithildin.target<br/>before the session, stops it after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
@@ -1810,9 +1808,9 @@ flowchart TB
     registry["GitHub's container registry<br/>image by digest, provenance verified"]
     mlvm["marketlake's VM<br/>capture daemon"]
     lake[("marketlake's bucket")]
-    bucket[("The runtime's S3 bucket<br/>run blobs, journal entries, heartbeats,<br/>leases, kill switch, hard caps, overrides")]
-    secrets["Secret store<br/>broker paper key"]
-    broker["Broker paper API"]
+    bucket[("That environment's S3 bucket<br/>run blobs, journal entries, heartbeats,<br/>leases, kill switch, hard caps, overrides")]
+    secrets["Secret store<br/>that environment's broker key,<br/>none in shadow"]
+    broker["Broker API<br/>paper or live"]
     beat["Heartbeat service"]
     alerts["Alert channel"]
     person["Owner or operator<br/>the ithildin tool, off the VM"]
@@ -2100,6 +2098,74 @@ Ten rules hold the deployment to the premise and the hard limits.
     same containers become tasks, each with its own role, and only the queue
     adapter changes, as question 12 says.
 
+### Four environments
+
+The owner ruled on 2026-10-30 that test, shadow, paper and live run in
+separate environments. Before the ruling, this doc kept the modes apart
+inside one VM and one bucket, by key prefix and by the account a lease
+names. So one wrong role, or one wrong prefix in a command, could reach every
+mode: a drill could pull the live switch, or a shadow run could read a broker
+key. Separate environments make that impossible by construction, because
+nothing in one environment can reach another's resources.
+
+An environment is everything one mode needs to run on its own: its machine,
+its bucket, its roles, its broker credential, its heartbeat check and its
+release pin. Where the rest of this doc says the runtime's VM or the
+runtime's bucket, it means the one in the environment at hand.
+
+| Environment | Runs | Machine | Bucket | Broker credential | Release pin |
+| --- | --- | --- | --- | --- | --- |
+| Test | Backtests, the contract suites and the containers' drills, as `### How CI runs them` says | A CI runner, gone after each run | The test bucket, which holds nothing kept | None. Only the simulated broker runs here | Every commit CI builds |
+| Shadow | Shadow mode on live data | The shadow VM | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | A digest the owner pins after it passed in test |
+| Paper | Paper mode | The paper VM | The paper bucket, with the paper journal | Alpaca's paper key | A digest the owner pins after it ran in shadow |
+| Live | Live mode, once the owner switches | The live VM, built only then | The live bucket, with the live journal | The live key, with no withdrawal or transfer permission | A digest the owner pins after it ran in paper and the board sat |
+
+Six rules keep the environments apart.
+
+1. **One image moves through the environments by digest.** Every
+   environment runs the same image from rule 10, and each has a pin of its
+   own. A digest reaches shadow only after it passed in test, paper only
+   after it ran in shadow, and live only after it ran in paper, which are
+   the charter's release gates. So the bytes that trade live are bytes that
+   traded on paper. Moving a pin stays the owner's under hard limit 6, and
+   the deploy runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a pin whose digest has not run in the
+   environment before it.
+2. **Each environment's roles reach only its own resources.** Its VM, its
+   volume and its roles carry a tag naming the environment. Each bucket's
+   policy refuses every principal but that environment's own roles, the
+   owner's and the operator's, matched on `aws:PrincipalArn`, as rule 5
+   does today. On the live bucket the operator may only read and pull the
+   switch, which is the owner's ruling of 2026-10-30. Each broker key sits
+   under a path of its own environment, such as `/ithildin/paper/`, and
+   only that environment's execution credential may read it. The paper VM
+   cannot read the live key, and nothing in test or shadow holds a key at
+   all.
+3. **Each environment reads marketlake with a credential of its own.**
+   Shadow, paper and live each download into their own mirror with a
+   read-only credential for marketlake's bucket, so losing or replacing
+   one VM touches no other environment's reads.
+4. **Each running environment has its own heartbeat check, and every alarm
+   names its environment.** Shadow, paper and live each get a check of
+   their own on healthchecks.io, so a dead paper VM cannot hide behind a
+   live one. Test needs none, because a failed CI run is its alarm.
+5. **The `ithildin` tool names its environment on every command.** Its
+   `--env` flag has no default, and a command reads and writes only that
+   environment's bucket. So a clear meant for paper cannot land on live,
+   and the owner-only rule for live accounts holds as the bucket's policy
+   enforces it.
+6. **The environments share marketlake's AWS account.** The owner ruled on
+   question 11 that the runtime's resources live in marketlake's account,
+   so the environments are separated by resource, tag and policy rather
+   than by AWS account. The price is that one IAM mistake can still cross
+   environments, which an account per environment would rule out. Rule 3's
+   drill grows to try each environment's roles against every other
+   environment's bucket, key and VM, and expects "access denied" every time.
+
+The price is a VM per running environment instead of one, so two VMs to
+patch and pay for until live exists, and three after. Each environment also
+needs its own bucket, roles, tags, heartbeat check and pin, and the drill
+grows with every pair of environments.
+
 ## Package layout and the import rule
 
 ```mermaid
@@ -2268,8 +2334,7 @@ three levels, from fast to slow.
      shows a reader half a blob, as a review's experiments showed. The suite
      runs against the memory-backed folder and against the S3 adapter, the
      second through a local S3 emulator that honours the refuse-if-it-exists
-     condition, which the first build confirms, and against a real test
-     bucket on each push to `main`.
+     condition, which the first build confirms, and against the test environment's bucket on each push to `main`.
    - **The queue suite** checks that one send is one write of at most 511
      bytes with its newline, and that 512 is refused. It runs two writers of
      at least a thousand messages each and finds no line mixed. A send with
@@ -2328,6 +2393,7 @@ accepted.
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming the tag S3 returned when each was created. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
+| Test, shadow, paper and live each run in an environment of their own, with their own machine, bucket, roles, broker credential, heartbeat check and release pin, and one image moves through them by digest | Keeping the modes apart inside one VM and one bucket by key prefix | A VM per running environment, a bucket and roles per environment, and a drill that grows with each pair | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at 15:40 on marketlake's segments read before sealing and sends market-on-close orders by 15:48, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |

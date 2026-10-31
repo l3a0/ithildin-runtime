@@ -934,6 +934,7 @@ glossing it.
 | **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
 | **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
 | **schedule** | A strategy's list of decision times on each trading day. One function in `core` turns the schedules and the trading calendar into a plan's decisions |
+| **environment** | Everything one of test, shadow, paper and live needs to run on its own: its machine, bucket, roles, broker credential, heartbeat check and release pin. Nothing in one environment can reach another's |
 | **deployment** | One or more strategies on one broker account in one mode, under whose name every key a run writes sits. An account carries one deployment in each mode, and the deployment's lease covers it |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
@@ -943,7 +944,7 @@ glossing it.
 
 The runtime's VM keeps no state, so it keeps no configuration that matters on
 its own disk. A setting comes from the release the owner pins or from a blob
-in the runtime's bucket. The owner ruled on 2026-10-29 that the broker key
+in the runtime's bucket. The owner ruled on 2026-10-30 that test, shadow, paper and live each run in an environment of their own, so each has its own bucket, VM, roles and broker credential, and a setting belongs to one environment, as [architecture.md](architecture.md#four-environments)'s `### Four environments` says. The owner ruled on 2026-10-29 that the broker key
 lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
 as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
 account, with marketlake's VM role narrowed so it cannot read it. The owner
@@ -1010,3 +1011,4 @@ once rather than re-argued.
 | A script that renders the board's tab icon | It reads the owner's brand folder, which lives outside the repo, and it needs Cairo, a dependency nothing else here uses. The icon changes only when the brand does, so `.github/board/favicon.ico` is committed as a finished file and a new icon is a new file. [PR #17](https://github.com/l3a0/ithildin-runtime/pull/17) carries how it was made |
 | Schwab or Interactive Brokers as the paper broker | Schwab is not known to offer an API paper account, and Interactive Brokers' needs a gateway process running beside the platform. The owner ruled on 2026-10-30 for Alpaca's paper account, which is free, has a REST API, and holds a paper key that cannot move money |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its queue adapter has run zero times, while the VM's design is reviewed and its refusals are ruled. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
+| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for an environment per mode, as [architecture.md](architecture.md#four-environments) says |

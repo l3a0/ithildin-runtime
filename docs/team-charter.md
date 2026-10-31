@@ -295,6 +295,8 @@ evidence, not elapsed time.
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
+Each stage runs in an environment of its own, test for the backtest and then shadow, paper and live, and a release reaches one only after it ran in the one before, as the owner ruled on 2026-10-30 and [architecture.md](architecture.md#four-environments) lays out.
+
 ### 6. Operate
 
 - **Monitoring** watches the four things Narang names: exposure, P&L including
