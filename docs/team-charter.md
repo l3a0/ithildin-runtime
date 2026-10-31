@@ -178,7 +178,7 @@ reaches the owner already reviewed.
 ### Operator
 
 - **Protects:** the system stops safely and says so.
-- **Does:** owns deployment, monitoring, alerts, the dead-man check, runbooks,
+- **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the shadow and paper environments day to day.
   Clears a paper or shadow account's halt, kill switch and lease, journaled,
   which the owner can do too, and may pull any account's kill switch. Only

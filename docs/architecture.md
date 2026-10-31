@@ -1800,7 +1800,7 @@ rules of its own for numbers, times and empty fields.
    such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a
    bar's volume, are JSON integers. Share counts are decimals, because the
    GLD leg is fractional.
-4. Every time is UTC, as the owner ruled on 2026-10-30, written in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
+4. Every time the platform writes is UTC, as the owner ruled on 2026-10-30, in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
 5. A field with no value is `null`, never left out, so a reader can tell an
    empty field from a format that lacks it. A list keeps its order when the
    order means something, such as a plan's decisions, and is sorted by its
@@ -1810,21 +1810,29 @@ rules of its own for numbers, times and empty fields.
 **A value received from outside is kept exactly as it arrived.** A fill's
 quantity and price, a position, an open order's quantity, and marketlake's
 bar and quote values are stored as the decimal string the broker or
-marketlake sent, never passed through a float and never rounded, and so is a
-time received from outside. The journal and the snapshot are the only
+marketlake sent, never passed through a float and never rounded, and so is a time received from outside, with its UTC instant written beside it. The journal and the snapshot are the only
 records of what the broker and the market said, so a rounded copy would
 lose a value that cannot be recaptured: at four places, a leftover
 position of `0.00004` would record as zero, and the book replayed from
 rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded.
 
-**Three rules are stated on the exchange's clock, and resolved to UTC once.**
-A strategy's schedule, such as the 15:40 decision, Alpaca's market-on-close
-cutoff, which Alpaca states as 15:50 Eastern, and the heartbeat check's cron
-expression all follow New York's clock, because the market does. A rule
-written in UTC would move by an hour against the close each time the clocks
-change. So each is written as the exchange's local time, and one calendar
-function in `core` turns it into a UTC instant for each session. The plan,
-every key, every stored time and every check hold only that instant.
+**Four rules are stated on the exchange's clock, and resolved to UTC once.**
+They follow New York's clock because the market does.
+
+1. A strategy's schedule, such as the 15:40 decision.
+2. The market-on-close cutoff, 15:48 in the hard caps, under Alpaca's 15:50
+   Eastern.
+3. The host's timer, which starts the run before the session and stops it
+   after the close.
+4. The heartbeat check's cron expression.
+
+A rule written in UTC would move by an hour against the close each time the
+clocks change. So each is written as the exchange's local time, and one
+calendar function in `core` turns it into a UTC instant for each session.
+The plan, every key, every timestamp the platform writes and every
+comparison hold only that instant. The promotion job's schedule is a GitHub
+Actions cron, which runs in UTC, so it runs at 22:00 UTC, after the close in
+both summer and winter.
 
 **A value the platform computes is rounded once, in one place.** The types
 in `core` hold `Decimal`. A statistic, such as the alpha model's hedge
@@ -2288,8 +2296,7 @@ Eleven rules keep the environments apart.
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
    run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So the next promotion cannot undo a rollback of either environment.
-   Only the owner runs `ithildin pin set` until the owner rules who else
-   may, under hard limit 6.
+   Only the owner runs `ithildin pin set` until the owner rules who else may, as this doc proposes.
 5. **Each role reaches only its own environment's resources, by ARN and
    path, never by tag.** Each bucket's policy refuses every principal but
    that environment's own runtime, deploy and promotion roles, the owner's

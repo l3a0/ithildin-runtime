@@ -166,8 +166,7 @@ Ten entries define the design's terms.
    it leads back to its inputs.
 8. A **decision** is one moment at which a deployment decides, such as 15:50
    on one trading day for a daily strategy, or every five minutes through the
-   day for a faster one. Its key is the decision time in the exchange's time
-   zone, written so keys sort in time order. Every stage writes one result
+   day for a faster one. Its key is the decision time in UTC, written so keys sort in time order. Every stage writes one result
    per decision.
 9. A **strategy** is the part of the platform that differs from one way of
    trading to the next: the instruments it trades, its **schedule** of
@@ -745,7 +744,7 @@ Five rules keep a day of decisions safe.
    left resting is neither sent again nor left out of a limit.
 4. **The dead-man check follows the schedule.** Monitoring pings after each
    decision's report, and the heartbeat service's check runs on the
-   deployment's schedule, a check by cron expression on the exchange's clock, the one external schedule not written in UTC, as architecture.md's `### File formats and keys` says, with a grace period of the longest chain of worker deadlines. On a
+   deployment's schedule, a check by cron expression on the exchange's clock, one of the rules stated on the exchange's clock, as architecture.md's `### File formats and keys` says, with a grace period of the longest chain of worker deadlines. On a
    market holiday the supervisor writes a plan with no decisions, and
    monitoring pings anyway. A period set to the longest gap between decisions
    would span a long weekend, so a run that died on a Tuesday would go
