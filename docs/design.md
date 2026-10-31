@@ -422,11 +422,9 @@ Ten rules make the blobs something a worker can trust.
       holds as open that the broker no longer lists, once a lookup by its
       client order id finds it `Expired`, `Rejected` or cancelled at the close
       as its time in force allows, or cancelled after a journaled cancel of
-      the platform's own, such as the kill switch's or the one that keeps a
-      pair whole. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the broker marks as the account holder's, with a client order id present and without the platform's stamp, is the owner's, placed by hand, and execution journals it as an outside entry and goes on, as `### Orders by the platform and orders by hand` says. Any other difference
+      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the broker marks as the account holder's, with a client order id present and without the platform's stamp, is the owner's, placed by hand, and execution journals it as an outside entry and goes on, as `### Orders by the platform and orders by hand` says. Any other difference
       halts the decision for a person, because the broker moved in a way the
-      platform did not ask for. Only then does it plan. It journals the
-      planned orders, each with its client order id, in the same entry as the
+      platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
       and a hash and the time of the broker state it fetched, before its first
       send. A rerun in the same decision never plans again, so an order's
@@ -456,8 +454,7 @@ Ten rules make the blobs something a worker can trust.
          fact the host reports, not a guess from a stopped heartbeat.
       2. Check the kill switch, and if it is set cancel every resting order the platform stamped, journaling each cancel first.
       3. For a decision whose send stage has journaled planned orders and no
-         result, settle each order in doubt by its client order id, journal
-         every planned order without a `sending` entry as `Abandoned`,
+         result, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
          cancel any accepted leg of a pair whose partner is not accepted,
          before the cancel cutoff, and write a halt as that send stage's
          result. It does this whether or not the supervisor has already
@@ -930,18 +927,28 @@ Five rules keep a day of decisions safe.
    1. **Every cancel and replacement passes the order path.** The planned
       list the send stage journals before its first send names each cancel
       and each replacement beside the new orders, so a rerun in the same
-      decision reuses that list and plans nothing again, as rule 9 says.
-      Each cancel is journaled before it reaches the broker, and one whose
-      answer is lost is settled by a lookup by client order id, like any
-      order in doubt. Each replacement is a new order, journaled, gated and
-      sent like any other.
-   2. **A replacement waits for its cancel.** The order manager sends a
-      replacement only once the broker confirms the old order's cancel, or
-      reports how much of it filled, so the old and the new can never both
-      fill. Until then the risk gate counts the old order at its worst case,
-      as rule 9 says. An order that fills while its cancel is in flight
-      keeps its fill, and the next decision plans from the book that
-      results.
+      decision reuses that list and plans nothing again, as rule 9 says. A
+      replacement's quantity is journaled as a rule rather than a number:
+      the planned quantity less whatever the old order filled after the
+      plan, never below zero, which every rerun computes the same way from
+      the journal. Each cancel is journaled before it reaches the broker,
+      and right before the broker call execution checks that no halt of the
+      run is stored, its own send result is still empty, the account's lease
+      still carries its tag, and the cancel cutoff has not passed. A cancel
+      is never sent twice for one client order id, and one whose answer is
+      lost stays `CancelSent` until a lookup by client order id settles it,
+      as rule 9 does for any order in doubt.
+   2. **A replacement waits for its cancel's outcome.** The order manager
+      journals the old order's outcome, any fill included, and only then
+      journals the replacement's intent and asks the risk gate, so the gate
+      sees what the old order filled and counts it at its worst case until
+      then. A cancel refused because the order already filled, or a
+      replacement whose quantity comes to zero, journals the replacement
+      `Abandoned`. A replacement whose cancel is not confirmed by the send
+      cutoff is journaled `Abandoned` too, and the next decision plans from
+      the book. A plan replaces an order only while the replacement can
+      still go out before the send cutoff, and otherwise leaves the old
+      order resting.
    3. **It touches only the strategy's own stamped orders.** A plan never
       cancels or changes an order placed by hand, or another strategy's,
       and never after the exchange's or the broker's cancel cutoff, past
@@ -983,9 +990,7 @@ Five rules keep a day of decisions safe.
       cancelling a closing-auction order, which this doc takes as 15:50, as
       architecture.md's kill switch section says. After the order loop, execution
       looks up each leg by its client order id until every leg is accepted or
-      the cancel cutoff passes. When one leg is rejected, unsent or past the
-      cutoff while another is accepted, execution cancels the accepted legs,
-      journaling each cancel first. When execution crashes with its send stage
+      the cancel cutoff passes. When one leg is rejected, unsent or past the cutoff while another is accepted, execution cancels the accepted legs, journaling each cancel first. The same holds for a pair whose legs are an order left resting and a replacement: when the replacement is refused, abandoned or past the cutoff, execution cancels the resting leg. When execution crashes with its send stage
       unfinished, the host restarts it within seconds, and the restarted
       execution sends nothing more for that decision, cancels any accepted
       leg whose partner was not accepted, before the cancel cutoff, and halts
@@ -1195,6 +1200,7 @@ once rather than re-argued.
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
 | Halting on any fill the journal did not send, an order placed by hand included | The owner ruled on 2026-10-31 that the platform stamps its orders and ignores unstamped ones, so the owner can trade the same account by hand. A hand fill the broker marks as the account holder's is journaled as an outside entry and reconciled, never a halt, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
+| The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |

@@ -588,7 +588,14 @@ sequenceDiagram
     X->>X: book from the journal agrees with the broker?
     X->>J: the whole target portfolio and its planned orders journaled
     X->>X: clock agrees with the broker's, and before the cutoff?
-    loop each order the order manager plans
+    opt a resting order the plan cancels or replaces
+        X->>J: cancel journaled
+        X->>F: no halt of the run, own send result empty, lease tag unchanged, and before the cancel cutoff?
+        X->>B: cancel, by its client order id
+        B-->>X: cancelled, or filled first
+        X->>J: the old order's outcome journaled, any fill included
+    end
+    loop each order the order manager plans, a replacement included
         X->>X: kill switch blob absent, and before the cutoff?
         X->>J: intent journaled
         X->>J: replay the book
@@ -633,7 +640,7 @@ The phases in order.
    a hash of the broker state it fetched, in one stored entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
-   Its order manager turns the target minus that strategy's own positions and open orders into orders. Each order goes through the order path alone. The order path
+   Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
    checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
    journals the approval and journals that it is sending. Right before the broker call it checks five things: the kill switch is absent, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision. After the loop
@@ -935,6 +942,7 @@ here, with the issue that builds its drill.
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, and one that never answers the cancel | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A second execution worker, or a second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1500,8 +1508,10 @@ stateDiagram-v2
     PartlyFilled --> Expired: rest not filled by the close
     Sending --> Rejected: broker refuses the submit
     Acknowledged --> Rejected: broker rejects
-    Acknowledged --> Cancelled: kill switch, its pair's other leg failed, or a later plan no longer wants it or replaces it
-    PartlyFilled --> Cancelled: the rest, for the kill switch, a failed pair leg, or a later plan
+        Acknowledged --> CancelSent: cancel journaled, for the kill switch, a failed pair leg, or a later plan
+    PartlyFilled --> CancelSent: cancel of the rest journaled, for the same reasons
+    CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
+    CancelSent --> Filled: it filled before the cancel landed
     Refused --> [*]
     Abandoned --> [*]
     Lost --> [*]
@@ -1521,8 +1531,7 @@ broker by client order id. Sending the order again is never a way out. An order
 that ends `Abandoned` or `Lost` never reached the broker, so the next decision's
 order manager plans from the book as if it had never existed.
 
-`Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Either way the
-cancel is journaled first, and the sync then counts it as the platform's own.
+`Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Each way the cancel is journaled first, and the sync then counts it as the platform's own.
 
 ## The life of a run
 
@@ -2455,7 +2464,7 @@ new arrow.
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected. The restart kills a worker mid-run, and the host brings execution up before data | The orders on each day, and a halt with no orders on each faulted day |
-| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, an order a hand position offsets that breaks a cap on the platform's books alone, the import rule test, and the fake broker | Seven refusals, the pair's and the offset order's, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
+| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, an order a hand position offsets that breaks a cap on the platform's books alone, a replacement whose old order fills during its cancel, the import rule test, and the fake broker | Seven refusals, the pair's and the offset order's, a replacement cut by a fill that raced its cancel, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
@@ -2500,7 +2509,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Flat and linear cost models, `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction, `TargetPortfolio` naming every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| Order manager, `OrderPath`, the journal written through `BlobStore`, each entry stored before its step, fills keyed by the broker's fill id, simulated and paper brokers, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Order manager, `OrderPath`, a plan's cancels and replacements, the journal written through `BlobStore`, each entry stored before its step, fills keyed by the broker's fill id, simulated and paper brokers, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each module issue also writes its own worker's entry point under `runtime`,
@@ -2632,7 +2641,8 @@ accepted.
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Every order carries the platform's stamp, a client order id naming its strategy and decision. Execution journals a stamped fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise. An order or fill with a client order id that lacks the stamp, on an order the broker marks as the account holder's, is the owner's, journaled as an outside entry and reconciled. A fill with no client order id, or an order the broker placed itself, halts | Journaling every fill the broker reports into the book, or halting on any fill the journal did not send | The account can hold a hand position no strategy planned, which the risk gate's second check counts so it can only tighten a cap, and the report shows | The stamp, ignoring unstamped orders, a kill switch that cancels only stamped orders, and a loss stop that hand losses do not trigger were ruled by the owner on 2026-10-31. Sorting by the broker's order id, the outside book and the gate's two checks are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
-| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill, or an unstamped order or fill of the owner's. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill, or an unstamped order or fill of the owner's. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A plan cancels a resting stamped order the target no longer wants and replaces one that should change, by a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | Ruled by the owner on 2026-10-31. The method is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
