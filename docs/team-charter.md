@@ -285,7 +285,7 @@ that turns on money, contracts or law goes to the owner under a
 
 ### 5. Release
 
-A strategy and a platform version move through gates, and each gate is
+A strategy moves through gates, and each gate is
 evidence, not elapsed time.
 
 | Stage | Runs against | Leaves the stage when |
