@@ -342,7 +342,7 @@ flowchart TB
         clock["History clock or wall clock"]
         broker["Simulated or paper broker"]
         store["Blob store<br/>S3, or a memory-backed folder"]
-                alertsink["Alerts and heartbeat"]
+        alertsink["Alerts and heartbeat"]
         queue["Queue<br/>SQS, or a named pipe fed by the memory-backed folder"]
     end
 
@@ -1500,8 +1500,8 @@ stateDiagram-v2
     PartlyFilled --> Expired: rest not filled by the close
     Sending --> Rejected: broker refuses the submit
     Acknowledged --> Rejected: broker rejects
-    Acknowledged --> Cancelled: kill switch, or its pair's other leg failed
-    PartlyFilled --> Cancelled: kill switch, or its pair's other leg failed
+    Acknowledged --> Cancelled: kill switch, its pair's other leg failed, or a later plan no longer wants it or replaces it
+    PartlyFilled --> Cancelled: the rest, for the kill switch, a failed pair leg, or a later plan
     Refused --> [*]
     Abandoned --> [*]
     Lost --> [*]
@@ -1521,9 +1521,7 @@ broker by client order id. Sending the order again is never a way out. An order
 that ends `Abandoned` or `Lost` never reached the broker, so the next decision's
 order manager plans from the book as if it had never existed.
 
-`Cancelled` is reached two ways: through the kill switch, as question 7
-settles, and when one leg of a pair is accepted and the other fails, as
-design.md's `### Strategies, schedules and decisions` says. Either way the
+`Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Either way the
 cancel is journaled first, and the sync then counts it as the platform's own.
 
 ## The life of a run
@@ -1949,7 +1947,7 @@ flowchart TB
         creds[("Memory-backed storage<br/>a credential, an error and a heartbeat<br/>directory per container, and the lease file")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer --> docker --> ctrs
-                guard -.-> ctrs
+        guard -.-> ctrs
         guard -. "kernel file change events" .-> creds
 
         
@@ -2634,7 +2632,7 @@ accepted.
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Every order carries the platform's stamp, a client order id naming its strategy and decision. Execution journals a stamped fill only when its client order id has a `sending` entry and the fill stays within that order's quantity, and halts otherwise. An order or fill with a client order id that lacks the stamp, on an order the broker marks as the account holder's, is the owner's, journaled as an outside entry and reconciled. A fill with no client order id, or an order the broker placed itself, halts | Journaling every fill the broker reports into the book, or halting on any fill the journal did not send | The account can hold a hand position no strategy planned, which the risk gate's second check counts so it can only tighten a cap, and the report shows | The stamp, ignoring unstamped orders, a kill switch that cancels only stamped orders, and a loss stop that hand losses do not trigger were ruled by the owner on 2026-10-31. Sorting by the broker's order id, the outside book and the gate's two checks are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
-| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill, or an unstamped order or fill of the owner's. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill, or an unstamped order or fill of the owner's. It then journals the whole target portfolio and its planned orders, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |

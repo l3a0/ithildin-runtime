@@ -918,10 +918,36 @@ Five rules keep a day of decisions safe.
 2. **Decisions send in order.** Execution sends for a decision only once it
    has a result for the one before, so two decisions never share the order
    path. Every stage's deadline fits inside the gap to the next decision time.
-3. **Orders still open at the next decision are netted.** The order manager
-   trades the target minus the positions and the open orders, and the risk
-   gate counts each open order at its worst case, as rule 9 says, so an order
-   left resting is neither sent again nor left out of a limit.
+3. **A plan changes or cancels its own unfilled orders.** The owner ruled
+   on 2026-10-31 that a plan can change or cancel an existing order if it
+   has not been filled yet. At each decision the order manager compares the
+   strategy's target with its positions and its own open orders. A resting
+   order of the platform's that the target no longer wants, in whole or in
+   part, is cancelled, and one whose quantity or price should change is
+   cancelled and replaced by a new order with a stamp of its own. Only the
+   unfilled remainder is ever cancelled, and fills already made stand. The
+   rest of this item is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   1. **Every cancel and replacement passes the order path.** The planned
+      list the send stage journals before its first send names each cancel
+      and each replacement beside the new orders, so a rerun in the same
+      decision reuses that list and plans nothing again, as rule 9 says.
+      Each cancel is journaled before it reaches the broker, and one whose
+      answer is lost is settled by a lookup by client order id, like any
+      order in doubt. Each replacement is a new order, journaled, gated and
+      sent like any other.
+   2. **A replacement waits for its cancel.** The order manager sends a
+      replacement only once the broker confirms the old order's cancel, or
+      reports how much of it filled, so the old and the new can never both
+      fill. Until then the risk gate counts the old order at its worst case,
+      as rule 9 says. An order that fills while its cancel is in flight
+      keeps its fill, and the next decision plans from the book that
+      results.
+   3. **It touches only the strategy's own stamped orders.** A plan never
+      cancels or changes an order placed by hand, or another strategy's,
+      and never after the exchange's or the broker's cancel cutoff, past
+      which a market-on-close order stays as sent.
+   An open order still wanted as it stands is left resting, so it is
+   neither sent again nor left out of a limit.
 4. **The dead-man check follows the schedule.** Monitoring pings after each
    decision's report, and the heartbeat service's check runs on the
    deployment's schedule, a check by cron expression on the exchange's clock, one of the rules stated on the exchange's clock, as architecture.md's `### File formats and keys` says, with a grace period of the longest chain of worker deadlines. On a
@@ -1003,7 +1029,7 @@ plan whose account another deployment names. Execution, the risk gate, the
 journal and the account's lease therefore stay one per account, and hard limit
 2's single order path holds however many strategies trade. Strategies that share an account share its deployment, and meet in portfolio construction, the place *Inside the Black Box* puts the combining of alpha models. Until how they combine is settled, it builds one target per strategy, as `### Orders by the platform and orders by hand` says.
 
-Three things wait for the first strategy that needs them. Each is written on
+Two things wait for the first strategy that needs them. Each is written on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so the next reader
 finds it there.
 
@@ -1019,9 +1045,7 @@ finds it there.
    could look. Holding the account needs an open halt recorded in the
    journal, written by the stage that finds the cause before its halt result,
    and cleared only by the clear command's own entry.
-3. **Cancel and replace.** Whether the order manager cancels an order left
-   resting and sends a new one, rather than netting it, is
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s to decide.
+
 
 Two limits come from marketlake rather than from this design.
 
