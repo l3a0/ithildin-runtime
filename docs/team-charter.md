@@ -291,7 +291,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, and the delay of each step's event is measured against the time before the cutoff |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. The stages above are a strategy's gates. A platform version has its own path: it passes CI, which is the test environment, then runs in shadow, then in paper, and reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
