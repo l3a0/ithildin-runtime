@@ -561,9 +561,7 @@ the broker's own order id.
    checks a fill id against `fill` and `outside_fill` entries together
    before it appends.
 3. Anything else halts: a fill whose client order id is absent or
-   unreadable, a stamped order or fill the journal never sent, and an order
-   the broker placed itself, such as a liquidation or an assignment. A
-   missing input never reads as a hand trade, which is hard limit 3. Which
+   unreadable, a stamped order or fill the journal never sent, and an order the broker placed itself, such as a liquidation or an assignment, which the owner ruled on 2026-10-31 must never be quiet, so it halts and alarms. A missing input never reads as a hand trade, which is hard limit 3. Which
    fields mark an order as the account holder's on Alpaca is for
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) to confirm.
 
