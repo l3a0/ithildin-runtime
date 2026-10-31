@@ -963,6 +963,7 @@ here, with the issue that builds its drill.
 | A person's journal entry names an identity that differs from the one AWS recorded for its write | The entry and both identities | Write an entry with a forged name | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's release pin is missing or unreadable | "release pin missing or unreadable", from the host's handler | Boot a VM whose pin is deleted, and one whose role cannot read it, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The promotion job stopped running | None. Its own heartbeat check raises it | Disable the promotion schedule for a day | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A promotion refused because a block record could not be read | The bucket and S3's answer | Deny the promotion role's read of one bucket's block records | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because paper is not clear | The open halt, set switch, pending override or held lease | Run a promotion with paper's switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4, run against each of shadow's, paper's and live's checks | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
@@ -2151,8 +2152,7 @@ Eleven rules keep the environments apart.
    unreadable fails its unit with "release pin missing or unreadable",
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
-   run, and a block record for the digest it replaced. The promotion job
-   refuses a blocked digest, so the next promotion cannot undo a rollback.
+   run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So the next promotion cannot undo a rollback of either environment.
    Only the owner runs `ithildin pin set` until the owner rules who else
    may, under hard limit 6.
 5. **Each role reaches only its own environment's resources, by ARN and
@@ -2160,9 +2160,7 @@ Eleven rules keep the environments apart.
    that environment's own runtime, deploy and promotion roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 says. A
    deploy role may only put its own environment's pin. The promotion role
-   may only put paper's pin and promotion record, read paper's status keys,
-   and read shadow's plans, results, halts and heartbeats, which shadow's
-   policy names as its one grant across environments. On the live bucket
+   may only put paper's pin and promotion record, read paper's status keys and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch, as the owner ruled, and read, which is
    this doc's proposal. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
@@ -2234,8 +2232,7 @@ Eleven rules keep the environments apart.
     2. The operator's credential is refused every broker key, every live
       write it is not granted, and `ssm:SendCommand` on every runtime VM.
     3. A deploy role is refused every key but its pin.
-    4. A promotion is refused while paper's switch is set, and a rollback
-      holds against the next promotion.
+    4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
     5. A pin moved mid-session leaves a restarted worker on the session's
       digest.
 
