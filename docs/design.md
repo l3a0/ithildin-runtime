@@ -422,7 +422,7 @@ Ten rules make the blobs something a worker can trust.
       holds as open that the broker no longer lists, once a lookup by its
       client order id finds it `Expired`, `Rejected` or cancelled at the close
       as its time in force allows, or cancelled after a journaled cancel of
-      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the broker marks as the account holder's, with a client order id present and without the platform's stamp, is the owner's, placed by hand, and execution journals it as an outside entry and goes on, as `### Orders by the platform and orders by hand` says. Any other difference
+      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the broker marks as the account holder's, with a client order id present and without the platform's stamp, is the owner's, placed by hand, and execution journals it as an outside entry and halts, as `### Orders by the platform and orders by hand` says. Any other difference
       halts the decision for a person, because the broker moved in a way the
       platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
@@ -452,7 +452,7 @@ Ten rules make the blobs something a worker can trust.
          its earlier container is gone. Each worker runs under one fixed
          container name, removed when it stops, so a gone container is a
          fact the host reports, not a guess from a stopped heartbeat.
-      2. Check the kill switch, and if it is set cancel every resting order the platform stamped, journaling each cancel first.
+      2. Check the kill switch, and if it is set cancel every resting order in the account, stamped or not, journaling each cancel first.
       3. For a decision whose send stage has journaled planned orders and no
          result, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
          cancel any accepted leg of a pair whose partner is not accepted,
@@ -490,12 +490,12 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order the platform stamped, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order it stamped through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order it stamped through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
     starting execution takes the account's lease and then checks the switch
     before anything else, as rule 9's fifth item says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
     the lease by a deadline. Execution checks the switch again right before
-    every broker call, as rule 9's fourth item says. When it has cancelled every resting order it stamped it journals that the switch's cancels are done, listing any unstamped order still resting, and
+    every broker call, as rule 9's fourth item says. When it has cancelled every resting order in the account it journals that the switch's cancels are done, and
     monitoring alarms a second time if that entry has not appeared within a
     deadline of the pull, naming the broker's own console as the next step.
     No worker sends an order with the switch set. Monitoring writes the decision's report and says the
@@ -529,8 +529,8 @@ the platform's account, and while none reaches it, the platform's broker
 statement is the strategies' alone. The sorting below stays for a hand
 order that reaches the platform's account anyway. This doc applies the same
 rule to paper, so Alpaca's paper account holds only the platform's orders.
-Five further steps wait for the owner. The board advised the first three,
-and the review of this ruling found the last two.
+The owner then ruled the same day on five further steps. The board advised
+the first two, and the review of this ruling found the other three.
 
 1. No hand trade, in any account, in an instrument a strategy trades,
    anything substantially identical to it, or an option on it. The wash
@@ -540,16 +540,16 @@ and the review of this ruling found the last two.
 2. A standing instruction at Schwab to choose which tax lot each sale
    closes, called specific lot identification, rather than its default of
    the oldest lot first.
-3. Halting on any order in the platform's account that does not carry the
-   stamp, rather than journaling it as the owner's.
-4. Counting an unstamped order's loss in that account toward the daily
-   loss stop, which reverses the owner's ruling of 2026-10-31 that a hand
-   loss does not trigger it.
-5. A kill switch that cancels every resting order in that account, which
-   returns to the owner's ruling of 2026-10-29 on question 7.
+3. Execution checks for unstamped orders in the platform's account and
+   halts on one, rather than journaling it as the owner's and going on.
+4. An unstamped order's loss in that account counts toward the daily loss
+   stop, which reverses the owner's earlier ruling of 2026-10-31 that a
+   hand loss does not trigger it.
+5. The kill switch cancels every resting order in that account, stamped or
+   not, which returns to the owner's ruling of 2026-10-29 on question 7.
 
-Until the owner rules on the third, an outside entry in an account that
-holds no hand trades raises an alarm, which changes no trading.
+So an unstamped order still gets an outside entry, which keeps the record,
+and then halts trading and alarms until a person clears the halt.
 
 What the stamp and the sorting below rest on is confirmed only at Alpaca.
 Schwab, the live broker, may differ on six things.
@@ -604,7 +604,8 @@ the broker's own order id.
    order id that is present and lacks the prefix, and marks the order as
    placed by the account holder. Execution journals it as an outside entry,
    `outside_order` keyed by the broker's order id and `outside_fill` keyed
-   by the broker's fill id, and never halts on it. A restarted execution
+   by the broker's fill id, and then halts, as the owner ruled on
+   2026-10-31 once the platform's account held no hand trades. A restarted execution
    checks a fill id against `fill` and `outside_fill` entries together
    before it appends.
 3. Anything else halts: a fill whose client order id is absent or
@@ -633,26 +634,30 @@ the broker's own order id.
    with hand orders still resting counted at their worst case. So a hand
    position can only tighten a limit and never loosen one, and the gate
    bounds the platform's share of the account rather than the account. The
-   daily loss stop counts the platform's books alone, so a hand gain never
-   hides a platform loss. The owner ruled on 2026-10-31 that a hand loss does not trigger the stop either.
-5. The kill switch cancels the platform's own resting orders, by their
-   stamp, and its "cancels done" entry, its alarm and `ithildin switch
-   pull` list every unstamped order still resting, so the owner knows what
-   to cancel at the broker's console. That narrows the owner's ruling of 2026-10-29 on question 7, which said every resting order, and the owner confirmed the narrowing on 2026-10-31.
+   daily loss stop counts the platform's books plus any loss, and never a
+   gain, on the outside book, as the owner ruled later on 2026-10-31,
+   reversing the same day's ruling that a hand loss does not trigger it.
+   Counting the loss alone keeps a hand gain from hiding a platform loss.
+5. The kill switch cancels every resting order in the account, a stamped
+   one by its client order id and an unstamped one by the broker's order
+   id, each through the order path and journaled first. The owner narrowed
+   the ruling of 2026-10-29 on question 7 to stamped orders on 2026-10-31,
+   while hand trades shared the account, and returned to every resting
+   order later that day.
 
 The price is four things.
 
-1. If a hand order reaches it anyway, the account can hold a position no strategy planned, in an instrument a
-   strategy also holds, and each strategy trades as if the hand position
-   were not there, within limits the hand position can only tighten.
-2. A stray hand trade can still get a platform order refused, by the gate's
+1. A hand order placed in the platform's account by mistake halts trading
+   until a person clears the halt, and a switch pull cancels it with the
+   platform's own.
+2. Before the halt, a stray hand trade can still get a platform order refused, by the gate's
    second check or by the broker: a wash-trade check against a hand order
    resting on the other side, a sell that crosses the account's real
    position through zero, or buying power the hand trade used. A refused
    leg cancels its pair's partner.
-3. A wash sale can still link a hand trade and a strategy trade for tax,
-   across accounts, unless the first of the three steps above is adopted.
-   With the platform's account its own, and while no hand order reaches it,
+3. A wash sale can still link a hand trade and a strategy trade for tax if
+   a hand trade breaks the first of the five steps above. With the
+   platform's account its own, and while no hand order reaches it,
    the broker's cost basis and realised profit and loss are the
    strategies' alone.
 4. The stamp rests on the owner never typing the prefix into an order by
@@ -1168,7 +1173,7 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of the outside orders and fills the owner placed by hand, written as execution finds them |
 | **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, which marks the order as the platform's and names its strategy |
-| **outside book** | The positions and resting orders the owner placed by hand on an account the platform trades, journaled from unstamped broker entries and kept apart from every strategy's book. The owner's ruling of 2026-10-31 keeps hand trades out of the platform's account, so it holds only a hand order that arrives there anyway |
+| **outside book** | The positions and resting orders the owner placed by hand on an account the platform trades, journaled from unstamped broker entries and kept apart from every strategy's book. The owner's ruling of 2026-10-31 keeps hand trades out of the platform's account, so it holds only a hand order that arrives there anyway, which halts the platform |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
@@ -1250,7 +1255,7 @@ once rather than re-argued.
 | A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
-| Halting on any fill the journal did not send, an order placed by hand included | The owner ruled on 2026-10-31 that the platform stamps its orders and ignores unstamped ones, so a hand order that reaches the platform's account does not halt it. The owner ruled later the same day that hand trades belong in other accounts, and halting on an unstamped order waits for the owner. A hand fill the broker marks as the account holder's is journaled as an outside entry and reconciled, never a halt, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
+| Journaling an unstamped order in the platform's account as the owner's and going on | The owner first ruled on 2026-10-31 that the platform ignores unstamped orders, so the owner could trade the same account by hand. Later that day the owner ruled that the platform's account holds no hand trades, and then that execution halts on an unstamped order there, counts its loss toward the daily loss stop, and cancels it on a switch pull. The outside entry still records it, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
 | The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
