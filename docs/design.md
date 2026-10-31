@@ -587,14 +587,11 @@ the broker's own order id.
    position can only tighten a limit and never loosen one, and the gate
    bounds the platform's share of the account rather than the account. The
    daily loss stop counts the platform's books alone, so a hand gain never
-   hides a platform loss. Whether a hand loss should also stop the platform
-   is the owner's to decide.
+   hides a platform loss. The owner ruled on 2026-10-31 that a hand loss does not trigger the stop either.
 5. The kill switch cancels the platform's own resting orders, by their
    stamp, and its "cancels done" entry, its alarm and `ithildin switch
    pull` list every unstamped order still resting, so the owner knows what
-   to cancel at the broker's console. That narrows the owner's ruling of
-   2026-10-29 on question 7, which said every resting order, and the owner
-   confirms it.
+   to cancel at the broker's console. That narrows the owner's ruling of 2026-10-29 on question 7, which said every resting order, and the owner confirmed the narrowing on 2026-10-31.
 
 The price is four things.
 
