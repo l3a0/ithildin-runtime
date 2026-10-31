@@ -171,8 +171,9 @@ bar.
 
 1. **Captured bars,** which shadow, paper and live trading read.
    [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) added GLD and USO, with daily and minute bars, to
-   marketlake's roster on 2026-10-29.
-   Capture starts once the owner onboards them on marketlake's VM.
+   marketlake's roster on 2026-10-29. The owner onboarded both on marketlake's
+   VM on 2026-10-30, so capture starts with Monday 2026-11-02's session,
+   which [l3a0/marketlake#961](https://github.com/l3a0/marketlake/issues/961) tracks.
 2. **quantitative-trading's committed vintages,** imported once, which the
    backtest reads.
 3. **A one-time vendor download** of the most recent sessions, imported once.
@@ -185,28 +186,20 @@ Every bar says whether it was captured or imported, and where an imported one
 came from, so a consumer can refuse imported history where only captured data
 will do. Imported history never overwrites a captured partition.
 
-For every mode to read the bars it needs through one query, one marketlake
-rule has to change. Its VM keeps 22 sessions on its own disk and deletes older
-partitions of every kind at one cutoff once its backup bucket holds them. The
-2006 to 2012 history, and a lookback longer than 22 sessions, would then drop
-out of a read with no error, which is exactly the silent gap a halt exists
-for.
-
-The owner ruled on 2026-10-29 to make that window configurable, and
-[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it in three parts.
-
-1. **A default per kind of data.** Option chains, quotes and bars each keep 22
-   sessions unless set otherwise, so nothing changes until an override is set.
-2. **An override per kind.** Bars are set to keep every session, which keeps
-   both the runtime's lookback and the imported history readable. Bars add
-   about 0.1 MB a session, against about 564 MB for option chains, as
-   [l3a0/marketlake#786](https://github.com/l3a0/marketlake/issues/786)
-   measured.
-3. **An override per ticker and kind,** for a later strategy that needs one
-   ticker's data kept longer.
-
-marketlake refuses a window below what its own readers need, and a
-configuration that would not fit the VM's disk.
+How long marketlake keeps data needs no change for the runtime. marketlake's
+VM deletes older partitions from its own disk once its backup bucket holds
+them, but the runtime reads a mirror of that bucket, which keeps every
+session, and never the VM's disk. So the 2006 to 2012 history and a lookback
+of any length stay readable.
+[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) recorded this on
+2026-10-30, correcting an earlier reading here that the VM's 22-session window
+would drop them. The owner's ruling of 2026-10-29 to make that window
+configurable went ahead in marketlake for its own readers.
+[l3a0/marketlake PR #959](https://github.com/l3a0/marketlake/pull/959), which closes
+[l3a0/marketlake#953](https://github.com/l3a0/marketlake/issues/953), gives option chains,
+quotes and bars their own windows on the VM and keeps every bars session
+there. The override per ticker is deferred as
+[l3a0/marketlake#954](https://github.com/l3a0/marketlake/issues/954), since nothing reads it.
 
 The owner ruled on 2026-10-29 that the runtime may read the day's data before
 marketlake seals it. marketlake's capture daemon already writes a segment
@@ -217,8 +210,17 @@ hours reads those segments, and the decision minute
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for shadow
 running, ten minutes before the close, is one such time. The data worker reads
 the segments up to the decision time, as a provisional read, because marketlake's validation
-battery runs only when it seals a day at the close plus fifteen minutes. So
-the data worker runs its own minimum checks before anything decides. A
+battery runs only when it seals a day at the close plus fifteen minutes. The owner ruled on 2026-10-30 that the runtime turns the
+segments into quote rows itself, when it reads what it needs, with
+marketlake's package, which this repository already depends on at a pinned
+commit. That package's `lake.journal.read_segment(path)` reads one segment up
+to its last complete record batch, drops a tail torn by a crash mid-write, and
+refuses a damaged file or bytes after the segment's end-of-stream marker.
+Joining a ticker-day's segments is the runtime's own code. marketlake's
+internal joiner, `measure.read_surface_cycles`, breaks when a day's schema
+changes partway through, which is
+[l3a0/marketlake#143](https://github.com/l3a0/marketlake/issues/143), so a test covers that
+case on the runtime's side. So the data worker runs its own minimum checks before anything decides. A
 missing or stale quote at the decision time halts the decision, and a price
 spike is flagged in the snapshot without halting. The owner ruled on question 10 that the skeleton's strategy trades the close and decides this way, and this doc proposes 15:40 as its decision time. A decision
 after marketlake has sealed and uploaded the day reads sealed partitions and
@@ -232,6 +234,26 @@ since the two differ by design. This is proposed for
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16), with marketlake's
 uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943).
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) also waits on two
+marketlake fixes to the daily bars it reads.
+[l3a0/marketlake#380](https://github.com/l3a0/marketlake/issues/380) files a bar stamped with the
+wrong seasonal offset under the previous date, and Eastern time returns to
+standard time on 2026-11-01.
+[l3a0/marketlake#947](https://github.com/l3a0/marketlake/issues/947) leaves a session with no daily
+bar when its 16:15 quote was missed.
+
+The 15:40 decision on a session needs the previous session's official daily
+bar for its lookback. Until now marketlake fetched a session's bar only after
+the next session's quotes sealed, so at 15:40 the newest bar in the lake was
+two sessions old, and the lookback would halt for the missing one. On
+2026-10-30 the owner chose to remove that wait rather than serve a provisional
+bar. [l3a0/marketlake#952](https://github.com/l3a0/marketlake/issues/952) is closed as not planned,
+and [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) fetches each bar at its own
+session's 18:30 sweep, still checked against that session's 16:15 quote.
+Once it ships, the 15:40 decision reads the previous session's official bar
+through `load_bars`, so the 15:40 decision waits on it. The lookback stays on
+daily closes, which matches the backtest and the imported history. Only the
+decision's price is the 15:40 quote.
 
 It sends orders to one place, the broker's paper account.
 
@@ -505,9 +527,7 @@ Alpaca rejects a market-on-close order "submitted after 3:50pm but before
 7:00pm ET", so every order goes out by 15:48, a cutoff the owner's hard caps
 hold, as design.md's `### Strategies, schedules and decisions` says. That rule
 also checks the cutoff again just before each broker call, and keeps a pair
-whole by cancelling an accepted leg whose partner fails. The official daily
-bar arrives the next evening, and monitoring then reports how far the
-decision's price and the fills sat from it.
+whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening once [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) ships, and the next evening until then. Monitoring then reports how far the decision's price and the fills sat from it.
 
 ```mermaid
 sequenceDiagram
@@ -2313,7 +2333,7 @@ accepted.
 | A component learns of a new blob from a message its writer sends, a timed check of the next key, and, once a writer or a component sits off the VM, S3's notifications to a queue, fanned out through SNS or EventBridge. Each is a hint, and anything that touches money re-reads the blob right before it acts | Watching S3 directly, which S3 does not offer, or trusting a notice as the change itself | A small read every few seconds for each reader that checks on a timer, which is execution, the supervisor and monitoring, and up to that interval's delay for a change nobody messaged | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how a component listens for changes |
 | CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how CI works for containers that pass messages |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11, with AWS's managed key ruled fine. The key's path, the grant to the execution user and the refusals for broad readers are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
-| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
+| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the runtime turns the segments into quote rows itself with marketlake's package. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, messages every worker and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt, and on 2026-10-30 that only the owner clears a live account's | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
@@ -2351,7 +2371,9 @@ Each question says what was recommended and how the owner ruled.
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 2. **Where do live GLD and USO bars come from?** The recommendation was to add
    both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) did on
-   2026-10-29. Capture starts once the owner onboards them on marketlake's VM.
+   2026-10-29. The owner onboarded both on marketlake's VM on 2026-10-30, so
+   capture starts with Monday 2026-11-02's session, which
+   [l3a0/marketlake#961](https://github.com/l3a0/marketlake/issues/961) tracks.
    marketlake captures forward from that day and keeps no history from before
    it. So the first z-score's 40 or so sessions come from a vintage recorded
    once from a vendor download, or the paper run waits that long before its
@@ -2420,8 +2442,7 @@ Each question says what was recommended and how the owner ruled.
     market-on-close orders, so the fill lands on the close the backtest fills
     at. Two evening choices were turned down: deciding on the official daily
     bar, which arrives a session later and fills two nights after the signal,
-    and deciding on marketlake's captured 16:15 close, which fills at the next
-    open, one night after the signal.
+    and deciding on marketlake's captured 16:15 close, which fills at the next open, one night after the signal. Once [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) ships, the official bar arrives the same evening, so deciding on it would also fill one night after the signal.
 
     This doc proposes the times. Alpaca's order documentation says
     market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
