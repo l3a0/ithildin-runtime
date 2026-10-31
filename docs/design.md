@@ -566,9 +566,7 @@ so nothing is lost and nothing is late by more than that gap.
 
 SQS caps a wait at twenty seconds, and the cap does work for the platform.
 A connection that dies without a clean close, through a network blip or a
-stalled firewall, looks exactly like a quiet queue, so a bounded wait is
-how a worker learns within twenty seconds that it has gone deaf rather than
-hanging on a dead connection. Network devices between the VM and SQS, such
+stalled firewall, looks exactly like a quiet queue, so a bounded wait, with the client's read timeout set a little over twenty seconds rather than botocore's default of sixty, is how a worker learns it has gone deaf rather than hanging on a dead connection. Network devices between the VM and SQS, such
 as a NAT gateway, also drop connections idle for minutes, which a short
 renewal stays under. Each renewal is a billable request. Workers run only
 during the session, about seven hours a day, so each makes about 1,260
@@ -584,9 +582,7 @@ costs nothing at this scale, and live's eight containers still fit.
    call a web address the worker serves, which opens the VM to inbound
    connections it accepts none of today.
 2. **Amazon MQ, RabbitMQ or ActiveMQ,** sends each message down a
-   connection the worker holds open, with no inbound port, but it is a
-   broker that runs and bills all day and can fail and halt every worker,
-   the reason the register cuts a messaging server.
+   connection the worker holds open, with no inbound port, but it is a broker that runs and bills all day, and a single-instance broker is one more machine to keep up.
 3. **Kinesis Data Streams with enhanced fan-out** pushes records over a
    held connection renewed every five minutes, at a charge per shard and
    per consumer each hour, for about nine events a decision.
@@ -595,14 +591,11 @@ costs nothing at this scale, and live's eight containers still fit.
    watch a pair's legs and the switch, and it is the serverless route rule
    10 of architecture.md's `## Where it runs` keeps open.
 
-Every push across a network rests on one side holding a connection open,
-so a broker or a stream renews or pings underneath as SQS's long polling
-does in plain sight. What decides between them is the time from a write to
+Every push to a worker that accepts no inbound connection rests on the worker holding one open, so a broker or a stream renews or pings underneath as SQS's long polling does in plain sight. What decides between them is the time from a write to
 a worker waking, and almost all of it is S3 handing the event to
 EventBridge, which comes before any of these. So SQS stays. Measured delay
 on paper is what would reopen it: if SQS's renewal ever added time that
-mattered, Amazon MQ is the push that keeps the VM closed to inbound
-connections.
+mattered, Amazon MQ and Kinesis are the pushes that keep the VM closed to inbound connections.
 
 No worker on a VM receives until that
 VM's supervisor holds the deployment's lease, and execution receives only
@@ -1089,7 +1082,7 @@ once rather than re-argued.
 | A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, and on 2026-10-31 that S3's own events feed it, with no polling, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. Watching a local folder sees nothing written in S3. The price is an EventBridge rule for each reader's prefix, generated from one table in `runtime` |
 | A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
-| A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour and can halt every worker, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ |
+| A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
