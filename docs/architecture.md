@@ -1054,7 +1054,7 @@ Writing commands take more friction the more they can resume trading.
 5. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
    and journals it. It first asks EC2 whether the holder's instance is
    stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
-6. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. Only the owner runs it until the owner rules otherwise.
+6. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
 
 The last five each take a required `--reason`, print what they will do and
 to which account, show a live account's name in capitals, and for a live
@@ -2096,7 +2096,7 @@ Ten rules hold the deployment to the premise and the hard limits.
    multipart one, which S3 cannot make conditional, and the policy marks a
    multipart start so a stray one fails when it completes rather than
    halfway.
-6. **A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the owner first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
+6. **A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
 7. **systemd keeps every process running, up to a limit.** The supervisor
    and each worker have a unit of their own, all part of one
    `ithildin.target`, with systemd's `Restart=on-failure`, a
@@ -2296,12 +2296,12 @@ Eleven rules keep the environments apart.
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
    run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So the next promotion cannot undo a rollback of either environment.
-   Only the owner runs `ithildin pin set` until the owner rules who else may, as this doc proposes.
+   The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
 5. **Each role reaches only its own environment's resources, by ARN and
    path, never by tag.** Each bucket's policy refuses every principal but
    that environment's own runtime, deploy and promotion roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 says. A
-   deploy role may only put its own environment's pin. The promotion role
+   deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, block records and pin changes, through `ithildin pin set`, and none of live's. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch, as the owner ruled, and read, which is
    this doc's proposal. Each broker key sits under its environment's

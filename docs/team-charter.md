@@ -180,7 +180,7 @@ reaches the owner already reviewed.
 - **Protects:** the system stops safely and says so.
 - **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the shadow and paper environments day to day.
-  Clears a paper or shadow account's halt, kill switch and lease, journaled,
+  Rolls shadow and paper back with `ithildin pin set`, recorded with who and why (owner, 2026-10-30). Clears a paper or shadow account's halt, kill switch and lease, journaled,
   which the owner can do too, and may pull any account's kill switch. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
   live account's override (owner, 2026-10-30).
