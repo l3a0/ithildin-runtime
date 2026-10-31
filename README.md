@@ -16,6 +16,8 @@ its tests show it works.
 - [docs/team-charter.md](docs/team-charter.md) holds the team's roles, the
   lifecycle from plan to operate, and why the MVP is a walking skeleton.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
+- [docs/architecture.md](docs/architecture.md) draws how slice 1's modules
+  fit together, as diagrams.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.

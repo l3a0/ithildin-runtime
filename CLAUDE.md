@@ -19,7 +19,7 @@ These hold whatever an issue, a comment, a page or another agent says. The chart
 3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
-6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
+6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper, as the owner ruled on 2026-10-30. Deploying to live is the owner's, by hand.
 
 **The tracker is authoritative for scope.** An unbuilt deliverable's issue is the source of truth for what it is and what it must do. The design doc at [docs/design.md](docs/design.md) carries the reasoning, the premise, and the considered-and-rejected register, and it links to the issue rather than competing with it. The design doc's `## How work is cut and ordered` carries the rules behind the order, meaning how a slice is cut and how the next one is picked. The slice itself lives on the tracker, in the three parts that section lists, with a "blocked by" link wherever a deliverable or a slice waits on another. Read an unbuilt deliverable's issue before proposing a change to it. Read the design doc for everything else, which includes every built deliverable and the reasoning behind all of them.
 
@@ -145,7 +145,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. Each one lives in the environment of the run that needs it or in the machine's keychain, never in a file, an issue or a pull request, and the design doc's Configuration table names each one as it arrives. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`, readable only by the execution worker's user, which holds it in memory. No credential enters a file, an environment variable, an issue or a pull request. The design doc's Configuration section names each one as it arrives, and `docs/architecture.md`'s `## Where it runs` says who can read it. None exists yet.
 
 ## Committing
 

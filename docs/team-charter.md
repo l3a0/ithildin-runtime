@@ -65,7 +65,7 @@ These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.m
 3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
-6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
+6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper, as the owner ruled on 2026-10-30. Deploying to live is the owner's, by hand.
 
 ## The product, as the book draws it
 
@@ -94,8 +94,7 @@ alpha models and the research platform are what the team builds with care.
 ### The owner (human)
 
 Product owner and the only person who can put capital at risk. Sets the order
-of the backlog, rules on questions an issue reserves, merges, deploys, and
-switches anything to live. The owner's time is the scarce resource, so work
+of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner's time is the scarce resource, so work
 reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -179,8 +178,12 @@ reaches the owner already reviewed.
 ### Operator
 
 - **Protects:** the system stops safely and says so.
-- **Does:** owns deployment, monitoring, alerts, the dead-man check, runbooks,
-  startup order, and incident reviews. Runs the paper environment day to day.
+- **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
+  startup order, and incident reviews. Runs the shadow and paper environments day to day.
+  Rolls shadow and paper back with `ithildin pin set`, recorded with who and why (owner, 2026-10-30). Clears a paper or shadow account's halt, kill switch and lease, journaled,
+  which the owner can do too, and may pull any account's kill switch. Only
+  the owner clears a live account's halt, kill switch or lease, or writes a
+  live account's override (owner, 2026-10-30). The owner runs every drill on live, and no agent does (owner, 2026-10-31).
 - **Vetoes:** a deploy without a rollback, and an alarm nobody has seen fire in
   a drill. An alarm reads zero while it is healthy, so count the cycles it
   watched rather than the times it fired.
@@ -281,25 +284,30 @@ that turns on money, contracts or law goes to the owner under a
 
 ### 5. Release
 
-A strategy and a platform version move through gates, and each gate is
+A strategy moves through gates, and each gate is
 evidence, not elapsed time.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, and the delay of each step's event is measured against the time before the cutoff |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+
+The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. The stages above are a strategy's gates. A platform version has its own path: it passes CI, which is the test environment, then runs in shadow, then in paper, and reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
 
 ### 6. Operate
 
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
   latency (L4973 to L5006).
-- **Startup** checks that every upstream module is live and current before
-  execution may act, which is the safeguard the reboot incident lacked (L4690).
-- **Reconciliation** compares journaled positions with the broker's every day,
-  and a mismatch halts trading.
+- **Startup** checks that every upstream worker has written a decision result
+  that lists outputs, not a halt, for the decision before execution may send an
+  order. That is the safeguard the reboot incident lacked (L4690). A worker is
+  one component run as its own process, and the workers form an event
+  pipeline, as the design doc's
+  [Processes and files](design.md#processes-and-files) says.
+- **Reconciliation** compares journaled positions and open orders with the broker's at every decision, and a mismatch halts trading.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it.
 - **Human override** stays the exception, for information the model cannot
