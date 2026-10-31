@@ -1046,7 +1046,6 @@ finds it there.
    journal, written by the stage that finds the cause before its halt result,
    and cleared only by the clear command's own entry.
 
-
 Two limits come from marketlake rather than from this design.
 
 1. **About one decision a minute at the fastest.** marketlake captures quotes
