@@ -521,22 +521,55 @@ owner may trade the same account by hand, and that should not stop the
 platform. The rest of this subsection is this doc's proposal for
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
-The owner ruled later on 2026-10-31, after a board sitting on hand trades
-and tax lots, that the platform trades an account and capital of its own,
-separate from the accounts the owner trades by hand, and that the live
-broker is Schwab. So the owner places no hand trades in the platform's
-account, and the platform's broker statement is the strategies' alone. The
-sorting below stays for a hand order that reaches the platform's account
-anyway, and paper's account at Alpaca holds only the platform's orders.
-Three further steps the board advised wait for the owner.
+The owner ruled on 2026-10-31 that the live broker is Schwab, and later
+that day, after a board sitting on hand trades and tax lots, that the
+platform trades an account and capital of its own, separate from the
+accounts the owner trades by hand. So the owner places no hand trades in
+the platform's account, and while none reaches it, the platform's broker
+statement is the strategies' alone. The sorting below stays for a hand
+order that reaches the platform's account anyway. This doc applies the same
+rule to paper, so Alpaca's paper account holds only the platform's orders.
+Five further steps wait for the owner. The board advised the first three,
+and the review of this ruling found the last two.
 
 1. No hand trade, in any account, in an instrument a strategy trades,
-   anything substantially identical to it, or an option on it, because the
-   wash sale rule follows the taxpayer rather than the account.
-2. A standing order at the live broker to identify lots by specific sale.
+   anything substantially identical to it, or an option on it. The wash
+   sale rule of [IRC section 1091](https://www.law.cornell.edu/uscode/text/26/1091)
+   follows the taxpayer rather than the account, and Rev. Rul. 2008-5
+   extends it to the taxpayer's IRA.
+2. A standing instruction at Schwab to choose which tax lot each sale
+   closes, called specific lot identification, rather than its default of
+   the oldest lot first.
 3. Halting on any order in the platform's account that does not carry the
-   stamp, rather than journaling it as the owner's, once no hand trade
-   belongs there.
+   stamp, rather than journaling it as the owner's.
+4. Counting an unstamped order's loss in that account toward the daily
+   loss stop, which reverses the owner's ruling of 2026-10-31 that a hand
+   loss does not trigger it.
+5. A kill switch that cancels every resting order in that account, which
+   returns to the owner's ruling of 2026-10-29 on question 7.
+
+Until the owner rules on the third, an outside entry in an account that
+holds no hand trades raises an alarm, which changes no trading.
+
+What the stamp and the sorting below rest on is confirmed only at Alpaca.
+Schwab, the live broker, may differ on six things.
+
+1. Whether its order API takes a client order id at all. Third-party
+   clients of its Trader API, such as the
+   [schwab-sdk](https://docs.rs/schwab-sdk) crate, say it does not.
+2. The id's length limit.
+3. Whether it marks an order as the account holder's.
+4. Whether it refuses a duplicate id.
+5. Whether it finds an order by the client's id.
+6. Its market-on-close entry and cancel cutoffs, and how long its
+   authorization lasts before a person must log in again.
+
+If the first fails, the stamp, rule 9's lookup of an order in doubt, and
+the kill switch's cancel by stamp each need another key at live.
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms these before the live gate. Paper runs at Alpaca because
+Schwab is not known to offer an API paper account, so how the Schwab
+adapter is exercised before live is the owner's, as a step toward live
+trading.
 
 **The stamp is the client order id.** Every order the platform sends
 carries a client order id of the form `ith-<strategy>-<decision>-<n>`: a
@@ -609,18 +642,19 @@ the broker's own order id.
 
 The price is four things.
 
-1. The account can hold a position no strategy planned, in an instrument a
+1. If a hand order reaches it anyway, the account can hold a position no strategy planned, in an instrument a
    strategy also holds, and each strategy trades as if the hand position
    were not there, within limits the hand position can only tighten.
-2. A hand trade can still get a platform order refused, by the gate's
+2. A stray hand trade can still get a platform order refused, by the gate's
    second check or by the broker: a wash-trade check against a hand order
    resting on the other side, a sell that crosses the account's real
    position through zero, or buying power the hand trade used. A refused
    leg cancels its pair's partner.
 3. A wash sale can still link a hand trade and a strategy trade for tax,
    across accounts, unless the first of the three steps above is adopted.
-   With the platform's account its own, the broker's cost basis and
-   realised profit and loss are the strategies' alone.
+   With the platform's account its own, and while no hand order reaches it,
+   the broker's cost basis and realised profit and loss are the
+   strategies' alone.
 4. The stamp rests on the owner never typing the prefix into an order by
    hand, which halts rather than passes if it happens.
 
@@ -1134,7 +1168,7 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of the outside orders and fills the owner placed by hand, written as execution finds them |
 | **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, which marks the order as the platform's and names its strategy |
-| **outside book** | The positions and resting orders the owner placed by hand on an account the platform trades, journaled from unstamped broker entries and kept apart from every strategy's book |
+| **outside book** | The positions and resting orders the owner placed by hand on an account the platform trades, journaled from unstamped broker entries and kept apart from every strategy's book. The owner's ruling of 2026-10-31 keeps hand trades out of the platform's account, so it holds only a hand order that arrives there anyway |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
@@ -1216,7 +1250,7 @@ once rather than re-argued.
 | A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
-| Halting on any fill the journal did not send, an order placed by hand included | The owner ruled on 2026-10-31 that the platform stamps its orders and ignores unstamped ones, so the owner can trade the same account by hand. A hand fill the broker marks as the account holder's is journaled as an outside entry and reconciled, never a halt, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
+| Halting on any fill the journal did not send, an order placed by hand included | The owner ruled on 2026-10-31 that the platform stamps its orders and ignores unstamped ones, so a hand order that reaches the platform's account does not halt it. The owner ruled later the same day that hand trades belong in other accounts, and halting on an unstamped order waits for the owner. A hand fill the broker marks as the account holder's is journaled as an outside entry and reconciled, never a halt, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
 | The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
