@@ -750,8 +750,7 @@ that a pull writes the switch blob and sends a message straight to
 execution and to any other component that needs to know at once.
 `ithildin switch pull`, the one supported way to pull it, writes the switch
 blob and journals the pull, then sends that message to the SQS queues of
-execution, the supervisor and monitoring, so the pull waits on neither S3
-nor EventBridge. The blob's own S3 event follows as a backup. A forged
+execution, the supervisor and monitoring, so the pull waits on neither S3 nor EventBridge. It writes in that order, the blob, then the journal entry, then the message, and the routes send the S3 events of both the switch blob and the pull's journal entry to the same three queues, as the owner ruled the same day. So a tool that fails after its first write and before its message still reaches execution, the supervisor and monitoring, a little later, through the store's events. A forged
 message only makes a component read the switch blob, which it then finds
 absent. The tool then reads the journal once at a deadline set before the
 cancel cutoff, and if execution's "cancels done" entry is not there, it

@@ -846,17 +846,17 @@ sequenceDiagram
 
     P->>K: pull the kill switch
     K->>F: create the kill switch blob
+    K->>J: halt journaled, reason "kill switch"
     K-->>X: a message straight to execution's queue
     K-->>V: the same message to the supervisor's queue
     K-->>M: the same message to monitoring's queue
-    K->>J: halt journaled, reason "kill switch"
     K->>A: alarm
     par
-                F-->>X: an event: the kill switch
+        F-->>X: the blob's and the journal entry's events, as a backup
     and
-        F-->>V: an event: the kill switch
+        F-->>V: the same two events
     and
-        F-->>M: an event: the kill switch
+        F-->>M: the same two events
     end
     X->>X: stop sending
     X->>J: orders in doubt settled
