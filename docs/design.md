@@ -393,7 +393,7 @@ Ten rules make the blobs something a worker can trust.
    the snapshot and the reconciled book.
 8. **The journal is the one numbered log.** Its entries sit at keys fixed by
    the account and a sequence number, written with leading zeros so they sort
-   in order. Each entry is one canonical blob holding its number, the time it was built, its body and the hash of the entry before it, and its own hash is the SHA-256 of those bytes, which S3 checks on upload, as architecture.md's `### File formats and keys` says. To append, a writer takes the last
+   in order. Each entry is one canonical blob holding its number, its format, the time it was built, its body and the hash of the entry before it, and its own hash is the SHA-256 of those bytes as stored, which the writer sends with the upload so S3 checks it, as architecture.md's `### File formats and keys` says. To append, a writer takes the last
    sequence number it knows, builds the next entry chained to the last one,
    and creates it at the next number's key. If S3 refuses because that key
    exists, the writer reads that entry first. If its hash equals the entry the
@@ -404,9 +404,7 @@ Ten rules make the blobs something a worker can trust.
    what it has just read, so an order is never sent on a stale book or after a
    pull, and starts again from the new end. Two writers can therefore never
    take one number, and no entry is ever written twice. Each entry is
-   stored before the step it records happens. A reader checks each entry's
-   hash and its link to the one before, and halts on a hash that does not
-   match, a link that does not chain, or a gap in the numbers.
+   stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
 9. **Leases make one VM, and one sender, per account.** A lease is a blob a
    process creates with the condition that it not exist, recording its
    holder: the VM, its boot, the container and its restart count, the release, the run and when it was created. It is deleted only with a condition naming the tag S3 returned

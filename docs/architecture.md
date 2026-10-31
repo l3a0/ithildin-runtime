@@ -415,7 +415,7 @@ A module that asks which mode it is in has broken the shape, because its
 backtest would then test a branch the paper run never takes. The account a
 worker's lease and kill switch belong to comes from its broker adapter, so a
 backtest's simulated account never shares the paper account's lease. The
-simulated broker keeps its resting orders and positions as one blob per account per decision, outside any run's prefix, so a shadow order still resting when one run ends is there to fill
+simulated broker keeps its resting orders and positions as one blob per account per call, written before the call returns, outside any run's prefix, so a shadow order still resting when one run ends is there to fill
 in the next, in a new process or on a new VM. One simulator serves backtest
 and shadow, and it fills by the order's type and time in force rather than
 by mode. It can also fill one leg of a pair in part, or not at all, on a
@@ -950,9 +950,9 @@ here, with the issue that builds its drill.
 | A second execution worker, or a second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after a minute; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A journal entry whose hash or link does not match, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A deterministic step that writes different bytes for the same inputs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker and its last heartbeat | A worker that exits after its first decision, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The segment's key and both SHA-256s | Change a sealed partition after a run read its segments | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1017,7 +1017,7 @@ account and no runtime role may write at all. On the live bucket, the switch, le
 
 ### The commands
 
-Reading commands change nothing. A halt's id carries its account, as `<account>/<run>/<decision>/<stage>`, so the tool finds the environment it lives in.
+Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, so the tool finds the environment it lives in.
 
 1. **`ithildin status`** shows, for every account, grouped by environment: whether the kill switch
    is set, who holds each lease, every open halt with its reason and age,
@@ -1269,9 +1269,10 @@ classDiagram
         +list decisions
     }
     class JournalEntry {
-        +int seq
+                +int seq
+        +int format
         +datetime built_at
-                +dict body
+        +dict body
         +str prev_hash
         +hash() str
     }
@@ -1650,16 +1651,15 @@ erDiagram
         string inputs
         datetime stored_at
     }
-    JOURNAL_ENTRY {
+        JOURNAL_ENTRY {
         int seq
-        string hash
-        string body
+        int format
         datetime built_at
-        datetime stored_at
-        string kind
-        string client_order_id
-        string payload
         string prev_hash
+        string body "holds kind and its fields"
+        string kind "read from body"
+        string client_order_id "read from body"
+        datetime stored_at "S3's metadata"
     }
     ORDER {
         string client_order_id
@@ -1752,8 +1752,7 @@ each keeps its own rule.
 5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
    owner to read, not as a record.
-6. **The simulated broker's account, one blob per simulated account per
-   decision, outside every run,** holds the resting orders and positions the
+6. **The simulated broker's account, one blob per simulated account per call, written before the call returns, outside every run,** holds the resting orders and positions the
    simulator keeps. The simulated broker's adapter reads and writes it
    through a `BlobStore` the entry point hands it, so execution's own outputs
    are the same whichever broker it holds. Backtest and shadow use the same
@@ -1762,8 +1761,7 @@ each keeps its own rule.
    own lease and kill switch, so a backtest never shares the paper account's.
    This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 7. **The account's own blobs, outside every run,** hold `LEASE`, `OVERRIDE`,
-   the kill switch and the hard caps blob, at keys fixed by the account under
-   prefixes of their own, with the rules `## Where it runs` rules 4 and 5
+   the kill switch and the hard caps blob, at keys fixed by the account or the deployment under prefixes of their own, with the rules `## Where it runs` rules 4 and 5
    give. `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD`
    sit under prefixes of their own, keyed by writer and time and by worker
    and restart count, and heartbeats are the one prefix the bucket's
@@ -1779,79 +1777,138 @@ written two ways, such as a different key order, a float printed with one
 more digit, or a time in another zone. This subsection is this doc's
 proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), where `core` defines the file form of every type.
 
-**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON
-Canonicalization Scheme, in five ways.
+**One codec in `core` writes and reads every blob.** `core.encode` turns an
+object into bytes and `core.decode` turns bytes of a named kind back into an
+object. No worker, tool or test calls a JSON library itself. Two workers
+that each followed the standard library would differ: Python's `json`
+sorts keys by code point where RFC 8785 sorts by UTF-16 units, and
+`Decimal(0.1)` carries fifty-five digits of the float behind it. Each field's
+type in `core` declares how the codec writes it, and `core`'s storage
+contract holds one key builder for each row of the key table below, so no
+module puts a key together from strings.
 
-1. UTF-8, with no byte order mark and no whitespace outside strings.
+**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON
+Canonicalization Scheme, for encoding, whitespace and key order, and adds
+rules of its own for numbers, times and empty fields.
+
+1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
 3. No JSON floats. RFC 8785 prints a number in its shortest double form,
-   which cannot hold most decimal prices exactly. So every decimal quantity,
-   such as a price, a share count, a dollar amount, a hedge ratio or a
-   z-score, is a JSON string in plain decimal notation, such as `"123.4500"`,
-   rounded half to even to a number of places `core` declares once beside
-   the field's type. Integers below 2⁵³, such as a sequence number or a
-   count, are JSON integers.
-4. Times are strings in RFC 3339 with six fractional digits and an offset. A
-   decision's time is in the exchange's time zone, as the vocabulary keys
-   it, such as `"2026-11-02T15:40:00.000000-05:00"`, and every other time is
-   in UTC, such as `"2026-11-02T20:40:01.123456Z"`. A session date is
-   `"2026-11-02"`.
+   which cannot hold most decimal prices exactly, and it recommends a
+   string for a number that needs more precision than a double holds. So
+   every decimal quantity, such as a price, a share count, a dollar amount,
+   a hedge ratio or a z-score, is a JSON string in plain decimal notation,
+   such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a
+   bar's volume, are JSON integers. Share counts are decimals, because the
+   GLD leg is fractional.
+4. Times are strings in RFC 3339 with an offset. A decision's time is in the
+   exchange's time zone, as the vocabulary keys it, such as
+   `"2026-11-02T15:40:00.000000-05:00"`, and every other time the platform
+   writes is in UTC with six fractional digits, truncated, such as
+   `"2026-11-02T20:40:01.123456Z"`. A session date is `"2026-11-02"`.
 5. A field with no value is `null`, never left out, so a reader can tell an
    empty field from a format that lacks it. A list keeps its order when the
    order means something, such as a plan's decisions, and is sorted by its
-   key when it does not, such as a header's inputs.
+   key when it does not, such as a header's inputs, which is this doc's
+   rule rather than RFC 8785's.
 
-Every output file is one object with two members, `header`, the `BlobHeader`,
-and `body`. The header's `format` is a number per kind, raised when that
-kind's fields change, under `## Where it runs` rule 6's rule that a release
-reads the format the release before it wrote. Each hash is lowercase hex
-SHA-256.
+**A value received from outside is kept exactly as it arrived.** A fill's
+quantity and price, a position, an open order's quantity, and marketlake's
+bar and quote values are stored as the decimal string the broker or
+marketlake sent, never passed through a float and never rounded, and so is a
+time received from outside. The journal and the snapshot are the only
+records of what the broker and the market said, so a rounded copy would
+lose a value that cannot be recaptured: at four places, a leftover
+position of `0.00004` would record as zero, and the book replayed from
+rounded fills would drift from the broker's. A received value with more
+places than its field declares is flagged in the record, never rounded.
 
-The price is that a worker computes in floats and rounds at its edge, so a
-value that falls exactly on a rounding boundary can round differently under
-another release's numeric library. A run never mixes releases, because a
-worker on another release halts with "release changed", so the difference
-can appear only between runs, where the header's `release` explains it.
+**A value the platform computes is rounded once, in one place.** The types
+in `core` hold `Decimal`. A statistic, such as the alpha model's hedge
+ratio and z-score or the cost model's estimate, may be computed in floats
+and converted at the stage's output by `core.to_decimal`, which takes the
+float's shortest form and rounds it half to even to the field's declared
+places. The risk gate, the order manager, `Journal.replay` and
+reconciliation compute in `Decimal` throughout, and the quantity journaled
+for an order is the exact string the broker adapter sends and the gate
+checks. A `dict` field's values take the declared places of their value
+type, such as a share count in `TargetPortfolio.shares`. A field's declared
+places never shrink in a later release.
+
+The price is that a value computed in floats that falls exactly on a
+rounding boundary can round differently under another release's numeric
+library. A run never mixes releases, because a worker on another release
+halts with "release changed", so the difference can appear only between
+runs, where the header's `release` explains it.
+
+**Every output file has a header and a body.** Each output file is one
+object with two members, `header`, the `BlobHeader`, and `body`. The
+header's `format` is a number per kind, raised when that kind's fields
+change, under `## Where it runs` rule 6's rule that each release writes
+only formats the release before it can read. Each hash is lowercase hex
+SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3
+checks it before it stores the blob.
 
 **A journal entry hashes its whole blob.** Each entry is one blob holding
-`seq`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those
-canonical bytes, which S3 checks on upload, and the next entry carries it as
-its `prev_hash`. The first entry of an account carries sixty-four zeros. A
+`seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256
+of those bytes exactly as stored, which the next entry carries as its
+`prev_hash`, and the first entry of an account carries sixty-four zeros. A
 hash of the body alone would leave an entry's number and its link outside
-what the next entry vouches for. The hash is not stored inside the entry,
-because a blob cannot hold its own hash, so `JournalEntry.hash()` computes
-it from the bytes. The `body` holds a `kind`, such as `intent`, `sending`,
-`fill`, `cancel`, `override`, `clear` or `switch_pull`, and that kind's
-fields. A writer builds an entry once and resends the same bytes on a retry,
-which is what lets it recognise its own earlier attempt by hash. A reader
-checks that each key's number equals the `seq` inside it.
+what the next entry vouches for. A blob cannot hold its own hash, so
+`JournalEntry.hash()` computes it from the bytes S3 returns, never from a
+re-encoding of the parsed fields. A reader also checks that those bytes are
+the canonical encoding of what it parsed, that each key's number equals the
+`seq` inside it, and that it knows the entry's `format`, and halts
+otherwise. Every journal format ever written stays readable by every later
+release, because the book is replayed from the first entry, and each
+format has a committed fixture entry and a test that replays it.
+
+The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `cancel`,
+`override`, `clear` or `switch_pull`, and that kind's fields. A writer builds
+an entry once and resends the same bytes on a retry, so a live process
+recognises its own earlier attempt by hash. A process that restarted builds
+new bytes, so before it appends it checks the field that names the step
+against the journal instead: the client order id for `intent`, `sending` and
+`cancel`, the broker's fill id for `fill`, the override blob's SHA-256 for
+`override`, and the halt's id for `clear`. A switch already pulled makes
+`switch_pull` say so rather than journal it twice.
 
 **Keys.** Every key below sits in its environment's bucket, as
-`### Four environments` says. Accounts and deployments appear by the alias
-the release's table gives them, never by a broker's account number.
+`### Four environments` says. Deployments and accounts appear by the alias
+the release's table gives them, never by a broker's account number. A
+create-only write that S3 refuses, whose stored SHA-256 differs from the
+writer's, alarms, as `### Every alarm and its drill` lists.
 
 | Store | Key |
 | --- | --- |
-| A run's plan | `runs/<deployment>/<session date>/plan.json` |
-| A stage's decision result | `runs/<deployment>/<session date>/<decision>/<stage>/result.json` |
-| A stage's output file | `runs/<deployment>/<session date>/<decision>/<stage>/<name>.json` |
+| A run's plan | `runs/<deployment>/<run>/plan.json` |
+| A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
+| A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
+| A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
-| The simulated account | `sim/<account>/<decision>.json` |
+| The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
 | The deployment's lease | `leases/deployments/<deployment>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
-| A restart record | `restarts/<deployment>/<session date>/<worker>/<count>.json`, with the count padded to six digits |
-| The release pin, block records and promotion records | `release/pin`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json` |
+| A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
+| The release pin, block records, promotion records and pin changes | `release/pin.json`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json`, `release/changes/<UTC time>.json` |
 
-`<decision>` is the decision's time in the exchange's zone in the compact
-form `20261102T154000-0500`, so a day's decisions sort in order. Twelve
-digits of sequence number cover a million million entries, which at even a
-decision a minute and thirty entries a decision lasts longer than any
-account. The prefixes are the ones `## Where it runs` rule 5's grants and the
-bucket's lifecycle name.
+`<run>` is the session date in shadow, paper and live, and the span's first
+and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by
+one function in `core`. `<decision>` is the decision's time in the
+exchange's zone in the compact form `20261102T154000-0500`, and `<UTC time>`
+is `20261102T204001.123456Z`, so each sorts in order. `<boot>` is the boot id
+of the VM that wrote the record, so a replacement VM whose restart count
+starts again never meets an earlier record's key. A halt's id is the key of
+the result that holds it, `<deployment>/<run>/<decision>/<stage>`. Twelve
+digits of sequence number cover a million million entries, which at thirty
+entries a minute around the clock last tens of thousands of years. The
+prefixes are the ones `## Where it runs` rule 5's grants and the bucket's
+lifecycle name, with `release/` read by each VM's role for its own pin, as
+`### Four environments` rule 4 says.
 
 ## Where it runs
 
@@ -2223,8 +2280,7 @@ Eleven rules keep the environments apart.
    its plan, and that run's decisions finished without a "release changed"
    or restart-limit halt.
 4. **A pin is a bare digest, read once a session, and a rollback holds.**
-   Each pin is a blob in its own environment's bucket holding only a
-   `sha256:` digest, and the VM builds `ghcr.io/l3a0/ithildin-runtime@`
+   Each pin is a blob in its own environment's bucket holding only a `sha256:` digest in its `digest` field, and the VM builds `ghcr.io/l3a0/ithildin-runtime@`
    and the digest itself, refusing anything else. When the timer starts a
    session, it resolves the pin once into a session file in memory-backed
    storage, and every unit start and restart that session uses it. A
@@ -2241,7 +2297,7 @@ Eleven rules keep the environments apart.
    that environment's own runtime, deploy and promotion roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 says. A
    deploy role may only put its own environment's pin. The promotion role
-   may only put paper's pin and promotion record, read paper's status keys and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
+   may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch, as the owner ruled, and read, which is
    this doc's proposal. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
@@ -2268,7 +2324,7 @@ Eleven rules keep the environments apart.
    `main` alone, with no tag rule. So a workflow added later on `main`,
    such as the board's, cannot reach these roles.
 7. **The environment is read once, at the edge.** The release carries one
-   table naming each environment's bucket, key paths and account aliases,
+   table naming each environment's bucket, key paths, deployments and account aliases,
    with each alias in exactly one environment. The mapping from an alias to
    a broker account stays under the environment's parameter path, because
    the image and the repository are public. The provisioning step that
@@ -2283,7 +2339,7 @@ Eleven rules keep the environments apart.
    environment's. Each environment downloads into its own mirror with its
    own read-only credential for marketlake's bucket.
 8. **The `ithildin` tool finds the environment from the account.** It looks
-   the account up in the same table, and a halt's id carries its account,
+   the account up in the same table, and a halt's id carries its deployment,
    so a command reaches the bucket that account lives in. It refuses an
    account the table does not name. So a switch pull for a live account
    cannot land in the paper bucket, and the pull stays one command.
@@ -2337,7 +2393,7 @@ rule 6. And the drills run once per environment and grow with each pair.
 
 ```mermaid
 flowchart TB
-    core["ithildinruntime.core<br/>shared types, Halt, every Protocol,<br/>Journal, the storage contract, the queue port"]
+    core["ithildinruntime.core<br/>shared types, Halt, every Protocol,<br/>Journal, the storage contract, the queue port,<br/>the codec and the key builders"]
     data["data"]
     alpha["alpha"]
     risk["risk"]
@@ -2373,8 +2429,7 @@ An arrow means "may import". The diagram draws three rules.
    `Protocol`, including `RiskGate`, live in `core` for that reason. So do
    `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to, and the storage contract every
    worker uses: the `BlobStore` port, writing a blob S3 refuses to replace,
-   the blob header, the decision result and its halt, the plan, and the
-   message to each reader's queue.
+   the blob header, the decision result and its halt, the plan, the message to each reader's queue, and the one codec and key builders that `### File formats and keys` describes.
 2. Only `runtime` imports the modules together. Each worker's entry point
    lives there. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
