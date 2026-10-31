@@ -799,8 +799,7 @@ the account after a refusal until a person clears it waits for a strategy
 that decides minutes apart, as design.md's
 `### Strategies, schedules and decisions` says.
 
-The daily loss stop works through the same gate. Once the day's loss passes the
-stop, the risk gate refuses every new order. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
+The daily loss stop works through the same gate. Once the day's loss on the strategies' books, never the outside book, passes the stop, the risk gate refuses every new order. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
 lists the limit as "an automatic unwind and stop", and an unwind is itself a
 trade. Slice 1 stops only, as question 8 settles.
 
@@ -1166,7 +1165,8 @@ classDiagram
         +dict open_orders_by_strategy
         +dict outside_positions
         +list outside_open_orders
-        +Decimal realised_pnl
+        +Decimal platform_realised_pnl
+
         +int replayed_through
     }
     class OrderIntent {

@@ -580,7 +580,7 @@ the broker's own order id.
    moves against the strategy's position past zero, which is what a
    liquidation looks like, and its report shows the outside book every
    decision.
-4. The risk gate checks every account cap twice, and an order must pass
+4. The risk gate checks every account cap but the daily loss stop twice, and an order must pass
    both: once against the platform's books alone, exactly as before the
    ruling, and once against the platform's books plus the outside book,
    with hand orders still resting counted at their worst case. So a hand
