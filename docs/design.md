@@ -521,6 +521,23 @@ owner may trade the same account by hand, and that should not stop the
 platform. The rest of this subsection is this doc's proposal for
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
+The owner ruled later on 2026-10-31, after a board sitting on hand trades
+and tax lots, that the platform trades an account and capital of its own,
+separate from the accounts the owner trades by hand, and that the live
+broker is Schwab. So the owner places no hand trades in the platform's
+account, and the platform's broker statement is the strategies' alone. The
+sorting below stays for a hand order that reaches the platform's account
+anyway, and paper's account at Alpaca holds only the platform's orders.
+Three further steps the board advised wait for the owner.
+
+1. No hand trade, in any account, in an instrument a strategy trades,
+   anything substantially identical to it, or an option on it, because the
+   wash sale rule follows the taxpayer rather than the account.
+2. A standing order at the live broker to identify lots by specific sale.
+3. Halting on any order in the platform's account that does not carry the
+   stamp, rather than journaling it as the owner's, once no hand trade
+   belongs there.
+
 **The stamp is the client order id.** Every order the platform sends
 carries a client order id of the form `ith-<strategy>-<decision>-<n>`: a
 prefix only the platform uses, the strategy's alias, the decision's UTC
@@ -600,10 +617,10 @@ The price is four things.
    resting on the other side, a sell that crosses the account's real
    position through zero, or buying power the hand trade used. A refused
    leg cancels its pair's partner.
-3. Hand trades and strategy trades in one account share the broker's cost
-   basis, so the broker's realised profit and loss differs from each
-   strategy's, and a wash sale can link them for tax. Both are the owner's
-   questions.
+3. A wash sale can still link a hand trade and a strategy trade for tax,
+   across accounts, unless the first of the three steps above is adopted.
+   With the platform's account its own, the broker's cost basis and
+   realised profit and loss are the strategies' alone.
 4. The stamp rests on the owner never typing the prefix into an order by
    hand, which halts rather than passes if it happens.
 
