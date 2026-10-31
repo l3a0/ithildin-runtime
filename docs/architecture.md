@@ -249,7 +249,7 @@ bar. [l3a0/marketlake#952](https://github.com/l3a0/marketlake/issues/952) is clo
 and [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) fetches each bar at its own
 session's 18:30 sweep, still checked against that session's 16:15 quote.
 Once it ships, the 15:40 decision reads the previous session's official bar
-through `load_bars`, so a 15:40 decision needs [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) to have shipped. [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run reads the previous session's official close the same way, and waits on it. That bar
+through `load_bars`, so a 15:40 decision needs [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) to have shipped. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on it for that read, and [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run, which reads the previous session's official close the same way, waits on it too. That bar
 is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
