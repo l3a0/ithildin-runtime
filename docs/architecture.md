@@ -852,11 +852,11 @@ sequenceDiagram
     K-->>M: the same message to monitoring's queue
     K->>A: alarm
     par
-        F-->>X: the blob's and the journal entry's events, as a backup
+        F-->>X: the blob's event, as a backup
     and
-        F-->>V: the same two events
+        F-->>V: the blob's event
     and
-        F-->>M: the same two events
+        F-->>M: the blob's event
     end
     X->>X: stop sending
     X->>J: orders in doubt settled
