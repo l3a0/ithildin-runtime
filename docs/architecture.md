@@ -954,6 +954,9 @@ here, with the issue that builds its drill.
 | A person's journal entry names an identity that differs from the one AWS recorded for its write | The entry and both identities | Write an entry with a forged name | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's release pin is missing or unreadable | "release pin missing or unreadable", from the host's handler | Boot a VM whose pin is deleted, and one whose role cannot read it, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The promotion job stopped running | None. Its own heartbeat check raises it | Disable the promotion schedule for a day | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Live's drill job stopped running | None. Its own heartbeat check raises it | Disable the drill schedule past one interval, against live's check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A drill refused because a session is open on live | "drill refused: lease held" and the holder | Start a drill while a live session holds the deployment's lease | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A live session refused because a drill is running or left something behind | "session refused: drill not clean" and what failed the check | Start a session while a drill's marker exists, and after a drill that leaves the switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's pin names a digest without a valid attestation, or with no deploy record, promotion record or earlier run in that environment | "release pin not trusted" and the digest | Write an unattested digest to paper's pin with the operator's credential, directly, and expect the session to halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because a block record could not be read | The bucket and S3's answer | Deny the promotion role's read of one bucket's block records | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because paper is not clear | The open halt, set switch, pending override or held lease | Run a promotion with paper's switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -961,7 +964,7 @@ here, with the issue that builds its drill.
 | A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | Deny a queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A rule the release's routes need is missing | "event rules do not match release" and the rule | Delete one rule, then start a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A decision's event delay passes its share of the time before the cutoff | Each step's delay | Delay events in the folder adapter past the share | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A pull's own message was refused or never reached execution | The tool's refusal at once, or no "cancels done" at its deadline | Turn off the bucket's EventBridge delivery and pull the switch, and expect cancels within seconds; deny the tool's send to execution's queue, and expect it to report at once | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A pull's own message was refused or never reached execution | The tool's refusal at once, or no "cancels done" at its deadline | Turn off the bucket's EventBridge delivery and pull the switch, and expect cancels within seconds; deny the tool's send to execution's queue, and expect it to report at once and execution to cancel through the blob's event; deny the send to the supervisor's and to monitoring's queue alone; kill the tool after it writes the blob, and expect cancels through the blob's event | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4, run against each of shadow's, paper's and live's checks | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -1026,9 +1029,7 @@ Reading commands change nothing. A halt's id is the key of the result that holds
 Writing commands take more friction the more they can resume trading.
 
 1. **`ithildin switch pull --account <a>`** is one command with a default
-   reason, because stopping should never be slow. It creates the kill
-   switch blob, journals the pull and raises the alarm. Execution reads the
-   switch itself and cancels every resting order the platform stamped, as rule 10 of `design.md`'s ten rules says. The tool then reads the journal once at a deadline set before the cancel cutoff for execution's entry saying the cancels are done, and if it is not there, tells the
+   reason, because stopping should never be slow. It creates the kill switch blob, journals the pull and raises the alarm, then sends a message straight to the queues of execution, the supervisor and monitoring, and reports at once if a send is refused or the tool fails before it. Execution reads the switch itself and cancels every resting order the platform stamped, as rule 10 of `design.md`'s ten rules says. The tool then reads the journal once at a deadline set before the cancel cutoff for execution's entry saying the cancels are done, and if it is not there, tells the
    person to cancel at the broker's own console.
 2. **`ithildin clear <halt>`** records that a person has looked at a halt
    and why it may be left behind. It never reruns the halted decision, and
@@ -2054,11 +2055,12 @@ Ten rules hold the deployment to the premise and the hard limits.
       name, and the owner writes its value by hand through standard input,
       as marketlake writes its own. No OpenTofu configuration, state or
       variable ever holds it.
-      6. **A drill** tries to read the key without decryption, so a missing
+   6. **A drill** tries to read the key without decryption, so a missing
       refusal returns ciphertext and never the key, with the plan, apply and
       VM roles' credentials and the runtime's VM role's, directly, by a
       recursive read from `/` and through its history, from a role that can
-      assume no other, as the owner ruled for live on 2026-10-31, reads marketlake's path with the
+      assume no other, as the owner ruled for live on 2026-10-31, tries to
+      read marketlake's path without decryption with the
       runtime's VM role, and tries an EC2 action on the runtime's VM with the
       apply and deploy roles, and expects "access denied" every time.
 
@@ -2362,7 +2364,7 @@ Eleven rules keep the environments apart.
     each environment that has them.** These are the dead-man check, the
     host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, and the event rules, queues and their policies. Shadow's and paper's drills run before paper's gate. Live's run
     before the owner switches, in a live session started with the kill
-    switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply anywhere in the shared AWS account or any host patch, as the owner ruled on 2026-10-31 on a board sitting's recommendation. Drills that end in a clear only the owner can make run once a month, the cadence the owner's two-hour bad week allows, and the rest run more often. A drill refuses to start while live's account lease is held, and a session refuses to start until whatever the last drill left behind checks clean. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one, as the owner ruled on 2026-10-31. No agent runs a drill on live. Drills that depend only on code
+    switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply anywhere in the shared AWS account or any host patch, as the owner ruled on 2026-10-31 on a board sitting's recommendation. Drills that end in a clear only the owner can make run once a month, the cadence the owner's two-hour bad week allows, and the rest run more often. A drill refuses to start while live's deployment lease or account lease is held, and writes a marker while it runs, and a session refuses to start while that marker exists or until whatever the last drill left behind checks clean. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one, as the owner ruled on 2026-10-31. No agent runs a drill on live. Drills that depend only on code
     run once, in test. Rule 3's drill grows to try each environment's roles
     against every other environment's bucket, key and VM, by each route rule 3's item 6 lists and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
     1. Each environment's monitoring role and VM role read their own ping

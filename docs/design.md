@@ -275,7 +275,7 @@ Ten rules make the blobs something a worker can trust.
    by the memory-backed folder adapter with the same events. One table in
    `runtime` is the only place a worker's inputs are declared. Each worker's
    entry point hands it its inputs from that table, and the rules and pipes that feed each queue are generated from routes one function in `runtime` builds from the same table, so no writer
-   sends anything beyond its write. An event names the blob its reader
+   sends anything beyond its write, except `ithildin switch pull`, whose message goes straight to three queues as `### How a component learns of a change` says. An event names the blob its reader
    should read: a decision result, the plan, the run's halt or stop, or the
    kill switch. A starting worker drains its queue and then checks its keys
    once, so nothing written while it was down goes unread. A woken worker
@@ -728,8 +728,7 @@ deadlines again from storage, once, as it starts.
    with the kernel's own file change events and kills a container whose
    file is thirty seconds stale. This is the one check that never touches
    S3, because a heartbeat event a minute late must not kill a healthy
-   worker. The supervisor and monitoring judge a heartbeat by the time in
-   its key, not by when its event arrives, against a limit set on
+   worker. The supervisor and monitoring count a heartbeat only after reading its blob, never from the event's key alone, and judge it by the time the blob holds, not by when its event arrives, against a limit set on
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the
    delivery delay measured on paper.
 
@@ -750,22 +749,19 @@ that a pull writes the switch blob and sends a message straight to
 execution and to any other component that needs to know at once.
 `ithildin switch pull`, the one supported way to pull it, writes the switch
 blob and journals the pull, then sends that message to the SQS queues of
-execution, the supervisor and monitoring, so the pull waits on neither S3 nor EventBridge. It writes in that order, the blob first, then the journal entry, then the message, and the routes send the switch blob's S3 event to the same three queues, as the owner ruled the same day. So a tool that fails after writing the blob and before its message still reaches execution, the supervisor and monitoring, a little later, through that event. A forged
+execution, the supervisor and monitoring, so the pull waits on neither S3 nor EventBridge. It writes in that order, the blob first, then the journal entry and the alarm, then the message, and the routes send the switch blob's S3 event to the same three queues, as the owner ruled the same day. So a tool that fails after writing the blob and before its message still reaches execution, the supervisor and monitoring, a little later, through that event. A forged
 message only makes a component read the switch blob, which it then finds
 absent. The tool then reads the journal once at a deadline set before the
 cancel cutoff, and if execution's "cancels done" entry is not there, it
 tells the person to cancel at the broker's own console while the broker
 still takes cancels. Execution also reads the switch right before every
-broker call and when it starts, as rule 9 says. No component reads the
-switch on a clock, so a pull whose message and event both fail is bounded
-only by the tool's warning, which the owner accepted the same day, with the
-message's delivery time measured on paper before live.
+broker call and when it starts, as rule 9 says. No component reads the switch on a clock, as the owner accepted the same day, with the message's delivery time measured on paper before live. If the message and the blob's event both fail, the tool's warning is the bound, and if the tool itself fails after writing the blob, its own failed exit is the only signal, so a person treats a pull with no confirmation as not delivered and cancels at the broker's console. Until then, resting orders stay until execution next wakes or they expire, and their size is what the gate's worst-case count of open orders already allowed. Execution's, the supervisor's and monitoring's queues admit any message the owner's and the operator's roles send, because a queue's policy cannot read a body, so every component treats a message only as a reason to read the blobs it checks anyway.
 
 **The same events in a backtest and in CI.** The memory-backed folder
 adapter plays S3's part from the same routes. After each write it delivers
 the event to each reader's named pipe, and under a seeded fault it repeats,
 delays by an amount drawn from the delay measured on paper, reorders or
-drops events. A named pipe keeps nothing while its reader is down, so the
+drops events, and the switch's own message goes straight to the pipes of execution, the supervisor and monitoring. A named pipe keeps nothing while its reader is down, so the
 contract suite holds both adapters only to what both guarantee: an event
 can be lost, and a worker recovers by checking its keys. A writer that
 restarts announces its newest result again through the storage port, which
@@ -794,7 +790,7 @@ The price is six things.
 4. Deadlines and heartbeat limits long enough to cover delivery's slow tail,
    or a healthy decision alarms, and the dead-man check's grace above them.
 5. A pull's delivery delay against the cancel cutoff, bounded only by the
-   tool's own message and its deadline, which the owner accepted on 2026-10-31.
+   tool's own message and its deadline, or by the tool's failed exit when the tool itself fails, which the owner accepted on 2026-10-31.
 6. A second implementation of delivery in the folder adapter, held to S3's
    behaviour only as far as the contract suite reaches.
 
@@ -1172,7 +1168,7 @@ once rather than re-argued.
 | A JSON Lines file per log | It reads with `cat`, but a crash partway through an append tears a line, and a review found that a writer appending after a torn line hid every event after it, a journal entry among them. Every write is now a blob that S3 creates whole or not at all |
 | A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about nine events a decision on one VM. SQS and EventBridge, which carry events since 2026-10-31, escape the first reason because an event is only a hint and the blobs stay the record, and an outage of either stops monitoring's pings, which the dead-man check outside AWS raises |
 | A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, and on 2026-10-31 that S3's own events feed it, with no polling, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. Watching a local folder sees nothing written in S3. The price is an EventBridge rule for each reader's prefix, generated from one table in `runtime` |
-| A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
+| A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
 | Halting on any fill the journal did not send, an order placed by hand included | The owner ruled on 2026-10-31 that the platform stamps its orders and ignores unstamped ones, so the owner can trade the same account by hand. A hand fill the broker marks as the account holder's is journaled as an outside entry and reconciled, never a halt, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
