@@ -1161,12 +1161,11 @@ classDiagram
         +dict shares
     }
     class Book {
-                +dict positions_by_strategy
+        +dict positions_by_strategy
         +dict open_orders_by_strategy
         +dict outside_positions
         +list outside_open_orders
         +Decimal platform_realised_pnl
-
         +int replayed_through
     }
     class OrderIntent {
