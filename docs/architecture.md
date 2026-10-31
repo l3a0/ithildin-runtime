@@ -2277,7 +2277,7 @@ Eleven rules keep the environments apart.
    decisions wrote a result that lists outputs rather than a halt,
    healthchecks.io's API shows every expected ping received, and every one
    of those decisions' orders matched what a replay of the same day emits.
-   The owner sets N and M on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) as counts. The promotion fires once per
+   The owner set N to one session and M to one decision for slice 1 on 2026-10-30, a ruling recorded on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Health is counted per digest, so a larger N would stall paper while merges come faster than every N sessions, and a bad promotion costs a halted paper session and no money. N rises once merges come less often than weekly, or the first time a defect gets past shadow. The promotion fires once per
    digest, and writes a promotion record holding the counts beside paper's
    pin. It refuses while paper has an open halt, a set switch, an override
    not yet applied, or a lease held by a lost VM, and alarms with that
