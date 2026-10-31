@@ -1267,7 +1267,7 @@ classDiagram
         +list decisions
     }
     class JournalEntry {
-                +int seq
+        +int seq
         +int format
         +datetime built_at
         +dict body
