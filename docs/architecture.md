@@ -286,8 +286,7 @@ that processes pass everything through files, and that the platform is an
 event pipeline. [design.md](design.md#processes-and-files)'s
 `## Processes and files` gives the reasoning and the rules. So each module
 here runs as one worker, a process of its own that the host keeps running.
-The supervisor writes the run's plan, whose event reaches every worker, and each one listens on its own queue. An event there names a blob to read: an input's decision result, the plan, the run's halt or stop, or the kill switch, and the worker then
-reads the output files that result lists, writes its own output files, and
+The supervisor writes the run's plan, whose event reaches every worker, and each one listens on its own queue. An event there wakes the worker for a blob it reads, such as an input's decision result, the plan, the run's halt or stop, or the kill switch, and the worker then checks the keys it builds from the plan, reads the output files that result lists, writes its own output files, and
 writes its own decision result last. A worker's entry point builds the
 adapters for the mode it is given and hands them to the module, so the module
 never learns which mode it is in.
@@ -349,7 +348,8 @@ flowchart TB
 
     lakesrc -. "DataSource" .-> data
     clock -. "Clock" .-> data
-    clock -. "Clock, for deadlines" .-> sup
+        clock -. "Clock, for deadlines" .-> sup
+    clock -. "Clock, for deadlines" .-> mon_report
     clock -. "Clock, for the cutoff" .-> exec_send
     broker -. "Broker" .-> exec_recover
     broker -. "Broker" .-> exec_send
@@ -545,8 +545,10 @@ sequenceDiagram
     participant C as Cost model
     participant P as Portfolio construction
 
-    S->>S: start every unit of ithildin.target, the supervisor's and each worker's
+        S->>S: start the supervisor's unit
     V->>F: the deployment's lease taken, the release recorded
+    V->>S: the local lease file written, so its path unit starts each worker's unit
+
     V->>V: kill switch blob absent?
     V->>F: the run's plan
     F-->>D: an event: the plan
@@ -681,7 +683,7 @@ Every halt takes the same route.
 The same route runs in every mode, and the run goes on to its next decision,
 which halts again if the cause is still there. A single crash is not a
 failure: the host restarts the worker, which resumes from storage. A
-failure is a missed deadline, a heartbeat stopped for more than a minute, or
+failure is a missed deadline, a heartbeat stopped for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), or
 a worker past its restart limit, and it takes the same route. The supervisor
 writes the halt as the failed worker's result, stores a halt of the whole run, whose event reaches every worker, writes a halt for every decision left in the plan, and monitoring reports.
 
@@ -854,7 +856,7 @@ sequenceDiagram
 
     P->>K: pull the kill switch
         K->>F: create the kill switch blob
-    K-->>X: its own event, straight to execution's queue
+        K-->>X: its own event, onto the bus, whose rule delivers it to execution's queue
 
     K->>J: halt journaled, reason "kill switch"
     K->>A: alarm
@@ -890,7 +892,7 @@ The two cover different failures.
    to exceed the longest chain of worker deadlines plus the report, or a slow,
    healthy decision alarms.
 
-The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and puts an event of its own on execution's queue so the pull does not wait on S3's delivery, and the execution worker
+The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and puts an event of its own onto the bus, whose rule delivers it to execution's queue, so the pull does not wait on S3's delivery, and the execution worker
 that already holds the account's lease cancels resting orders through the
 order path, so each cancel is journaled like any other step. A starting execution takes the account's lease and, finding the switch set, cancels before anything else, so a
 switch pulled while execution is down still cancels once the host restarts
@@ -937,7 +939,7 @@ here, with the issue that builds its drill.
 | Kill switch pulled | "kill switch" | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A lease another VM holds, the deployment's or the account's | The holder's VM, boot, container and run | Start a second VM while the first runs | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A lease another VM holds, the deployment's or the account's | The holder's VM, boot, container and run | Start a second VM while the first runs, then pull the switch with both up, and expect the first VM's execution to journal its cancels done | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution cannot take the account's lease by its deadline | The lease's holder and whether the host shows its container gone | Start execution while the earlier container holding the lease is frozen and not removed | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -964,10 +966,11 @@ here, with the issue that builds its drill.
 | A VM's pin names a digest without a valid attestation, or with no deploy record, promotion record or earlier run in that environment | "release pin not trusted" and the digest | Write an unattested digest to paper's pin with the operator's credential, directly, and expect the session to halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because a block record could not be read | The bucket and S3's answer | Deny the promotion role's read of one bucket's block records | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because paper is not clear | The open halt, set switch, pending override or held lease | Run a promotion with paper's switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The plan's own event did not reach the supervisor in time | "event delivery: plan event not received" | Turn off the bucket's EventBridge delivery, and deny one queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The plan's own event did not reach the supervisor in time | "event delivery: plan event not received" | Turn off the bucket's EventBridge delivery, and deny the supervisor's queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | Deny a queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A rule the release's routes need is missing | "event rules do not match release" and the rule | Delete one rule, then start a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A decision's event delay passes its share of the time before the cutoff | Each step's delay | Delay events in the folder adapter past the share | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A pull's own event was refused or never reached execution | The tool's refusal at once, or no "cancels done" at its deadline | Turn off the bucket's EventBridge delivery and pull the switch, and expect cancels within seconds; deny the tool's send, and expect it to report at once | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4, run against each of shadow's, paper's and live's checks | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -1930,7 +1933,7 @@ new one from the pinned release.
 ```mermaid
 flowchart TB
     subgraph host["One environment's VM, shadow, paper or live,<br/>separate from marketlake's, holding no state"]
-        timer["Scheduler<br/>a systemd timer starts ithildin.target<br/>before the session, stops it after the close"]
+        timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it holds the lease,<br/>the timer stops all after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
         subgraph ctrs["A container per component, each its own unit and its own user"]
@@ -1944,10 +1947,12 @@ flowchart TB
             mon["Monitoring"]
         end
         
-        creds[("Memory-backed storage<br/>a credential directory and an error<br/>directory per container")]
+        creds[("Memory-backed storage<br/>a credential, an error and a heartbeat<br/>directory per container, and the lease file")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer --> docker --> ctrs
-        guard -.-> ctrs
+                guard -.-> ctrs
+        guard -. "kernel file change events" .-> creds
+
         
         creds -. "each container mounts only its own" .-> ctrs
         mirror --> data
@@ -1977,7 +1982,8 @@ flowchart TB
     mon --> alerts
     guard --> beat
     beat --> alerts
-    person <-->|"status, clears, overrides, the switch"| bucket
+        person <-->|"status, clears, overrides, the switch"| bucket
+    person -->|"the switch's own event"| events
 ```
 
 Ten rules hold the deployment to the premise and the hard limits.
@@ -1987,7 +1993,7 @@ Ten rules hold the deployment to the premise and the hard limits.
    condition and its conditional delete.
 2. **Nothing the platform must keep lives only on the VM.** Every blob a run
    writes and every journal entry is created in the runtime's bucket before
-   anything relies on it. The VM's working directory holds only error output and the files the host's stop handler writes, and none of it
+   anything relies on it. The VM's working directory holds only error output, heartbeat files, the local lease file and the files the host's stop handler writes, and none of it
    is kept. The journal is one of the
    three things the premise says cannot be recovered, so losing the VM must
    not take it. Captured bars, another of the three, live in marketlake,
@@ -2152,7 +2158,7 @@ Ten rules hold the deployment to the premise and the hard limits.
 
     The supervisor only sends messages, as design.md's rule 7 says, so it
     needs no power over containers. A systemd unit per container, under
-    rule 7, starts each one before the session, restarts it when it exits or
+    rule 7, starts the supervisor before the session and each worker once the supervisor holds the lease, restarts it when it exits or
     its heartbeat stops, and stops it after the close. No container holds the
     Docker socket or the system D-Bus, because either one is root on the
     host. The owner said on 2026-10-30 that eventually each component could
@@ -2173,7 +2179,7 @@ Ten rules hold the deployment to the premise and the hard limits.
        mounted directory sees each new file. Only execution's credential
        reads the broker key, which is fetched into memory and never mounted.
        Each worker's error output goes to a directory of its own, readable by
-       its own user alone. Each component's SQS queue refuses, by an explicit refusal matched on `aws:PrincipalArn`, every send but EventBridge delivering from that environment's own rule ARNs, every receive, delete or visibility change but by that component's own role, and every purge, attribute change, delete or permission change but by the owner. An allow-list alone would not do, because inside one account a role's own grant is enough. A worker acts on an event only after reading the blob it names, as design.md's rule 3 says.
+       its own user alone. Each component's SQS queue refuses, by an explicit refusal matched on `aws:PrincipalArn`, every send but EventBridge delivering from that environment's own rule ARNs, the kill switch's rule among them, every receive, delete or visibility change but by that component's own role, and every purge, attribute change, delete or permission change but by the owner. An allow-list alone would not do, because inside one account a role's own grant is enough. An event only wakes a worker to check the keys it builds from the plan, as design.md's rule 3 says.
     3. **The instance's credentials never reach a container.** The instance
        is launched with IMDSv2 required and a token hop limit of 1, set
        explicitly, because AWS's own
@@ -2302,8 +2308,7 @@ Eleven rules keep the environments apart.
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 says. A
    deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
-   the operator may pull the switch, as the owner ruled, and read, which is
-   this doc's proposal. Each broker key sits under its environment's
+   the operator may pull the switch, as the owner ruled, and read, which is this doc's proposal. The owner's and the operator's roles may put the switch's own event on their environment's bus, which `ithildin switch pull` reports at once if refused. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and rule 3's refusals cover
    every broker path. Ping addresses sit apart, under
@@ -2339,7 +2344,7 @@ Eleven rules keep the environments apart.
    arguments, so a module gets a `BlobStore`, a broker and an alert adapter
    and never the environment's name. The mode follows from the environment,
    and the supervisor halts on a plan whose mode differs from its
-   environment's. Each environment downloads into its own mirror with its own read-only credential for marketlake's bucket. Each environment's EventBridge rules match only its own bucket's events, and each queue's policy admits only those rules, so no event crosses environments.
+   environment's. Each environment downloads into its own mirror with its own read-only credential for marketlake's bucket. Each environment's EventBridge rules match only its own bucket's events, or the switch's own event naming that environment, and each queue's policy admits only those rules, so no event crosses environments.
 8. **The `ithildin` tool finds the environment from the account.** It looks
    the account up in the same table, and a halt's id carries its deployment,
    so a command reaches the bucket that account lives in. It refuses an
@@ -2370,8 +2375,7 @@ Eleven rules keep the environments apart.
       digest.
 
     Each environment's infrastructure is applied by a plan of its own, a bad
-    apply rolls back by applying the previous configuration, and that
-    environment's drills run again after every apply.
+    apply rolls back by applying the previous configuration, which never removes an event rule, and that environment's drills run again after every apply.
 11. **The environments share marketlake's AWS account.** The owner ruled on
     question 11 that the runtime's resources live there, so the environments
     are separated by ARN, path and policy rather than by AWS account. The owner confirmed on 2026-10-31 that live stays in that account too, rather than moving to one of its own at the switch. The price is that one IAM mistake can still cross environments, which an
@@ -2428,7 +2432,7 @@ An arrow means "may import". The diagram draws three rules.
    lives there. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
    order path. The supervisor lives there too, and imports only `core`. It
-   starts no worker. It writes nothing but the plan, the deployment's lease and its delete at the end of the run, its heartbeat, its deadlines, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, and the journal entry for a lease it clears, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
+   starts no worker. It writes nothing but the plan, the deployment's lease and its delete at the end of the run, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, and the journal entry for a lease it clears, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
    only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
