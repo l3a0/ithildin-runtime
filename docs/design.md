@@ -269,33 +269,22 @@ Ten rules make the blobs something a worker can trust.
    and a reader needs no cursor, because the keys it needs are fixed by the
    decision. Since a stage has one result key per decision, a decision can never
    end that stage with both outputs and a halt, or twice. A worker whose result
-   write S3 refuses because the supervisor has already written a halt there, as rule 7 says, takes the halt as final. Every instruction the supervisor
-   gives is a blob before it is a message: the plan, a halt of the whole
-   run, and the stop at the end of the run. A worker acts on a message only
-   after reading the blob it names, and checks those blobs whenever it
-   wakes, so a message that is dropped or never read loses nothing.
-4. **A worker listens on its queue, then reads its inputs.** Each queue is a
-   named pipe in the VM's working directory, a file that one process reads
-   and others write to, one per worker. One table in `runtime` is the only
-   place a worker's inputs are declared. Each worker's entry point hands it
-   its inputs from that table, and hands the storage contract the list of
-   workers that read its outputs. After a worker writes a decision result, the
-   contract sends a message to the queue of every worker on that list. A
-   message names the blob its reader should read: a decision result, the
-   plan, the run's halt or stop, or the kill switch. Every send opens the
-   pipe without waiting. A worker that is not running has no listener, and a
-   worker far behind may have a full pipe, which a long backtest can fill.
-   Either way the send fails at once and is skipped, because a full pipe
-   already holds a message that will wake its reader, and a stopped worker
-   catches up when it starts. A starting worker opens its pipe for reading
-   first, and only then checks its keys to catch up, so no result written in
-   between goes unannounced. Each message is one line under the pipe's
-   512-byte limit, so messages from several writers never mix. A writer that
-   crashes between its result and its message has already stored the result,
-   so when it starts again it sends a message for its newest result before
-   anything else, and a deadline catches a writer that never starts again. A
-   woken worker checks every decision it has not finished rather than only the
-   one a message names, so a repeated or skipped message costs nothing.
+   write S3 refuses because the supervisor has already written a halt there, as rule 7 says, takes the halt as final. Every instruction the supervisor gives is a blob, and writing it is what announces it, through the store's own event: the plan, a halt of the whole run, and the stop at the end of the run. A worker acts on an event only after reading the blob it names, and checks those blobs whenever it wakes, so an event that is late or repeated loses nothing.
+4. **A worker listens on its queue, then reads its inputs.** Each component
+   has one queue, and what arrives on it is the store's own event for a blob
+   the component reads, as `### How a component learns of a change` says. In
+   shadow, paper and live each queue is SQS, fed by EventBridge rules on the
+   environment's bucket. In a backtest and in CI each is a named pipe, fed
+   by the memory-backed folder adapter with the same events. One table in
+   `runtime` is the only place a worker's inputs are declared. Each worker's
+   entry point hands it its inputs from that table, and the rules and pipes
+   that feed each queue are generated from the same table, so no writer
+   sends anything beyond its write. An event names the blob its reader
+   should read: a decision result, the plan, the run's halt or stop, or the
+   kill switch. A starting worker drains its queue and then checks its keys
+   once, so nothing written while it was down goes unread. A woken worker
+   checks every decision it has not finished rather than only the one an
+   event names, so a repeated, late or out-of-order event costs nothing.
 5. **Each blob names what made it.** Its header names its run, its decision,
    its kind, output or halt, its format version, every input blob by key and
    SHA-256, the release commit and a hash of the configuration. A reader
@@ -326,18 +315,15 @@ Ten rules make the blobs something a worker can trust.
    halt as its result for the decision, with the reason, and then moves to its next decision, because a halt is not a crash. Hard limit 3 came from an
    execution server that read "no signals" as "hold nothing" (L4690). Here,
    "has this decision's forecast been written" is a check of one result key.
-7. **A halt flows down the pipeline, and the supervisor only sends
-   messages.** The host keeps every worker running and restarts one that
+7. **A halt flows down the pipeline, and the supervisor only sends messages,** which are the events of the blobs it writes. The host keeps every worker running and restarts one that
    exits: on the VM, a systemd unit per worker's container, as rule 10 of
    architecture.md's `## Where it runs` says. The supervisor starts, stops
    and watches no process. It takes the deployment's lease, as rule 9 says,
-   writes the run's plan, which a restarted supervisor finds already there,
-   and sends a message to every worker's queue. A worker that starts before
+   writes the run's plan, which a restarted supervisor finds already there, and whose event reaches every worker's queue. A worker that starts before
    any plan exists, or finds a plan whose run the deployment's lease does
    not name, waits, so no worker acts before a supervisor holds the lease.
    Every worker, in every mode, finishes its decision loop once it has a
-   result for every decision in the plan. The supervisor then stores the
-   run's stop, messages each worker, which exits cleanly, and deletes the
+   result for every decision in the plan. The supervisor then stores the run's stop, whose event reaches each worker, which exits cleanly, and deletes the
    deployment's lease. A timer on the host stops every unit after the close
    as well, in case a stop is lost.
    - **A halt is passed on.** A worker whose input's result for a decision is a
@@ -523,15 +509,7 @@ Ten rules make the blobs something a worker can trust.
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
     creates the blob, journals the halt, raises the alarm, and cancels every
-    resting order, journaling each cancel first. This doc adds how. The
-    switch can be pulled from anywhere, so the supervisor checks it every few
-    seconds and sends a message to every worker's queue when it finds it set.
-    Execution, the one worker that holds the account's lease, then stops
-    sending and cancels every resting order through the order path, and
-    alarms if a cancel fails. Execution does not wait for that message. It
-    reads the switch itself every few seconds whenever the account has a
-    resting order, and on every pass of the loop that watches a pair's legs,
-    so a pull reaches resting orders even with the supervisor down. A
+    resting order, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order through the order path, and alarms if a cancel fails. The event reaches execution directly, so a pull reaches resting orders even with the supervisor down, and no worker reads the switch on a clock. A
     starting execution takes the account's lease and then checks the switch
     before anything else, as rule 9's fifth item says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
@@ -554,66 +532,107 @@ Ten rules make the blobs something a worker can trust.
 
 ### How a component learns of a change
 
-S3 has no call that holds a connection open and reports new objects, so no
-component can watch a prefix the way a process watches a local folder. A
-component learns of a new blob one of three ways, and this doc proposes
-using them in layers, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22)
-and [#11](https://github.com/l3a0/ithildin-runtime/issues/11). None of the
-three is trusted on its own. A notice only says where to look. The blob is
-what a component acts on, and anything that touches money reads it again
-right before it acts.
+The owner ruled on 2026-10-31 that a component learns of a change the way a
+process watches a folder, by an event when a file changes, with S3's
+notifications as that event and no polling. Before the ruling, this doc
+layered three routes: a message the writer sent, a timed check of the next
+key, and S3's notifications once a component sat off the VM. A writer's
+message reached only the readers it knew on its own host, and a timed check
+cost a read every few seconds for each reader and still noticed late. The
+store already sees every write, whoever made it, so the store announces it.
+The rest of this subsection is this doc's proposal for
+[#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-1. **The writer sends a message.** After a worker writes a decision result,
-   the storage contract sends a message to the queue of every worker the
-   table in `runtime` lists as a reader, as rule 4 says. It is immediate and
-   costs nothing, but it reaches only readers the writer knows, on the same
-   host, and a message can be dropped. So a worker that wakes checks every
-   decision it has not finished, not only the one a message names.
-2. **The reader checks the next key.** Journal entries sit at keys numbered
-   in order, so whether anything is new is one request: does entry N+1
-   exist? The kill switch and a halt of the run are single keys, so each is
-   one request too. A reader that checks on a timer bounds how late it can
-   notice a change, whoever wrote it, including a person off the VM.
-   Execution checks the switch every few seconds while orders rest, makes
-   the checks rule 9's fourth item lists right before every broker call, and
-   finds any new journal entry when its append of the `sending` entry is
-   refused, as rule 8 says. The supervisor checks the switch and the
-   heartbeats on a timer. Monitoring wakes on a timer as well as on
-   messages, for the deadlines it keeps: the supervisor's heartbeat, the
-   kill switch's cancels, and a restart record a worker never uploaded.
-3. **S3 notifies a queue.** S3 can send a notification for every object
-   created under a prefix to an SQS queue, an SNS topic or EventBridge. That
-   announces changes the first route cannot: a person writing with
-   `ithildin` from their own machine, or components on separate machines
-   once the queue adapter becomes SQS, as rule 10 of architecture.md's
-   `## Where it runs` keeps open. S3 sends one prefix's notifications to one
-   destination, so several readers of a prefix take them through an SNS
-   topic or EventBridge that copies each to every reader's queue. AWS's
-   [event notifications page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
-   says they "are designed to be delivered at least once" and are
-   "typically" delivered "in seconds but can sometimes take a minute or
-   longer", and its
-   [message structure page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
-   says they are not guaranteed to arrive in order. So a notification can
-   repeat, arrive late or arrive out of order, and is a hint like a
-   message: a reader that gets one checks the keys as the second route
-   does. The SQS adapter turns each notification into the queue port's own
-   message naming the key, under the same contract tests, and the bucket's
-   notification configuration is one more piece of infrastructure. Slice 1
-   needs none of this while every writer but a person sits on one VM, and
-   the second route already covers a person. It waits for the first
-   component that runs elsewhere.
+**One event, from the store.** For every blob created, S3 sends an event
+naming the bucket, the key, its size, its ETag, its version and a sequencer,
+the same whether a worker on the VM or a person running `ithildin` from their
+own machine wrote it. A deleted key, such as a cleared switch or a lease
+released, sends a removed event the same way. Each environment's bucket
+sends its events to EventBridge, as AWS's
+[S3 and EventBridge page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
+describes. One EventBridge rule for each reader and each prefix it reads,
+generated from the one table in `runtime` that declares every worker's
+inputs, copies each matching event to that reader's SQS queue. So a
+component's queue receives exactly the changes it reads, and no writer
+sends anything beyond its write.
 
-In a backtest every writer is local and the store is the memory-backed
-folder, so messages alone wake each reader, and the timed checks find
-nothing new.
+**Waiting is a held receive, not a check on a clock.** SQS cannot push to a
+process, so a worker waits in a receive call that SQS answers as soon as a
+message arrives, holding the call open for up to twenty seconds and then
+opening the next, which AWS calls
+[long polling](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-short-and-long-polling.html).
+It is the queue's own way to wait, and it never reads storage. A message
+stays in the queue until the worker has handled it and deletes it, for up
+to the queue's retention, so a worker that was down finds every event it
+missed when it starts.
 
-The price is the timed checks' requests, one small read a few seconds apart
-for each reader that checks on a timer, which is execution, the supervisor
-and monitoring, and a notice delay of up to the check's interval for a change
-nobody messaged. What no route can give is a reader that sees a change the
-instant it is written, which is why nothing that changes money rests on a
-notice.
+**An event is a hint.** AWS's
+[event notifications page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
+says events "are designed to be delivered at least once" and are
+"typically" delivered "in seconds but can sometimes take a minute or
+longer", and its
+[message structure page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
+says they are not guaranteed to arrive in order. So an event can repeat,
+arrive late or arrive out of order. A worker treats it as "look here": it
+reads the blob the event names, checks its SHA-256 against the header that
+names it, and reads anything that touches money again right before it acts.
+A repeated event finds the worker's own result key already written, so it
+does nothing twice. A woken worker checks every decision it has not
+finished, in the plan's order, so an event that arrives out of order waits
+for the decision before it.
+
+**An absence is a deadline, not a poll.** No event announces that something
+did not happen: a worker that hung, a result never written, a heartbeat that
+stopped, or an event lost to a rule nobody generated. Each is caught by a
+deadline that an earlier event set, and the deadline is itself a message.
+SQS holds a message back for up to fifteen minutes before delivering it, as
+its [delay queues page](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-delay-queues.html)
+says, and EventBridge Scheduler delivers one at a set time for anything
+longer.
+
+1. **The supervisor's deadlines.** When it writes the plan, the supervisor
+   sends itself one delayed message per decision and stage. When one
+   arrives, it reads that result key once, and a result still missing fails
+   the worker, as rule 7 says.
+2. **Monitoring's deadlines.** Monitoring re-arms a deadline on each of the
+   supervisor's heartbeat events, and on each kill switch event for the
+   switch's cancels, and alarms when one arrives before the event it waits
+   for.
+3. **The host's watchdog.** It receives the heartbeat events of the workers
+   on its VM, keeps each worker's last one in memory, and kills a container
+   whose next heartbeat is thirty seconds late.
+
+So a missed event never passes silently. It ends at a deadline, and the
+deadline halts, which is hard limit 3. The kill switch needs no deadline at
+all: creating its blob is an event that reaches execution, the supervisor
+and monitoring, and execution reads the switch again right before every
+broker call, as rule 9's fourth item says.
+
+**The same events in a backtest and in CI.** The memory-backed folder
+adapter plays S3's part. After each write it delivers the same event to the
+queue of each reader the table names, a named pipe there, and under a seeded
+fault it repeats, delays or reorders events. So each reader is tested
+against what S3 does rather than a tidier store, and one contract suite
+holds both adapters to the same rules.
+
+The price is four things.
+
+1. An EventBridge rule for each reader's prefix and an SQS queue for each
+   component, in each environment, kept in step with the table by
+   generating them from it, and a drill that deletes one rule and expects
+   the deadline alarm.
+2. A held receive's requests, about three a minute for each waiting worker.
+3. S3's delivery delay added to each step of a decision. A decision passes
+   through about five steps, so a slow day that delays each by a minute
+   can push the 15:40 decision past the 15:48 cutoff, where execution
+   journals its orders `Abandoned` rather than sending them late. The delay
+   is measured on paper before live.
+4. Deadlines long enough to cover delivery's slow tail, or a healthy
+   decision alarms.
+
+What no route gives is a reader that sees a change the instant it is
+written, which is why nothing that changes money rests on an event.
 
 ### A worker works through a span of decisions
 
@@ -663,7 +682,7 @@ guards against a hung process rather than shaping what a strategy sees.
 Execution's send stage reads it before every send, to check the cutoff for
 the strategy's orders, as `### Strategies, schedules and decisions` says.
 Under the history clock that reading is the decision time, so a backtest
-never meets the cutoff, and a drill sets a test clock past it instead. Apart from those places, a worker reads wall time only to key its heartbeat and, in execution and monitoring, to run the timed checks of `### How a component learns of a change`, none of which shapes what a strategy sees. Otherwise the workers move on only when messages arrive.
+never meets the cutoff, and a drill sets a test clock past it instead. Apart from those places, a worker reads wall time only to key its heartbeat and, in execution and monitoring, to set the deadlines of `### How a component learns of a change`, none of which shapes what a strategy sees. Otherwise the workers move on only when messages arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
 halts again if its cause is still there. A failure stops the whole run.
@@ -797,8 +816,7 @@ Five rules keep a day of decisions safe.
       the gate refuses the order that would repair a stranded leg, leaving
       that cap the only bound.
       1. **A stress move sets the cap.** One leg's stress move is derived from
-         a recorded data vintage by a calculation anyone can rerun, over at
-         least a weekend's hold. `max_net` is sized so one leg's loss under
+         a recorded data vintage by a calculation anyone can rerun, over at least a weekend's hold. The owner ruled on 2026-10-31 to read every alert before the next trading day's decision, about 24 hours on a trading day and never longer than a weekend, which is the hold this window covers. `max_net` is sized so one leg's loss under
          that move fits the share of the loss limit the owner sets. The hard
          caps blob stores the stress move beside the cap, with the hash of
          the vintage it came from.
@@ -917,11 +935,11 @@ glossing it.
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
 | **stage** | One step a component takes in a decision. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
 | **decision result** | The blob a stage writes last for a decision, at a key fixed by the run, the stage and the decision, listing its output files by key and SHA-256 or saying the decision halted. One key, so a stage ends each decision exactly once |
-| **event** | The arrival of a decision result, which a message on a queue announces |
+| **event** | The store's announcement that a blob was created or deleted, which reaches the queue of every component that reads it. An event is a hint, and the blob is the record |
 | **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
-| **queue** | The one place a worker listens for notice of something new. The message only says something is new, and the blobs stay the record |
-| **supervisor** | The process that takes the deployment's lease, writes a run's plan and messages every worker, reads the workers' heartbeats, checks the kill switch on a timer, writes a halt as a worker's result when the worker fails, and stores and messages a halt of the run on such a failure. It starts, stops and watches no process, and keeps no state outside storage |
+| **queue** | The one place a worker listens for events: SQS in shadow, paper and live, and a named pipe in a backtest and in CI. A worker waits on it with a held receive and never reads storage on a clock |
+| **supervisor** | The process that takes the deployment's lease, writes a run's plan, whose event reaches every worker, hears the workers' heartbeats and the kill switch as events, sets a deadline for every decision and stage, writes a halt as a worker's result when the worker fails, and stores a halt of the run on such a failure, whose event reaches every worker. It starts, stops and watches no process, and keeps no state outside storage |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues and error output, none of which is kept |
 | **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, except on a live account, where only the owner does, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
@@ -989,7 +1007,8 @@ once rather than re-argued.
 | Litestream, streaming SQLite to S3 | It copies each write about a second after it lands, so a lost VM lost rows that no blob could rebuild, among them halts. It also needs to delete in the bucket, and two copies streaming to one path can leave the copy impossible to restore. A review found all three, and the owner made S3 the record instead |
 | A JSON Lines file per log | It reads with `cat`, but a crash partway through an append tears a line, and a review found that a writer appending after a torn line hid every event after it, a journal entry among them. Every write is now a blob that S3 creates whole or not at all |
 | A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about nine events a decision on one VM |
-| A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, which needs no dependency, and only execution, the supervisor and monitoring also check keys on a timer, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. The price is that each writer sends a message to every reader of its outputs, which one table in `runtime` wires |
+| A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, and on 2026-10-31 that S3's own events feed it, with no polling, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. Watching a local folder sees nothing written in S3. The price is an EventBridge rule for each reader's prefix, generated from one table in `runtime` |
+| A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
