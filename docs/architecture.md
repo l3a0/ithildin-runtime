@@ -2233,9 +2233,7 @@ design, one read-only grant lets the promotion job judge shadow, and rule 11
 names what the shared AWS account still allows. The rest of this subsection
 is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-Hard limit 6, in CLAUDE.md and in the charter, still says deploying is the
-owner's. The automatic deploys to shadow and paper wait on the owner
-rewording it, because this doc cannot change either file.
+The owner reworded hard limit 6, in CLAUDE.md and in the charter, the same day to match: merging to `main` is the owner's, a merge deploys to shadow and, once shadow is healthy, to paper, and deploying to live is the owner's, by hand.
 
 An environment is a set of resources: a machine, a bucket, roles, a broker
 credential, a heartbeat check and a release pin. Shadow, paper and live each

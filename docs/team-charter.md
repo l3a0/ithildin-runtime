@@ -65,7 +65,7 @@ These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.m
 3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
-6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
+6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper, as the owner ruled on 2026-10-30. Deploying to live is the owner's, by hand.
 
 ## The product, as the book draws it
 
@@ -94,8 +94,7 @@ alpha models and the research platform are what the team builds with care.
 ### The owner (human)
 
 Product owner and the only person who can put capital at risk. Sets the order
-of the backlog, rules on questions an issue reserves, merges, deploys, and
-switches anything to live. The owner's time is the scarce resource, so work
+of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner's time is the scarce resource, so work
 reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
