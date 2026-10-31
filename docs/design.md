@@ -493,7 +493,7 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order the platform stamped, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order it stamped through the order path, and alarms if a cancel fails. `ithildin switch pull` also puts an event of its own onto the bus, whose rule delivers it to execution's queue, which does not wait on S3's delivery, and reads the journal once at a deadline before the cancel cutoff. Either event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, so nothing bounds how late a pull reaches resting orders if both events are slow, which this doc puts to the owner. A
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order the platform stamped, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order it stamped through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
     starting execution takes the account's lease and then checks the switch
     before anything else, as rule 9's fifth item says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
@@ -744,19 +744,23 @@ A failure of the event path itself is caught three ways.
    the heartbeat service's dead-man check, which sits outside AWS, raises
    it.
 
-**The kill switch reaches execution two ways.** `ithildin switch pull`, the
-one supported way to pull it, writes the switch blob, whose S3 event reaches
-execution, the supervisor and monitoring. It also puts one event of its own
-straight onto the bus for execution's queue, which does not wait on S3's
-delivery. The rule for that event matches its own source, and a forged one
-only makes execution read the switch blob, which it then finds absent. The
-tool then reads the journal once at a deadline set before the cancel
-cutoff, and if execution's "cancels done" entry is not there, it tells the
-person to cancel at the broker's own console while the broker still takes
-cancels. Execution also reads the switch right before every broker call and
-when it starts, as rule 9 says. With no read on a clock, nothing bounds how
-late a pull reaches orders already resting if both events are slow, which
-is a question this doc puts to the owner.
+**The kill switch reaches execution two ways.** The owner ruled on
+2026-10-31 that components wait only by long polling their queues, and
+that a pull writes the switch blob and sends a message straight to
+execution and to any other component that needs to know at once.
+`ithildin switch pull`, the one supported way to pull it, writes the switch
+blob and journals the pull, then sends that message to the SQS queues of
+execution, the supervisor and monitoring, so the pull waits on neither S3
+nor EventBridge. The blob's own S3 event follows as a backup. A forged
+message only makes a component read the switch blob, which it then finds
+absent. The tool then reads the journal once at a deadline set before the
+cancel cutoff, and if execution's "cancels done" entry is not there, it
+tells the person to cancel at the broker's own console while the broker
+still takes cancels. Execution also reads the switch right before every
+broker call and when it starts, as rule 9 says. No component reads the
+switch on a clock, so a pull whose message and event both fail is bounded
+only by the tool's warning, which the owner accepted the same day, with the
+message's delivery time measured on paper before live.
 
 **The same events in a backtest and in CI.** The memory-backed folder
 adapter plays S3's part from the same routes. After each write it delivers
@@ -791,7 +795,7 @@ The price is six things.
 4. Deadlines and heartbeat limits long enough to cover delivery's slow tail,
    or a healthy decision alarms, and the dead-man check's grace above them.
 5. A pull's delivery delay against the cancel cutoff, bounded only by the
-   tool's own event and its deadline.
+   tool's own message and its deadline, which the owner accepted on 2026-10-31.
 6. A second implementation of delivery in the folder adapter, held to S3's
    behaviour only as far as the contract suite reaches.
 
