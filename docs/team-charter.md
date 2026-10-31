@@ -183,7 +183,7 @@ reaches the owner already reviewed.
   Rolls shadow and paper back with `ithildin pin set`, recorded with who and why (owner, 2026-10-30). Clears a paper or shadow account's halt, kill switch and lease, journaled,
   which the owner can do too, and may pull any account's kill switch. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
-  live account's override (owner, 2026-10-30).
+  live account's override (owner, 2026-10-30). The owner runs every drill on live, and no agent does (owner, 2026-10-31).
 - **Vetoes:** a deploy without a rollback, and an alarm nobody has seen fire in
   a drill. An alarm reads zero while it is healthy, so count the cycles it
   watched rather than the times it fired.

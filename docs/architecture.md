@@ -2376,8 +2376,7 @@ Eleven rules keep the environments apart.
     and expects "access denied" every time. It also checks five more things.
     1. Each environment's monitoring role and VM role read their own ping
       addresses, and every other role is refused.
-    2. The operator's credential is refused every broker key, every live
-      write it is not granted, and `ssm:SendCommand` on every runtime VM.
+    2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the one live write that role holds by pulling the switch while no session runs, and clears it.
     3. A deploy role is refused every key but its pin.
     4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
     5. A pin moved mid-session leaves a restarted worker on the session's
