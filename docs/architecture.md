@@ -2220,8 +2220,7 @@ The owner ruled on 2026-10-30 that test, shadow, paper and live run in
 separate environments. The same day the owner ruled that GitHub's CI is the
 test environment, that a merge to `main` deploys to shadow, and that a
 healthy shadow then deploys to paper. The owner's words ended "and then
-live". This doc reads that last step as the owner's own, by hand, which hard
-limit 1 requires, and asks the owner to confirm the reading on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+live". The owner confirmed the same day that the last step is the owner's own, by hand, which hard limit 1 requires.
 
 Before those rulings, this doc kept the modes apart inside one VM and one
 bucket, by key prefix and by the account a lease names. So one wrong role or
