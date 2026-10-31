@@ -2445,7 +2445,7 @@ Each question says what was recommended and how the owner ruled.
     market-on-close orders, so the fill lands on the close the backtest fills
     at. Two evening choices were turned down: deciding on the official daily
     bar, which arrives a session later and fills two nights after the signal,
-    and deciding on marketlake's captured 16:15 close, which fills at the next open, one night after the signal. 
+    and deciding on marketlake's captured 16:15 close, which fills at the next open, one night after the signal.
 
     This doc proposes the times. Alpaca's order documentation says
     market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
