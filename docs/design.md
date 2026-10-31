@@ -745,8 +745,7 @@ Five rules keep a day of decisions safe.
    left resting is neither sent again nor left out of a limit.
 4. **The dead-man check follows the schedule.** Monitoring pings after each
    decision's report, and the heartbeat service's check runs on the
-   deployment's schedule, a check by cron expression in the exchange's time
-   zone, with a grace period of the longest chain of worker deadlines. On a
+   deployment's schedule, a check by cron expression on the exchange's clock, the one external schedule not written in UTC, as architecture.md's `### File formats and keys` says, with a grace period of the longest chain of worker deadlines. On a
    market holiday the supervisor writes a plan with no decisions, and
    monitoring pings anyway. A period set to the longest gap between decisions
    would span a long weekend, so a run that died on a Tuesday would go
@@ -756,7 +755,7 @@ Five rules keep a day of decisions safe.
    that the skeleton trades the close with market-on-close orders, which
    Alpaca rejects after 15:50. The cutoff belongs to the broker account,
    because it is the broker's rule: the hard caps blob of the paper account
-   holds 15:48 America/New_York on the decision's own session date, and a
+   holds 15:48 on the exchange's clock, which the calendar function in `core` turns into a UTC instant on the decision's own session date, and a
    simulated account's holds the close itself. A strategy can set an earlier
    cutoff and never a later one. The cutoff applies to market-on-close orders
    only, so a market order sent at another time, such as the shadow run on
@@ -927,7 +926,7 @@ glossing it.
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's queues and error output, none of which is kept |
 | **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, except on a live account, where only the owner does, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
-| **decision** | One moment at which a deployment decides, keyed by its time in the exchange's time zone. Every stage writes one result per decision |
+| **decision** | One moment at which a deployment decides, keyed by its time in UTC, as the owner ruled on 2026-10-30. Every stage writes one result per decision |
 | **strategy** | The instruments, schedule, data needs, alpha model and configuration that differ from one way of trading to the next. Every other module is shared by all strategies |
 | **schedule** | A strategy's list of decision times on each trading day. One function in `core` turns the schedules and the trading calendar into a plan's decisions |
 | **environment** | A set of resources one of test, shadow, paper and live runs on: a machine, a bucket, roles, a broker credential, a heartbeat check and a release pin. Shadow, paper and live each run the mode of the same name. Test is GitHub's CI, which runs backtest mode among its checks |

@@ -1438,8 +1438,7 @@ Eight choices in the two diagrams for a reviewer to check.
    The `Constraints` come from the risk model's constraints file, so the order
    path first checks that every field of that file and every hard cap in the
    hard caps blob only the owner can write is present, finite and of the sign the field expects, and
-   halts otherwise. `moc_cutoff` must be a time in the exchange's time zone,
-   applied on the decision's own session date. Then it takes the tighter of
+   halts otherwise. `moc_cutoff` is a time on the exchange's clock, which the calendar function in `core` turns into a UTC instant on the decision's own session date, and the gate compares only that instant. Then it takes the tighter of
    each pair: the smaller maximum, the smaller loss for the loss stop, and
    the earlier cutoff. The gate also refuses a market-on-close order past the cutoff, at the time execution hands it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as design.md's `### Strategies, schedules and decisions` rule 5 says. A constraints file can
    tighten a limit and never loosen it. This is a proposal for
@@ -1801,11 +1800,7 @@ rules of its own for numbers, times and empty fields.
    such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a
    bar's volume, are JSON integers. Share counts are decimals, because the
    GLD leg is fractional.
-4. Times are strings in RFC 3339 with an offset. A decision's time is in the
-   exchange's time zone, as the vocabulary keys it, such as
-   `"2026-11-02T15:40:00.000000-05:00"`, and every other time the platform
-   writes is in UTC with six fractional digits, truncated, such as
-   `"2026-11-02T20:40:01.123456Z"`. A session date is `"2026-11-02"`.
+4. Every time is UTC, as the owner ruled on 2026-10-30, written in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
 5. A field with no value is `null`, never left out, so a reader can tell an
    empty field from a format that lacks it. A list keeps its order when the
    order means something, such as a plan's decisions, and is sorted by its
@@ -1820,8 +1815,16 @@ time received from outside. The journal and the snapshot are the only
 records of what the broker and the market said, so a rounded copy would
 lose a value that cannot be recaptured: at four places, a leftover
 position of `0.00004` would record as zero, and the book replayed from
-rounded fills would drift from the broker's. A received value with more
-places than its field declares is flagged in the record, never rounded.
+rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded.
+
+**Three rules are stated on the exchange's clock, and resolved to UTC once.**
+A strategy's schedule, such as the 15:40 decision, Alpaca's market-on-close
+cutoff, which Alpaca states as 15:50 Eastern, and the heartbeat check's cron
+expression all follow New York's clock, because the market does. A rule
+written in UTC would move by an hour against the close each time the clocks
+change. So each is written as the exchange's local time, and one calendar
+function in `core` turns it into a UTC instant for each session. The plan,
+every key, every stored time and every check hold only that instant.
 
 **A value the platform computes is rounded once, in one place.** The types
 in `core` hold `Decimal`. A statistic, such as the alpha model's hedge
@@ -1898,9 +1901,7 @@ writer's, alarms, as `### Every alarm and its drill` lists.
 
 `<run>` is the session date in shadow, paper and live, and the span's first
 and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by
-one function in `core`. `<decision>` is the decision's time in the
-exchange's zone in the compact form `20261102T154000-0500`, and `<UTC time>`
-is `20261102T204001.123456Z`, so each sorts in order. `<boot>` is the boot id
+one function in `core`. `<decision>` is the decision's UTC time in the compact form `20261102T204000Z`, and `<UTC time>` is `20261102T204001.123456Z`, so each sorts in order. `<boot>` is the boot id
 of the VM that wrote the record, so a replacement VM whose restart count
 starts again never meets an earlier record's key. A halt's id is the key of
 the result that holds it, `<deployment>/<run>/<decision>/<stage>`. Twelve
@@ -2626,7 +2627,7 @@ accepted.
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11, with AWS's managed key ruled fine. The key's path, the grant to the execution user and the refusals for broad readers are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |
 | The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the runtime turns the segments into quote rows itself with marketlake's package. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
 | A supervisor that writes the plan, messages every worker and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt, and on 2026-10-30 that only the owner clears a live account's | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
-| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in RFC 3339 with their offset, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | Reconciling inside execution, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
