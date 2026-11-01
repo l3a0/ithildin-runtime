@@ -9,12 +9,12 @@ doc draws those shared pieces now, while disagreeing with them costs an edit.
 Slice 1 is the walking skeleton on
 [#4](https://github.com/l3a0/ithildin-runtime/issues/4): the first version of
 the platform in which every module exists in its simplest form and one
-strategy runs end to end, every trading day, in shadow mode: it decides on
-live data and fills every order in the platform's own simulated broker. The
-owner ruled on 2026-10-29 that the paper account, a practice account at a
-broker that trades with no real money, waits until [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s reopening
-condition. So this doc designs paper's environment without slice 1 building
-it. Each
+strategy runs end to end, every trading day, in shadow mode and on Alpaca's
+paper account. Shadow decides on live data and fills every order in the
+platform's own simulated broker. Paper, a practice account at a broker that
+trades with no real money, sends the same decisions to Alpaca. The owner
+ruled on 2026-10-29 that the paper account waited, and on 2026-11-01 that
+paper is part of slice 1. Each
 module issue, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), still decides what
 its module must do. Where this doc and an issue disagree, the issue wins.
@@ -264,7 +264,7 @@ close. That is the timing gap item 1 of
 `## How the four acceptance tests exercise it` names, which shadow running
 measures.
 
-In slice 1 it sends no order to any broker, because shadow fills every order in the simulator. Once [#10](https://github.com/l3a0/ithildin-runtime/issues/10) reopens paper, orders go to one place, Alpaca's paper account.
+It sends orders to one place, Alpaca's paper account, which the owner ruled into slice 1 on 2026-11-01. Shadow fills its own orders in the simulator, so they reach no broker.
 
 Two switches come from outside the loop.
 
@@ -2145,7 +2145,8 @@ Ten rules hold the deployment to the premise and the hard limits.
 
    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
    holds marketlake's side, which was deferred on 2026-10-30 because slice 1
-   reads no broker credential. So no broker key enters Parameter Store until
+   then read no broker credential. With paper in slice 1 since 2026-11-01, it
+   is on slice 1's path. No broker key enters Parameter Store until
    that issue's narrowing and refusals are applied and item 6's drill returns
    "access denied" for every role. What remains needs the owner's approval or the
    owner's own credential. An approved apply can edit a role's refusal,
@@ -2496,8 +2497,8 @@ Eleven rules keep the environments apart.
     account per environment would rule out, and rule 10's drill is what
     catches one.
 
-The price is a VM per running environment: one for slice 1, which runs in
-shadow, two once [#10](https://github.com/l3a0/ithildin-runtime/issues/10) reopens paper, and three once live exists, as
+The price is a VM per running environment: two for slice 1, shadow and
+paper, and three once live exists, as
 question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy and promotion jobs hold
@@ -2584,7 +2585,7 @@ new arrow.
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
 | 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected. The restart kills a worker mid-run, and the host brings execution up before data | The orders on each day, and a halt with no orders on each faulted day |
 | 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, a replacement whose old order fills during its cancel, the import rule test, and the fake broker | Seven refusals, the pair's, a replacement cut by a fill that raced its cancel, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
-| 4. The kill switch and the dead-man check fire in a drill | Shadow, drill, and paper once [#10](https://github.com/l3a0/ithildin-runtime/issues/10) reopens it | Set the switch before a run, pull it five minutes after a decision with a platform order and an order the platform did not send both resting, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", a journaled cancel for each resting order and a "cancels done" entry, and a dead-man alarm delivered |
+| 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, pull it five minutes after a decision with a platform order and an order the platform did not send both resting, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", a journaled cancel for each resting order and a "cancels done" entry, and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
 Chan's script assumes. The owner ruled on question 10 that the paper run
@@ -3004,14 +3005,7 @@ Each question says what was recommended and how the owner ruled.
     The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
     on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gives shadow and paper a VM each in slice 1, and one more for live, as `### Four environments` says, which doubles the patching the VM recommendation weighed for slice 1.
 
-Two things still wait on the owner.
-
-1. **Whether paper is part of slice 1.** [#4](https://github.com/l3a0/ithildin-runtime/issues/4) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) say slice 1
-   runs in shadow and that the paper account waits for [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s
-   reopening condition, while the owner's rulings of 2026-10-30 chose Alpaca
-   for paper and a merge that reaches paper through a healthy shadow. This
-   doc follows the issues, which win until the owner says otherwise, and
-   designs paper's environment without slice 1 building it.
-2. **The share of the venture's loss limit one stranded leg may take**,
-   which sizes `max_net`, the cap on the account's net exposure, when
-   [#7](https://github.com/l3a0/ithildin-runtime/issues/7) is built.
+One thing still waits on the owner: the share of the venture's loss limit
+one stranded leg may take, which sizes `max_net`, the cap on the account's
+net exposure, when [#7](https://github.com/l3a0/ithildin-runtime/issues/7) is built. The owner ruled on 2026-11-01 that
+paper is part of slice 1, which the issues and this doc had deferred.
