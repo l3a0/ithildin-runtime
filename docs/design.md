@@ -1100,7 +1100,9 @@ Five rules keep a day of decisions safe.
          ruled on 2026-11-01 that the loss limit is the account's portfolio
          value, so the cap follows the account rather than a fixed figure.
          `max_net` is s × V ÷ m, where s is the share, V the portfolio value
-         and m one leg's stress move as a fraction. The hard caps blob stores s and m, with the hash
+         and m one leg's stress move as a fraction. The owner set s at 1% the
+         same day, so one stranded leg's loss under the stress move is 1% of
+         the portfolio, and a hundred such losses in a row would exhaust it. The hard caps blob stores s and m, with the hash
          of the vintage m came from, and the gate computes the cap at each
          decision. V is the account's valuation at the prior session's
          official closes, which the loss stop already stores, so the cap

@@ -32,7 +32,7 @@ The owner's part in reviewing this doc is two sections at the end.
 
 1. [Decisions](#decisions), a table where each row says what this doc chose, what it
    turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depended on, each with what was recommended and how the owner ruled. The owner has answered all twelve, and the section ends with what still waits on the owner.
+2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depended on, each with what was recommended and how the owner ruled. The owner has answered all twelve, and the section ends by saying nothing in the design waits on the owner.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
 what it shows and what to look for. Nothing here is built yet.
@@ -3005,9 +3005,12 @@ Each question says what was recommended and how the owner ruled.
     The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
     on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gives shadow and paper a VM each in slice 1, and one more for live, as `### Four environments` says, which doubles the patching the VM recommendation weighed for slice 1.
 
-One thing still waits on the owner: the share s of the loss limit one
-stranded leg may take, which sizes `max_net`, the cap on the account's net
-exposure, when [#7](https://github.com/l3a0/ithildin-runtime/issues/7) is built. The owner ruled on 2026-11-01 that the
-loss limit is the account's portfolio value, as design.md's
-`### Strategies, schedules and decisions` rule 5 says. The owner ruled on 2026-11-01 that
-paper is part of slice 1, which the issues and this doc had deferred.
+Nothing in the design waits on the owner. The last two items were ruled on
+2026-11-01.
+
+1. Paper is part of slice 1, which the issues and this doc had deferred.
+2. `max_net`, the cap on the account's net exposure, is s × V ÷ m with the
+   loss limit V the account's portfolio value and the share s at 1%, so one
+   stranded leg's loss under the stress move is 1% of the portfolio, as
+   design.md's `### Strategies, schedules and decisions` rule 5 says.
+   [#7](https://github.com/l3a0/ithildin-runtime/issues/7) builds it.
