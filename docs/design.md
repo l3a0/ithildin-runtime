@@ -221,8 +221,8 @@ apply it.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
    fills made at the start of execution's send stage, as rule 9 says, and,
    just before the broker call, on the kill switch, the run's halt, its own send-stage result key, the account's lease's tag and the cutoff, as rule 9's fourth item says.
-4. **Every lease** is fetched before it is taken, and one another VM holds is
-   resolved by a person, as rule 9 says.
+4. **Every lease** is fetched before it is taken, and one another VM holds
+   is taken over only once it has expired unrenewed, as rule 9 says.
 5. **Every read of marketlake** fetches the manifest entry before the data it
    names, and a checksum that differs halts, as rule 8 of architecture.md's `## Where it runs` says.
 
@@ -238,12 +238,26 @@ Ten rules make the blobs something a worker can trust.
    runs', the journal's and the simulated accounts' prefixes that lacks the
    condition, and any delete there. It refuses the runtime's principals the
    same on the leases' and the switch's prefixes, which keep the delete
-   rules of rules 9 and 10. The bucket keeps every version, so the rule
+   rules of rules 9 and 10, except that a lease may also be rewritten with
+   `If-Match` on its current tag, which is how it is renewed and taken over. The bucket keeps every version, so the rule
    holds even against a bug in the runtime's own code or a person's
    mistake. A plain delete leaves a delete marker, and a create-only write
    can then land on the same key, so an S3 delete event under the journal's
    prefix alarms, and replay lists versions and halts on a journal key with
-   a delete marker or a second version. A deterministic component's header
+   a delete marker or a second version. The owner ruled on 2026-11-01 for
+   S3 Object Lock now. Each environment's bucket is created with Object
+   Lock enabled, and every object under the journal's and the runs'
+   prefixes is written with a retention date of its own, in compliance mode
+   on live, which nobody can shorten or delete through, the account's root
+   user included, and in governance mode on pre-live, which the owner alone
+   may bypass. Heartbeats and leases carry no lock, so their lifecycle and
+   deletes still work. The bucket carries OpenTofu's `prevent_destroy`, and
+   a test pins its lifecycle rules to the heartbeats' prefix alone. Before
+   live, the live journal is also replicated to a bucket in a second AWS
+   account with Object Lock of its own, as the owner ruled the same day,
+   because Object Lock cannot outlive the account that holds it. The
+   retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
+   live gate. A deterministic component's header
    carries no clock time, so two runs of the same step on the same inputs
    write the same bytes. A capture, meaning data's snapshot and execution's
    account file, and every journal entry carry the time the source was read or
@@ -292,7 +306,7 @@ Ten rules make the blobs something a worker can trust.
    by the memory-backed folder adapter with the same events. One table in
    `runtime` is the only place a worker's inputs are declared. Each worker's
    entry point hands it its inputs from that table, and the rules and pipes that feed each queue are generated from routes one function in `runtime` builds from the same table, so no writer
-   sends anything beyond its write, except `ithildin switch pull`, whose message goes straight to three queues as `### How a component learns of a change` says. An event names the blob its reader
+   sends anything beyond its write. An event names the blob its reader
    should read: a decision result, the plan, the run's halt or stop, or the
    kill switch. A starting worker drains its queue and then checks its keys
    once, so nothing written while it was down goes unread. A woken worker
@@ -372,7 +386,7 @@ Ten rules make the blobs something a worker can trust.
      [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and drills
      cover a halted day followed by a dead VM, two reasons in one run, and a
      fault that persists into a second day, each expecting its push. Alarms
-     raised before monitoring runs, such as a lease another VM holds, a pin
+     raised before monitoring runs, such as a lease taken over from another VM, a pin
      the VM does not trust, a drill not clean, or the plan's own event not
      received, go out on the host's direct route, the one the `OnFailure`
      handler uses, with the reason as the body.
@@ -386,8 +400,12 @@ Ten rules make the blobs something a worker can trust.
      and the operator acts on paper and shadow accounts, plus pulling a live
      account's switch. A halt is open until a later decision of the same
      deployment succeeds or a person clears it. A halt for a book that
-     disagrees with the broker, an order the platform did not send, or a
-     lease another VM holds stays open until a person clears it. `ithildin
+     disagrees with the broker, or an order the platform did not send, stays
+     open until a person clears it. On a live account every halt holds the
+     account until the owner clears it, as the owner ruled on 2026-11-01:
+     each later decision halts while the journal holds a live halt that no
+     `ithildin clear` entry names, so no cause that clears itself resumes
+     live trading without the owner. Shadow and paper keep the rule above. `ithildin
      explain` and the alarm's second line say who may clear it: nobody
      needed, the operator or the owner, or the owner alone.
 
@@ -415,13 +433,12 @@ Ten rules make the blobs something a worker can trust.
    stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
 9. **Leases make one VM, and one sender, per account.** A lease is a blob a
    process creates with the condition that it not exist, recording its
-   holder: the VM, its boot, the container and its restart count, the release, the run and when it was created. It is deleted only with a condition naming the tag S3 returned
-   when it was created, so no stale holder deletes a successor's lease. Two
+   holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. Two
    leases matter.
    1. **The deployment's lease.** The supervisor takes it before it writes the
       plan, in every mode, so a replacement VM started while the old one
-      still runs halts and alarms, and its workers, which find no plan under
-      a lease of theirs, wait.
+      still runs waits, and its workers, which find no plan under a lease of
+      theirs, wait with it.
    2. **The account's lease.** The execution worker takes it for its whole
       life, and a second execution worker that would send and cannot take it
       halts.
@@ -430,8 +447,21 @@ Ten rules make the blobs something a worker can trust.
    restart count rather than a process id, which means nothing outside one
    container. A lease whose holder is the same VM on an earlier boot, or a
    container the host shows is gone, is cleared by the next process that
-   needs it, and the clearing is journaled. A stopped heartbeat alone never
-   clears a lease, because a frozen process can wake. A lease held by another VM waits for the owner, or on a paper or shadow account the owner or the operator, who first confirm that VM is gone. The order manager, the
+   needs it, and the clearing is journaled. The owner ruled on 2026-11-01
+   for automatic failover across machines, so a lease another VM holds is
+   taken over once it has gone unrenewed past its expiry and a margin for
+   clock skew, by a conditional write naming the expired lease's tag, which
+   a revived holder's renewal can then never overwrite. The takeover is
+   journaled and alarms. A frozen holder that wakes finds its renewal
+   refused, and stops: its supervisor stops its VM's units, and execution's
+   check of the lease's tag right before every broker call, rule 9's fourth
+   item, refuses its next send. The price is one window. A holder that
+   froze after that check and before its request left can still send that
+   one request after a takeover. The new holder settles it the way it
+   settles any order in doubt, by looking it up, and the gate already
+   counts every open order at its worst case. The lease period, thirty
+   seconds as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), is longer than a renewal's
+   worst delay and shorter than the time a decision can wait. The order manager, the
    risk gate, the journal and the order path all run inside the execution
    worker, because the gate checks each order against every order and
    position in the account's journal just before the order is sent, and a
@@ -540,7 +570,7 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
     starting execution takes the account's lease and then checks the switch
     before anything else, as rule 9's fifth item says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
@@ -812,25 +842,33 @@ A failure of the event path itself is caught three ways.
    the heartbeat service's dead-man check, which sits outside AWS, raises
    it.
 
-**The kill switch reaches execution two ways.** The owner ruled on
-2026-10-31 that components wait only by long polling their queues, and
-that a pull writes the switch blob and sends a message straight to
-execution and to any other component that needs to know at once.
-`ithildin switch pull`, the one supported way to pull it, writes the switch
-blob and journals the pull, then sends that message to the SQS queues of
-execution, the supervisor and monitoring, so the pull waits on neither S3 nor EventBridge. It writes in that order, the blob first, then the journal entry and the alarm, then the message, and the routes send the switch blob's S3 event to the same three queues, as the owner ruled the same day. So a tool that fails after writing the blob and before its message still reaches execution, the supervisor and monitoring, a little later, through that event. A forged
-message only makes a component read the switch blob, which it then finds
-absent. The tool then reads the journal once at a deadline set before the
-cancel cutoff, and if execution's "cancels done" entry is not there, it
-tells the person to cancel at the broker's own console while the broker
-still takes cancels. Execution also reads the switch right before every
-broker call and when it starts, as rule 9 says. No component reads the switch on a clock, as the owner accepted the same day, with the message's delivery time measured on paper before live. If the message and the blob's event both fail, the tool's warning is the bound, and if the tool itself fails after writing the blob, its own failed exit is the only signal, so a person treats a pull with no confirmation as not delivered and cancels at the broker's console. Until then, resting orders stay until execution next wakes or they expire, and their size is what the gate's worst-case count of open orders already allowed. Execution's, the supervisor's and monitoring's queues admit any message the owner's and the operator's roles send, because a queue's policy cannot read a body, so every component treats a message only as a reason to read the blobs it checks anyway.
+**The kill switch reaches execution through its blob's event.** The owner
+ruled on 2026-10-31 that components wait only by long polling their queues,
+and that a pull also sent a message straight to execution, the supervisor
+and monitoring. On 2026-11-01 the owner dropped that message. The supervisor
+cannot cancel anything, because only execution talks to the broker, and the
+switch blob's own S3 event already reaches the queues of execution, the
+supervisor and monitoring, whoever pulled it. `ithildin switch pull`, the
+one supported way to pull it, writes the switch blob, then journals the pull
+and raises the alarm. It then reads the journal once at a deadline set
+before the cancel cutoff, and if execution's "cancels done" entry is not
+there, it tells the person to cancel at the broker's own console while the
+broker still takes cancels. Execution also reads the switch right before
+every submit and when it starts, as rule 9 says, so no new order goes out
+after a pull whatever the event's delay. No component reads the switch on a
+clock, as the owner accepted on 2026-10-31. The price is a pull that waits on
+S3's event delivery, usually seconds and sometimes a minute or longer, so a
+pull in the two minutes between the send cutoff and the cancel cutoff can
+reach execution after the broker stops taking cancels on a slow day. The
+tool's deadline and the broker's console are the bound then. No person's
+role may send to any queue, so every message on a queue is an event from an
+environment's own rule.
 
 **The same events in a backtest and in CI.** The memory-backed folder
 adapter plays S3's part from the same routes. After each write it delivers
 the event to each reader's named pipe, and under a seeded fault it repeats,
 delays by an amount drawn from the delay measured on paper, reorders or
-drops events, and the switch's own message goes straight to the pipes of execution, the supervisor and monitoring. A named pipe keeps nothing while its reader is down, so the
+drops events. A named pipe keeps nothing while its reader is down, so the
 contract suite holds both adapters only to what both guarantee: an event
 can be lost, and a worker recovers by checking its keys. A writer that
 restarts announces its newest result again through the storage port, which
@@ -859,7 +897,8 @@ The price is six things.
 4. Deadlines and heartbeat limits long enough to cover delivery's slow tail,
    or a healthy decision alarms, and the dead-man check's grace above them.
 5. A pull's delivery delay against the cancel cutoff, bounded only by the
-   tool's own message and its deadline, or by the tool's failed exit when the tool itself fails, which the owner accepted on 2026-10-31.
+   tool's deadline and the broker's console, which the owner accepted on
+   2026-11-01 when dropping the pull's direct message.
 6. A second implementation of delivery in the folder adapter, held to S3's
    behaviour only as far as the contract suite reaches.
 
@@ -1184,9 +1223,11 @@ finds it there.
    time contributes, waits for a second strategy. A forecast from an earlier
    decision names the wrong decision, so rule 6 halts on it until that rule
    is written.
-2. **A halt that holds the account until a person clears it**, for every
-   cause but an order the platform did not send, which
-   `### Orders the platform did not send` builds now. Once a day, a
+2. **A halt that holds a shadow or paper account until a person clears
+   it**, for every cause but an order the platform did not send. Slice 1
+   builds the holding halt for that cause, as
+   `### Orders the platform did not send` says, and for every cause on a
+   live account, as rule 7 says. Once a day, a
    persistent cause such as a book that disagrees with the broker halts the
    next decision again, because every decision checks again. A strategy
    deciding minutes apart would meet a gate refusal again before a person
@@ -1339,6 +1380,7 @@ once rather than re-argued.
 | A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about nine events a decision on one VM. SQS and EventBridge, which carry events since 2026-10-31, escape the first reason because an event is only a hint and the blobs stay the record, and an outage of either stops monitoring's pings, which the dead-man check outside AWS raises |
 | A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, and on 2026-10-31 that S3's own events feed it, with no polling, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. Watching a local folder sees nothing written in S3. The price is an EventBridge rule for each reader's prefix, generated from one table in `runtime` |
 | A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
+| A pull's direct message to the queues of execution, the supervisor and monitoring | The owner ruled for it on 2026-10-31 so a pull would not wait on S3's event, and dropped it on 2026-11-01. The supervisor cannot cancel anything, the switch blob's event already reaches the same three queues, and execution checks the switch before every submit. Dropping it removed three queue grants for people's roles, a refusal path in the tool, a fake message in the folder adapter and a drill row |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
 | Hand trades in a platform account, kept apart in an outside book | The owner first ruled on 2026-10-31 that the platform ignores unstamped orders, so the owner could trade the same account by hand, and the doc built an outside book that reconciliation and the gate counted. Later that day the owner gave the platform an account of its own, and on 2026-11-01 ruled that each portfolio has its own account with no hand trading in it. So the outside book went, and an order the platform did not send is journaled as received and halts, as [Orders the platform did not send](#orders-the-platform-did-not-send) says |
@@ -1358,4 +1400,4 @@ once rather than re-argued.
 | Schwab as the live broker | The owner ruled on 2026-10-31 for a Schwab account of the platform's own, then on 2026-11-01 for Alpaca at live too, since the platform's account is separate anyway. Alpaca's paper and live accounts share one API and differ only by base URL and key, so the adapter paper exercises is the one live runs, and Schwab's open questions, a client order id and an API paper account among them, no longer apply |
 | Calling the broker's REST API with an HTTP client passed in, rather than its SDK | The owner ruled on 2026-11-01 to use the broker's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake. The wrapper keeps the SDK's types out of every module, so the import rule still fences the broker to `execution.brokers` |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its task roles and placement have run zero times, while the VM's design is reviewed and its refusals are ruled. Since 2026-10-31 the VM uses the same SQS adapter Fargate would, so the queue no longer separates them. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
-| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, as [architecture.md](architecture.md#four-environments) says |
+| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, and on 2026-11-01 that shadow and paper share one pre-live environment in slice 1 while live keeps its own, as [architecture.md](architecture.md#four-environments) says. Live, where the mistake would cost money, still never shares |
