@@ -1096,9 +1096,19 @@ Five rules keep a day of decisions safe.
       that cap the only bound.
       1. **A stress move sets the cap.** One leg's stress move is derived from
          a recorded data vintage by a calculation anyone can rerun, over at least a weekend's hold. The owner ruled on 2026-10-31 to read every alert before the next trading day's decision, about 24 hours on a trading day and never longer than a weekend, which is the hold this window covers. `max_net` is sized so one leg's loss under
-         that move fits the share of the loss limit the owner sets. The hard
-         caps blob stores the stress move beside the cap, with the hash of
-         the vintage it came from.
+         that move fits the share of the loss limit the owner sets. The owner
+         ruled on 2026-11-01 that the loss limit is the account's portfolio
+         value, so the cap follows the account rather than a fixed figure.
+         `max_net` is s × V ÷ m, where s is the share, V the portfolio value
+         and m one leg's stress move as a fraction. The hard caps blob stores s and m, with the hash
+         of the vintage m came from, and the gate computes the cap at each
+         decision. V is the lower of two valuations: the account's valuation
+         at the prior session's official closes, which the loss stop already
+         stores, and the valuation stored when the owner last wrote the hard
+         caps. So a loss tightens the cap at the next decision, while growth
+         raises it only when the owner writes the hard caps again, because
+         raising a capital limit is the owner's act under hard limit 1. A
+         missing valuation halts, as any missing input does.
       2. **A tally after each close.** Monitoring's report records every
          stranded leg, its overnight profit or loss, and how many sessions it
          stayed open, so the decision to go live rests on measured numbers.
