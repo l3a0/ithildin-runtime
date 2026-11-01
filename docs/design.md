@@ -1102,12 +1102,14 @@ Five rules keep a day of decisions safe.
          `max_net` is s × V ÷ m, where s is the share, V the portfolio value
          and m one leg's stress move as a fraction. The hard caps blob stores s and m, with the hash
          of the vintage m came from, and the gate computes the cap at each
-         decision. V is the lower of two valuations: the account's valuation
-         at the prior session's official closes, which the loss stop already
-         stores, and the valuation stored when the owner last wrote the hard
-         caps. So a loss tightens the cap at the next decision, while growth
-         raises it only when the owner writes the hard caps again, because
-         raising a capital limit is the owner's act under hard limit 1. A
+         decision. V is the account's valuation at the prior session's
+         official closes, which the loss stop already stores, so the cap
+         shrinks after a loss and grows after a gain with no one acting, as
+         the owner ruled on 2026-11-01. The capital limit the owner sets by
+         hand under hard limit 1 is therefore s and m, and only a write of
+         the hard caps changes either. V comes from the book the journal
+         replays, valued at official closes, never from the broker's equity
+         figure, so a broker's reporting error cannot raise the cap. A
          missing valuation halts, as any missing input does.
       2. **A tally after each close.** Monitoring's report records every
          stranded leg, its overnight profit or loss, and how many sessions it
