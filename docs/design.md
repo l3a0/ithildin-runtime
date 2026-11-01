@@ -58,6 +58,17 @@ module table, and three adapters at its edges.
    broker's paper account on paper, and the real account only once the owner
    switches it.
 
+Three more adapters differ by mode but change only where records and
+signals go, never what a strategy sees.
+
+1. **The blob store**, which holds every output and the journal: S3 in
+   shadow, paper and live, and a memory-backed folder in a backtest.
+2. **The queue**, which wakes a worker when something new exists for it:
+   SQS in shadow, paper and live, and a named pipe in a backtest and in CI.
+3. **The alert channel**, which sends in shadow, paper and live and only
+   records in a backtest, so a backtest of 1,480 decisions never pages the
+   owner.
+
 The price is that every module has to be written against an event from its
 first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
@@ -161,7 +172,7 @@ Ten entries define the design's terms.
    from, by key and SHA-256, along with the release commit and a hash of the
    configuration, so the listing is the component's record and each entry in
    it leads back to its inputs.
-8. A **decision** is one moment at which a deployment decides, such as 15:50
+8. A **decision** is one moment at which a deployment decides, such as 15:40
    on one trading day for a daily strategy, or every five minutes through the
    day for a faster one. Its key is the decision time in UTC, written so keys sort in time order. Every stage writes one result
    per decision.
@@ -182,7 +193,7 @@ Three stores sit outside every run, because they outlive any one run.
    stored before the step it records happens, which is how hard limit 4 holds
    through the loss of the VM.
 3. A simulated account's resting orders and positions, one blob per account
-   per decision, which the simulated broker's adapter reads and writes through
+   per call, written before the call returns, which the simulated broker's adapter reads and writes through
    the storage port, so a shadow order still resting when one run ends is
    there in the next.
 
@@ -209,7 +220,7 @@ apply it.
    decides again, and appends after it, as rule 8 says.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
    fills made at the start of execution's send stage, as rule 9 says, and,
-   just before the broker call, on the kill switch, the run's halt, its own send-stage result key and the account's lease's tag, as rule 9's fourth item says.
+   just before the broker call, on the kill switch, the run's halt, its own send-stage result key, the account's lease's tag and the cutoff, as rule 9's fourth item says.
 4. **Every lease** is fetched before it is taken, and one another VM holds is
    resolved by a person, as rule 9 says.
 5. **Every read of marketlake** fetches the manifest entry before the data it
@@ -222,11 +233,17 @@ Ten rules make the blobs something a worker can trust.
    exists, and the blob's SHA-256, which S3 checks before it accepts the blob.
    So a reader never sees half a blob, and no blob is ever replaced. S3
    returns the stored blob's tag and records when it stored it, and the
-   storage port hands both back. The bucket's policy, scoped to the runtime's
-   own principal, refuses any write on the runs', the journal's, the leases'
-   and the switch's prefixes that lacks the condition, and any delete outside
-   the leases, and the bucket keeps every version, so the rule holds even
-   against a bug in the runtime's own code. A deterministic component's header
+   storage port hands both back. The bucket's policy refuses every
+   principal, the owner's and the operator's included, any write on the
+   runs', the journal's and the simulated accounts' prefixes that lacks the
+   condition, and any delete there. It refuses the runtime's principals the
+   same on the leases' and the switch's prefixes, which keep the delete
+   rules of rules 9 and 10. The bucket keeps every version, so the rule
+   holds even against a bug in the runtime's own code or a person's
+   mistake. A plain delete leaves a delete marker, and a create-only write
+   can then land on the same key, so an S3 delete event under the journal's
+   prefix alarms, and replay lists versions and halts on a journal key with
+   a delete marker or a second version. A deterministic component's header
    carries no clock time, so two runs of the same step on the same inputs
    write the same bytes. A capture, meaning data's snapshot and execution's
    account file, and every journal entry carry the time the source was read or
@@ -288,8 +305,8 @@ Ten rules make the blobs something a worker can trust.
    a mismatch. Nothing irreversible rests on an upstream blob alone: execution
    journals the whole target portfolio it acts on, in a journal entry, before
    its first send. Each release writes only formats the release before it can
-   read, so pinning back to an earlier release still reads what storage
-   holds. A worker killed by a signal or a crash writes nothing about itself
+   read, so pinning back to the release before still reads what storage
+   holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
    as it dies. The host that runs it, systemd on the VM today, records the
    exit status or signal and the end of the worker's error output in a file
    of the worker's own when the worker stops, and restarts it. The restarted
@@ -346,9 +363,19 @@ Ten rules make the blobs something a worker can trust.
      through a day of frequent decisions alarms once that day, and once again
      on each later day it persists. Before it alarms, it writes an output file
      naming the halt it is handling, so a restarted monitoring finds that file
-     and neither repeats nor drops an alarm. Every halted decision pings the
-     heartbeat service's failure address, so the owner hears even if the alarm
-     sent from the machine is lost.
+     and neither repeats nor drops an alarm. The dead-man check gets success
+     pings only. healthchecks.io notifies only when a check changes state, so
+     a failure ping to a check already down sends nothing, and a check left
+     down by one halted day would never alarm on a dead VM the next. A halt's
+     alarm therefore goes straight to the alert channel's push topic with its
+     reason, which this doc proposes for
+     [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and drills
+     cover a halted day followed by a dead VM, two reasons in one run, and a
+     fault that persists into a second day, each expecting its push. Alarms
+     raised before monitoring runs, such as a lease another VM holds, a pin
+     the VM does not trust, a drill not clean, or the plan's own event not
+     received, go out on the host's direct route, the one the `OnFailure`
+     handler uses, with the reason as the body.
    - **A halt is final for its decision.** This finality is this doc's choice
      rather than part of the ruling. The owner ruled on 2026-10-29 that the
      owner or the operator clears a halt, with a command that journals who
@@ -357,7 +384,12 @@ Ten rules make the blobs something a worker can trust.
      decision. The owner narrowed it on 2026-10-30: on a live account only
      the owner clears a halt, a switch or a lease, or writes an override,
      and the operator acts on paper and shadow accounts, plus pulling a live
-     account's switch.
+     account's switch. A halt is open until a later decision of the same
+     deployment succeeds or a person clears it. A halt for a book that
+     disagrees with the broker, an order the platform did not send, or a
+     lease another VM holds stays open until a person clears it. `ithildin
+     explain` and the alarm's second line say who may clear it: nobody
+     needed, the operator or the owner, or the owner alone.
 
    Everything the supervisor knows, it reads from storage, so a supervisor
    that crashes and is started again reads the plan, the results and the
@@ -408,7 +440,12 @@ Ten rules make the blobs something a worker can trust.
    worker again is safe everywhere except here, because a sent order cannot be
    unsent. So execution sends an order only when the journal holds no
    `sending` entry for its client order id, and asks the broker about any
-   order in doubt by that id, never by sending again. Five more rules keep a
+   order in doubt by that id, never by sending again. A request sent just
+   before a crash can still reach the broker after the first lookup, so a
+   lookup that finds nothing leaves the order `InDoubt`, counted by the gate
+   at its worst case, until its time in force has run out. Only then is it
+   journaled `Lost`. The broker client's total request timeout is shorter
+   than the wait before the first lookup. Five more rules keep a
    rerun from doubling anything.
    1. Execution journals each fill under the broker's own fill id, and skips
       a fill whose id is already journaled.
@@ -422,14 +459,14 @@ Ten rules make the blobs something a worker can trust.
       holds as open that the broker no longer lists, once a lookup by its
       client order id finds it `Expired`, `Rejected` or cancelled at the close
       as its time in force allows, or cancelled after a journaled cancel of
-      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the broker marks as the account holder's, with a client order id present and without the platform's stamp, is the owner's, placed by hand, and execution journals it as an outside entry and halts, as `### Orders by the platform and orders by hand` says. Any other difference
+      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the journal did not send, including a fill on an order the journal holds as `Lost` or `Abandoned`, is journaled as received and halts, as `### Orders the platform did not send` says. Any other difference
       halts the decision for a person, because the broker moved in a way the
       platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
       whole target portfolio, along with the journal entry it synced through
       and a hash and the time of the broker state it fetched, before its first
       send. A rerun in the same decision never plans again, so an order's
       id never shifts between attempts, and sends nothing more, as item 5
-      says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in that list, as `### Orders by the platform and orders by hand` says, so it is unique across the decisions of a day and the same on every rerun.
+      says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in that list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
    3. Its account file names the journal entry it replayed through, and the
       send stage's sync names the entry it synced through. Before it plans,
       execution halts if an entry that changes the book, and that neither its
@@ -437,15 +474,28 @@ Ten rules make the blobs something a worker can trust.
       A person's override that lands after the sync halts the decision the
       same way before its next send, and applies from the next decision's
       sync.
-   4. **Right before every broker call**, after the order's `sending` entry
-      is stored, execution checks four things: that the kill switch is
-      absent, that no halt of the run is stored, that its own send-stage
-      result key is still empty, and that the account's lease still carries
-      the tag execution got when it took it. Any one failing journals the
+   4. **Right before every submit**, after the order's `sending` entry
+      is stored, execution checks five things.
+      1. The kill switch is absent.
+      2. No halt of the run is stored.
+      3. Its own send-stage result key is still empty.
+      4. The account's lease still carries the tag execution got when it
+         took it.
+      5. The market-on-close cutoff has not passed, for such an order.
+
+      Any one failing journals the
       order `Abandoned`, sends nothing, and halts the decision. So a run the
       supervisor has halted, a switch pulled mid-loop, or a lease another
       execution has taken over stops the next send, even when the message
-      saying so is lost or unread.
+      saying so is lost or unread. A cancel has checks of its own, because
+      the cancels that protect the account run exactly when a switch is set
+      or a halt is stored. The kill switch's cancels, and a restarted
+      execution's cancel of a stranded leg, check only the lease's tag. The
+      cancel that keeps a pair whole checks the lease's tag and the cancel
+      cutoff. A plan's own cancel or replacement checks everything this item
+      lists. A cancel skips the risk gate's limits on purpose: every open
+      order is already counted at its worst case, so a cancel can only lower
+      each counted limit.
    5. **A restarted execution sends nothing more for a decision it was in
       the middle of.** Its first acts on starting are, in order:
       1. Take the account's lease, which it may only once the host shows
@@ -490,12 +540,12 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order it stamped through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. `ithildin switch pull` also sends a message straight to the queues of execution, the supervisor and monitoring, which waits on neither S3 nor EventBridge, and reads the journal once at a deadline before the cancel cutoff. Either the message or the blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
     starting execution takes the account's lease and then checks the switch
     before anything else, as rule 9's fifth item says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
     the lease by a deadline. Execution checks the switch again right before
-    every broker call, as rule 9's fourth item says. When it has cancelled every resting order in the account it journals that the switch's cancels are done, and
+    every broker call, as rule 9's fourth item says. It cancels the union of the orders the journal holds open and the orders the broker lists, so an empty or failed broker answer never reads as nothing to cancel. It journals that the switch's cancels are done only after a fresh read lists none of them and a lookup has settled each journal order the broker no longer lists, and
     monitoring alarms a second time if that entry has not appeared within a
     deadline of the pull, naming the broker's own console as the next step.
     No worker sends an order with the switch set. Monitoring writes the decision's report and says the
@@ -510,66 +560,36 @@ Ten rules make the blobs something a worker can trust.
     create the switch from anywhere, cancel at the broker's own console, and
     journal both as a human override with `ithildin` once back at a computer.
 
-### Orders by the platform and orders by hand
+### Orders the platform did not send
 
-The owner ruled on 2026-10-31 that the platform stamps its orders and
-ignores those that are not stamped, and that it can tell its orders apart by
-strategy. Before the ruling, a fill from an order the owner placed by hand
-at the broker halted the platform, because execution journaled only fills
-whose client order id had a `sending` entry and halted on any other. The
-owner may trade the same account by hand, and that should not stop the
-platform. The rest of this subsection is this doc's proposal for
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+The owner ruled on 2026-10-31 that the platform stamps every order it sends,
+and later that day that at live it trades an account and capital of its own.
+In review comments on [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15)
+on 2026-11-01 the owner went further, in three points.
 
-The owner ruled on 2026-10-31 that the live broker is Schwab, and later
-that day, after a board sitting on hand trades and tax lots, that the
-platform trades an account and capital of its own, separate from the
-accounts the owner trades by hand. So the owner places no hand trades in
-the platform's account, and while none reaches it, the platform's broker
-statement is the strategies' alone. The sorting below stays for a hand
-order that reaches the platform's account anyway. This doc applies the same
-rule to paper, so Alpaca's paper account holds only the platform's orders.
-The owner then ruled the same day on five further steps. The board advised
-the first two, and the review of this ruling found the other three.
+1. One account holds one portfolio, which several strategies may share, and
+   each portfolio has an account of its own.
+2. Nobody trades by hand in a platform account.
+3. The live broker is Alpaca too, since the platform's account is separate
+   anyway, rather than Schwab as the owner ruled on 2026-10-31.
 
-1. No hand trade, in any account, in an instrument a strategy trades,
-   anything substantially identical to it, or an option on it. The wash
-   sale rule of [IRC section 1091](https://www.law.cornell.edu/uscode/text/26/1091)
+So nothing but the platform should ever place an order in its account, and
+the outside book that the 2026-10-31 rulings built for hand orders in a
+shared account is gone. Two of that day's rulings still hold.
+
+1. No hand trade, in any account the owner holds, in an instrument a
+   strategy trades, anything substantially identical to it, or an option on
+   it. The wash sale rule of
+   [IRC section 1091](https://www.law.cornell.edu/uscode/text/26/1091)
    follows the taxpayer rather than the account, and Rev. Rul. 2008-5
    extends it to the taxpayer's IRA.
-2. A standing instruction at Schwab to choose which tax lot each sale
-   closes, called specific lot identification, rather than its default of
-   the oldest lot first.
-3. Execution checks for unstamped orders in the platform's account and
-   halts on one, rather than journaling it as the owner's and going on.
-4. An unstamped order's loss in that account counts toward the daily loss
-   stop, which reverses the owner's earlier ruling of 2026-10-31 that a
-   hand loss does not trigger it.
-5. The kill switch cancels every resting order in that account, stamped or
-   not, which returns to the owner's ruling of 2026-10-29 on question 7.
+2. The platform's account chooses which tax lot each sale closes, called
+   specific lot identification, rather than closing the oldest lot first.
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms that
+   Alpaca's live account offers it.
 
-So an unstamped order still gets an outside entry, which keeps the record,
-and then halts trading and alarms until a person clears the halt.
-
-What the stamp and the sorting below rest on is confirmed only at Alpaca.
-Schwab, the live broker, may differ on six things.
-
-1. Whether its order API takes a client order id at all. Third-party
-   clients of its Trader API, such as the
-   [schwab-sdk](https://docs.rs/schwab-sdk) crate, say it does not.
-2. The id's length limit.
-3. Whether it marks an order as the account holder's.
-4. Whether it refuses a duplicate id.
-5. Whether it finds an order by the client's id.
-6. Its market-on-close entry and cancel cutoffs, and how long its
-   authorization lasts before a person must log in again.
-
-If the first fails, the stamp, rule 9's lookup of an order in doubt, and
-the kill switch's cancel by stamp each need another key at live.
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms these before the live gate. Paper runs at Alpaca because
-Schwab is not known to offer an API paper account, so how the Schwab
-adapter is exercised before live is the owner's, as a step toward live
-trading.
+The rest of this subsection is this doc's proposal for
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 **The stamp is the client order id.** Every order the platform sends
 carries a client order id of the form `ith-<strategy>-<decision>-<n>`: a
@@ -594,74 +614,67 @@ as `### Strategies, schedules and decisions` defers, portfolio construction
 builds one target per strategy and never nets two strategies' wants into
 one order.
 
+**The journal maps the broker's ids to the platform's.** The owner asked on
+2026-11-01 that the platform map the broker's order id to its own client
+order id and track each order's details itself. So execution journals the
+broker's order id with each `Ack`, beside the client order id, the strategy,
+the decision and the order's place in the planned list. Every later call on
+that order, a lookup or a cancel, uses the broker's id the journal holds.
+Alpaca cancels only by its own order id, through `DELETE /v2/orders/{id}`,
+so this is also what its adapter needs. The client order id serves one
+purpose only: settling an order in doubt, which has no journaled ack yet,
+through Alpaca's `GET /v2/orders:by_client_order_id`. A broker that took no
+client order id would lose only that lookup, which its adapter would answer
+another way, such as by listing the account's orders since the send.
+
 **Sorting what the broker reports.** Execution sorts each order and fill by
 the broker's own order id.
 
-1. A fill whose broker order id matches one journaled from the platform's
-   `Ack`, or whose order a lookup finds carrying a stamp, is the
-   platform's, and journals into its strategy's book.
-2. An order or fill is the owner's only when the broker returns a client
-   order id that is present and lacks the prefix, and marks the order as
-   placed by the account holder. Execution journals it as an outside entry,
-   `outside_order` keyed by the broker's order id and `outside_fill` keyed
-   by the broker's fill id, and then halts, as the owner ruled on
-   2026-10-31 once the platform's account held no hand trades. A restarted execution
-   checks a fill id against `fill` and `outside_fill` entries together
-   before it appends.
-3. Anything else halts: a fill whose client order id is absent or
-   unreadable, a stamped order or fill the journal never sent, and an order the broker placed itself, such as a liquidation or an assignment, which the owner ruled on 2026-10-31 must never be quiet, so it halts and alarms. A missing input never reads as a hand trade, which is hard limit 3. Which
-   fields mark an order as the account holder's on Alpaca is for
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) to confirm.
+1. A fill whose broker order id the journal mapped from a platform `Ack`, or
+   whose order a lookup by client order id finds carrying a stamp, is the
+   platform's, and journals into its strategy's book within that order's
+   quantity.
+2. Anything else halts: an order or fill with no stamp, a stamped one the
+   journal never sent, a fill past its order's quantity or on an order the
+   journal holds as `Lost` or `Abandoned`, and an order the broker placed
+   itself, such as a liquidation or an assignment, which the owner ruled on
+   2026-10-31 must never be quiet. Execution first journals what it
+   received, as an `unmatched_order` or `unmatched_fill` entry keyed by the
+   broker's order or fill id, which replay leaves out of every book until a
+   person's `ithildin override` brings it in. So the record of a real
+   account event survives even when the platform did not cause it.
+3. That halt holds the account. Every later decision halts while the
+   journal holds an unmatched entry that no `ithildin clear` entry names.
+   Once such an order has filled, nothing else would make the next decision
+   halt, and it would trade on top of a position nobody explained. This is
+   the one cause for which slice 1 builds the holding halt that
+   `### Strategies, schedules and decisions` otherwise defers, under
+   CLAUDE.md's third exception, a guard whose price is paid by building it
+   late.
 
-**Reconciling, and what the platform still counts.**
+**What reconciling and the gate count.** Monitoring checks each stamped
+order's filled quantity at the broker against the journal's, and the
+broker's position in each instrument against the sum of the strategies'
+books. The risk gate checks every cap against the account, and the daily
+loss stop counts the whole account. The kill switch cancels every resting
+order in the account, a platform order by the broker's id its `Ack`
+journaled and any other by the broker's order id the listing gives, each
+through the order path and journaled first, as the owner ruled on
+2026-10-29 on question 7 and again on 2026-10-31.
 
-1. Each stamped order's filled quantity at the broker must equal the
-   journal's, so a platform fill can never hide in the outside book. Only
-   what is left over in a position counts toward the outside book.
-2. The broker's position in each instrument is checked against the
-   strategies' books plus the outside book, so a hand trade the journal
-   recorded is not a mismatch. A hand position held before the journal
-   began, or moved without a fill, such as by a transfer in or a corporate
-   action, still halts until the owner records an opening outside position
-   with `ithildin override`.
-3. Monitoring alarms when the outside book in an instrument a strategy holds
-   moves against the strategy's position past zero, which is what a
-   liquidation looks like, and its report shows the outside book every
-   decision.
-4. The risk gate checks every account cap but the daily loss stop twice, and an order must pass
-   both: once against the platform's books alone, exactly as before the
-   ruling, and once against the platform's books plus the outside book,
-   with hand orders still resting counted at their worst case. So a hand
-   position can only tighten a limit and never loosen one, and the gate
-   bounds the platform's share of the account rather than the account. The
-   daily loss stop counts the platform's books plus any loss, and never a
-   gain, on the outside book, as the owner ruled later on 2026-10-31,
-   reversing the same day's ruling that a hand loss does not trigger it.
-   Counting the loss alone keeps a hand gain from hiding a platform loss.
-5. The kill switch cancels every resting order in the account, a stamped
-   one by its client order id and an unstamped one by the broker's order
-   id, each through the order path and journaled first. The owner narrowed
-   the ruling of 2026-10-29 on question 7 to stamped orders on 2026-10-31,
-   while hand trades shared the account, and returned to every resting
-   order later that day.
+The price is three things.
 
-The price is four things.
-
-1. A hand order placed in the platform's account by mistake halts trading
-   until a person clears the halt, and a switch pull cancels it with the
-   platform's own.
-2. Before the halt, a stray hand trade can still get a platform order refused, by the gate's
-   second check or by the broker: a wash-trade check against a hand order
-   resting on the other side, a sell that crosses the account's real
-   position through zero, or buying power the hand trade used. A refused
-   leg cancels its pair's partner.
-3. A wash sale can still link a hand trade and a strategy trade for tax if
-   a hand trade breaks the first of the five steps above. With the
-   platform's account its own, and while no hand order reaches it,
-   the broker's cost basis and realised profit and loss are the
-   strategies' alone.
-4. The stamp rests on the owner never typing the prefix into an order by
-   hand, which halts rather than passes if it happens.
+1. An order the platform did not send, a broker's liquidation included,
+   halts trading until a person clears it, even when it turns out harmless.
+2. Each `Ack` entry carries the broker's order id and the order's details,
+   one more mapping replay has to keep right.
+3. The stamp's length limit, whether Alpaca refuses a repeated client order
+   id, which its order reference does not say, and specific lot
+   identification need confirming on Alpaca's live account before the live
+   gate, on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   Nothing in the design rests on that refusal. It is a second line of
+   defence to test, because the platform never resends and settles doubt by
+   lookup.
 
 ### How a component learns of a change
 
@@ -769,8 +782,11 @@ deadlines again from storage, once, as it starts.
 
 1. **The supervisor's deadlines.** When the supervisor hears the event for a
    stage's last needed input, it starts that stage's deadline, as rule 7
-   says, in every mode. When one expires, it reads that result key once, and
-   a result still missing fails the worker, with the halt naming whether the
+   says, in every mode. The event for that stage's result clears the
+   deadline the moment it arrives, so a stage that finishes early is never
+   waited on. Only a deadline whose result event never came expires. Then
+   the supervisor reads that result key once, because the event could have
+   been lost, and a result still missing fails the worker, with the halt naming whether the
    worker's input event was ever received, so a lost event reads differently
    from a hung worker.
 2. **Monitoring's deadlines.** Monitoring starts a deadline on each of the
@@ -894,7 +910,11 @@ The clock adapter is read in three places only. The data worker reads it to
 decide when a decision's snapshot is written, which is as fast as possible
 under the history clock and at the decision time under the wall clock. The
 supervisor reads wall time for deadlines in every mode, because a deadline
-guards against a hung process rather than shaping what a strategy sees.
+guards against a hung process rather than shaping what a strategy sees. It
+reads it through a timer port of its own, always wall time and faked in
+tests, so a deadline never reads the history clock and never bypasses a
+port. The simulator's `clock()` reads the `Clock` handed to it, so a
+backtest never halts on skew between two clocks.
 Execution's send stage reads it before every send, to check the cutoff for
 the strategy's orders, as `### Strategies, schedules and decisions` says.
 Under the history clock that reading is the decision time, so a backtest
@@ -951,8 +971,9 @@ A run in shadow, paper and live is one trading day of one deployment. One
 function in `core` turns the deployment's schedules and the exchange's trading
 calendar into a list of decisions, each with its time and the strategies
 deciding at it. The supervisor calls it for one day, and a backtest calls it
-for the whole span, so both build their plans the same way, and an early close
-drops the decision times after it. The host starts every unit of the run
+for the whole span, so both build their plans the same way. A decision time
+stated as minutes before the close moves with an early close, and one stated
+as a clock time after an early close is dropped. The host starts every unit of the run
 before the first decision time. The workers stay up all day and work through the
 decisions as they work through a backtest's span, and the data worker writes
 each decision's snapshot once the wall clock reaches its time. A worker's
@@ -1006,7 +1027,7 @@ Five rules keep a day of decisions safe.
       still go out before the send cutoff, and otherwise leaves the old
       order resting.
    3. **It touches only the strategy's own stamped orders.** A plan never
-      cancels or changes an order placed by hand, or another strategy's,
+      cancels or changes another strategy's order,
       and never after the exchange's or the broker's cancel cutoff, past
       which a market-on-close order stays as sent.
    An open order still wanted as it stands is left resting, so it is
@@ -1015,16 +1036,26 @@ Five rules keep a day of decisions safe.
    decision's report, and the heartbeat service's check runs on the
    deployment's schedule, a check by cron expression on the exchange's clock, one of the rules stated on the exchange's clock, as architecture.md's `### File formats and keys` says, with a grace period of the longest chain of worker deadlines. On a
    market holiday the supervisor writes a plan with no decisions, and
-   monitoring pings anyway. A period set to the longest gap between decisions
+   monitoring pings anyway, at or after the check's scheduled time, from a
+   ping-only entry the plan carries at that time. healthchecks.io expects a
+   cron check's next ping at the first scheduled time after the last one, so
+   a morning ping on an empty plan would still leave the check expecting
+   one at the decision time. A period set to the longest gap between decisions
    would span a long weekend, so a run that died on a Tuesday would go
    unheard until Saturday.
 5. **Market-on-close orders go out before the broker's cutoff, or not at
    all.** The owner ruled on question 10 of [architecture.md](architecture.md)
    that the skeleton trades the close with market-on-close orders, which
-   Alpaca rejects after 15:50. The cutoff belongs to the broker account,
-   because it is the broker's rule: the hard caps blob of the paper account
-   holds 15:48 on the exchange's clock, which the calendar function in `core` turns into a UTC instant on the decision's own session date, and a
-   simulated account's holds the close itself. A strategy can set an earlier
+   Alpaca rejects when "submitted after 3:50pm", ten minutes before a full
+   day's close. The owner asked on 2026-11-01 for times stated as minutes
+   before the session's close, written close−N, so an early close moves
+   every time with it. The skeleton decides at close−20, which is 15:40 on a
+   full day. The cutoff belongs to the broker account, because it is the
+   broker's rule. This doc recommends close−12, 15:48 on a full day, for the
+   owner to set in the paper account's hard caps blob, and the calendar
+   function in `core` turns it into a UTC instant on the decision's own
+   session date from that day's close. A simulated account's cutoff is the
+   close itself. A strategy can set an earlier
    cutoff and never a later one. The cutoff applies to market-on-close orders
    only, so a market order sent at another time, such as the shadow run on
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at 15:50,
@@ -1043,8 +1074,8 @@ Five rules keep a day of decisions safe.
       reads as "before the cutoff".
    3. **A pair is kept whole while cancels are still taken.** The cancel
       cutoff is the earlier of the broker's and the exchange's cutoff for
-      cancelling a closing-auction order, which this doc takes as 15:50, as
-      architecture.md's kill switch section says. After the order loop, execution
+      cancelling a closing-auction order, which this doc takes as close−10,
+      15:50 on a full day, as architecture.md's kill switch section says. After the order loop, execution
       looks up each leg by its client order id until every leg is accepted or
       the cancel cutoff passes. When one leg is rejected, unsent or past the cutoff while another is accepted, execution cancels the accepted legs, journaling each cancel first. The same holds for a pair whose legs are an order left resting and a replacement: when the replacement is refused, abandoned or past the cutoff, execution cancels the resting leg. When execution crashes with its send stage
       unfinished, the host restarts it within seconds, and the restarted
@@ -1088,7 +1119,47 @@ Five rules keep a day of decisions safe.
 An account belongs to one environment and carries one deployment there, and the supervisor refuses a
 plan whose account another deployment names. Execution, the risk gate, the
 journal and the account's lease therefore stay one per account, and hard limit
-2's single order path holds however many strategies trade. Strategies that share an account share its deployment, and meet in portfolio construction, the place *Inside the Black Box* puts the combining of alpha models. Until how they combine is settled, it builds one target per strategy, as `### Orders by the platform and orders by hand` says.
+2's single order path holds however many strategies trade. Strategies that share an account share its deployment, and meet in portfolio construction, the place *Inside the Black Box* puts the combining of alpha models. Until how they combine is settled, it builds one target per strategy, as `### Orders the platform did not send` says.
+
+**A scale unit per portfolio.** The owner set the shape of scaling out in
+review comments on 2026-11-01, in four points.
+
+1. One account holds one portfolio, which several strategies may share.
+2. One scale unit is a complete set of components, the supervisor and every
+   worker, paired to one portfolio.
+3. The platform scales out by adding portfolios, each a scale unit of its
+   own.
+4. Every component but the supervisor may run as several instances, with a
+   router in front that hands each message to an instance that is free.
+
+The rest of this part is this doc's proposal for
+[#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). For every stage
+but execution's send, the queue is already that router. SQS lets several
+processes long poll one queue at once, hands each message to one of them,
+and hides it from the rest until that one deletes it or its visibility
+timeout runs out, as AWS's
+[visibility timeout page](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html)
+describes. An instance that dies mid-message lets the message return to the
+queue for another. Two instances that both compute one decision write the
+same bytes, which the create-only write and rule 2's comparison turn into
+one result. So a second instance of data, alpha, risk, cost, portfolio
+construction or monitoring needs nothing new.
+
+Execution is the exception, because sends on one account happen one at a
+time. The risk gate checks each order against every order in the account's
+journal just before it goes out, and two instances sending at once would
+each check a book missing the other's order. So the account's lease still
+names one sender. A second execution instance in the same scale unit
+stands by, and takes over only once the host shows the first one's
+container gone, as rule 9 says. Within one portfolio, more execution
+instances buy failover rather than throughput, and throughput comes from
+more portfolios, each sending on its own account. Slice 1 runs one instance
+of each component.
+
+Shadow needs no broker account. Its simulated account lives in the shadow
+environment's bucket, so a shadow deployment can run the same portfolio as
+a paper one without touching paper's account.
 
 Two things wait for the first strategy that needs them. Each is written on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so the next reader
@@ -1099,7 +1170,9 @@ finds it there.
    time contributes, waits for a second strategy. A forecast from an earlier
    decision names the wrong decision, so rule 6 halts on it until that rule
    is written.
-2. **A halt that holds the account until a person clears it.** Once a day, a
+2. **A halt that holds the account until a person clears it**, for every
+   cause but an order the platform did not send, which
+   `### Orders the platform did not send` builds now. Once a day, a
    persistent cause such as a book that disagrees with the broker halts the
    next decision again, because every decision checks again. A strategy
    deciding minutes apart would meet a gate refusal again before a person
@@ -1171,9 +1244,8 @@ glossing it.
 | **vintage** | One series as one source held it on one date, recorded with vendor, symbol, span, that date and which price the series carries, and kept unchanged once written. The term and its rules come from the sibling quantitative-trading repository |
 | **target portfolio** | The positions portfolio construction asks for one strategy. The difference between it and that strategy's own positions and open orders is what execution trades |
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
-| **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of the outside orders and fills the owner placed by hand, written as execution finds them |
+| **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of every order or fill the platform did not send, journaled as received before execution halts on it |
 | **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, which marks the order as the platform's and names its strategy |
-| **outside book** | The positions and resting orders the owner placed by hand on an account the platform trades, journaled from unstamped broker entries and kept apart from every strategy's book. The owner's ruling of 2026-10-31 keeps hand trades out of the platform's account, so it holds only a hand order that arrives there anyway, which halts the platform |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
@@ -1255,7 +1327,7 @@ once rather than re-argued.
 | A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
-| Journaling an unstamped order in the platform's account as the owner's and going on | The owner first ruled on 2026-10-31 that the platform ignores unstamped orders, so the owner could trade the same account by hand. Later that day the owner ruled that the platform's account holds no hand trades, and then that execution halts on an unstamped order there, counts its loss toward the daily loss stop, and cancels it on a switch pull. The outside entry still records it, as [Orders by the platform and orders by hand](#orders-by-the-platform-and-orders-by-hand) says |
+| Hand trades in a platform account, kept apart in an outside book | The owner first ruled on 2026-10-31 that the platform ignores unstamped orders, so the owner could trade the same account by hand, and the doc built an outside book that reconciliation and the gate counted. Later that day the owner gave the platform an account of its own, and on 2026-11-01 ruled that each portfolio has its own account with no hand trading in it. So the outside book went, and an order the platform did not send is journaled as received and halts, as [Orders the platform did not send](#orders-the-platform-did-not-send) says |
 | The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
@@ -1269,5 +1341,7 @@ once rather than re-argued.
 | The template's cross-surface sweep module | Nothing in the repo is regenerated from code yet, and it holds no figure. The board's tab icon is committed as a finished file, per the next row. Take the module from [repo-template](https://github.com/l3a0/repo-template) when the first generated artifact lands |
 | A script that renders the board's tab icon | It reads the owner's brand folder, which lives outside the repo, and it needs Cairo, a dependency nothing else here uses. The icon changes only when the brand does, so `.github/board/favicon.ico` is committed as a finished file and a new icon is a new file. [PR #17](https://github.com/l3a0/ithildin-runtime/pull/17) carries how it was made |
 | Schwab or Interactive Brokers as the paper broker | Schwab is not known to offer an API paper account, and Interactive Brokers' needs a gateway process running beside the platform. The owner ruled on 2026-10-30 for Alpaca's paper account, which is free, has a REST API, and holds a paper key that cannot move money |
+| Schwab as the live broker | The owner ruled on 2026-10-31 for a Schwab account of the platform's own, then on 2026-11-01 for Alpaca at live too, since the platform's account is separate anyway. Alpaca's paper and live accounts share one API and differ only by base URL and key, so the adapter paper exercises is the one live runs, and Schwab's open questions, a client order id and an API paper account among them, no longer apply |
+| Calling the broker's REST API with an HTTP client passed in, rather than its SDK | The owner ruled on 2026-11-01 to use the broker's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake. The wrapper keeps the SDK's types out of every module, so the import rule still fences the broker to `execution.brokers` |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its task roles and placement have run zero times, while the VM's design is reviewed and its refusals are ruled. Since 2026-10-31 the VM uses the same SQS adapter Fargate would, so the queue no longer separates them. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
 | Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, as [architecture.md](architecture.md#four-environments) says |

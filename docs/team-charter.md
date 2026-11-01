@@ -284,17 +284,17 @@ that turns on money, contracts or law goes to the owner under a
 
 ### 5. Release
 
-A strategy moves through gates, and each gate is
+A strategy and a platform version move through gates, and each gate is
 evidence, not elapsed time.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, and the delay of each step's event is measured against the time before the cutoff |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
-The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. The stages above are a strategy's gates. A platform version has its own path: it passes CI, which is the test environment, then runs in shadow, then in paper, and reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
+The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
 
 ### 6. Operate
 

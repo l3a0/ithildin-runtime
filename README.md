@@ -6,8 +6,8 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Nothing is built yet. The first milestone is a walking skeleton that trades on
-paper, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
+Nothing is built yet. The first milestone is a walking skeleton that trades in
+shadow mode, filling every order in its own simulator, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 
 ## Where things live
