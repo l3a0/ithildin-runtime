@@ -439,9 +439,16 @@ Ten rules make the blobs something a worker can trust.
       plan, in every mode, so a replacement VM started while the old one
       still runs waits, and its workers, which find no plan under a lease of
       theirs, wait with it.
-   2. **The account's lease.** The execution worker takes it for its whole
-      life, and a second execution worker that would send and cannot take it
-      halts.
+   2. **The account's lease.** Every execution instance receives from
+      execution's queue, and the owner ruled on 2026-11-01 that an instance
+      holds the account's lease only while it changes the account. It takes
+      the lease before it re-reads the journal for a submit or a cancel, and
+      deletes it once the journal holds the broker's answer or the order's
+      doubt. An instance that needs the lease while another holds it waits,
+      and alarms if it cannot take it by a deadline. A plan of several orders
+      therefore takes the lease once per order, so a pull's cancels, run by
+      whichever instance received the switch's event, wait for at most one
+      order in flight.
 
    A holder record names the VM, its boot, the worker's container and its
    restart count rather than a process id, which means nothing outside one
@@ -510,7 +517,7 @@ Ten rules make the blobs something a worker can trust.
       2. No halt of the run is stored.
       3. Its own send-stage result key is still empty.
       4. The account's lease still carries the tag execution got when it
-         took it.
+         took it for this order.
       5. The market-on-close cutoff has not passed, for such an order.
 
       Any one failing journals the
@@ -519,28 +526,35 @@ Ten rules make the blobs something a worker can trust.
       execution has taken over stops the next send, even when the message
       saying so is lost or unread. A cancel has checks of its own, because
       the cancels that protect the account run exactly when a switch is set
-      or a halt is stored. The kill switch's cancels, and a restarted
-      execution's cancel of a stranded leg, check only the lease's tag. The
+      or a halt is stored. The kill switch's cancels, and the cancel of a
+      stranded leg by an instance taking over a send stage, check only the
+      lease's tag. The
       cancel that keeps a pair whole checks the lease's tag and the cancel
       cutoff. A plan's own cancel or replacement checks everything this item
       lists. A cancel skips the risk gate's limits on purpose: every open
       order is already counted at its worst case, so a cancel can only lower
       each counted limit.
-   5. **A restarted execution sends nothing more for a decision it was in
-      the middle of.** Its first acts on starting are, in order:
-      1. Take the account's lease, which it may only once the host shows
-         its earlier container is gone. Each worker runs under one fixed
-         container name, removed when it stops, so a gone container is a
-         fact the host reports, not a guess from a stopped heartbeat.
-      2. Check the kill switch, and if it is set cancel every resting order in the account, stamped or not, journaling each cancel first.
-      3. For a decision whose send stage has journaled planned orders and no
-         result, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
+   5. **No instance sends more for a send stage whose runner died.** The
+      entry that journals a send stage's planned orders names the instance
+      running it: its VM, boot, container and restart count. Another
+      instance, or the same one restarted, takes that send stage over only
+      once its runner is gone, meaning the host shows the runner's container
+      gone or restarted, or the runner's VM no longer holds the deployment's
+      lease. Each worker runs under one fixed container name, removed when
+      it stops, so a gone container is a fact the host reports, not a guess
+      from a stopped heartbeat. A send stage whose runner is alive is left to
+      it, which also covers SQS handing a second instance a copy of the
+      runner's message. An instance that starts, and one that receives a
+      send stage's event, acts in this order:
+      1. Check the kill switch, and if it is set take the account's lease and cancel every resting order in the account, stamped or not, journaling each cancel first.
+      2. For a send stage that has journaled planned orders and no result,
+         and whose runner is gone, take the account's lease, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
          cancel any accepted leg of a pair whose partner is not accepted,
          before the cancel cutoff, and write a halt as that send stage's
          result. It does this whether or not the supervisor has already
          written a halt there.
-      4. Write its restart record and carry on with the next decision, which
-         plans again from the book.
+      3. Write its restart record, if it restarted, and carry on with the
+         next decision, which plans again from the book.
 
    The gate counts every open order at its worst case, separately for each
    limit: for each limit, an order on the side that makes that limit worse
@@ -570,9 +584,10 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Execution, the one worker that holds the account's lease, then stops sending and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
-    starting execution takes the account's lease and then checks the switch
-    before anything else, as rule 9's fifth item says, so a switch pulled
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Whichever execution instance receives that event takes the account's lease, which waits for at most one order in flight, and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. Every other instance stops sending at its next check of the switch. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
+    starting execution instance checks the switch before anything else, and
+    takes the account's lease to cancel if it is set, as rule 9's fifth item
+    says, so a switch pulled
     while execution is down still cancels, and it alarms if it cannot take
     the lease by a deadline. Execution checks the switch again right before
     every broker call, as rule 9's fourth item says. It cancels the union of the orders the journal holds open and the orders the broker lists, so an empty or failed broker answer never reads as nothing to cancel. It journals that the switch's cancels are done only after a fresh read lists none of them and a lookup has settled each journal order the broker no longer lists, and
@@ -783,9 +798,10 @@ on paper is what would reopen it: if SQS's renewal ever added time that
 mattered, Amazon MQ and Kinesis are the pushes that keep the VM closed to inbound connections.
 
 No worker on a VM receives until that
-VM's supervisor holds the deployment's lease, and execution receives only
-once it holds the account's lease too, so a second VM's workers never take
-the lease holder's events off a shared queue.
+VM's supervisor holds the deployment's lease, so a second VM's workers never
+take the lease holder's events off a shared queue. Execution receives
+without the account's lease, which it takes only to change the account, as
+rule 9 says.
 
 **An event is a hint, and the keys come from the plan.** AWS's
 [event notifications page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventNotifications.html)
@@ -1202,12 +1218,18 @@ construction or monitoring needs nothing new.
 Execution is the exception, because sends on one account happen one at a
 time. The risk gate checks each order against every order in the account's
 journal just before it goes out, and two instances sending at once would
-each check a book missing the other's order. So the account's lease still
-names one sender. A second execution instance in the same scale unit
-stands by, and takes over only once the host shows the first one's
-container gone, as rule 9 says. Within one portfolio, more execution
-instances buy failover rather than throughput, and throughput comes from
-more portfolios, each sending on its own account. Slice 1 runs one instance
+each check a book missing the other's order. So execution instances compete
+for execution's queue like any other component's, as the owner ruled on
+2026-11-01, and the account's lease lets one of them change the account at a
+time. An instance holds the lease only from re-reading the journal for one
+order until the journal holds the broker's answer, as rule 9 says, so the
+others never wait long. The instance running a send stage extends its
+message's visibility timeout while it works, so the message returns to the
+queue only once that instance dies, and rule 9's fifth item says who then
+takes the send stage over. Within one portfolio, more execution instances
+buy failover rather than throughput, because sends still go one at a time,
+and throughput comes from more portfolios, each sending on its own
+account. Slice 1 runs one instance
 of each component.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
@@ -1386,7 +1408,8 @@ once rather than re-argued.
 | Hand trades in a platform account, kept apart in an outside book | The owner first ruled on 2026-10-31 that the platform ignores unstamped orders, so the owner could trade the same account by hand, and the doc built an outside book that reconciliation and the gate counted. Later that day the owner gave the platform an account of its own, and on 2026-11-01 ruled that each portfolio has its own account with no hand trading in it. So the outside book went, and an order the platform did not send is journaled as received and halts, as [Orders the platform did not send](#orders-the-platform-did-not-send) says |
 | The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
-| More than one execution process per broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease |
+| More than one execution process sending on one broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease. Several execution processes may run, as the owner ruled on 2026-11-01, and the account's lease lets one of them send at a time |
+| One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
 | S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
 | One result per component per decision | Execution and monitoring each act at two points in a decision, and a single result written last put execution's account file behind its own send, a cycle a review's simulation showed. Each now has two stages with a result each |

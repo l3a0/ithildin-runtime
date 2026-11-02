@@ -562,7 +562,6 @@ sequenceDiagram
     F-->>C: an event: the plan
     F-->>P: an event: the plan
     Note over V,M: Phase 1, read the data, then recover
-    X->>F: the account's lease, taken when execution started
     D->>F: snapshot, naming each bar read, and data's decision result
     F-->>X: an event: data's result
     X->>B: orders in doubt, fills since the last decision
@@ -586,7 +585,7 @@ sequenceDiagram
     end
     F-->>P: events: alpha's, risk's, cost's and monitoring's results
     P->>F: target portfolio and portfolio construction's result
-    Note over X,J: Phase 3, send, in the execution worker still running
+    Note over X,J: Phase 3, send, in whichever execution instance receives the event
     F-->>X: an event: portfolio construction's result
     X->>B: positions, open orders and fills since recover
     B-->>X: the broker's state now
@@ -595,13 +594,16 @@ sequenceDiagram
     X->>J: the whole target portfolio and its planned orders journaled
     X->>X: clock agrees with the broker's, and before the cutoff?
     opt a resting order the plan cancels or replaces
+        X->>F: the account's lease taken
         X->>J: cancel journaled
         X->>F: no halt of the run, own send result empty, lease tag unchanged, and before the cancel cutoff?
         X->>B: cancel, by the broker's order id the ack journaled
         B-->>X: cancelled, or filled first
         X->>J: the old order's outcome journaled, any fill included
+        X->>F: the account's lease deleted
     end
     loop each order the order manager plans, a replacement included
+        X->>F: the account's lease taken
         X->>X: kill switch blob absent, and before the cutoff?
         X->>J: intent journaled
         X->>J: replay the book
@@ -612,6 +614,7 @@ sequenceDiagram
         X->>B: send, with its client order id
         B-->>X: ack
         X->>J: ack journaled
+        X->>F: the account's lease deleted
     end
     X->>B: is every leg accepted?
     alt a leg rejected or unsent while another is accepted
@@ -628,28 +631,28 @@ The phases in order.
 
 1. **Read the data and recover.** Data reads the bars the decision's lookback
    needs from marketlake, about 40 sessions of each ETF, and records which ones
-   it read before any model sees them. Execution, which took the broker
-   account's lease when it started, waits for that snapshot, so it reads the
-   broker at the decision's own time. It settles any order a crash left in
+   it read before any model sees them. Execution waits for that snapshot, so
+   it reads the broker at the decision's own time. It settles any order a crash left in
    doubt, journals the fills that arrived since the last decision, and writes
    the strategies' books it replays from the journal beside the broker's positions and open orders. Monitoring then checks they agree, position by position and order by order, and each stamped order's filled quantity against the journal's. A run that starts on a book the broker disagrees with would trade
    the wrong difference.
 2. **Decide.** The alpha, risk and cost models run at once, each on the blobs
    it needs. The risk model sets the constraints, meaning the limits for this
    decision. Portfolio construction builds the target portfolio within them.
-3. **Send.** Execution, which has held the account's lease since phase 1, reads
-   the target portfolio its result lists. Following the owner's ruling to
+3. **Send.** Whichever execution instance receives portfolio construction's
+   result reads the target portfolio it lists. Following the owner's ruling to
    fetch and sync before changing state, it first fetches the broker's
    positions, open orders and fills again, journals any fill that arrived
    since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person. Only then does it journal the target whole, with the planned
-   orders and their client order ids, the journal entry it synced through and
-   a hash of the broker state it fetched, in one stored entry. A target portfolio names every
+   orders and their client order ids, the journal entry it synced through, a
+   hash of the broker state it fetched and the instance running the send
+   stage, in one stored entry. A target portfolio names every
    instrument the book holds or the forecast names, with a flat leg as an
    explicit zero, and execution halts on one that leaves an instrument out.
    Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
-   checks the kill switch again, journals the intent, replays the book from the
+   takes the account's lease, checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval and journals that it is sending. Right before the broker call it checks five things: the kill switch is absent, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision. After the loop
+   journals the approval and journals that it is sending. Right before the broker call it checks five things: the kill switch is absent, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
    it looks up each leg, and cancels any accepted leg whose partner was
    rejected or never sent.
    Monitoring writes the decision's report and pings the heartbeat service
@@ -746,15 +749,16 @@ sequenceDiagram
     F-->>D: an event: the plan
     F-->>M: an event: the plan
     par
-        X->>F: the account's lease, clearing the one this VM's earlier boot left, journaled
         X->>F: kill switch blob absent?
-        X->>J: which planned orders were sending with no ack?
-        J-->>X: one, in yesterday's last decision
+        X->>J: which send stage has planned orders and no result, and a runner that is gone?
+        J-->>X: yesterday's last decision, run on this VM's earlier boot, one order sending with no ack
+        X->>F: the account's lease, clearing the one this VM's earlier boot left, journaled
         X->>J: in doubt journaled
         X->>B: is there an order with this client order id?
         B-->>X: yes, acknowledged
         X->>J: ack journaled, and any unsent planned order journaled Abandoned
         X->>F: a halt as that decision's send result, if none is stored
+        X->>F: the account's lease deleted
     and
         D->>D: are the segments up to the decision time in marketlake?
         D->>F: a halt as data's result, reason "data not ready"
@@ -894,8 +898,8 @@ The two cover different failures.
    to exceed the longest chain of worker deadlines plus the report, or a slow,
    healthy decision alarms.
 
-The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and the execution worker
-that already holds the account's lease cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution takes the account's lease and, finding the switch set, cancels every resting order before anything else, so a
+The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and whichever execution instance
+receives that event takes the account's lease, waiting for at most one order in flight, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch and, finding it set, takes the account's lease and cancels every resting order before anything else, so a
 switch pulled while execution is down still cancels once the host restarts
 it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
@@ -941,7 +945,7 @@ here, with the issue that builds its drill.
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A lease taken over from another VM after it expired unrenewed, the deployment's or the account's | The old holder's VM, boot, container and run, and when it last renewed | Freeze the first VM's supervisor and execution while a second VM waits, expecting the takeover after the lease period, the first VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Execution cannot take the account's lease by its deadline | The lease's holder and whether the host shows its container gone | Start execution while the earlier container holding the lease is frozen and not removed | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution cannot take the account's lease by its deadline | The lease's holder, the order it holds the lease for, and whether the host shows its container gone | Freeze an execution instance while it holds the lease, with the deadline shorter than the lease period. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -950,7 +954,7 @@ here, with the issue that builds its drill.
 | Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A second execution worker, or a second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -1537,7 +1541,7 @@ Eight choices in the two diagrams for a reviewer to check.
 ## The life of an order
 
 A state diagram shows the states one thing can be in and what moves it between
-them. Each transition is a journal entry written before the next step. A restarted execution writes two of them after the fact, when it finds the gap, as design.md's rule 9 says: `Abandoned` for an order a crash left without a `sending` entry, and the crash half of `InDoubt`.
+them. Each transition is a journal entry written before the next step. An execution instance taking over a send stage whose runner died writes two of them after the fact, when it finds the gap, as design.md's rule 9 says: `Abandoned` for an order a crash left without a `sending` entry, and the crash half of `InDoubt`.
 
 ```mermaid
 stateDiagram-v2
@@ -2775,7 +2779,7 @@ accepted.
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A deployment's lease and an account's lease, as blobs in S3 that record their holder and are deleted only with a condition naming the tag S3 returned when each was created. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM | A lease another VM left behind needs a person to clear it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
+| A deployment's lease and an account's lease, as blobs in S3 that record their holder, are renewed with a condition naming the tag S3 last returned, and are deleted only with that condition. The account's lease is held only while one execution instance changes the account, so several instances can run. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, or an account's lease held for an execution process's whole life | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, and an S3 round trip to take and delete the account's lease for each order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled on 2026-11-01 |
 | Test, shadow, paper and live each run in an environment of their own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, or deploying by hand to every environment | A VM per running environment, a bucket, roles and a pin per environment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at close−20, 15:40 on a full day, on marketlake's segments read before sealing and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -2789,7 +2793,7 @@ accepted.
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt, and on 2026-10-30 that only the owner clears a live account's | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside one execution worker per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
+| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside the execution worker, one instance at a time per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
 | Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | A second comparison written in execution, rather than the one `core.reconcile` both call, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack. Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it | Ignoring unstamped orders, or an outside book for hand trades | One more mapping per ack, and a halt on a broker's liquidation even when it is harmless | The stamp ruled by the owner on 2026-10-31, the mapping asked for and hand trading ruled out on 2026-11-01. The rest is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Each portfolio trades an account and capital of its own, at Alpaca for paper and for live, and nobody trades by hand in it | Hand trades beside the platform in one account, or Schwab at live | Hand trades stay out of the strategies' instruments in every account the owner holds, for the wash sale rule | Ruled by the owner on 2026-10-31, and on 2026-11-01 for an account per portfolio, no hand trading and Alpaca at live. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms the live account's facts before the live gate |
