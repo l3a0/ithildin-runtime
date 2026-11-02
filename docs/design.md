@@ -1517,16 +1517,12 @@ glossing it.
 
 The runtime's VM keeps no state, so it keeps no configuration that matters on
 its own disk. A setting comes from the release the pin names, from a blob in the environment's bucket, or, for which environment a VM is in, from the provisioning step at boot. The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments. This doc proposes that each has its own bucket, VM, roles and broker credential, that the release carries one table of the environments, and that the provisioning step at boot tells a VM which environment it is in, as [architecture.md](architecture.md#four-environments)'s `### Four environments` says. The owner ruled on 2026-10-29 that the broker key
-lives in the same store marketlake uses: AWS Systems Manager Parameter Store,
-as a `SecureString` parameter encrypted under KMS, in marketlake's AWS
-account, with marketlake's VM role narrowed so it cannot read it. The owner
-ruled later that day that the runtime's bucket and VM live in that account
-too, with the key under AWS's managed `aws/ssm` key, which the owner ruled
-fine, the bucket behind a policy that names who may reach it, and
-marketlake's plan role
-narrowed to what `tofu plan` reads, as
-[architecture.md](architecture.md#where-it-runs)'s rules 3 and 5 and its
-question 11 say. This doc proposes the rest: each environment's key sits under a path of its own below `/ithildin/`, the roles that keep a broad parameter read refuse that
+lives in the same store marketlake uses, AWS Systems Manager Parameter
+Store, as a `SecureString` parameter encrypted under KMS, with AWS's managed
+`aws/ssm` key ruled fine, and on 2026-11-02 that each environment runs in an
+AWS account of its own, so each key sits in its own environment's account,
+as [architecture.md](architecture.md#where-it-runs)'s rule 3 and its
+`### Four environments` rule 11 say. This doc proposes the rest: each environment's key sits under a path of its own below `/ithildin/`, the roles that keep a broad parameter read refuse that
 path as a backstop, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
 gives that user alone. Nothing here sits in a file tracked in this
@@ -1584,6 +1580,7 @@ once rather than re-argued.
 | A session record written once per run, naming the run and its release | The owner ruled on 2026-11-01, after it was briefly written in, that no session record is needed. The run's plan is already written once per run and already names its release, and the plan and the run's stop say whether a session is open |
 | A queue for each component instance, with a router in front of each group that forwards each message to one instance's queue | The owner ruled on 2026-11-01 to keep one queue per component, which SQS already makes the group's router: it hands each message to one instance, only a live instance with a free handler receives, and a message a dying instance held returns for another. A router would need three instances of its own, each instance's health and free handlers published for it to read, and a way to move messages out of a dead instance's queue, and would roughly double the long polling requests. Work that must land on one particular instance, such as every message of one account on one instance, would reopen it |
 | A queue for each supervisor instance, so the instance that wrote the plan receives the plan's own event | The owner ruled on 2026-11-01 to keep the create-only record that the plan's event arrived. The supervisors share one queue, so SQS hands the event to one instance, often not the writer, and the writer's deadline reads the record when it expires, the way every deadline reads storage before it acts. A queue per instance would need EventBridge to copy the event to each, queues created and deleted as the Auto Scaling group starts and ends VMs, and an exception to one queue per component, for one check a session |
+| The runtime in marketlake's AWS account, its environments kept apart by lists of refusals and bucket policies | The owner ruled for it on 2026-10-29 and confirmed it for live on 2026-10-31, then reversed both on 2026-11-02 for an AWS account per environment. One IAM mistake in a shared account could cross environments, and marketlake's roles needed refusals a CI check had to keep complete as marketlake grew. The price of the reversal is four runtime accounts and a management account, and a read grant from marketlake for each environment |
 | One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones. Losing a VM or a zone then leaves two instances of every component running, and an Auto Scaling group replaces the lost VM without a person |
 | A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | Rolling a new release out VM by VM during a session, by instance refresh, CodeDeploy or an ECS rolling deployment | Each tool assumes two versions can serve side by side while it rolls. Here two releases in one run write different bytes to one key, which the create-only rule turns into a halt, so a release changes only at a session's start, through the pin and the promotion from shadow to paper to live. The owner ruled on 2026-11-01 that instance refresh rolls out changes to the VM image instead, outside sessions |
