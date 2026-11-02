@@ -1284,22 +1284,22 @@ journal and the account's lease therefore stay one per account, and hard limit
 2's single order path holds however many strategies trade. Strategies that share an account share its deployment, and meet in portfolio construction, the place *Inside the Black Box* puts the combining of alpha models. Until how they combine is settled, it builds one target per strategy, as `### Orders the platform did not send` says.
 
 **A scale unit per portfolio.** The owner set the shape of scaling out in
-review comments on 2026-11-01, in four points.
+review comments on 2026-11-01, in four points, and amended the fourth later
+that day.
 
 1. One account holds one portfolio, which several strategies may share.
 2. One scale unit is a complete set of components, the supervisor and every
    worker, paired to one portfolio.
 3. The platform scales out by adding portfolios, each a scale unit of its
    own.
-4. Every component but the supervisor may run as several instances, with a
-   router in front that hands each message to an instance that is free.
+4. Every component, the supervisor included, may run as several
+   instances, and the component's one queue is the router that hands each
+   message to one of them. A queue of each instance's own behind a separate
+   router is turned down, as the register says.
 
 The rest of this part is this doc's proposal for
 [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). For every stage,
-the queue is already that router, and the owner ruled on 2026-11-01 to keep
-it so rather than give each instance a queue of its own behind a separate
-router. SQS lets several
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). SQS lets several
 processes long poll one queue at once, hands each message to one of them,
 and hides it from the rest until that one deletes it or its visibility
 timeout runs out, as AWS's
@@ -1329,8 +1329,8 @@ account.
 The owner ruled on 2026-11-01 that slice 1 runs three instances of each
 component, for high availability, and later that day that the supervisor
 runs several instances too, whose first write of the run's plan counts,
-as rule 9 says.
-That amends point 4 above. So a deployment runs 21 worker containers and
+as rule 9 says,
+which point 4 above now carries. So a deployment runs 21 worker containers and
 three supervisor containers, and pre-live's two deployments run 48
 containers. The owner ruled the same day that each environment runs as a
 cluster of three VMs, one in each of three availability zones, so each VM
