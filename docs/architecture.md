@@ -944,7 +944,8 @@ here, with the issue that builds its drill.
 | Kill switch pulled | "kill switch", and how many resting orders it cancelled, stamped and not | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A lease taken over from another VM after it expired unrenewed, the deployment's or the account's | The old holder's VM, boot, container and run, and when it last renewed | Freeze the first VM's supervisor and execution while a second VM waits, expecting the takeover after the lease period, the first VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A lease taken over from another VM after it expired unrenewed, the deployment's or the account's | The old holder's VM, boot, container and run, and when it last renewed | Freeze one VM of the cluster while it holds the account's lease mid-send, expecting another VM to take the lease over after the lease period and the send stage once the frozen VM counts as gone, the frozen VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A VM of the cluster counts as gone, or the Auto Scaling group replaced one | The VM, its zone, its supervisors' last heartbeats and the group's activity | Terminate a VM mid-decision, and take one zone's subnet down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution cannot take the account's lease by its deadline | The lease's holder, the order it holds the lease for, and whether the host shows its container gone | Freeze an execution instance while it holds the lease, with the deadline shorter than the lease period. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -2002,18 +2003,18 @@ lifecycle name, with `release/` read by each VM's role for its own pin, as
 
 ## Where it runs
 
-A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has a VM, a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
+A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has a cluster of three VMs, a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
 that matters, and that the storage is S3, so everything the platform must
-keep sits in the runtime's bucket, and the VM can be replaced by starting a
-new one from the pinned release.
+keep sits in the runtime's bucket, and an Auto Scaling group replaces a lost
+VM by starting a new one on the release the run uses, as rule 11 says.
 
 ```mermaid
 flowchart TB
-    subgraph host["One environment's VM, shadow, paper or live,<br/>separate from marketlake's, holding no state"]
+    subgraph host["Each of one environment's three VMs, one per availability zone,<br/>separate from marketlake's, holding no state,<br/>replaced by an Auto Scaling group when lost"]
         timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it holds the lease,<br/>the timer stops all after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
-        subgraph ctrs["A container per component, each its own unit and its own user"]
+        subgraph ctrs["A container per component and a supervisor, one of each per deployment on each VM,<br/>each its own unit and its own user"]
             sup["Supervisor<br/>plan, deadlines"]
             data["Data"]
             alpha["Alpha model"]
@@ -2062,7 +2063,7 @@ flowchart TB
         person <-->|"status, clears, overrides, the switch"| bucket
 ```
 
-Ten rules hold the deployment to the premise and the hard limits.
+Eleven rules hold the deployment to the premise and the hard limits.
 
 1. **The pin names the release.** Each environment's VM runs the release its pin names. The owner's merge to `main` moves shadow's pin, a healthy shadow moves paper's, and only the owner moves live's, as `### Four environments` says, so the code that traded is always known. The release also pins boto3, from a version
    whose botocore, 1.35.67 or later, sends both S3's refuse-if-it-exists
@@ -2240,15 +2241,16 @@ Ten rules hold the deployment to the premise and the hard limits.
    covers the segments' prefix too. The mirror is a copy, so losing it costs only a
    download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it.
-9. **A replacement VM's supervisor takes the lease, then runs.** The
-   supervisor instances take the deployment's lease for their VM before any
-   of them writes the plan, the same in every mode. If another VM holds it, the supervisor waits for the
-   lease to expire unrenewed, takes it over, journals the takeover and
-   alarms, as the owner ruled on 2026-11-01, and until then the
-   replacement's workers, finding no plan under a lease of theirs, wait. Once it holds
-   the lease, there is nothing to restore, because every worker finds its
-   place by checking its own keys in S3. Who starts a replacement VM, from
-   which VM image, and when a person clears a lease early with `ithildin lease clear`, is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+9. **A replacement VM's supervisor joins the lease, then runs.** The
+   supervisor instances take the deployment's lease before any of them
+   writes the plan, the same in every mode, and a VM that starts later joins
+   it, as rule 11 says. If every supervisor instance has gone quiet long
+   enough for the lease to expire unrenewed, the next to start takes it
+   over, journals the takeover and alarms, as the owner ruled on 2026-11-01,
+   and until then the workers, finding no plan under a lease of theirs,
+   wait. Once a VM has joined the lease, there is nothing to restore,
+   because every worker finds its place by checking its own keys in S3.
+   When a person clears a lease early with `ithildin lease clear` is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 10. **The release is one container image, and each component runs in a
     container of its own.** This is this doc's proposal, raised by the owner
     on 2026-10-30. One Docker image holds the whole runtime: one Python
@@ -2328,6 +2330,53 @@ Ten rules hold the deployment to the premise and the hard limits.
     pull request, and a verification step before each deploy. On Fargate the
     same containers become tasks, each with its own role, and only the queue
     adapter changes, as question 12 says.
+11. **An environment runs as a cluster of three VMs.** The owner ruled on
+    2026-11-01 that the containers spread across a cluster of VMs, on this
+    doc's recommendation of three identical VMs in an EC2 Auto Scaling group,
+    one in each of three availability zones. For every deployment in its
+    environment, each VM runs one supervisor instance and one instance of
+    each component, under rule 7's units, so the three VMs together run the
+    three instances of each that design.md's `### Strategies, schedules and
+    decisions` sets.
+    1. **The group replaces a lost VM.** A VM that fails EC2's status checks
+       or stops is terminated and replaced from the group's launch template,
+       which holds the VM image and rule 3's provisioning step, in the same
+       zone while it is up and in another when it is not. So a replacement
+       needs no person.
+    2. **A VM joins the run the deployment's lease names.** A VM that starts
+       mid-session runs the release that lease names, its supervisor joins
+       the lease as design.md's rule 9 says, and its path unit then starts
+       its workers, which find their place by checking their keys in S3.
+    3. **A VM counts as gone when its supervisors go quiet.** Each supervisor
+       instance's heartbeat blob names its VM. Another VM counts a VM as gone
+       once no supervisor instance on it has written a heartbeat within a
+       limit longer than a supervisor's restart, or once the group reports it
+       terminated. Only then does an instance take over a send stage that
+       VM's handler was running. A VM whose supervisor instances find their
+       own last heartbeat older than that limit, as after a freeze, stops its
+       units, which start again as a fresh member, so a woken VM never
+       carries on work another VM took over. Execution's check of the
+       account's lease tag before every broker call stops its send even if
+       it tried.
+    4. **The VMs share no disk.** Each keeps its own watchdog, heartbeat
+       files, local lease file and lake mirror, so losing one costs its
+       mirror's download and nothing else.
+    5. **A zone's outage takes only its own VM.** Each VM sits in a subnet of
+       its own zone, and nothing a VM needs to reach S3, SQS or the secret
+       store lives in only one zone.
+
+    The price is three VMs per environment where there was one, each
+    smaller. A pre-live VM runs 16 containers, about 1.6 GB at an estimated
+    100 MB each, so a 4 GB machine such as `t4g.medium` fits, at roughly 3
+    cents an hour on demand, a figure to confirm against AWS's price list on
+    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The group, its
+    launch template and subnets in three zones are more infrastructure to
+    keep in step, and three drills come with them.
+    1. Terminate a VM mid-decision, expecting the other two to finish the
+       decision and the group to replace the VM.
+    2. Take one zone's subnet down, expecting the group to start its VM in
+       another zone.
+    3. Freeze a VM past the limit, expecting its units stopped when it wakes.
 
 ### Four environments
 
@@ -2354,19 +2403,20 @@ run exactly one mode, the one with the same name. Test is GitHub's CI, which
 runs backtest mode among its checks, and backtest mode also runs on a
 developer's machine, outside every environment. Where the rest of this doc
 says the runtime's VM or the runtime's bucket, it means the one in the
-environment at hand.
+environment at hand, and the VM means each of that environment's three
+VMs, as rule 11 of `## Where it runs` says.
 
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
-| Shadow | Shadow mode on live data | The pre-live VM, shared with paper in slice 1 | The pre-live bucket, under shadow's deployment prefix, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
-| Paper | Paper mode | The pre-live VM, shared with shadow in slice 1 | The pre-live bucket, under paper's deployment prefix, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
-| Live | Live mode, once the owner switches | The live VM | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
+| Shadow | Shadow mode on live data | The pre-live cluster, shared with paper in slice 1 | The pre-live bucket, under shadow's deployment prefix, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
+| Paper | Paper mode | The pre-live cluster, shared with shadow in slice 1 | The pre-live bucket, under paper's deployment prefix, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
+| Live | Live mode, once the owner switches | The live cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
 
 The owner ruled on 2026-11-01 that shadow and paper share one environment in
 slice 1, which this doc calls pre-live, and that live keeps its own. So the
-pre-live environment has one VM, one bucket, one machine role and one Docker
-daemon, and runs two deployments, each with its own release pin, its own set
+pre-live environment has one cluster of three VMs, one bucket, one machine
+role and a Docker daemon on each VM, and runs two deployments, each with its own release pin, its own set
 of units and Unix users, and its keys under its own deployment's prefix.
 Paper's broker key stays readable by paper's execution user alone. Where the
 rules below name shadow's and paper's VMs, buckets or roles, in slice 1 they
@@ -2422,8 +2472,9 @@ Eleven rules keep the environments apart.
    is a plain S3 write, so a check inside a tool can be skipped by writing
    the pin directly. It then resolves the pin once into a session file in memory-backed
    storage, and every unit start and restart that session uses it. A
-   replacement VM that reads a newer pin mid-session halts with "release
-   changed", which is intended. A VM that finds its pin missing or
+   replacement VM that starts mid-session runs the release the deployment's
+   lease names, so a pin moved since the session started waits for the next
+   session, as rule 11 says. A VM that finds its pin missing or
    unreadable fails its unit with "release pin missing or unreadable",
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
@@ -2528,9 +2579,10 @@ Eleven rules keep the environments apart.
     account per environment would rule out, and rule 10's drill is what
     catches one.
 
-The price is a VM per running environment: one for slice 1, which shadow
-and paper share, with three instances of each component and of the supervisor in each deployment,
-and two once live exists, as
+The price is a cluster of three VMs per running environment: one cluster
+for slice 1, which shadow and paper share, each VM running one instance of
+each component and of the supervisor for each deployment, and two clusters
+once live exists, as
 question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy and promotion jobs hold
@@ -2791,6 +2843,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder, are renewed with a condition naming the tag S3 last returned, and are deleted only with that condition. The account's lease is held only while one execution instance changes the account, so several instances can run. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, or an account's lease held for an execution process's whole life | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, and an S3 round trip to take and delete the account's lease for each order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled on 2026-11-01 |
 | Test, shadow, paper and live each run in an environment of their own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, or deploying by hand to every environment | A VM per running environment, a bucket, roles and a pin per environment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Each environment runs as an EC2 Auto Scaling group of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | Three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at close−20, 15:40 on a full day, on marketlake's segments read before sealing and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation, and on 2026-11-01 that the loss limit is the account's portfolio value, so the gate computes the cap at each decision from the account's valuation at the prior closes, shrinking and growing with it, while the share and the stress move stay the owner's to write. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |

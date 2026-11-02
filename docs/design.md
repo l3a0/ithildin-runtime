@@ -348,7 +348,7 @@ Ten rules make the blobs something a worker can trust.
    and watches no process. Its instances share the deployment's lease, as rule 9 says,
    and the first whose write of the run's plan lands wins, so another instance, or a restarted one, finds the plan already there and uses it, and whose event reaches every worker's queue. A worker that starts before
    any plan exists, or finds a plan whose run the deployment's lease does
-   not name, waits, so no worker acts before a supervisor holds the lease. On a VM the host starts the workers only once that VM's supervisor instances hold the deployment's lease, through a systemd path unit that the supervisor's local lease file starts, so a second VM's workers never receive from a shared queue.
+   not name, waits, so no worker acts before a supervisor holds the lease. On each VM the host starts the workers only once a supervisor instance on that VM has joined the deployment's lease, through a systemd path unit that the supervisor's local lease file starts, so a VM outside the run never receives from a shared queue.
    Every worker, in every mode, finishes its decision loop once it has a
    result for every decision in the plan. A supervisor instance then stores the run's stop, whose event reaches each worker and every other supervisor instance, which exit cleanly, and the instance whose write of the stop landed deletes the
    deployment's lease. A timer on the host stops every unit after the close
@@ -431,23 +431,25 @@ Ten rules make the blobs something a worker can trust.
    pull, and starts again from the new end. Two writers can therefore never
    take one number, and no entry is ever written twice. Each entry is
    stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
-9. **Leases make one VM, and one sender, per account.** A lease is a blob a
+9. **Leases make one run per deployment, and one sender per account.** A lease is a blob a
    process creates with the condition that it not exist, recording its
    holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. Two
    leases matter.
    1. **The deployment's lease.** The owner ruled on 2026-11-01 that the
-      supervisor runs several instances that share this lease. Its holder is
-      the VM and its boot, and it records which instance renewed it last.
-      The first supervisor instance to start on a VM creates it before any
-      instance writes the plan, in every mode, and the others find it held
-      by their own VM and boot and join it. Any instance on that VM renews
-      it when a renewal is due. A 412 on a renewal whose stored holder is
-      still the instance's own VM and boot means a sibling renewed first, so
-      the instance takes the new tag and carries on. A 412 naming another VM
-      is a takeover, and stops the VM's units. So the lease outlives any one
-      supervisor instance, and a replacement VM started while the old one
-      still runs waits, and its workers, which find no plan under a lease of
-      theirs, wait with it.
+      supervisor runs several instances that share this lease, and later
+      that day that an environment runs as a cluster of three VMs. So the
+      lease's holder is the run and its release rather than one VM, and it
+      records which instance renewed it last. The first supervisor instance
+      to start creates it before any instance writes the plan, in every
+      mode. Every other supervisor instance, on any VM of the environment,
+      finds it naming the run and joins it once its VM runs the release the
+      lease names. Any instance renews it when a renewal is due. A 412 on a
+      renewal whose stored lease still names the same run and release means
+      a sibling renewed first, so the instance takes the new tag and carries
+      on. A lease naming another run or release means this VM is not part of
+      the run, so its supervisor stops its units, and its workers, which find
+      no plan under a lease of theirs, wait. So the lease outlives any one
+      supervisor instance and any one VM.
    2. **The account's lease.** Every execution instance receives from
       execution's queue, and the owner ruled on 2026-11-01 that an instance
       holds the account's lease only while it changes the account. It takes
@@ -472,7 +474,11 @@ Ten rules make the blobs something a worker can trust.
    journaled and alarms. A frozen holder that wakes finds its renewal
    refused, and stops: its supervisor stops its VM's units, and execution's
    check of the lease's tag right before every broker call, rule 9's fourth
-   item, refuses its next send. The price is one window. A holder that
+   item, refuses its next send. A VM whose supervisor instances find their
+   own last heartbeat older than the limit after which the other VMs count
+   it as gone, as after a freeze, stops its units, which start again as a
+   fresh member, as architecture.md's rule 11 of `## Where it runs` says.
+   The price is one window. A holder that
    froze after that check and before its request left can still send that
    one request after a takeover. The new holder settles it the way it
    settles any order in doubt, by looking it up, and the gate already
@@ -548,9 +554,11 @@ Ten rules make the blobs something a worker can trust.
       entry that journals a send stage's planned orders names the handler
       running it: its VM, boot, container, restart count and handler. Another
       instance, or the same one restarted, takes that send stage over only
-      once its runner is gone, meaning the host shows the runner's container
-      gone or restarted, or the runner's VM no longer holds the deployment's
-      lease. Each worker instance runs under one fixed container name, its
+      once its runner is gone. On the runner's own VM that means the host
+      shows its container gone or restarted. From another VM it means the
+      runner's VM counts as gone: no supervisor instance on it has written a
+      heartbeat within the limit, or the Auto Scaling group reports it
+      terminated, as architecture.md's rule 11 of `## Where it runs` says. Each worker instance runs under one fixed container name, its
       component and its number, removed when it stops, so a gone container is a fact the host reports, not a guess
       from a stopped heartbeat. A send stage whose runner is alive is left to
       it, which also covers SQS handing a second instance a copy of the
@@ -873,9 +881,10 @@ test 1's backtest with every pool at size one and again at size four, and
 expects the same journal and the same blobs byte for byte, so concurrency
 that changes an output fails CI.
 
-No worker on a VM receives until that
-VM's supervisor instances hold the deployment's lease, so a second VM's workers never
-take the lease holder's events off a shared queue. Execution receives
+No worker on a VM receives until a supervisor instance on that
+VM has joined the deployment's lease, so a VM outside the run never
+takes the run's events off a shared queue. The VMs inside it share every
+queue as competing consumers. Execution receives
 without the account's lease, which it takes only to change the account, as
 rule 9 says.
 
@@ -1315,13 +1324,15 @@ component, for high availability, and later that day that the supervisor
 runs several instances too, sharing the deployment's lease, as rule 9 says.
 That amends point 4 above. So a deployment runs 21 worker containers and
 three supervisor containers, and pre-live's two deployments run 48
-containers on its one VM. The supervisor's instances compete for its queue
+containers. The owner ruled the same day that each environment runs as a
+cluster of three VMs, one in each of three availability zones, so each VM
+runs one supervisor and one instance of each component for every
+deployment, 16 containers on a pre-live VM. The supervisor's instances compete for its queue
 like any component's, and each of its writes, the plan, a worker's halt,
 a halt of the run and the run's stop, is create-only, so the first
-instance's write counts and the others use it. Three instances on one VM cover a process
-that crashes or hangs, which the other two absorb while the host restarts
-it. They do not cover the loss of the VM, which only a replacement VM
-taking over the deployment's lease covers, as architecture.md's
+instance's write counts and the others use it. Losing a process, a VM
+or a zone leaves the other two instances of every component running, and
+an Auto Scaling group replaces a lost VM, as architecture.md's rule 11 of
 `## Where it runs` says.
 
 Several instances of one component need two rules a single instance did
@@ -1342,10 +1353,10 @@ not.
 
 The price is three times the containers, about 1.2 million long polling
 requests a month on pre-live and about 1.9 million once live runs, past
-SQS's free million, and a VM with memory for 48 Python processes. At
-roughly 100 MB each, an estimate to measure on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11), that is about
-5 GB.
+SQS's free million, and three VMs per environment, each with memory for
+16 Python processes on pre-live. At roughly 100 MB each, an estimate to
+measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that
+is about 1.6 GB a VM.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
 environment's bucket, so a shadow deployment can run the same portfolio as
@@ -1529,6 +1540,8 @@ once rather than re-argued.
 | Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
 | One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability. The price is three times the containers on the VM and a long polling bill past SQS's free million |
 | One supervisor beside several instances of each worker | The owner ruled on 2026-11-01 that the supervisor runs several instances that share the deployment's lease. The price is a renewal shared among instances and a record that the plan's event arrived |
+| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones. Losing a VM or a zone then leaves two instances of every component running, and an Auto Scaling group replaces the lost VM without a person |
+| A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
 | S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
