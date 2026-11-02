@@ -946,6 +946,7 @@ here, with the issue that builds its drill.
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A lease taken over from another VM after it expired unrenewed, the deployment's or the account's | The old holder's VM, boot, container and run, and when it last renewed | Freeze one VM of the cluster while it holds the account's lease mid-send, expecting another VM to take the lease over after the lease period and the send stage once the frozen VM counts as gone, the frozen VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM of the cluster counts as gone, or the Auto Scaling group replaced one | The VM, its zone, its supervisors' last heartbeats and the group's activity | Terminate a VM mid-decision, and take one zone's subnet down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| An instance refresh failed, rolled back or was refused | The refresh, the launch template versions, and the VM whose checks failed or the session that was open | Refresh with an image whose checks fail, and start one during a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution cannot take the account's lease by its deadline | The lease's holder, the order it holds the lease for, and whether the host shows its container gone | Freeze an execution instance while it holds the lease, with the deadline shorter than the lease period. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -2364,6 +2365,28 @@ Eleven rules hold the deployment to the premise and the hard limits.
     5. **A zone's outage takes only its own VM.** Each VM sits in a subnet of
        its own zone, and nothing a VM needs to reach S3, SQS or the secret
        store lives in only one zone.
+    6. **A new VM image rolls out by instance refresh, outside sessions.**
+       The owner ruled on 2026-11-01 that a change to the VM itself, such as
+       an OS patch, a Docker upgrade or a new machine image in the launch
+       template, rolls out through the group's instance refresh. The apply
+       that changes the launch template starts it, and on live that apply is
+       the owner's. The refresh keeps at least 66 percent of the group
+       healthy, so it replaces one of the three VMs at a time and two stay
+       up throughout. A launch lifecycle hook holds each new VM out of
+       service until its provisioning step has verified the pin's provenance
+       and pulled the image, and the read-only drill checks pass, and only
+       then does the VM complete the hook. The VM's role may complete the
+       hook on its own group and nothing else in Auto Scaling. A VM whose
+       checks fail never completes it, the hook's timeout abandons the VM,
+       the refresh fails, and the refresh's automatic rollback restores the
+       earlier launch template. A refresh first creates a marker with a
+       create-only write and refuses to go on while a session is open, by the
+       same two-sided check that keeps a drill and a session apart, so a
+       session never starts on a group with two VM images in it. An app
+       release never rolls out this way, because two releases in one run
+       write different bytes to one key, which the create-only rule turns
+       into a halt. A release changes only at a session's start, through the
+       pin and the promotion from shadow to paper to live.
 
     The price is three VMs per environment where there was one, each
     smaller. A pre-live VM runs 16 containers, about 1.6 GB at an estimated
@@ -2371,12 +2394,15 @@ Eleven rules hold the deployment to the premise and the hard limits.
     cents an hour on demand, a figure to confirm against AWS's price list on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The group, its
     launch template and subnets in three zones are more infrastructure to
-    keep in step, and three drills come with them.
+    keep in step, and four drills come with them.
     1. Terminate a VM mid-decision, expecting the other two to finish the
        decision and the group to replace the VM.
     2. Take one zone's subnet down, expecting the group to start its VM in
        another zone.
     3. Freeze a VM past the limit, expecting its units stopped when it wakes.
+    4. Refresh with an image whose checks fail, expecting the hook to abandon
+       the new VM, the refresh to roll back with two VMs up throughout, and a
+       refresh started during a session to be refused.
 
 ### Four environments
 
@@ -2844,6 +2870,7 @@ accepted.
 | A deployment's lease and an account's lease, as blobs in S3 that record their holder, are renewed with a condition naming the tag S3 last returned, and are deleted only with that condition. The account's lease is held only while one execution instance changes the account, so several instances can run. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, or an account's lease held for an execution process's whole life | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, and an S3 round trip to take and delete the account's lease for each order | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the deployment's lease and the switch, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled on 2026-11-01 |
 | Test, shadow, paper and live each run in an environment of their own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, or deploying by hand to every environment | A VM per running environment, a bucket, roles and a pin per environment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each environment runs as an EC2 Auto Scaling group of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | Three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at close−20, 15:40 on a full day, on marketlake's segments read before sealing and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation, and on 2026-11-01 that the loss limit is the account's portfolio value, so the gate computes the cap at each decision from the account's valuation at the prior closes, shrinking and growing with it, while the share and the stress move stay the owner's to write. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
