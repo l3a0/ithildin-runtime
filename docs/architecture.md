@@ -548,7 +548,7 @@ sequenceDiagram
     participant C as Cost model
     participant P as Portfolio construction
 
-        S->>S: start the supervisor's unit
+        S->>S: start the supervisor instances' units
     V->>F: the deployment's lease taken, the release recorded
     V->>S: the local lease file written, so its path unit starts each worker's unit
 
@@ -955,7 +955,7 @@ here, with the issue that builds its drill.
 | Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A second supervisor on one VM | The lease that was held | Start two | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, and stop one, expecting none | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -2201,10 +2201,10 @@ Ten rules hold the deployment to the premise and the hard limits.
    multipart start so a stray one fails when it completes rather than
    halfway.
 6. **A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
-7. **systemd keeps every process running, up to a limit.** The supervisor
-   and each worker instance, three per component as the owner ruled on
-   2026-11-01, have a unit of their own, the instances from one template
-   unit, all part of one
+7. **systemd keeps every process running, up to a limit.** Each
+   supervisor instance and each worker instance, three of each per
+   deployment as the owner ruled on 2026-11-01, has a unit of its own, the
+   instances of each from one template unit, all part of one
    `ithildin.target`, with systemd's `Restart=on-failure`, a
    `StartLimitBurst`, and a `StartLimitIntervalSec` of a whole trading day,
    since systemd's default of ten seconds would never reach the limit for a
@@ -2241,8 +2241,8 @@ Ten rules hold the deployment to the premise and the hard limits.
    download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it.
 9. **A replacement VM's supervisor takes the lease, then runs.** The
-   supervisor takes the deployment's lease before it writes the plan, the
-   same in every mode. If another VM holds it, the supervisor waits for the
+   supervisor instances take the deployment's lease for their VM before any
+   of them writes the plan, the same in every mode. If another VM holds it, the supervisor waits for the
    lease to expire unrenewed, takes it over, journals the takeover and
    alarms, as the owner ruled on 2026-11-01, and until then the
    replacement's workers, finding no plan under a lease of theirs, wait. Once it holds
@@ -2529,7 +2529,7 @@ Eleven rules keep the environments apart.
     catches one.
 
 The price is a VM per running environment: one for slice 1, which shadow
-and paper share, with three instances of each component in each deployment,
+and paper share, with three instances of each component and of the supervisor in each deployment,
 and two once live exists, as
 question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
@@ -2785,7 +2785,7 @@ accepted.
 | A decision result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per decision, which put execution's account file behind its own send | Two more result keys a decision, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Ruled by the owner on 2026-10-29, the folder this doc's reading of it |
 | Each component keeps a queue, listens for events on it, and reads its inputs from files and writes its outputs to files. An event reaches a component's queue whenever there is something new for it | File notifications through `watchdog`, or polling | An event has to reach every component with something new | Ruled by the owner on 2026-10-29, and on 2026-10-31 that the event is S3's own notification with no polling of storage |
-| Each queue is SQS in shadow, paper and live, fed by EventBridge rules generated from the table in `runtime`, and a named pipe fed by the memory-backed folder in a backtest and in CI, with one contract suite for both | A named pipe on the VM fed by writers' messages, a socket, a queue server of the runtime's own, or a queue that pushes, such as SNS to an HTTPS endpoint, Amazon MQ or Kinesis enhanced fan-out | A rule and a queue per reader in each environment, and long polling's requests, about 1.1 million a month for shadow and paper and about 1.7 million once live runs, a little past SQS's free million | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
+| Each queue is SQS in shadow, paper and live, fed by EventBridge rules generated from the table in `runtime`, and a named pipe fed by the memory-backed folder in a backtest and in CI, with one contract suite for both | A named pipe on the VM fed by writers' messages, a socket, a queue server of the runtime's own, or a queue that pushes, such as SNS to an HTTPS endpoint, Amazon MQ or Kinesis enhanced fan-out | A rule and a queue per reader in each environment, and long polling's requests, about 1.2 million a month for shadow and paper and about 1.9 million once live runs, a little past SQS's free million | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
