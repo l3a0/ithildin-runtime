@@ -433,8 +433,8 @@ Ten rules make the blobs something a worker can trust.
    process creates with the condition that it not exist, recording its
    holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. The
    owner ruled on 2026-11-01 that the account's lease is the only lease,
-   with no deployment's lease and no session record, because every VM of the
-   cluster runs at once and every other write is create-only. The run's plan,
+   because every VM of the cluster runs at once and every other write is
+   create-only. The run's plan,
    which the first supervisor instance writes once, already names the run and
    its release, so it carries what those named. On each VM the host reads the
    run's plan before the pin and runs the plan's
