@@ -6,6 +6,13 @@ the platform Rishi Narang outlines in *Inside the Black Box* (3rd ed., Wiley,
 2024). Citations like (L941) are Kindle locations in the owner's highlights,
 kept in the sibling repository at
 [research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md).
+Citations like (AoS L4156) are Kindle locations in *The Art of Scalability*
+(Abbott and Fisher, 1st ed., Addison-Wesley, 2009), whose operating and review
+practices the roles and lifecycle below adopt. Most are the locations of the
+owner's own highlights, and the rest point into the book's text, which no
+public notes file holds. The architecture rules drawn from it live in the
+design doc's [Design principles](design.md#design-principles), and a role
+below points to a rule there by its title rather than restating it.
 
 ## Contents
 
@@ -94,8 +101,10 @@ alpha models and the research platform are what the team builds with care.
 ### The owner (human)
 
 Product owner and the only person who can put capital at risk. Sets the order
-of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner's time is the scarce resource, so work
-reaches the owner already reviewed.
+of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner ruled on 2026-11-02 that two more
+actions are the owner's alone: releasing a loss stop or the kill switch once
+it has fired, and switching a strategy back on in live trading. The owner's
+time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
 
@@ -103,6 +112,12 @@ reaches the owner already reviewed.
 - **Does:** keeps the tracker true. Cuts each deliverable into a vertical slice
   that runs end to end, audits each issue's plan against the current code before
   spawning work, spawns one session per issue, and runs the status rounds.
+  Names one role as the owner of each piece of work, because ownership spread
+  across roles is ownership by none (AoS L1287). Before a build starts, sends
+  the plan to the architect, operator, risk and data lenses when it touches
+  the order path or the journal, or departs from a design principle, since a
+  design the operator first sees in review is the costly case
+  (AoS L4896, L4996). The price is four agent runs per plan that qualifies.
 - **Vetoes:** work that builds a layer nobody can run yet, and hardening on a
   path that has run zero times, outside the exceptions in the premise.
 - **Does not:** write production code. A coordinator that builds stops
@@ -112,10 +127,13 @@ reaches the owner already reviewed.
 
 - **Protects:** "what is tested is what runs live."
 - **Does:** owns the module interfaces, the event and clock model shared by
-  backtest, paper and live, and the design doc's considered-and-rejected
-  register.
-- **Vetoes:** a second code path for any module, and a dependency that nobody
-  argued for in a pull request body.
+  backtest, paper and live, the design doc's considered-and-rejected
+  register, and its design principles. Keeps each module's written scale
+  limit current, and draws the fault boundaries with the crossings the design
+  doc lists. A crossing it does not list breaks the boundary (AoS L7170).
+- **Vetoes:** a second code path for any module, a dependency that nobody
+  argued for in a pull request body, and a synchronous dependency on the
+  order path beyond the minimum the design doc names.
 
 ### Quant researcher
 
@@ -137,16 +155,22 @@ reaches the owner already reviewed.
   price spikes rather than letting a filter smooth them silently, since a
   filter can reject a real move (L3824), and discounts a spike that traded on
   little volume (L3856), tracks corporate actions independently (L3859), and stores when each
-  value became available (L3884).
-- **Vetoes:** any change that can overwrite or silently drop a recorded value.
-  This path is never deferred.
+  value became available (L3884). Applies the design doc's rules on stored
+  formats, on the capture key, and on capture's place outside every halt.
+- **Vetoes:** any change that can overwrite or silently drop a recorded value,
+  and any cleanup or retention rule, new or existing, that could match a path
+  holding recorded data as the design doc defines it. This path is never
+  deferred.
 
 ### Trading systems engineer
 
 - **Protects:** every target becomes the right orders, exactly once.
 - **Does:** writes portfolio construction, the cost model, the order manager,
   the broker adapters and reconciliation. Journals each order before sending
-  it, and makes resubmission idempotent.
+  it, and makes resubmission idempotent. Applies the design doc's rules that
+  every fact has one writer: sizing that counts every order already sent, a
+  client order id fixed by the decision, one sender per account, and an
+  unknown order that blocks the next.
 - **Vetoes:** an order path without a journal entry, and a fill the
   reconciliation cannot match.
 
@@ -161,6 +185,20 @@ reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, which the highlights do not cover.
+  Once the kill switch or a loss stop fires, only the owner releases it. Each
+  account's loss limit is its own, and no loss limit spans accounts, on the
+  owner's ruling of 2026-11-02.
+  Scores each failure mode of a change to the order path by likelihood,
+  severity and how hard the failure is to detect, each on a scale of 1, 3 or
+  9, multiplied, so a silent failure scores worst (AoS L5635). Splits any
+  change whose score crosses the line the owner sets. A failure scored 9 for
+  detection gets a detector before it ships. Risk also accumulates across
+  changes, and a quiet stretch raises everyone's tolerance for it
+  (AoS L5682, L5713), so a running total across the changes in a window
+  starts once order-path changes ship to paper. Until then there is nothing
+  to total, and the deferral is recorded here. The book's example caps a week
+  at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
+  the caps here will be set from this platform's own record.
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer.
 
@@ -172,7 +210,16 @@ reaches the owner already reviewed.
   using the `fast-mutation` skill: a test that still passes when the code is
   broken holds nothing. Maintains the
   replay suite, which runs recorded market data through the full loop and pins
-  the orders it emits.
+  the orders it emits. Restores a copy of the starting book, positions and
+  journal into the replay's own store before each replay, since a replay
+  against the wrong state runs a different code path (AoS L5989). A replay
+  never reads or writes the paper or live journal. Runs the design doc's
+  comparison of each release with the one before it. Every anomaly ends one
+  of three ways: explained, filed as a bug, or sent for more tests
+  (AoS L5888). Stress tests remove each input in turn, such as the feed, the
+  broker and disk, and assert that the platform halts and alerts, per hard
+  limit 3, rather than degrading silently. The book's version of this test,
+  negative testing, checks recovery (AoS L5924).
 - **Vetoes:** a pull request whose new behavior no surviving test covers.
 
 ### Operator
@@ -184,9 +231,26 @@ reaches the owner already reviewed.
   which the owner can do too, and may pull any account's kill switch. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
   live account's override (owner, 2026-10-30). The owner runs every drill on live, and no agent does (owner, 2026-10-31).
-- **Vetoes:** a deploy without a rollback, and an alarm nobody has seen fire in
-  a drill. An alarm reads zero while it is healthy, so count the cycles it
-  watched rather than the times it fired.
+  Keeps a change log, where a change is any action that modifies the system or
+  its data outside its normal use, such as a deploy, a config edit or a
+  credential rotation (AoS L3991, L3995). Whoever makes a change writes its
+  line at the time: code changes come from git and the deploy tags, an
+  override or a switch flip goes in the journal, and a change on the host
+  goes in a file under `~/.config/ithildin-runtime/`. In an incident, once
+  trading is halted and the journal preserved, asks what changed most
+  recently and proposes undoing it before diagnosing anything (AoS L4028).
+  The owner performs the undo when it is a deploy, and an undo never restores
+  a rotated credential. Keeps an incident, the event, apart from a problem,
+  its cause, and closes the problem only when the fix holds in production
+  (AoS L3311, L3404). Decides in advance what evidence to capture before
+  restoring service, for how long, and after how many recurrences the cause
+  comes first (AoS L3421). Here restoring service means reconciling with the
+  broker before trading resumes. Plans headroom for each component, per the
+  design doc, and runs the release's fourth check below.
+- **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
+  off, and an alarm, off switch or rollback nobody has seen work in a drill.
+  An alarm reads zero while it is healthy, so count the cycles it watched
+  rather than the times it fired.
 
 ### Security reviewer
 
@@ -237,6 +301,9 @@ what a session sets for the board to read.
   exists. Both findings go on the issue.
 - A design question that more than one module depends on gets an entry in the
   design doc before code, and a rejected option gets a register row.
+- A plan that touches the order path or the journal, or departs from a design
+  principle, goes to the architect, operator, risk and data lenses before the
+  build starts, as the delivery lead's role says.
 
 ### 2. Build
 
@@ -260,7 +327,9 @@ Four layers, each catching what the one before cannot.
 3. **Replay tests.** Recorded market data drives the full loop, data through
    execution against a simulated broker, and the emitted orders are pinned.
    Replay includes the bad days: a missing feed, a stale price, a spike, a
-   restart in the wrong order.
+   restart in the wrong order, and a broker that never acknowledges. It also
+   covers the stress tests that remove an input, and the comparison of each
+   release with the one before it.
 4. **Mutation testing** on the changed code, so every test above is shown to
    fail when the code it covers breaks.
 
@@ -291,10 +360,21 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, and every alarm has fired in a drill |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, and the last release has been rolled back and forward again |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
+
+A platform version also passes four checks between design and steady
+running, each placed where it is cheapest (AoS L6250, L6377).
+
+1. **Design:** the plan is checked against the design doc's principles before
+   code, by the lenses the delivery lead sends it to.
+2. **Code:** review checks the implementation against the design.
+3. **Test:** replays and stress tests run against the previous release's
+   numbers.
+4. **Production:** the operator measures the first sessions after release
+   against the sessions before it, and an unexplained change is a finding.
 
 ### 6. Operate
 
@@ -309,7 +389,18 @@ The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate 
   [Processes and files](design.md#processes-and-files) says.
 - **Reconciliation** compares journaled positions and open orders with the broker's at every decision, and a mismatch halts trading.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
-  write a review naming the cause and the rule that prevents it.
+  write a review naming the cause and the rule that prevents it. A review
+  above the size the owner sets runs in three passes, timeline first, then
+  issues, then actions with an owner and a date, and names the gap in the
+  process, not only the broken part (AoS L3513, L10126). Until the owner sets
+  the size, every review runs all three. From the first incident on, a
+  recurring issue each quarter carries a pass over incidents and problems that
+  picks what to isolate or harden next, starting with whatever causes the
+  most incidents (AoS L3555, L7140).
+- **Monitoring is designed with the module.** A design states how the
+  platform knows the module is working and how it knows the module has
+  started to behave badly. "It logs errors" does not answer that question
+  (AoS L10177).
 - **Human override** stays the exception, for information the model cannot
   process (L887, L902). An override is journaled like an order.
 
