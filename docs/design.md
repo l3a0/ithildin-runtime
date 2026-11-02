@@ -74,6 +74,13 @@ across three availability zones in rule 11 of architecture.md's
 component the owner ruled for on 2026-11-01 run on that one VM, where they
 cover a process that crashes or hangs.
 
+Two things are built at 1x all the same. The first is the measure of load
+and the alarm that says when it nears the 1x limit, which here is the
+decisions a day across every deployment and how long each stage takes
+against its deadline, because otherwise the first sign of needing 100x is
+a missed deadline. The second is least privilege, so each credential
+carries only what its 1x use needs from the first day.
+
 The price is that the 100x paths run zero times at 1x. The test of whether
 a VM on another machine has gone, the instance refresh across three VMs and
 the move to another zone are designed now and built when load calls for
