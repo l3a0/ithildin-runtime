@@ -2387,9 +2387,9 @@ Eleven rules hold the deployment to the premise and the hard limits.
        pin and the promotion from shadow to paper to live.
 
     The price is three VMs per environment where there was one, each
-    smaller. A pre-live VM runs 16 containers, about 1.6 GB at an estimated
-    100 MB each, so a 4 GB machine such as `t4g.medium` fits, at roughly 3
-    cents an hour on demand, a figure to confirm against AWS's price list on
+    smaller. A VM runs 8 containers, about 0.8 GB at an estimated 100 MB
+    each, so a 2 GB machine such as `t4g.small` fits, at roughly 2 cents an
+    hour on demand, a figure to confirm against AWS's price list on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The group, its
     launch template and subnets in three zones are more infrastructure to
     keep in step, and four drills come with them.
@@ -2433,19 +2433,16 @@ VMs, as rule 11 of `## Where it runs` says.
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
-| Shadow | Shadow mode on live data | The pre-live cluster, shared with paper in slice 1 | The pre-live bucket, under shadow's deployment prefix, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
-| Paper | Paper mode | The pre-live cluster, shared with shadow in slice 1 | The pre-live bucket, under paper's deployment prefix, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
+| Shadow | Shadow mode on live data | The shadow cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
+| Paper | Paper mode | The paper cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
 | Live | Live mode, once the owner switches | The live cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
 
 The owner ruled on 2026-11-01 that shadow and paper share one environment in
-slice 1, which this doc calls pre-live, and that live keeps its own. So the
-pre-live environment has one cluster of three VMs, one bucket, one machine
-role and a Docker daemon on each VM, and runs two deployments, each with its own release pin, its own set
-of units and Unix users, and its keys under its own deployment's prefix.
-Paper's broker key stays readable by paper's execution user alone. Where the
-rules below name shadow's and paper's VMs, buckets or roles, in slice 1 they
-mean the pre-live ones, and the drills that try one environment's roles
-against another's run between pre-live and live.
+slice 1, and on 2026-11-02 that shadow keeps machines of its own after all.
+So shadow, paper and live each have their own cluster, bucket and roles,
+and shadow's simulated account never shares a machine with paper's broker
+key. The drills that try one environment's roles against another's run
+between every pair.
 
 The price of sharing is three things, accepted because paper holds no real
 money.
@@ -2603,10 +2600,9 @@ Eleven rules keep the environments apart.
     account per environment would rule out, and rule 10's drill is what
     catches one.
 
-The price is a cluster of three VMs per running environment: one cluster
-for slice 1, which shadow and paper share, each VM running one instance of
-each component and of the supervisor for each deployment, and two clusters
-once live exists, as
+The price is a cluster of three VMs per running environment: two clusters
+for slice 1, one for shadow and one for paper, each VM running one instance
+of each component and of the supervisor, and three once live exists, as
 question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy and promotion jobs hold
@@ -2866,7 +2862,7 @@ accepted.
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease, one blob per run, is held only while one supervisor instance changes the run, and carries the run's status, so a frozen holder's write after a takeover fails S3's tag check. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
-| Test, shadow, paper and live each run in an environment of their own, except that shadow and paper share the pre-live environment in slice 1, each with its own containers, units, Unix users, pin and key prefix, as the owner ruled on 2026-11-01. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping every mode apart inside one VM and one bucket by key prefix, live included, or deploying by hand to every environment | A cluster of three VMs per running environment, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | A cluster of three VMs per running environment, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each environment runs as an EC2 Auto Scaling group of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | Three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
@@ -3119,7 +3115,7 @@ Each question says what was recommended and how the owner ruled.
     evidence that would settle it is what running the VM costs: hours spent
     patching and restarting it, and any marketlake apply that touches it.
     The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
-    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, with one more for live, as `### Four environments` says.
+    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, then on 2026-11-02 that shadow keeps machines of its own, so slice 1 runs a cluster each for shadow and paper, with one more for live, as `### Four environments` says.
 
 No open question this doc carries waits on the owner. The last two were
 ruled on 2026-11-01, and the review of that day lists four recommendations

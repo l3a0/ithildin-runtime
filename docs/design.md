@@ -249,7 +249,7 @@ Ten rules make the blobs something a worker can trust.
    Lock enabled, and every object under the journal's and the runs'
    prefixes is written with a retention date of its own, in compliance mode
    on live, which nobody can shorten or delete through, the account's root
-   user included, and in governance mode on pre-live, which the owner alone
+   user included, and in governance mode on shadow and paper, which the owner alone
    may bypass. Heartbeats and leases carry no lock, so their lifecycle and
    deletes still work. The bucket carries OpenTofu's `prevent_destroy`, and
    a test pins its lifecycle rules to the heartbeats' prefix alone. Before
@@ -1362,11 +1362,11 @@ component, for high availability, and later that day that the supervisor
 runs several instances too, which point 4 above now carries, and on
 2026-11-02 that they take a plan's lease to change the run, as rule 9
 says. So a deployment runs 21 worker containers and
-three supervisor containers, and pre-live's two deployments run 48
-containers. The owner ruled the same day that each environment runs as a
+three supervisor containers, and shadow and paper together run 48. The owner ruled the same day that each environment runs as a
 cluster of three VMs, one in each of three availability zones, so each VM
-runs one supervisor and one instance of each component for every
-deployment, 16 containers on a pre-live VM. The supervisor's instances compete for its queue
+runs one supervisor and one instance of each component for its
+deployment, 8 containers a VM, since the owner ruled on 2026-11-02 that
+shadow runs on machines of its own rather than sharing paper's. The supervisor's instances compete for its queue
 like any component's, and each of its writes, the plan, a worker's halt,
 a halt of the run and the run's stop, is create-only and made under the
 plan's lease, so one instance changes the run at a time and a frozen one
@@ -1392,11 +1392,11 @@ not.
    the same kind of file, named for the deadline and its decision.
 
 The price is three times the containers, about 1.2 million long polling
-requests a month on pre-live and about 1.9 million once live runs, past
-SQS's free million, and three VMs per environment, each with memory for
-16 Python processes on pre-live. At roughly 100 MB each, an estimate to
+requests a month on shadow and paper together and about 1.9 million once
+live runs, past SQS's free million, and three VMs per environment, each
+with memory for 8 Python processes. At roughly 100 MB each, an estimate to
 measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that
-is about 1.6 GB a VM.
+is about 0.8 GB a VM.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
 environment's bucket, so a shadow deployment can run the same portfolio as
@@ -1602,4 +1602,5 @@ once rather than re-argued.
 | Schwab as the live broker | The owner ruled on 2026-10-31 for a Schwab account of the platform's own, then on 2026-11-01 for Alpaca at live too, since the platform's account is separate anyway. Alpaca's paper and live accounts share one API and differ only by base URL and key, so the adapter paper exercises is the one live runs, and Schwab's open questions, a client order id and an API paper account among them, no longer apply |
 | Calling the broker's REST API with an HTTP client passed in, rather than its SDK | The owner ruled on 2026-11-01 to use the broker's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake. The wrapper keeps the SDK's types out of every module, so the import rule still fences the broker to `execution.brokers` |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its task roles and placement have run zero times, while the VM's design is reviewed and its refusals are ruled. Since 2026-10-31 the VM uses the same SQS adapter Fargate would, so the queue no longer separates them. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
-| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, and on 2026-11-01 that shadow and paper share one pre-live environment in slice 1 while live keeps its own, as [architecture.md](architecture.md#four-environments) says. Live, where the mistake would cost money, still never shares |
+| Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, on 2026-11-01 that shadow and paper share one environment in slice 1, and on 2026-11-02 that shadow keeps machines of its own after all, as [architecture.md](architecture.md#four-environments) says |
+| Shadow and paper sharing one environment in slice 1, each with its own containers, units, Unix users, pin and key prefix | The owner ruled for it on 2026-11-01 and reversed it on 2026-11-02, so shadow keeps its own cluster, bucket and roles. The price is a third cluster, bucket and set of roles once live runs, and a second in slice 1 |
