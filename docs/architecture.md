@@ -2003,18 +2003,18 @@ lifecycle name, with `release/` read by each VM's role for its own pin, as
 
 ## Where it runs
 
-A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has a cluster of three VMs, a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
+A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has one VM in slice 1, scaling out to a cluster of three, and a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
 that matters, and that the storage is S3, so everything the platform must
 keep sits in the runtime's bucket, and an Auto Scaling group replaces a lost
 VM by starting a new one on the release the run uses, as rule 11 says.
 
 ```mermaid
 flowchart TB
-    subgraph host["Each of one environment's three VMs, one per availability zone,<br/>separate from marketlake's, holding no state,<br/>replaced by an Auto Scaling group when lost"]
+    subgraph host["One environment's VM in slice 1, or each of three across availability zones once it scales out,<br/>separate from marketlake's, holding no state,<br/>replaced by an Auto Scaling group when lost"]
         timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it has read the run's plan,<br/>the timer stops all after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
-        subgraph ctrs["A container per component and a supervisor, one of each per deployment on each VM,<br/>each its own unit and its own user"]
+        subgraph ctrs["Three containers per component and three supervisors per deployment, on the one VM or spread across three,<br/>each its own unit and its own user"]
             sup["Supervisor<br/>plan, deadlines"]
             data["Data"]
             alpha["Alpha model"]
@@ -2314,14 +2314,19 @@ Eleven rules hold the deployment to the premise and the hard limits.
     pull request, and a verification step before each deploy. On Fargate the
     same containers become tasks, each with its own role, and only the queue
     adapter changes, as question 12 says.
-11. **An environment runs as a cluster of three VMs.** The owner ruled on
-    2026-11-01 that the containers spread across a cluster of VMs, on this
-    doc's recommendation of three identical VMs in an EC2 Auto Scaling group,
-    one in each of three availability zones. For every deployment in its
-    environment, each VM runs one supervisor instance and one instance of
-    each component, under rule 7's units, so the three VMs together run the
-    three instances of each that design.md's `### Strategies, schedules and
-    decisions` sets.
+11. **An environment scales out to a cluster of three VMs, and slice 1 runs
+    one.** The owner ruled on 2026-11-01 that the containers spread across a
+    cluster of VMs, on this doc's recommendation of three identical VMs in an
+    EC2 Auto Scaling group, one in each of three availability zones, and on
+    2026-11-02 that the cluster is the scale-out strategy for 100 times
+    slice 1's load, while the MVP starts on a single VM, as design.md's
+    `## Design for 100x, build at 1x` says. So slice 1 runs each
+    environment's one VM in an Auto Scaling group of one, which replaces a
+    lost VM without a person, and that VM runs every instance of its
+    deployment, under rule 7's units. Scaling out raises the group to three,
+    one VM a zone, each running one supervisor instance and one instance of
+    each component. The items below describe the cluster, and the first,
+    second and fourth hold for the group of one as well.
     1. **The group replaces a lost VM.** A VM that fails EC2's status checks
        or stops is terminated and replaced from the group's launch template,
        which holds the VM image and rule 3's provisioning step, in the same
@@ -2355,7 +2360,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
        that changes the launch template starts it, and on live that apply is
        the owner's. The refresh keeps at least 66 percent of the group
        healthy, so it replaces one of the three VMs at a time and two stay
-       up throughout. A launch lifecycle hook holds each new VM out of
+       up throughout. In slice 1's group of one it replaces the one VM,
+       which is one more reason it runs only outside sessions. A launch lifecycle hook holds each new VM out of
        service until its provisioning step has verified the pin's provenance
        and pulled the image, and the read-only drill checks pass, and only
        then does the VM complete the hook. The VM's role may complete the
@@ -2371,13 +2377,16 @@ Eleven rules hold the deployment to the premise and the hard limits.
        into a halt. A release changes only at a session's start, through the
        pin and the promotion from shadow to paper to live.
 
-    The price is three VMs per environment where there was one, each
-    smaller. A VM runs 8 containers, about 0.8 GB at an estimated 100 MB
-    each, so a 2 GB machine such as `t4g.small` fits, at roughly 2 cents an
-    hour on demand, a figure to confirm against AWS's price list on
-    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The group, its
-    launch template and subnets in three zones are more infrastructure to
-    keep in step, and four drills come with them.
+    Slice 1's one VM runs 24 containers, about 2.4 GB at an estimated
+    100 MB each, so a 4 GB machine such as `t4g.medium` fits, at roughly 3
+    cents an hour on demand, a figure to confirm against AWS's price list on
+    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Until load
+    calls for the cluster, losing the VM or its zone stops the environment
+    until the group starts a replacement. Scaling out costs three VMs per
+    environment, each running 8 containers on a 2 GB machine such as
+    `t4g.small`, at roughly 2 cents an hour, and subnets in three zones, and
+    it brings four drills, which run before anything relies on the
+    cluster.
     1. Terminate a VM mid-decision, expecting the other two to finish the
        decision and the group to replace the VM.
     2. Take one zone's subnet down, expecting the group to start its VM in
@@ -2418,13 +2427,13 @@ VMs, as rule 11 of `## Where it runs` says.
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
-| Shadow | Shadow mode on live data | The shadow cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
-| Paper | Paper mode | The paper cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
-| Live | Live mode, once the owner switches | The live cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
+| Shadow | Shadow mode on live data | The shadow VM, scaling out to a cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
+| Paper | Paper mode | The paper VM, scaling out to a cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
+| Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
 
 The owner ruled on 2026-11-01 that shadow and paper share one environment in
 slice 1, and on 2026-11-02 that shadow keeps machines of its own after all.
-So shadow, paper and live each have their own cluster, bucket and roles,
+So shadow, paper and live each have their own VM, bucket and roles,
 and shadow's simulated account never shares a machine with paper's broker
 key. The drills that try one environment's roles against another's run
 between every pair.
@@ -2589,10 +2598,10 @@ Eleven rules keep the environments apart.
     limited to the records it judges. An organization trail records every
     account's API calls in one place, for the drills that read CloudTrail.
 
-The price is a cluster of three VMs per running environment: two clusters
-for slice 1, one for shadow and one for paper, each VM running one instance
-of each component and of the supervisor, and three once live exists, as
-question 12 now says. Live's rules and drills here are designed now and
+The price is one VM per running environment in slice 1, one for shadow
+and one for paper, each running three instances of each component and of
+the supervisor, a third once live exists, and three VMs per environment
+once load calls for rule 11's cluster, as question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy and promotion jobs hold
 AWS roles in a public repository's workflows, guarded by the trust rules of
@@ -2852,7 +2861,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease, one blob per run, is held only while one supervisor instance changes the run, and carries the run's status, so a frozen holder's write after a takeover fails S3's tag check. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
 | Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | A cluster of three VMs per running environment, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Each environment runs as an EC2 Auto Scaling group of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | Three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Each environment runs in an EC2 Auto Scaling group: of one VM in slice 1, and of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment, as the scale-out for 100 times slice 1's load | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01, and on 2026-11-02 that slice 1 starts on one VM. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
 | The skeleton's strategy decides at close−20, 15:40 on a full day, on marketlake's segments read before sealing and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -3106,7 +3115,7 @@ Each question says what was recommended and how the owner ruled.
     evidence that would settle it is what running the VM costs: hours spent
     patching and restarting it, and any marketlake apply that touches it.
     The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
-    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, then on 2026-11-02 that shadow keeps machines of its own, so slice 1 runs a cluster each for shadow and paper, with one more for live, as `### Four environments` says.
+    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, then on 2026-11-02 that shadow keeps machines of its own, so slice 1 runs a VM each for shadow and paper, with one more for live, each scaling out to a cluster of three, as `### Four environments` says.
 
 No open question this doc carries waits on the owner. The last two were
 ruled on 2026-11-01, and the review of that day lists four recommendations

@@ -9,6 +9,7 @@ draws how slice 1's modules fit together.
 ## Contents
 
 - [Premise](#premise)
+- [Design for 100x, build at 1x](#design-for-100x-build-at-1x)
 - [One runtime](#one-runtime)
 - [Processes and files](#processes-and-files)
 - [How work is cut and ordered](#how-work-is-cut-and-ordered)
@@ -38,6 +39,45 @@ from those three. That asymmetry is what the ranking rule in
 [CLAUDE.md](../CLAUDE.md) protects. A path that can lose captured data or the
 order record is never deferred, and a path that can lose capital sits behind
 the hard limits, which no ranking overrides.
+
+## Design for 100x, build at 1x
+
+The owner ruled on 2026-11-02 that the architecture is always designed for
+100 times the load it first carries, and that the first version, the MVP,
+starts at that first load. Slice 1's load is one portfolio deciding once a
+day. A hundred times that is a hundred portfolios, or a portfolio deciding
+every few minutes, or a mix, and the design's own ceiling for one
+deployment is a decision a minute, as `### Strategies, schedules and
+decisions` says.
+
+Designing for 100x means a choice made now does not need rewriting to
+scale. A design passes when reaching 100x takes configuration and more
+infrastructure, such as more instances, more VMs or more portfolios, and no
+rewrite of a component, a file format or a rule. The pieces that carry that
+are already in this doc.
+
+1. Components pass everything through blobs and queues, and keep no state
+   on a machine, so any of them can move to another machine.
+2. Every component can run as several instances, with its queue as the
+   router, so adding instances adds capacity without new code.
+3. The account's lease and the plan's lease make only the changes that must
+   happen one at a time wait for each other, and nothing else.
+4. A portfolio is a scale unit of its own, so more portfolios add load
+   side by side rather than on one path.
+
+Building at 1x means slice 1 runs the smallest deployment that design
+allows. Each environment runs on one VM, in an Auto Scaling group of one so
+a lost VM is still replaced without a person, and the cluster of three VMs
+across three availability zones in rule 11 of architecture.md's
+`## Where it runs` is the scale-out for 100x. The three instances of each
+component the owner ruled for on 2026-11-01 run on that one VM, where they
+cover a process that crashes or hangs.
+
+The price is that the 100x paths run zero times at 1x. The test of whether
+a VM on another machine has gone, the instance refresh across three VMs and
+the move to another zone are designed now and built when load calls for
+them, under the ranking rule in [CLAUDE.md](../CLAUDE.md), and each is
+drilled before anything relies on it.
 
 ## One runtime
 
@@ -1362,18 +1402,22 @@ component, for high availability, and later that day that the supervisor
 runs several instances too, which point 4 above now carries, and on
 2026-11-02 that they take a plan's lease to change the run, as rule 9
 says. So a deployment runs 21 worker containers and
-three supervisor containers, and shadow and paper together run 48. The owner ruled the same day that each environment runs as a
-cluster of three VMs, one in each of three availability zones, so each VM
-runs one supervisor and one instance of each component for its
-deployment, 8 containers a VM, since the owner ruled on 2026-11-02 that
-shadow runs on machines of its own rather than sharing paper's. The supervisor's instances compete for its queue
+three supervisor containers, and shadow and paper together run 48. The owner ruled the same day that each environment can run as a
+cluster of three VMs, one in each of three availability zones, and on
+2026-11-02 that this cluster is the scale-out for 100 times slice 1's
+load, while slice 1 starts on one VM per environment, as
+[Design for 100x, build at 1x](#design-for-100x-build-at-1x) says. So in
+slice 1 one VM runs all 24 of its deployment's containers, and the cluster
+would spread them 8 to a VM. Shadow runs on machines of its own rather
+than sharing paper's, as the owner ruled the same day. The supervisor's instances compete for its queue
 like any component's, and each of its writes, the plan, a worker's halt,
 a halt of the run and the run's stop, is create-only and made under the
 plan's lease, so one instance changes the run at a time and a frozen one
-cannot change it after a takeover. Losing a process, a VM
-or a zone leaves the other two instances of every component running, and
-an Auto Scaling group replaces a lost VM, as architecture.md's rule 11 of
-`## Where it runs` says.
+cannot change it after a takeover. In slice 1, losing a process leaves
+the other two instances of its component running, and losing the VM or its
+zone stops the environment until its Auto Scaling group of one starts a
+replacement. The cluster would let the other two VMs carry on, as
+architecture.md's rule 11 of `## Where it runs` says.
 
 Several instances of one component need two rules a single instance did
 not.
@@ -1393,10 +1437,10 @@ not.
 
 The price is three times the containers, about 1.2 million long polling
 requests a month on shadow and paper together and about 1.9 million once
-live runs, past SQS's free million, and three VMs per environment, each
-with memory for 8 Python processes. At roughly 100 MB each, an estimate to
-measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that
-is about 0.8 GB a VM.
+live runs, past SQS's free million, and in slice 1 one VM per
+environment with memory for 24 Python processes. At roughly 100 MB each, an
+estimate to measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that is about 2.4 GB, and
+about 0.8 GB on each VM of the cluster once load calls for it.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
 environment's bucket, so a shadow deployment can run the same portfolio as
@@ -1582,7 +1626,7 @@ once rather than re-argued.
 | A queue for each supervisor instance, so the instance that wrote the plan receives the plan's own event | The owner ruled on 2026-11-01 to keep the create-only record that the plan's event arrived. The supervisors share one queue, so SQS hands the event to one instance, often not the writer, and the writer's deadline reads the record when it expires, the way every deadline reads storage before it acts. A queue per instance would need EventBridge to copy the event to each, queues created and deleted as the Auto Scaling group starts and ends VMs, and an exception to one queue per component, for one check a session |
 | The runtime in marketlake's AWS account, its environments kept apart by lists of refusals and bucket policies | The owner ruled for it on 2026-10-29 and confirmed it for live on 2026-10-31, then reversed both on 2026-11-02 for an AWS account per environment. One IAM mistake in a shared account could cross environments, and marketlake's roles needed refusals a CI check had to keep complete as marketlake grew. The price of the reversal is four runtime accounts and a management account, and a read grant from marketlake for each environment |
 | Test's bucket and queues in shadow's AWS account, scoped by resource name | The owner ruled on 2026-11-02 that test keeps an account of its own. Test is not all in memory: on each push to `main` the store and queue suites run against a real bucket and real queues, through a role GitHub assumes, and one drill lets a test principal delete a journal version on purpose. Sharing shadow's account would save one account, at the price of test and shadow kept apart by policy alone and an organization policy scoped to shadow's bucket rather than the whole account |
-| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones. Losing a VM or a zone then leaves two instances of every component running, and an Auto Scaling group replaces the lost VM without a person |
+| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out for 100 times the load. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
 | A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | Rolling a new release out VM by VM during a session, by instance refresh, CodeDeploy or an ECS rolling deployment | Each tool assumes two versions can serve side by side while it rolls. Here two releases in one run write different bytes to one key, which the create-only rule turns into a halt, so a release changes only at a session's start, through the pin and the promotion from shadow to paper to live. The owner ruled on 2026-11-01 that instance refresh rolls out changes to the VM image instead, outside sessions |
 | AWS CodeDeploy for the cluster | Its agent installs a release on each VM, which the pin and the image pull already do, and it adds an agent and a role to every VM. Instance refresh covers the VM image without either |
