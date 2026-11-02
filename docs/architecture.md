@@ -550,7 +550,7 @@ sequenceDiagram
 
         S->>S: start the supervisor instances' units
     V->>V: kill switch blob absent?
-    V->>F: the run's plan, written once, naming its release
+    V->>F: the run's plan, written once under the plan's lease, naming its release
     V->>S: the local release file written, so its path unit starts each worker's unit
     F-->>D: an event: the plan
     F-->>X: an event: the plan
@@ -942,9 +942,10 @@ here, with the issue that builds its drill.
 | Kill switch pulled | "kill switch", and how many resting orders it cancelled, stamped and not | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| The account's lease taken over from another VM after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze one VM of the cluster while it holds the account's lease mid-send, expecting another VM to take the lease over after the lease period and the send stage once the frozen VM counts as gone, the frozen VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The account's or the plan's lease taken over from another VM after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze one VM of the cluster while it holds the account's lease mid-send, expecting another VM to take the lease over after the lease period and the send stage once the frozen VM counts as gone, the frozen VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM of the cluster counts as gone, or the Auto Scaling group replaced one | The VM, its zone, its supervisors' last heartbeats and the group's activity | Terminate a VM mid-decision, and take one zone's subnet down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An instance refresh failed, rolled back or was refused | The refresh, the launch template versions, and the VM whose checks failed or the session that was open | Refresh with an image whose checks fail, and start one during a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A supervisor cannot take the plan's lease by its deadline | The lease's holder, the write it holds the lease for, and whether the host shows its container gone | Freeze a supervisor instance while it holds the plan's lease mid-halt, with the deadline shorter than the lease period | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution cannot take the account's lease by its deadline | The lease's holder, the order it holds the lease for, and whether the host shows its container gone | Freeze an execution instance while it holds the lease, with the deadline shorter than the lease period. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -1979,6 +1980,7 @@ writer's, alarms, as `### Every alarm and its drill` lists.
 | A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
 | The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
+| The plan's lease | `leases/plans/<deployment>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | The hard caps | `accounts/<account>/caps.json` |
@@ -2176,8 +2178,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
    drill reads an absent switch with that list right and expects "no such
    blob". It can also create heartbeats and restart records under their own
    prefixes, the heartbeats being the one prefix the bucket's lifecycle
-   expires. Only execution's credential may delete a
-   lease, and only with the tag the creator got, which leaves a delete marker
+   expires. Only execution's credential may delete an account's lease,
+   and only the supervisor's may delete a plan's lease, each only with the tag the creator got, which leaves a delete marker
    so the lease's history survives, besides the owner's and the operator's
    off the VM, as `## What a person runs` says. No credential the runtime
    holds can delete a version, or change the bucket's policy, versioning or
@@ -2240,8 +2242,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
    download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it.
 9. **A replacement VM's supervisor reads the run's plan, then runs.**
-   The first supervisor instance's write of the plan counts, the same in
-   every mode, and a VM that starts later reads it and runs the release it
+   The supervisor instance holding the plan's lease writes the plan, the
+   same in every mode, and a VM that starts later reads it and runs the release it
    names, as rule 11 says. Once a VM has read the plan, there is nothing to
    restore, because every worker finds
    its place by checking its own keys in S3. When a person clears an
@@ -2658,7 +2660,7 @@ An arrow means "may import". The diagram draws four rules.
    supervisor run. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
    order path. The supervisor lives there too, and imports only `core`. It
-   starts no worker. It writes nothing but the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
+   starts no worker. It writes nothing but the plan's lease and its delete, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
    only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
@@ -2861,7 +2863,7 @@ accepted.
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| An account's lease, as a blob in S3 that records its holder, renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch, with no other lease as the owner ruled on 2026-11-01, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
+| A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease is held only while one supervisor instance changes the run. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
 | Test, shadow, paper and live each run in an environment of their own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, or deploying by hand to every environment | A VM per running environment, a bucket, roles and a pin per environment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each environment runs as an EC2 Auto Scaling group of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | Three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |

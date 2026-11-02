@@ -345,8 +345,8 @@ Ten rules make the blobs something a worker can trust.
 7. **A halt flows down the pipeline, and the supervisor only sends messages,** which this doc reads as the events of the blobs it writes. The host keeps every worker running and restarts one that
    exits: on the VM, a systemd unit per worker's container, as rule 10 of
    architecture.md's `## Where it runs` says. The supervisor starts, stops
-   and watches no process. Its instances write the run's plan, which names its release, as rule 9 says,
-   and the first whose write lands wins, so another instance, or a restarted one, finds the plan already there and uses it, and whose event reaches every worker's queue. A worker that starts before
+   and watches no process. Its instances take the plan's lease to write the run's plan, which names its release, as rule 9 says,
+   so one instance writes it, and another, or a restarted one, finds the plan already there and uses it, and whose event reaches every worker's queue. A worker that starts before
    any plan exists waits, so no worker acts before a supervisor has written the plan. On each VM the host starts the workers only once a supervisor instance on that VM has read the run's plan and found its VM on the plan's release, through a systemd path unit that the supervisor's local release file starts, so a VM outside the run never receives from a shared queue.
    Every worker, in every mode, finishes its decision loop once it has a
    result for every decision in the plan. A supervisor instance then stores the run's stop, whose event reaches each worker and every other supervisor instance, which exit cleanly, and the stop ends the run. A timer on the host stops every unit after the close
@@ -429,12 +429,13 @@ Ten rules make the blobs something a worker can trust.
    pull, and starts again from the new end. Two writers can therefore never
    take one number, and no entry is ever written twice. Each entry is
    stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
-9. **A lease makes one sender per account.** A lease is a blob a
+9. **Leases make one supervisor change a run, and one sender change an account, at a time.** A lease is a blob a
    process creates with the condition that it not exist, recording its
    holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. The
-   owner ruled on 2026-11-01 that the account's lease is the only lease,
-   because every VM of the cluster runs at once and every other write is
-   create-only. The run's plan,
+   owner ruled on 2026-11-01 that no lease covers the deployment or the
+   session, because every VM of the cluster runs at once and every other
+   write is create-only, and on 2026-11-02 that a lease covers the plan.
+   Each of the two leases is held only while it guards a change. The run's plan,
    which the first supervisor instance writes once, already names the run and
    its release, so it carries what those named. On each VM the host reads the
    run's plan before the pin and runs the plan's
@@ -447,7 +448,24 @@ Ten rules make the blobs something a worker can trust.
    died before writing its stop never blocks the next drill. The price is the
    one thing a lease's expiry told, that every supervisor had gone quiet,
    which monitoring's supervisor-heartbeat alarm reports instead.
-   1. **The account's lease.** Every execution instance receives from
+   1. **The plan's lease.** The owner ruled on 2026-11-02 that the
+      supervisor keeps several instances, and a lease so that only one
+      changes the plan at a time. A supervisor instance takes it before it
+      reads the run's state for a write that changes the run: the plan, a
+      halt as a worker's result, a halt of the run with a halt for every
+      decision left in the plan, and the run's stop. It deletes it once
+      those writes are stored. Each write is create-only on its own key,
+      which stops two writers taking one key but not two instances acting on
+      one read of the run, such as one storing the stop while another halts
+      the run. Holding the lease, an instance re-reads the run's state
+      before it writes, so it never halts a stopped run, stops a halted one
+      or halts a worker whose result has just landed. Another instance that
+      needs it waits, and alarms if it cannot take it by a deadline. A
+      frozen holder's lease is taken over once it expires unrenewed, as the
+      account's is. A holder that froze mid-write and wakes after a takeover
+      can still store the one write it had begun, which the new holder's
+      re-read before its next write sees.
+   2. **The account's lease.** Every execution instance receives from
       execution's queue, and the owner ruled on 2026-11-01 that an instance
       holds the account's lease only while it changes the account. It takes
       the lease before it re-reads the journal for a submit or a cancel, and
@@ -1328,17 +1346,17 @@ account.
 
 The owner ruled on 2026-11-01 that slice 1 runs three instances of each
 component, for high availability, and later that day that the supervisor
-runs several instances too, whose first write of the run's plan counts,
-as rule 9 says,
-which point 4 above now carries. So a deployment runs 21 worker containers and
+runs several instances too, which point 4 above now carries, and on
+2026-11-02 that they take a plan's lease to change the run, as rule 9
+says. So a deployment runs 21 worker containers and
 three supervisor containers, and pre-live's two deployments run 48
 containers. The owner ruled the same day that each environment runs as a
 cluster of three VMs, one in each of three availability zones, so each VM
 runs one supervisor and one instance of each component for every
 deployment, 16 containers on a pre-live VM. The supervisor's instances compete for its queue
 like any component's, and each of its writes, the plan, a worker's halt,
-a halt of the run and the run's stop, is create-only, so the first
-instance's write counts and the others use it. Losing a process, a VM
+a halt of the run and the run's stop, is create-only and made under the
+plan's lease, so one instance changes the run at a time. Losing a process, a VM
 or a zone leaves the other two instances of every component running, and
 an Auto Scaling group replaces a lost VM, as architecture.md's rule 11 of
 `## Where it runs` says.
@@ -1468,7 +1486,7 @@ glossing it.
 | **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
 | **queue** | The one place a worker listens for events: SQS in shadow, paper and live, and a named pipe in a backtest and in CI. A worker waits on it by long polling the queue and never reads storage on a clock |
-| **supervisor** | The process that writes a run's plan, whose event reaches every worker, hears the workers' heartbeats and the kill switch as events, starts each stage's deadline when it hears that stage's last input, writes a halt as a worker's result when the worker fails, and stores a halt of the run on such a failure, whose event reaches every worker. It starts, stops and watches no process, and keeps no state outside storage. A deployment runs several supervisor instances, whose first write of the plan counts and which compete for the supervisor's queue |
+| **supervisor** | The process that writes a run's plan under the plan's lease, whose event reaches every worker, hears the workers' heartbeats and the kill switch as events, starts each stage's deadline when it hears that stage's last input, writes a halt as a worker's result when the worker fails, and stores a halt of the run on such a failure, whose event reaches every worker. It starts, stops and watches no process, and keeps no state outside storage. A deployment runs several supervisor instances, which take the plan's lease to change the run and compete for the supervisor's queue |
 | **run** | Everything one run writes, kept under the run's own prefix in storage. The VM keeps only a working directory for the run's error output and heartbeat files, none of which is kept |
 | **halt** | A decision result saying why a decision cannot go on, naming the reason or the halt it met. Every worker downstream passes it on and skips that decision. The owner or the operator clears it, except on a live account, where only the owner does, and clearing never reruns the decision. |
 | **span** | The decisions in a run's plan, which every worker works through: one trading day's in shadow, paper and live, and the whole history in a backtest |
@@ -1547,8 +1565,8 @@ once rather than re-argued.
 | More than one execution process sending on one broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease. Several execution processes may run, as the owner ruled on 2026-11-01, and the account's lease lets one of them send at a time |
 | Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
 | One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability. The price is three times the containers on the VM and a long polling bill past SQS's free million |
-| One supervisor beside several instances of each worker | The owner ruled on 2026-11-01 that the supervisor runs several instances, whose first write of the plan counts. The price is a record that the plan's event arrived |
-| A deployment's lease, renewed for the whole session | Once the cluster ran every VM at once, the lease guarded only facts that never change during a session, the run and its release, and the check that keeps a drill and a session apart. The owner ruled on 2026-11-01 that the account's lease is the only lease. The price is that no expiry signals that every supervisor has gone quiet, which monitoring's supervisor-heartbeat alarm reports |
+| One supervisor beside several instances of each worker | The owner ruled on 2026-11-01 that the supervisor runs several instances, and on 2026-11-02 that they take the plan's lease to change the run. The price is a record that the plan's event arrived and a lease taken for each change to the run |
+| A deployment's lease, renewed for the whole session | Once the cluster ran every VM at once, the lease guarded only facts that never change during a session, the run and its release, and the check that keeps a drill and a session apart. The owner ruled on 2026-11-01 that no lease covers the deployment or the session. The price is that no expiry signals that every supervisor has gone quiet, which monitoring's supervisor-heartbeat alarm reports |
 | A session record written once per run, naming the run and its release | The owner ruled on 2026-11-01, after it was briefly written in, that no session record is needed. The run's plan is already written once per run and already names its release, and the plan and the run's stop say whether a session is open |
 | A queue for each component instance, with a router in front of each group that forwards each message to one instance's queue | The owner ruled on 2026-11-01 to keep one queue per component, which SQS already makes the group's router: it hands each message to one instance, only a live instance with a free handler receives, and a message a dying instance held returns for another. A router would need three instances of its own, each instance's health and free handlers published for it to read, and a way to move messages out of a dead instance's queue, and would roughly double the long polling requests. Work that must land on one particular instance, such as every message of one account on one instance, would reopen it |
 | A queue for each supervisor instance, so the instance that wrote the plan receives the plan's own event | The owner ruled on 2026-11-01 to keep the create-only record that the plan's event arrived. The supervisors share one queue, so SQS hands the event to one instance, often not the writer, and the writer's deadline reads the record when it expires, the way every deadline reads storage before it acts. A queue per instance would need EventBridge to copy the event to each, queues created and deleted as the Auto Scaling group starts and ends VMs, and an exception to one queue per component, for one check a session |
