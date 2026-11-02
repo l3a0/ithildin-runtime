@@ -2179,9 +2179,11 @@ Eleven rules hold the deployment to the premise and the hard limits.
    blob". It can also create heartbeats and restart records under their own
    prefixes, the heartbeats being the one prefix the bucket's lifecycle
    expires. Only execution's credential may delete an account's lease,
-   only with the tag the creator got, and only the supervisor's may write a plan's lease, always with a condition on its tag, and none deletes it, which leaves a delete marker
+   only with the tag the creator got, which leaves a delete marker
    so the lease's history survives, besides the owner's and the operator's
-   off the VM, as `## What a person runs` says. No credential the runtime
+   off the VM, as `## What a person runs` says. Only the supervisor's may
+   write a plan's lease, always with a condition on its tag, and none
+   deletes it. No credential the runtime
    holds can delete a version, or change the bucket's policy, versioning or
    lifecycle, or its notification configuration, and no credential but the owner's can change those four. The
    bucket's policy, whose refusals name the runtime's principals, refuses any
