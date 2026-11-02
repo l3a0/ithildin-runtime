@@ -541,8 +541,8 @@ Ten rules make the blobs something a worker can trust.
       instance, or the same one restarted, takes that send stage over only
       once its runner is gone, meaning the host shows the runner's container
       gone or restarted, or the runner's VM no longer holds the deployment's
-      lease. Each worker runs under one fixed container name, removed when
-      it stops, so a gone container is a fact the host reports, not a guess
+      lease. Each worker instance runs under one fixed container name, its
+      component and its number, removed when it stops, so a gone container is a fact the host reports, not a guess
       from a stopped heartbeat. A send stage whose runner is alive is left to
       it, which also covers SQS handing a second instance a copy of the
       runner's message. An instance that starts, and one that receives a
@@ -771,11 +771,13 @@ stalled firewall, looks exactly like a quiet queue, so a bounded wait, with the 
 as a NAT gateway, also drop connections idle for minutes, which a short
 renewal stays under. Each renewal is a billable request. Workers run only
 during the session, about seven hours a day, so each makes about 1,260
-requests a trading day and about 26,000 a month, and eight containers in
-each of shadow and paper make about 420,000 a month. SQS's first million
-requests a month are free, as its
+requests a trading day and about 26,000 a month. Three instances of each
+of seven components and a supervisor make 22 containers in each of shadow
+and paper, about 1.1 million requests a month, and live's 22 bring the
+account to about 1.7 million. SQS's first million requests a month are
+free, and each further million costs 0.40 US dollars, as its
 [pricing page](https://aws.amazon.com/sqs/pricing/) says, so the waiting
-costs nothing at this scale, and live's eight containers still fit.
+costs about 30 cents a month once live runs.
 
 **A queue that pushes buys no speed.** Five AWS services do push to a process, weighed here in four groups.
 
@@ -1294,8 +1296,41 @@ queue only once that instance dies, and rule 9's fifth item says who then
 takes the send stage over. Within one portfolio, more execution instances
 buy failover rather than throughput, because sends still go one at a time,
 and throughput comes from more portfolios, each sending on its own
-account. Slice 1 runs one instance
-of each component.
+account.
+
+The owner ruled on 2026-11-01 that slice 1 runs three instances of each
+component, for high availability. The supervisor stays one, as point 4
+above says, because it is not a module of the charter's table and the
+deployment's lease already lets only one supervisor act. So a deployment
+runs 21 worker containers and a supervisor, and pre-live's two deployments
+run 44 containers on its one VM. Three instances on one VM cover a process
+that crashes or hangs, which the other two absorb while the host restarts
+it. They do not cover the loss of the VM, which only a replacement VM
+taking over the deployment's lease covers, as architecture.md's
+`## Where it runs` says.
+
+Several instances of one component need two rules a single instance did
+not.
+
+1. **A deadline that expires reads storage before it acts.** The event that
+   would clear a deadline can reach a different instance from the one that
+   set it, so each instance's timer expires on its own. Before it alarms or
+   halts, an instance reads the key the deadline waits on once, as the
+   supervisor's deadlines already do, and acts only if what it waits for is
+   still missing.
+2. **One cause raises one alarm.** Monitoring writes the file naming the
+   halt it is handling before it alarms, as rule 7 says, and that write is
+   create-only. Only the instance whose write lands sends the alarm, and an
+   instance whose write S3 refuses sends nothing, so three instances that
+   all see one cause raise one alarm. A missed deadline's alarm goes through
+   the same kind of file, named for the deadline and its decision.
+
+The price is three times the containers, about 1.1 million long polling
+requests a month on pre-live and about 1.7 million once live runs, past
+SQS's free million, and a VM with memory for 44 Python processes. At
+roughly 100 MB each, an estimate to measure on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), that is about
+4 to 5 GB.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
 environment's bucket, so a shadow deployment can run the same portfolio as
@@ -1477,6 +1512,7 @@ once rather than re-argued.
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process sending on one broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease. Several execution processes may run, as the owner ruled on 2026-11-01, and the account's lease lets one of them send at a time |
 | Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
+| One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability. The price is three times the containers on the VM and a long polling bill past SQS's free million |
 | One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
 | S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
