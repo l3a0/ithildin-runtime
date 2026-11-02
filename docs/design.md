@@ -1291,8 +1291,10 @@ review comments on 2026-11-01, in four points.
 
 The rest of this part is this doc's proposal for
 [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). For every stage
-but execution's send, the queue is already that router. SQS lets several
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). For every stage,
+the queue is already that router, and the owner ruled on 2026-11-01 to keep
+it so rather than give each instance a queue of its own behind a separate
+router. SQS lets several
 processes long poll one queue at once, hands each message to one of them,
 and hides it from the rest until that one deletes it or its visibility
 timeout runs out, as AWS's
@@ -1540,6 +1542,7 @@ once rather than re-argued.
 | Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
 | One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability. The price is three times the containers on the VM and a long polling bill past SQS's free million |
 | One supervisor beside several instances of each worker | The owner ruled on 2026-11-01 that the supervisor runs several instances that share the deployment's lease. The price is a renewal shared among instances and a record that the plan's event arrived |
+| A queue for each component instance, with a router in front of each group that forwards each message to one instance's queue | The owner ruled on 2026-11-01 to keep one queue per component, which SQS already makes the group's router: it hands each message to one instance, only a live instance with a free handler receives, and a message a dying instance held returns for another. A router would need three instances of its own, each instance's health and free handlers published for it to read, and a way to move messages out of a dead instance's queue, and would roughly double the long polling requests. Work that must land on one particular instance, such as every message of one account on one instance, would reopen it |
 | One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones. Losing a VM or a zone then leaves two instances of every component running, and an Auto Scaling group replaces the lost VM without a person |
 | A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
