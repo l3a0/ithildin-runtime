@@ -102,8 +102,10 @@ alpha models and the research platform are what the team builds with care.
 
 Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner ruled on 2026-11-02 that two more
-actions are the owner's alone: releasing a loss stop or the kill switch once
-it has fired, and switching a strategy back on in live trading. The owner's
+actions are the owner's alone in live trading: releasing a loss stop or the
+kill switch once it has fired, and switching a strategy back on. In shadow
+and paper the operator may release them too, as the owner ruled on
+2026-11-02. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -185,7 +187,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, which the highlights do not cover.
-  Once the kill switch or a loss stop fires, only the owner releases it. Each
+  Once the kill switch or a loss stop fires on a live account, only the
+  owner releases it, and on shadow or paper the operator may too, on the
+  owner's ruling of 2026-11-02. Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
   Scores each failure mode of a change to the order path by likelihood,
