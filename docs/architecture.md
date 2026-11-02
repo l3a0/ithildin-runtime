@@ -367,7 +367,7 @@ flowchart TB
 Each cylinder is one component's output files for a decision, and the decision
 result that lists them, each a blob written once at a key fixed by the run,
 the stage and the decision. A solid arrow into a worker is an output it
-reads. When a worker writes its decision result, S3's event for it reaches the queue of each worker that reads it, which runs that worker's processing loop. Every
+reads. When a worker writes its decision result, S3's event for it reaches the queue of each worker that reads it, which wakes that worker's receive loop, and the loop hands the work to a free handler in the worker's pool. Every
 worker reads the plan, which the diagram draws only into the two that start
 the day, and monitoring reads every component's results, which the diagram
 leaves out to stay legible. Each dotted arrow from an adapter is a port,
@@ -950,6 +950,7 @@ here, with the issue that builds its drill.
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, and one that never answers the cancel | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -2210,6 +2211,7 @@ Ten rules hold the deployment to the premise and the hard limits.
    burst in a second. Each unit's stop handler, `ExecStopPost`, runs on the
    host and records why the container stopped, for the restart record
    design.md's rule 5 describes. A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale,
+   and the worker's receive loop touches that file only while every busy handler is making progress,
    because systemd's own watchdog cannot see a process inside a container.
    An `OnFailure` handler on the host pings the heartbeat service's failure
    address when any unit, or the Docker daemon itself, reaches its limit or
@@ -2546,7 +2548,7 @@ flowchart TB
     execution["execution<br/>order manager, order path"]
     brokers["execution.brokers<br/>simulated, Alpaca through its SDK"]
     monitoring["monitoring"]
-    runtime["runtime<br/>supervisor, worker entry points, modes, CLI"]
+    runtime["runtime<br/>supervisor, worker entry points, receive loop, modes, CLI"]
 
     data --> core
     alpha --> core
@@ -2577,7 +2579,8 @@ An arrow means "may import". The diagram draws four rules.
    worker uses: the `BlobStore` port, writing a blob S3 refuses to replace,
    the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that `### File formats and keys` describes, and `reconcile`, the one comparison of a book with the broker's account. `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. Only `runtime` imports the modules together. Each worker's entry point
-   lives there. It picks the adapters for the mode it is given, and the
+   lives there, and so does the one receive loop every worker and the
+   supervisor run. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
    order path. The supervisor lives there too, and imports only `core`. It
    starts no worker. It writes nothing but the plan, the deployment's lease and its delete at the end of the run, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, and the journal entry for a lease it clears, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
@@ -2725,7 +2728,11 @@ three levels, from fast to slow.
      events to EventBridge and SQS, named and pinned by digest when
      [#22](https://github.com/l3a0/ithildin-runtime/issues/22) picks it, and
      against the test environment's bucket and queues on each push to
-     `main`.
+     `main`. The suite also runs the receive loop over both adapters. A
+     message whose item is already in a handler is deleted rather than run
+     twice, the loop never holds more messages than it has free handlers, a
+     message whose handler is killed returns to the queue, and a hung
+     handler stops the heartbeat.
    - **The broker suite** holds every `Broker` adapter to the methods
      `OrderPath` calls: a submit with a client order id, a lookup by that id
      and by the broker's order id, a cancel by the broker's order id, fills
@@ -2786,6 +2793,7 @@ accepted.
 | `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation, and on 2026-11-01 that the loss limit is the account's portfolio value, so the gate computes the cap at each decision from the account's valuation at the prior closes, shrinking and growing with it, while the share and the stress move stay the owner's to write. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail. The operator's credential acts on paper and shadow accounts only, plus a live pull, as the owner ruled on 2026-10-30 | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, each behind a hardware key | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 what a person runs. Only the owner resumes live trading, ruled by the owner on 2026-10-30 |
+| Each worker, and the supervisor, runs one receive loop, an `asyncio` event loop in `runtime` that reads its queue and hands each item, a stage and a decision, to a pool of handler threads that work independently. Stages that read the journal keep the plan's order | One message at a time per worker, or a loop of each component's own | A thread pool in every worker, a progress report at every step, an order rule for the stages that read the journal, and a backtest run at two pool sizes in CI | Ruled by the owner on 2026-11-01. The design is proposed for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A component learns of a new blob from S3's own event, sent through EventBridge to its SQS queue, and waits by long polling the queue, never storage. An absence is caught by a deadline an earlier event set, held in the setter's memory, and the host's watchdog watches local heartbeat files. A pull reaches execution through the switch blob's own event, the owner having dropped its direct message on 2026-11-01, and no component reads the switch on a clock. Each event is a hint, the keys come from the plan, and anything that touches money re-reads the blob right before it acts | A writer messaging its readers, timed checks of the next key, or trusting an event as the change itself | S3's delivery delay on each step of a decision and on a pull, a rule and a queue per reader, dead-letter queues, refusals that keep other roles off them, and deadlines long enough for delivery's slow tail | Ruled by the owner on 2026-10-31. The design is proposed for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how CI works for containers that pass messages |
 | The runtime's bucket, VM and broker key live in marketlake's AWS account. The bucket policy names who may reach the data, the broker key stays under AWS's managed `aws/ssm` key behind a grant to the execution user and refusals for broad readers, marketlake's plan role reads only what `tofu plan` needs, and marketlake's apply and deploy roles refuse the runtime's VM | A separate AWS account, which a board sitting recommended | The VM is guarded by refusals a CI check has to keep complete, and the account's root user can edit every policy | Ruled by the owner on 2026-10-29, question 11, with AWS's managed key ruled fine. The key's path, the grant to the execution user and the refusals for broad readers are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). marketlake's side is [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944) |

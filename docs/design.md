@@ -444,14 +444,15 @@ Ten rules make the blobs something a worker can trust.
       holds the account's lease only while it changes the account. It takes
       the lease before it re-reads the journal for a submit or a cancel, and
       deletes it once the journal holds the broker's answer or the order's
-      doubt. An instance that needs the lease while another holds it waits,
-      and alarms if it cannot take it by a deadline. A plan of several orders
+      doubt. A handler that needs the lease while another handler, in its own
+      instance or another, holds it waits, and alarms if it cannot take it
+      by a deadline. A plan of several orders
       therefore takes the lease once per order, so a pull's cancels, run by
       whichever instance received the switch's event, wait for at most one
       order in flight.
 
-   A holder record names the VM, its boot, the worker's container and its
-   restart count rather than a process id, which means nothing outside one
+   A holder record names the VM, its boot, the worker's container, its
+   restart count and the handler, rather than a process id, which means nothing outside one
    container. A lease whose holder is the same VM on an earlier boot, or a
    container the host shows is gone, is cleared by the next process that
    needs it, and the clearing is journaled. The owner ruled on 2026-11-01
@@ -535,8 +536,8 @@ Ten rules make the blobs something a worker can trust.
       order is already counted at its worst case, so a cancel can only lower
       each counted limit.
    5. **No instance sends more for a send stage whose runner died.** The
-      entry that journals a send stage's planned orders names the instance
-      running it: its VM, boot, container and restart count. Another
+      entry that journals a send stage's planned orders names the handler
+      running it: its VM, boot, container, restart count and handler. Another
       instance, or the same one restarted, takes that send stage over only
       once its runner is gone, meaning the host shows the runner's container
       gone or restarted, or the runner's VM no longer holds the deployment's
@@ -797,6 +798,70 @@ EventBridge, which comes before any of these. So SQS stays. Measured delay
 on paper is what would reopen it: if SQS's renewal ever added time that
 mattered, Amazon MQ and Kinesis are the pushes that keep the VM closed to inbound connections.
 
+**One receive loop hands work to a pool of handlers.** The owner ruled on
+2026-11-01 that each component instance processes its queue through an
+event loop. One receive loop in each worker reads from the queue and hands
+each item to a pool of handlers, and each handler works on its item
+independently of the others. The list below is this
+doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
+
+1. **The receive loop is one implementation.** It lives in `runtime`, and
+   every worker and the supervisor run it in every mode, over the queue
+   port, so a backtest's named pipe goes through the same loop as SQS. It is
+   a Python `asyncio` event loop, and each handler is a thread from a pool
+   the loop owns, because boto3 and Alpaca's SDK block on the network. The
+   handlers share one boto3 client, which boto3 documents as safe to share
+   across threads. Each handler builds its own broker client, because the
+   SDK's HTTP session is not documented as safe to share.
+2. **An item is a stage and a decision, not a message.** The loop turns
+   each message, once it passes the checks below, into the stage and
+   decision it concerns. On waking and on starting it also adds every
+   decision it has not finished, in the plan's order. One instance never
+   runs an item twice at once, so the loop deletes a message whose item is
+   already in a handler.
+3. **The loop receives only for free handlers.** It asks SQS for at most as
+   many messages as it has free handlers, up to SQS's ten, so no message
+   waits hidden inside a busy instance while another instance could take
+   it. While a handler works, the loop extends its message's visibility
+   timeout, and it deletes the message once the handler's result is stored.
+   A message whose instance dies returns to the queue for another.
+4. **Stages that read the journal keep the plan's order.** Execution's two
+   stages and monitoring's reconcile read a book the decision before
+   changed, so a handler starts decision N of one of them only once the same
+   stage's result for decision N−1 is stored, a halt included. Every other
+   stage reads only blobs keyed by its own decision, so its handlers may run
+   decisions side by side.
+5. **A handler's failure stays in its item.** A handler that raises an error
+   it does not handle writes a halt as its stage's result for that
+   decision and alarms, and the loop deletes its message, so the other
+   handlers go on. If the halt cannot be written, the process exits and the
+   host restarts it, as rule 5 says.
+6. **A hung handler stops the heartbeat.** Each handler reports progress at
+   every blob write, journal append and broker call it finishes. The loop
+   touches the worker's heartbeat file only while every busy handler has
+   reported within the heartbeat limit, so a hung handler lets the host's
+   watchdog kill the container, and rule 9's takeover applies. The loop
+   renews a lease only for a handler that is still reporting, so a hung
+   handler never keeps the account's lease alive. Every broker and S3 call
+   therefore carries a timeout shorter than that limit.
+7. **Stopping drains the pool.** When the host stops the container, the loop
+   stops receiving and lets each handler finish within the unit's stop
+   timeout. A message whose handler did not finish returns to the queue,
+   and an execution send stage left unfinished is taken over as rule 9's
+   fifth item says.
+8. **The pool's size is configuration.** The deployment's config sets it
+   for each component, four by this doc's proposal, and one for the
+   supervisor. In execution, a second handler lets a pull's cancels run
+   while another handler is in the middle of a plan. Two handlers of one
+   instance meet at the account's lease the way two instances do, because
+   the lease's holder record names the handler.
+
+The price is a thread pool in every worker, a progress report at every
+step, and an order rule for the stages that read the journal. A test runs
+test 1's backtest with every pool at size one and again at size four, and
+expects the same journal and the same blobs byte for byte, so concurrency
+that changes an output fails CI.
+
 No worker on a VM receives until that
 VM's supervisor holds the deployment's lease, so a second VM's workers never
 take the lease holder's events off a shared queue. Execution receives
@@ -938,10 +1003,10 @@ would take about 9 minutes at the standard library's cost, 35 to 52 minutes at
 pyarrow's and 3 hours at pandas'.
 
 The event pipeline makes the span cheap. A worker starts once and runs its
-processing loop until it has a result for every decision in the plan. In
+receive loop until it has a result for every decision in the plan. In
 shadow, paper and live the plan holds one trading day's decisions. In a
-backtest it holds the whole history. Each worker works through every decision
-in turn, and the exit rule is the same in both. A worker carries nothing from one
+backtest it holds the whole history. Each worker hands every decision to its pool
+of handlers, in the plan's order, and the exit rule is the same in both. A worker carries nothing from one
 decision to the next except through blobs, so a long span runs the same steps
 as a span of one. The launch is paid once per worker, and the workers run as a
 pipeline. The alpha worker can run ahead through every decision's snapshot
@@ -1323,11 +1388,13 @@ glossing it.
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of every order or fill the platform did not send, journaled as received before execution halts on it |
 | **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, which marks the order as the platform's and names its strategy |
-| **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
+| **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue through its receive loop, which hands each item to a handler in its pool, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
 | **stage** | One step a component takes in a decision. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
 | **decision result** | The blob a stage writes last for a decision, at a key fixed by the run, the stage and the decision, listing its output files by key and SHA-256 or saying the decision halted. One key, so a stage ends each decision exactly once |
+| **receive loop** | The one event loop in each worker, and in the supervisor, that reads its queue and hands each item, a stage and a decision, to a free handler. [How a component learns of a change](#how-a-component-learns-of-a-change) gives its rules |
+| **handler** | One thread of a worker's pool, which works on one item at a time, independently of the worker's other handlers |
 | **event** | The store's announcement that a blob was created or deleted, which reaches the queue of every component that reads it. An event is a hint, and the blob is the record |
 | **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
@@ -1409,6 +1476,7 @@ once rather than re-argued.
 | The broker's own replace call, which swaps a resting order for a new one in one request, and sending a replacement before its cancel is confirmed | The owner ruled on 2026-10-31 that a plan can change or cancel an unfilled order. A cancel and then a new order keep every broker write on the one order path with a journal entry each, and waiting for the cancel's outcome means the old and the new can never both fill unseen. The price is a gap between the two orders, and a replacement that misses the send cutoff |
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process sending on one broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease. Several execution processes may run, as the owner ruled on 2026-11-01, and the account's lease lets one of them send at a time |
+| Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
 | One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
 | Durable state on the VM's disk | The owner ruled on 2026-10-29 that the VM keeps no state that matters, with every file a blob in storage. A replaced or lost VM then costs nothing but a lease to take. The price is a round trip to S3 per blob, and a memory-backed folder for backtests that must behave like S3 |
 | S3 for backtests | Test 1's tens of thousands of writes and reads would each wait 10 to 30 ms. The owner ruled on 2026-10-29 for an in-memory store, which this doc takes as a memory-backed folder |
