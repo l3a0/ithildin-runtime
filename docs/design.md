@@ -1131,7 +1131,15 @@ Five rules keep a day of decisions safe.
    current book. Data and recover therefore no longer overlap.
 2. **Decisions send in order.** Execution sends for a decision only once it
    has a result for the one before, so two decisions never share the order
-   path. Every stage's deadline fits inside the gap to the next decision time.
+   path. The order holds across instances because it rests on stored keys,
+   not on which instance ran a stage. Send for decision N needs recover for
+   N, which needs the stored send result for N−1. An instance that wakes
+   checks the keys of every decision its component has not finished, so
+   whichever instance receives the event for the last missing input runs
+   the stage, and one that finds an input missing drops the message. A lost
+   event leaves the stage to the supervisor's deadline, which halts the
+   decision rather than sending out of order. Every stage's deadline fits
+   inside the gap to the next decision time.
 3. **A plan changes or cancels its own unfilled orders.** The owner ruled
    on 2026-10-31 that a plan can change or cancel an existing order if it
    has not been filled yet. At each decision the order manager compares the
