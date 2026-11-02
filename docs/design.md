@@ -10,6 +10,7 @@ draws how slice 1's modules fit together.
 
 - [Premise](#premise)
 - [Design for 100x, build at 1x](#design-for-100x-build-at-1x)
+- [Every design weighs the whole lifecycle](#every-design-weighs-the-whole-lifecycle)
 - [One runtime](#one-runtime)
 - [Processes and files](#processes-and-files)
 - [How work is cut and ordered](#how-work-is-cut-and-ordered)
@@ -78,6 +79,56 @@ a VM on another machine has gone, the instance refresh across three VMs and
 the move to another zone are designed now and built when load calls for
 them, under the ranking rule in [CLAUDE.md](../CLAUDE.md), and each is
 drilled before anything relies on it.
+
+## Every design weighs the whole lifecycle
+
+The owner ruled on 2026-11-02 that the architecture always considers the
+entire software development lifecycle, from planning through building,
+testing, deploying and operating to retiring, and follows best practice for
+ten qualities. A design that serves one stage and breaks another, such as a
+fast path no test can reach or a deployment nobody can roll back, is not
+finished. Each quality has a home in these two docs.
+
+1. **Scalability.** Every part is designed for 100 times its first load and
+   built at that first load, as the section above says.
+2. **Availability.** Three instances of each component, an Auto Scaling
+   group that replaces a lost VM, and leases that fail over on their own,
+   as rule 9 and architecture.md's rule 11 of `## Where it runs` say.
+3. **Security.** No agent places a live order or moves money, a broker key
+   never carries withdrawal permission, each environment has an AWS account
+   of its own, and only the execution user reads the broker key, as
+   architecture.md's rule 3 of `## Where it runs` says.
+4. **Operability.** A person acts through the one `ithildin` tool, every
+   halt says why, and every live halt holds until the owner clears it, as
+   architecture.md's `## What a person runs` says.
+5. **Monitoring.** A monitoring component reports every decision and
+   raises one alarm per cause, and a dead-man check outside AWS catches the
+   silence nothing inside can report, as architecture.md's
+   `## When something is wrong` says.
+6. **Auditing.** Every order is journaled before it is sent, the journal is
+   a hash-chained log under Object Lock, every blob names the blobs it was
+   made from, and an organization trail records every account's API calls.
+7. **Testing.** What is tested is what runs, as `## One runtime` says, and
+   CI runs module tests, contract suites against every adapter and drills
+   for every alarm, as architecture.md's `### How CI runs them` says.
+8. **Performance.** A decision waits about a second on S3 and on S3's event
+   delivery, which caps one deployment at about a decision a minute, as
+   `### Strategies, schedules and decisions` says, and each component's
+   pool of handlers keeps one slow item from holding up the rest.
+9. **Usability.** The owner's time is the scarce thing, so `ithildin status`
+   and `ithildin explain` answer what happened in one command, each cause
+   alarms once, and each report names the next step.
+10. **Deployment.** One container image pinned by digest, a provenance
+    check before it runs, promotion from shadow to paper with live moved by
+    the owner alone, rollback by pinning an earlier digest, and VM images
+    rolled out by instance refresh outside sessions, as architecture.md's
+    `### Four environments` and rule 11 of `## Where it runs` say.
+
+A design pull request says which of the ten it changes and how, and names
+the price where one rises. A quality it leaves untouched needs no line. The
+price of the rule is a longer pull request body, paid so that a change that
+quietly weakens one quality, such as an alarm with no drill, is caught in
+review rather than in a session.
 
 ## One runtime
 
