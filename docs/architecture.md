@@ -1911,8 +1911,9 @@ each keeps its own rule.
    link from the entry after it, and the bucket refuses every principal, the
    owner's included, any replacement or delete there, keeps every version,
    locks each entry with S3 Object Lock, and alarms on a delete event, so an
-   edit cannot hide. Before live, the live journal is replicated to a bucket
-   in a second AWS account, as design.md's rule 1 says.
+   edit cannot hide. Before live, the live journal, every override and
+   every recorded capture are replicated to a bucket in a second AWS
+   account, as design.md's rule 1 says.
 5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
    owner to read, not as a record.

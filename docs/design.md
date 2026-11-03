@@ -370,8 +370,8 @@ Ten rules make the blobs something a worker can trust.
    prefix alarms, and replay lists versions and halts on a journal key with
    a delete marker or a second version. The owner ruled on 2026-11-01 for
    S3 Object Lock now. Each environment's bucket is created with Object
-   Lock enabled, and every object under the journal's and the runs'
-   prefixes is written with a retention date of its own. This doc proposes
+   Lock enabled, and every object under the journal's, the runs' and the
+   overrides' prefixes is written with a retention date of its own. This doc proposes
    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the mode
    by environment: compliance mode on live, which nobody can shorten or
    delete through, the account's root user included, and governance mode
@@ -389,7 +389,15 @@ Ten rules make the blobs something a worker can trust.
    data, a snapshot a decision read included. Before
    live, the live journal is also replicated to a bucket in a second AWS
    account with Object Lock of its own, as the owner ruled the same day,
-   because Object Lock cannot outlive the account that holds it. The
+   because Object Lock cannot outlive the account that holds it. The owner
+   ruled on 2026-11-02 that the replica also carries every override and
+   every recorded capture, because the journal names an override only by
+   its SHA-256, so a journal copy without its overrides cannot replay the
+   book. A capturing stage writes each capture with the tag
+   `recorded=true`, and the replication rule matches the journal's prefix,
+   the overrides' prefix and every object under the runs' prefix that
+   carries that tag, so a derived output is never copied. A test pins that
+   tag on every capture the store writes. The
    retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
    live gate. A deterministic component's header
    carries no clock time, so two runs of the same step on the same inputs
