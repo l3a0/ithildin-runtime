@@ -135,10 +135,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) says.
   Adds a parallel session to late work only when that work splits into
   pieces that need no exchange with the rest, which is the part of Brooks's
-  law McConnell asks readers to remember (RD p. 378). Never has two build sessions
-  edit one module at the same time, and names one session as the owner of a
-  module while its work is open, since a structure with a high cost of
-  coordination shapes the system it builds (BM L3853, BM L3905).
+  law McConnell asks readers to remember (RD p. 378). Here never has two build sessions edit
+  one module at the same time, and names one session as the owner of a module
+  while its work is open. That is this charter's reading of Newman's finding
+  that a structure with a high cost of coordination shapes the system it
+  builds (BM L3853, BM L3905).
 - **Vetoes:** work that builds a layer nobody can run yet, and hardening on
   a path that has run zero times outside the exceptions in the premise. Also
   a slip answered by dropping something that rule 3 of the design doc's
@@ -297,7 +298,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's ten
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's thirteen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -318,12 +319,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   change rather than claim correctness, and each names the commit and the
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
-  and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate within a day and fixes it
-  or replaces it with a smaller one, and never reruns a build until it
-  passes, since a team that does learns to accept failure, the drift Diane Vaughan named
+  and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate only as a skip whose reason
+  links an issue, here within a day of that issue, and fixes it or replaces it
+  with a smaller one. A test that guards a hard limit leaves the gate only once
+  a smaller replacement covering the same behavior passes there. Never reruns
+  a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named
   the normalization of deviance (BM L2868, BM L2917). Keeps
-  tests that run the full loop to a short named list of journeys, with an
-  order of magnitude more tests at each step down the pyramid
+  tests that run the full loop, beyond the injected faults, to a short named
+  list of journeys marked `full_loop` in `tests/`, and takes the book's order
+  of magnitude more tests at each step down the pyramid as guidance
   (BM L2798).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -356,8 +360,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
   handover the design doc's rules describe: one artifact built once for every
-  environment, and a new release taking the account's lease only after the
-  old one has stopped sending (BM L\~2160, BM L3044).
+  environment, its hash checked at every deploy and startup, and a new release
+  that sends only after the old one has left execution's queue and exited,
+  with an alarm when no release is consuming past a written bound
+  (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
+  rewrite-planning load, per the design doc.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
