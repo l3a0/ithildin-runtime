@@ -295,7 +295,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -356,8 +356,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Owns the rules of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
   the infrastructure code, its scheduled check and its rollback, the restart cap of each component
-  and the switch that stops restarts and scaling, the log pipeline off the machine, and the drill
-  for each alarm the group adds (DT p. 88, p. 302).
+  and the switch that stops restarts and scaling, the log pipeline off the machine, and the drills
+  the Release table's Paper row lists for them (DT p. 88, p. 302).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -374,22 +374,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
   that every committed recording of a broker response is scrubbed of them.
-  Checks the credential rules of the design doc's
+  Checks the credential rules in rules 2 to 5 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
-  which are eight.
-
-  1. No workflow run holds a broker or data-vendor credential.
-  2. A deploy credential sits behind an environment per cloud account that admits `main` alone,
-     names the owner as required reviewer and never serves a `pull_request_target` or
-     `workflow_run` job.
-  3. The infrastructure code holds no credential.
-  4. The deploy and apply roles deny deleting recorded data, writing the hard caps and releasing a
-     halt.
-  5. The drift check's role reads no data.
-  6. The step that restarts cannot write the release's record.
-  7. A log credential can only write.
-  8. Every interface that can control a host or a container takes only authenticated calls
-     (DT p. 92).
+  and the policy tests [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds for them, and that every
+  interface that can control a host or a container takes only authenticated calls (DT p. 92).
 
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
@@ -554,7 +542,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, and a backup of captured data and the journal has been restored and checked |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart and scaling switch has been flipped with the component left running, a release that fails Startup has left cancels and the kill switch served, a deploy has halted on an unreadable deployment state, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
