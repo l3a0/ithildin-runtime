@@ -104,8 +104,10 @@ Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner ruled on 2026-11-02 that two more
 actions are the owner's alone in live trading: releasing a loss stop or the
 kill switch once it has fired, and switching a strategy back on. In shadow
-and paper the operator may release them too, as the owner ruled on
-2026-11-02. The owner's
+and paper the operator may release a fired loss stop or kill switch too, as
+the owner ruled on 2026-11-02. That the operator may also switch a strategy
+back on there is the design's reading of those rulings, not a ruling of its
+own. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -364,7 +366,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, and the last release has been rolled back and forward again |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, the delay of each step's event is measured against the time before the cutoff, every strategy's off switch has been flipped in a drill with the others still trading, and the last release and the last VM image have each been rolled back and forward again |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.

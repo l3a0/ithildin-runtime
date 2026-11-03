@@ -75,6 +75,17 @@ across three availability zones in rule 11 of architecture.md's
 component the owner ruled for on 2026-11-01 run on that one VM, where they
 cover a process that crashes or hangs.
 
+A VM group also has a written limit of deployments, which this doc
+proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). It
+is the most deployments whose containers fit in 75% of one VM's memory at
+the size per process measured on paper. At the estimate of 100 MB a
+process, one deployment's 24 containers take about 2.4 GB, so slice 1's
+8 GB VM holds two deployments under that limit, a figure the measurement
+replaces. The next split past the limit is configuration rather than
+code: a mapping from account to VM group, with one Auto Scaling group per
+set of accounts, and each VM in a group still running every container of
+its accounts' deployments.
+
 Two things are built at 1x all the same. The first is the measure of load
 and the alarm that says when it nears the 1x limit, which here is the
 decisions a day across every deployment and how long each stage takes
@@ -105,12 +116,19 @@ finished. Each quality has a home in these two docs.
 3. **Security.** No agent places a live order or moves money, a broker key
    never carries withdrawal permission, each environment has an AWS account
    of its own, and only the execution user reads the broker key, as
-   architecture.md's rule 3 of `## Where it runs` says.
+   architecture.md's rule 3 of `## Where it runs` says. One check is still
+   open. Alpaca's trading API may offer crypto wallet transfer and
+   whitelist endpoints, so
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms
+   before the live gate either that none of them can move money out of the
+   platform's account, or that crypto is disabled on it with no
+   whitelisted address.
 4. **Operability.** A person acts through the one `ithildin` tool, every
    halt says why, and every live halt holds until the owner clears it, as
    architecture.md's `## What a person runs` says.
 5. **Monitoring.** A monitoring component reports every decision and
-   raises one alarm per cause, and a dead-man check outside AWS catches the
+   raises one alarm per cause, rarely two and never none, and a dead-man
+   check outside AWS catches the
    silence nothing inside can report, as architecture.md's
    `## When something is wrong` says.
 6. **Auditing.** Every order is journaled before it is sent, the journal is
@@ -132,8 +150,10 @@ finished. Each quality has a home in these two docs.
     rolled out by instance refresh outside sessions, as architecture.md's
     `### Four environments` and rule 11 of `## Where it runs` say.
 
-A design pull request says which of the ten it changes and how, and names
-the price where one rises. A quality it leaves untouched needs no line. The
+[CLAUDE.md](../CLAUDE.md)'s `## Design for 100x, across the whole
+lifecycle` says what a design pull request states about the ten. A
+`## Qualities` section in the pull request body, which CLAUDE.md's
+`## Pull requests` names, is this repo's convention for stating it. The
 price of the rule is a longer pull request body, paid so that a change that
 quietly weakens one quality, such as an alarm with no drill, is caught in
 review rather than in a session.
@@ -172,7 +192,7 @@ The price is that every module has to be written against an event from its
 first commit, which is slower than a vectorised backtest over a price array.
 What it buys is that a strategy's backtest and its paper run exercise the same
 lines of code. The next section says what that event is: a decision result,
-one blob in storage that lists a component's outputs for a decision. Only the data worker, the supervisor, and execution's send stage for its cutoff read the clock in a way that shapes what a strategy sees.
+one blob in storage that lists a component's outputs for a decision. Only the data worker, the simulator, and execution's send stage for its cutoff read the clock in a way that shapes what a strategy sees.
 
 ## Processes and files
 
@@ -241,7 +261,9 @@ rulings themselves.
 
 Ten entries define the design's terms.
 
-1. A **blob** is one object in storage, written once and never replaced. An
+1. A **blob** is one object in storage, written once and never replaced,
+   except a lease, which its holder rewrites only by a condition on the tag
+   it last got. An
    **output file** is a blob that holds one thing a component produced for
    one decision, such as a snapshot or a forecast, at a key fixed by the run,
    the component's stage, the decision and the output's name.
@@ -306,7 +328,7 @@ disagrees with the step's own view in a way that would mean choosing between
 two versions of the truth, as when the broker's positions differ from the
 journal's book, the step halts and a person resolves it, the way a git merge
 conflict waits for a person. Nothing ever forces a change over state it has
-not fetched: no blob is replaced, no entry is rewritten, and no order is sent
+not fetched: no blob is replaced but a lease by its holder's tag, no entry is rewritten, and no order is sent
 on a book not brought up to date at the start of the send stage. Five places
 apply it.
 
@@ -319,9 +341,10 @@ apply it.
    decides again, and appends after it, as rule 8 says.
 3. **Every order** waits on a fetch of the broker's positions, open orders and
    fills made at the start of execution's send stage, as rule 9 says, and,
-   just before the broker call, on the kill switch, the run's halt, its own send-stage result key, the account's lease's tag and the cutoff, as rule 9's fourth item says.
-4. **Every lease** is fetched before it is taken, and one another VM holds
-   is taken over only once it has expired unrenewed, as rule 9 says.
+   just before the broker call, on the kill switch, the strategy's off switch, the run's halt, its own send-stage result key, the account's lease's tag and the cutoff, as rule 9's fourth item says.
+4. **Every lease** is fetched before it is taken, and one another process
+   holds, on this VM or another, is taken over only once it has gone
+   unrenewed past its expiry and the margin for clock skew, as rule 9 says.
 5. **Every read of marketlake** fetches the manifest entry before the data it
    names, and a checksum that differs halts, as rule 8 of architecture.md's `## Where it runs` says.
 
@@ -330,7 +353,9 @@ Ten rules make the blobs something a worker can trust.
 1. **Every write is a blob, created once.** A worker writes each blob with a
    single upload carrying a condition that makes S3 refuse it if the key
    exists, and the blob's SHA-256, which S3 checks before it accepts the blob.
-   So a reader never sees half a blob, and no blob is ever replaced. S3
+   So a reader never sees half a blob, and no blob is ever replaced, except
+   a lease, which its holder rewrites only by a condition on the tag it
+   last got. S3
    returns the stored blob's tag and records when it stored it, and the
    storage port hands both back. The bucket's policy refuses every
    principal, the owner's and the operator's included, any write on the
@@ -346,13 +371,22 @@ Ten rules make the blobs something a worker can trust.
    a delete marker or a second version. The owner ruled on 2026-11-01 for
    S3 Object Lock now. Each environment's bucket is created with Object
    Lock enabled, and every object under the journal's and the runs'
-   prefixes is written with a retention date of its own, in compliance mode
-   on live, which nobody can shorten or delete through, the account's root
-   user included, and in governance mode on shadow and paper, which the owner alone
-   may bypass. Heartbeats and leases carry no lock, so their lifecycle and
+   prefixes is written with a retention date of its own. This doc proposes
+   for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the mode
+   by environment: compliance mode on live, which nobody can shorten or
+   delete through, the account's root user included, and governance mode
+   on shadow and paper, which the owner alone may bypass. It also proposes
+   for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) an Object
+   Lock legal hold on live's journal and recorded captures, which no
+   retention date ends, and an alarm on any object whose retention ends
+   within a set window. Heartbeats and leases carry no lock, so their lifecycle and
    deletes still work. The bucket carries OpenTofu's `prevent_destroy`, and
-   a test pins its lifecycle rules to the heartbeats' prefix alone, so that
-   no rule matches a key that holds a snapshot a decision read. Before
+   a test pins its lifecycle rules to two kinds of key: the heartbeats'
+   prefix, and the noncurrent versions under `leases/`, which a
+   noncurrent-version expiry removes, as this doc proposes for
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so a lease's
+   rewrites do not pile up. So no rule matches a key that holds recorded
+   data, a snapshot a decision read included. Before
    live, the live journal is also replicated to a bucket in a second AWS
    account with Object Lock of its own, as the owner ruled the same day,
    because Object Lock cannot outlive the account that holds it. The
@@ -432,8 +466,9 @@ Ten rules make the blobs something a worker can trust.
    writer and the time, from their main loop at least every fifteen seconds,
    so the supervisor can tell a live worker from a hung or lost one without
    being its parent, and monitoring can tell the same of the supervisor. The
-   bucket's lifecycle expires heartbeats after a week, the one prefix where
-   anything is removed.
+   bucket's lifecycle expires heartbeats after a week, and removes the
+   noncurrent versions a lease's rewrites leave under `leases/`, as rule 1
+   says. Nothing else is removed.
 6. **An absent, stale or empty input halts. It never reads as "trade
    nothing".** A blob whose header names the wrong decision halts as stale. An
    output file with no entries halts unless it carries an explicit "trade
@@ -456,9 +491,13 @@ Ten rules make the blobs something a worker can trust.
      on to its next decision.
    - **A crash is a restart, and a failure stops the run.** One crash is not
      a failure: the host restarts the worker within seconds and it resumes
-     from storage, which rules 3 and 9 make safe to repeat. A worker has
-     failed when it misses its deadline, when its heartbeat, judged by the time in its key, stops for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the delivery delay measured on paper, or when it restarts more often in one run than the
-     host's limit allows. Its deadline runs from the moment its last needed
+     from storage, which rules 3 and 9 make safe to repeat. One instance is
+     unhealthy when its heartbeat, judged by the time in its key, stops for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the delivery delay measured on paper, when it restarts more often in one run than the
+     host's limit allows, or when it exits before it has a result for every
+     decision. An unhealthy instance raises an alarm naming the instance and
+     is restarted or replaced, while the component's other two instances
+     carry on. A worker, meaning the component, has failed only when its
+     stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
      input appears, so waiting on a slow upstream worker never counts against
      it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. On a failure the supervisor writes the halt as that worker's
      result, naming its restart records and every output file it finds
@@ -474,8 +513,13 @@ Ten rules make the blobs something a worker can trust.
      once, and again only after a decision succeeds, so a fault that persists
      through a day of frequent decisions alarms once that day, and once again
      on each later day it persists. Before it alarms, it writes an output file
-     naming the halt it is handling, so a restarted monitoring finds that file
-     and neither repeats nor drops an alarm. The dead-man check gets success
+     naming the halt it is handling, and after the push it writes a second
+     create-only record saying the push was sent. An instance that finds,
+     when it starts or wakes, a claim older than a short limit with no sent
+     record pushes again, which this doc proposes for
+     [#11](https://github.com/l3a0/ithildin-runtime/issues/11). So a
+     monitoring killed between its claim and its push can repeat an alarm,
+     rarely, and never drops one, a repeat being the cheaper failure. The dead-man check gets success
      pings only. healthchecks.io notifies only when a check changes state, so
      a failure ping to a check already down sends nothing, and a check left
      down by one halted day would never alarm on a dead VM the next. A halt's
@@ -484,7 +528,7 @@ Ten rules make the blobs something a worker can trust.
      [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and drills
      cover a halted day followed by a dead VM, two reasons in one run, and a
      fault that persists into a second day, each expecting its push. Alarms
-     raised before monitoring runs, such as a lease taken over from another VM, a pin
+     raised before monitoring runs, such as a lease taken over from another process, a pin
      the VM does not trust, a drill not clean, or the plan's own event not
      received, go out on the host's direct route, the one the `OnFailure`
      handler uses, with the reason as the body.
@@ -500,10 +544,19 @@ Ten rules make the blobs something a worker can trust.
      deployment succeeds or a person clears it. A halt for a book that
      disagrees with the broker, or an order the platform did not send, stays
      open until a person clears it. On a live account every halt holds the
-     account until the owner clears it, as the owner ruled on 2026-11-01:
-     each later decision halts while the journal holds a live halt that no
-     `ithildin clear` entry names, so no cause that clears itself resumes
-     live trading without the owner. Shadow and paper keep the rule above. `ithildin
+     account until the owner clears it, as the owner ruled on 2026-11-01.
+     Where that rule lives is this doc's proposal for
+     [#7](https://github.com/l3a0/ithildin-runtime/issues/7). The set of
+     causes that hold an account is a value of each account's hard caps
+     blob, which only the owner writes, and on live it names every cause,
+     as the owner ruled. One holding-halt check reads that value rather than
+     the environment, so no stage branches on which environment it runs in.
+     Each later decision halts while the journal holds a halt of a holding
+     cause that no `ithildin clear` entry names, so no cause that clears
+     itself resumes live trading without the owner. Shadow and paper name
+     only an order the platform did not send, and keep the rule above for
+     every other cause. A run of test 2's replay with every cause set to
+     hold puts live's behaviour through CI. `ithildin
      explain` and the alarm's second line say who may clear it: nobody
      needed, the operator or the owner, or the owner alone.
 
@@ -595,10 +648,12 @@ Ten rules make the blobs something a worker can trust.
    container. A lease whose holder is the same VM on an earlier boot, or a
    container the host shows is gone, is cleared by the next process that
    needs it, and the clearing is journaled. The owner ruled on 2026-11-01
-   for automatic failover across machines, so a lease another VM holds is
-   taken over once it has gone unrenewed past its expiry and a margin for
-   clock skew, by a conditional write naming the expired lease's tag, which
-   a revived holder's renewal can then never overwrite. The takeover is
+   for automatic failover across machines, so any process, on any VM, takes
+   over a lease that has gone unrenewed past its expiry and a margin for
+   clock skew, by the same conditional write naming the expired lease's
+   tag, which a revived holder's renewal can then never overwrite. A
+   handler frozen on the lease holder's own VM is taken over this way too,
+   without waiting for the host to show its container gone. The takeover is
    journaled and alarms. A frozen holder that wakes finds its renewal
    refused, and stops that action, and execution's
    check of the lease's tag right before every broker call, rule 9's fourth
@@ -658,17 +713,24 @@ Ten rules make the blobs something a worker can trust.
    4. **Right before every submit**, after the order's `sending` entry
       is stored, execution checks six things.
       1. The kill switch is absent.
-      2. The order's strategy is not switched off.
-      3. No halt of the run is stored.
+      2. The order's strategy is not switched off. As with the kill
+         switch in rule 10, any answer other than "no such blob", a timeout
+         included, reads as switched off, with the reason "strategy off
+         switch unreadable", and that halts the decision as an unreadable
+         control does. So execution's role can read and list
+         `accounts/<account>/strategies/`.
+      3. No halt of the run is stored, and the plan's lease holds the
+         run's status as running, so a halt or stop the supervisor has
+         recorded but not yet announced also stops the send.
       4. Its own send-stage result key is still empty.
-      5. The account's lease still carries the tag execution got when it
-         took it for this order.
+      5. The account's lease still carries the tag that the holder's own
+         last take or renewal of it returned.
       6. The market-on-close cutoff has not passed, for such an order.
 
       Any one failing journals the
       order `Abandoned`, sends nothing, and halts the decision, except the
-      second, which abandons only that strategy's orders and leaves the
-      account's other strategies sending, since a strategy's off switch,
+      second when it finds the off switch, which abandons only that
+      strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
       `accounts/<account>/strategies/<strategy>/off.json`, stops one
       strategy without a deploy and never reads as a target of zero, as rule
       1 of `### Every change can be undone or switched off` asks. So a run the
@@ -680,15 +742,25 @@ Ten rules make the blobs something a worker can trust.
       stranded leg by an instance taking over a send stage, check only the
       lease's tag. The
       cancel that keeps a pair whole checks the lease's tag and the cancel
-      cutoff. A plan's own cancel or replacement checks everything this item
-      lists. A cancel skips the risk gate's limits on purpose: every open
+      cutoff. A plan's own cancel, the cancel ahead of a replacement
+      included, checks four things: no halt of the run is stored, its own
+      send result is still empty, the lease's tag, and the cancel cutoff.
+      It skips the strategy's off switch, so a switched-off strategy's
+      cancels still go out, and the replacement itself is a submit, which
+      checks all six. A cancel skips the risk gate's limits on purpose: every open
       order is already counted at its worst case, so a cancel can only lower
       each counted limit.
-   5. **No instance sends more for a send stage whose runner died.** The
-      entry that journals a send stage's planned orders names the handler
-      running it: its VM, boot, container, restart count and handler. Another
-      instance, or the same one restarted, takes that send stage over only
-      once its runner is gone. On the runner's own VM that means the host
+   5. **No instance sends more for a send stage whose runner died.** Before
+      its broker fetch, a send stage writes a create-only claim at
+      `runs/<deployment>/<run>/<decision>/execution/send/claim.json` naming
+      the handler running it: its VM, boot, container, restart count and
+      handler. The entry that journals its planned orders names the same
+      handler. A send stage that finds a claim or a planned entry it did not
+      write never syncs or plans for that decision, so two instances that
+      both receive its event never both plan. Another instance, or the same
+      one restarted, reads the claim rather than the planned entry to find
+      the runner, and takes that send stage over only once its runner is
+      gone. On the runner's own VM that means the host
       shows its container gone or restarted. From another VM it means the
       runner's VM counts as gone: no supervisor instance on it has written a
       heartbeat within the limit, or the Auto Scaling group reports it
@@ -699,8 +771,8 @@ Ten rules make the blobs something a worker can trust.
       runner's message. An instance that starts, and one that receives a
       send stage's event, acts in this order:
       1. Check the kill switch, and if it is set take the account's lease and cancel every resting order in the account, stamped or not, journaling each cancel first.
-      2. For a send stage that has journaled planned orders and no result,
-         and whose runner is gone, take the account's lease, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
+      2. For a send stage that has a claim and no result, and whose runner
+         is gone, take the account's lease, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
          cancel any accepted leg of a pair whose partner is not accepted,
          before the cancel cutoff, and write a halt as that send stage's
          result. It does this whether or not the supervisor has already
@@ -722,11 +794,15 @@ Ten rules make the blobs something a worker can trust.
    An order in doubt also blocks the next order beside it, as rule 3 of
    `### Every fact has one writer` asks. The gate refuses any order on an
    account and instrument that hold an `InDoubt` order, so a decision never
-   sends a second order beside one the platform cannot see. An `InDoubt`
-   order still unsettled a written time after it was sent, 30 minutes by
-   this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), halts the run
-   and alerts the owner, rather than waiting out a time in force that a
-   good-till-cancelled order may not reach for weeks.
+   sends a second order beside one the platform cannot see. An order
+   alarms the moment it is first journaled `InDoubt`. One still unsettled
+   a written time after it was sent halts the run and alerts the owner,
+   rather than waiting out a time in force that a good-till-cancelled
+   order may not reach for weeks. By this doc's proposal for
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that time is
+   the smaller of 30 minutes and the time left before the cancel cutoff,
+   and a supervisor deadline enforces it, reading storage before it acts,
+   as any expired deadline does.
 
    No other worker's output can loosen the gate, because its hard caps come
    from a blob the bucket's policy lets only the owner's credential write,
@@ -853,10 +929,10 @@ the broker's own order id.
    journal holds an unmatched entry that no `ithildin clear` entry names.
    Once such an order has filled, nothing else would make the next decision
    halt, and it would trade on top of a position nobody explained. This is
-   the one cause for which slice 1 builds the holding halt that
-   `### Strategies, schedules and decisions` otherwise defers, under
-   CLAUDE.md's third exception, a guard whose price is paid by building it
-   late.
+   the one cause every account's hard caps blob names among the causes
+   that hold it, in every environment, under CLAUDE.md's third exception,
+   a guard whose price is paid by building it late. Rule 7 says how that
+   value is read.
 
 **What reconciling and the gate count.** Monitoring checks each stamped
 order's filled quantity at the broker against the journal's, and the
@@ -934,8 +1010,9 @@ during the session, about seven hours a day, so each makes about 1,260
 requests a trading day and about 26,000 a month. Three instances of each
 of seven components and of the supervisor make 24 containers in each of
 shadow and paper, about 1.2 million requests a month, and live's 24 bring
-the account to about 1.9 million. SQS's first million requests a month are
-free, and each further million costs 0.40 US dollars, as its
+the organization to about 1.9 million. Consolidated billing shares SQS's
+free tier across the organization's accounts, so its first million
+requests a month are free once for the whole organization, and each further million costs 0.40 US dollars, as its
 [pricing page](https://aws.amazon.com/sqs/pricing/) says, so the waiting
 costs about 35 cents a month once live runs.
 
@@ -977,7 +1054,8 @@ doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
    SDK's HTTP session is not documented as safe to share.
 2. **An item is a stage and a decision, not a message.** The loop turns
    each message, once it passes the checks below, into the stage and
-   decision it concerns. On waking and on starting it also adds every
+   decision it concerns, except the kill switch's event, which becomes an
+   item of its own, as item 8 says. On waking and on starting it also adds every
    decision it has not finished, in the plan's order. One instance never
    runs an item twice at once, so the loop deletes a message whose item is
    already in a handler.
@@ -996,10 +1074,17 @@ doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
 5. **A handler's failure stays in its item.** A handler that raises an error
    it does not handle writes a halt as its stage's result for that
    decision and alarms, and the loop deletes its message, so the other
-   handlers go on. If the halt cannot be written, the process exits and the
+   handlers go on. A handler that ends for any reason, an error included,
+   first journals its order's doubt if it was sending, then deletes its
+   lease, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process exits and the
    host restarts it, as rule 5 says.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
-   every blob write, journal append and broker call it finishes. The loop
+   every blob write, journal append and broker call it finishes, and at
+   each attempt to take a lease, so a handler waiting for a held lease is
+   not taken for a hung one. The deadline at which a lease wait alarms sits
+   below the watchdog's limit, so a wait that cannot end alarms before
+   anything kills the container, and the handler keeps trying after the
+   alarm. The loop
    touches the worker's heartbeat file only while every busy handler has
    reported within the heartbeat limit, so a hung handler lets the host's
    watchdog kill the container, and rule 9's takeover applies. The loop
@@ -1013,8 +1098,13 @@ doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
    fifth item says.
 8. **The pool's size is configuration.** The deployment's config sets it
    for each component, four by this doc's proposal, and one for the
-   supervisor. In execution, a second handler lets a pull's cancels run
-   while another handler is in the middle of a plan. Two handlers of one
+   supervisor. In execution, one handler of each instance is kept for the
+   kill switch's work alone, so a pull's cancels run while another handler
+   is in the middle of a plan. The switch blob's event becomes an item of
+   its own, the account's kill switch rather than a stage and a decision,
+   and only that handler takes it. Any other message the loop receives for
+   that handler goes back to the queue at once with visibility 0, so
+   another instance can take it. Two handlers of one
    instance meet at the account's lease the way two instances do, because
    the lease's holder record names the handler.
 
@@ -1022,7 +1112,10 @@ The price is a thread pool in every worker, a progress report at every
 step, and an order rule for the stages that read the journal. A test runs
 test 1's backtest with every pool at size one and again at size four, and
 expects the same journal and the same blobs byte for byte, so concurrency
-that changes an output fails CI.
+that changes an output fails CI. A second test runs test 2's replay with
+one instance of each component and again with three, and compares the
+journal and the blobs byte for byte in the same way, so a race between
+instances fails CI too.
 
 No worker on a VM receives until a supervisor instance on that
 VM has read the run's plan and found its VM on the plan's release, so a VM outside the run never
@@ -1065,7 +1158,10 @@ deadlines again from storage, once, as it starts.
    from a hung worker.
 2. **Monitoring's deadlines.** Monitoring starts a deadline on each of the
    supervisor's heartbeat events and on each kill switch event, for the
-   switch's cancels, and alarms when one expires first.
+   switch's cancels, and alarms when one expires first. It cancels the
+   supervisor-heartbeat deadline when it hears the run's halt or stop, so a
+   failed run, whose supervisors exit cleanly, raises one alarm rather than
+   a second for the heartbeats that stopped after it.
 3. **The host's watchdog.** Each worker also touches a heartbeat file in its
    own memory-backed directory on the VM. The watchdog watches those files
    with the kernel's own file change events and kills a container whose
@@ -1133,7 +1229,7 @@ The price is six things.
    queue for each component, in each environment, generated from the
    routes, and drills that delete a rule, deny a queue's policy and turn off
    the bucket's EventBridge delivery, each expecting its alarm.
-2. Long polling's requests, about three a minute for each waiting worker, inside SQS's free million a month at this scale.
+2. Long polling's requests, about three a minute for each waiting worker, which pass SQS's free million a month at this scale, at about 35 cents a month once live runs.
 3. S3's delivery delay added to each step of a decision. A decision passes
    through about five steps, so a slow day that delays each by two minutes
    can push the 15:40 decision past the 15:48 cutoff, where execution
@@ -1186,25 +1282,28 @@ never shows half a blob. One contract test suite runs against both adapters.
 It covers a write refused when its key exists, the SHA-256 check, keys listed
 in order, the same answers for a refusal, two processes racing one create, a
 read during a write, a writer killed partway through, a lost reply on a write
-that landed, the tag a create returns, the stored time a lookup returns, and
-a conditional delete with a stale tag. A rule the folder breaks fails a
+that landed, the tag a create returns, the stored time a lookup returns, a
+conditional rewrite with a stale tag, the new tag a conditional rewrite
+returns, and a conditional delete with a stale tag. A rule the folder breaks fails a
 test. A backtest's blobs vanish when it ends, which the premise
 allows, because a backtest can be regenerated from committed data and the
 pinned release.
 
-The clock adapter is read in three places only. The data worker reads it to
+The clock adapter is read in three places only: the data worker, the
+simulator and execution's send stage. The data worker reads it to
 decide when a decision's snapshot is written, which is as fast as possible
 under the history clock and at the decision time under the wall clock. The
-supervisor reads wall time for deadlines in every mode, because a deadline
-guards against a hung process rather than shaping what a strategy sees. It
-reads it through a timer port of its own, always wall time and faked in
-tests, so a deadline never reads the history clock and never bypasses a
-port. The simulator's `clock()` reads the `Clock` handed to it, so a
+simulator's `clock()` reads the `Clock` handed to it, so a
 backtest never halts on skew between two clocks.
 Execution's send stage reads it before every send, to check the cutoff for
 the strategy's orders, as `### Strategies, schedules and decisions` says.
 Under the history clock that reading is the decision time, so a backtest
-never meets the cutoff, and a drill sets a test clock past it instead. Apart from those places, a worker reads wall time only to key its heartbeat and, in execution and monitoring, to set the deadlines of `### How a component learns of a change`, none of which shapes what a strategy sees. Otherwise the workers move on only when messages arrive.
+never meets the cutoff, and a drill sets a test clock past it instead. The
+supervisor is apart from the three. It reads wall time for deadlines in
+every mode, because a deadline guards against a hung process rather than
+shaping what a strategy sees, and it reads it through a timer port of its
+own, always wall time and faked in tests, so a deadline never reads the
+history clock and never bypasses a port. Apart from those places, a worker reads wall time only to key its heartbeat and, in execution and monitoring, to set the deadlines of `### How a component learns of a change`, none of which shapes what a strategy sees. Otherwise the workers move on only when messages arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
 halts again if its cause is still there. A failure stops the whole run.
@@ -1235,7 +1334,7 @@ The owner's rulings 7 to 9 move the time of day, the frequency and the
 strategy out of the platform and into the strategy. The first strategy trades
 once a day on daily closes, and a design shaped around it would bake in an
 evening run, a key per trading session and one strategy per account. Blobs are
-never rewritten, so a key or a stored format changed later leaves every reader
+never rewritten, a lease aside, so a key or a stored format changed later leaves every reader
 handling two layouts. That is the one part this subsection builds in slice 1:
 keys, stored formats and the plan. Machinery that only a strategy deciding
 minutes apart, or a second strategy, would exercise waits for one, and the
@@ -1503,11 +1602,14 @@ not.
    halts, an instance reads the key the deadline waits on once, as the
    supervisor's deadlines already do, and acts only if what it waits for is
    still missing.
-2. **One cause raises one alarm.** Monitoring writes the file naming the
-   halt it is handling before it alarms, as rule 7 says, and that write is
-   create-only. Only the instance whose write lands sends the alarm, and an
-   instance whose write S3 refuses sends nothing, so three instances that
-   all see one cause raise one alarm. A missed deadline's alarm goes through
+2. **One cause raises one alarm, or rarely two.** Monitoring writes the
+   file naming the halt it is handling before it alarms, as rule 7 says,
+   and that write is create-only. Only the instance whose write lands sends
+   the alarm, and an instance whose write S3 refuses sends nothing, so three
+   instances that all see one cause raise one alarm. The sent record that
+   follows the push lets another instance push again for a claim whose
+   writer died before pushing, as rule 7 says, so a cause can alarm twice
+   and never not at all. A missed deadline's alarm goes through
    the same kind of file, named for the deadline and its decision.
 
 The price is three times the containers, about 1.2 million long polling
@@ -1532,9 +1634,10 @@ finds it there.
    is written.
 2. **A halt that holds a shadow or paper account until a person clears
    it**, for every cause but an order the platform did not send. Slice 1
-   builds the holding halt for that cause, as
-   `### Orders the platform did not send` says, and for every cause on a
-   live account, as rule 7 says. Once a day, a
+   builds the one holding-halt check for every cause, because live holds on
+   every cause, and the hard caps blob's set of holding causes decides
+   which apply, as rule 7 says. So holding a shadow or paper account on
+   more causes waits only for the owner to widen that set. Once a day, a
    persistent cause such as a book that disagrees with the broker halts the
    next decision again, because every decision checks again. A strategy
    deciding minutes apart would meet a gate refusal again before a person
@@ -1585,7 +1688,7 @@ So these rules are checks on a design, and a review applies all of them. A modul
 
 1. **The next scale step exists as a written design, and the only code built ahead of it is configuration.** The book's example is a data-access layer designed so it could reach several databases while one runs. Its migration scripts are written when the need arises, and the design is what lets a second database take weeks rather than months (AoS L1078). Here the only code built ahead is a configuration value, such as a partition count, whose other settings a test runs. A script or path offered later as the next step has run once, in a drill on a copy, before anything relies on it.
 2. **Every implementation states its written scale limit, and an alarm or a test trips at 75% of it.** Code built for "any number of read nodes" that handles five has a limit of five (AoS L1174). The limit is stated beside the code that enforces it, and 75% is the headroom ceiling in rule 4. On the order path, reaching the limit halts.
-3. **A partition key and its count are configuration from the first commit.** Raising the count of a split by key is a configuration change. The book finds a split by function "not so easy" to design room for in advance (AoS L7781), so module boundaries and data ownership are settled early. Captured data is keyed by its source, the vendor's identifier as received, and the date it was recorded. The key only routes a record and never identifies it, and a write into a key that already holds data adds a new vintage rather than replacing one. A snapshot that a decision read is a record of that read rather than a capture, so it keeps the run's key and is written once. The trading loop is keyed by account.
+3. **A partition key and its count are configuration from the first commit.** Raising the count of a split by key is a configuration change. The book finds a split by function "not so easy" to design room for in advance (AoS L7781), so module boundaries and data ownership are settled early. Captured data is keyed by its source, the vendor's identifier as received, and the date it was recorded. The key only routes a record and never identifies it, and a write into a key that already holds data adds a new vintage rather than replacing one. A snapshot that a decision read is a capture of that read, keyed by its run rather than by source and date, and written once. The trading loop is keyed by account.
 4. **Plan headroom per component, at 50% of measured capacity and never above 75%.** The measured maximum can be wrong, growth estimates can be wrong, and behaviour near the limit turns erratic (AoS L4449, L4475, L4480). Headroom is computed for each component, never for the system as a whole (AoS L4496). Here that means capture disk, journal volume and the broker's API rate limits. A share of the rate limit is reserved for cancels and the kill switch, and new orders never draw on it.
 
 ### Keep the order path isolated
@@ -1593,21 +1696,21 @@ So these rules are checks on a design, and a review applies all of them. A modul
 The **order path** runs from the target portfolio through the risk gate and the journal to the broker adapter. A **synchronous dependency** on it is a call that leaves the process or waits on input or output. A call between modules inside the process, through their shared interfaces, is not one.
 
 1. **Nothing that does not earn money can stall the order path.** The book's first rule of fault isolation is to protect whatever is closest to the money (AoS L7130). Monitoring, reports, dashboards and research reach the order path only asynchronously, and are allowed to fail. The book's own case is a monitoring database whose slowness backed up every user query until the site went down (AoS L8616). The loss stop and the kill switch live in the risk gate and are read on every order, never in monitoring.
-2. **Count the synchronous dependencies on the order path and keep them to the minimum.** Availability multiplies along a chain. One hundred parts at 99.999% each give about 99.9% together, which turns about 5 minutes of downtime a year into over 500 (AoS L8698). The minimum here is the input data, the risk gate, the journal and the broker. The journal write is synchronous on purpose, because hard limit 4 puts it before the send.
+2. **Count the synchronous dependencies on the order path and keep them to the minimum.** Availability multiplies along a chain. One hundred parts at 99.999% each give about 99.9% together, which turns about 5 minutes of downtime a year into over 500 (AoS L8698). The minimum here is the input data, the risk gate, the journal and the broker. The journal write is synchronous on purpose, because hard limit 4 puts it before the send. The account's lease, the controls and the halt checks before each send are reads and conditional writes on the same store that holds the journal, so they count as the journal's dependency, and the count stays at four.
 3. **A fault boundary is drawn around the whole loop, never around a layer, and every crossing is listed.** In the book, a unit isolated from faults shares nothing with its neighbours, takes no calls across its boundary, and carries every transaction from start to finish inside itself (AoS L7088, L7101, L7113). A boundary drawn around all the databases, or all the risk checks, only groups like parts, and one failure there still reaches every transaction (AoS L7117). The book lets one boundary hold one tenant or many (AoS L7147). So the first build is one boundary holding every strategy sleeve, and a split by account comes when load or risk calls for it. Two strategies in one broker account share buying power, so they never sit in different boundaries. Three crossings are allowed, and any other breaks the boundary.
    1. Captured data flows in, read only and one way, and a stale feed halts the sleeves that read it.
    2. Monitoring reads outward only.
-   3. Operator controls flow inward to every boundary. A control is the kill switch, a strategy's off switch, the hard caps, a person's override, a halt's clear or the release pin, and a control not named here breaks the boundary like any other crossing. Each control meets four conditions.
+   3. Operator controls flow inward to every boundary. A control is the kill switch, a strategy's off switch, the hard caps, a person's override, a halt's clear, a fired loss stop's clear or the release pin, and a control not named here breaks the boundary like any other crossing. Each control meets four conditions.
       1. It is a blob at a fixed key that only named credentials write.
-      2. The loop reads it at a stated point: the switches and the hard caps before each order, the release pin at a session's start, and an override or a clear at the next decision's sync.
+      2. The loop reads it at a stated point: the switches, a fired loss stop and the hard caps before each order, the release pin at a session's start, and an override or a clear at the next decision's sync.
       3. Every write is journaled under the identity of the writer.
       4. A boundary that cannot read a control halts.
 
 ### Every fact has one writer
 
-1. **Each fact has one authoritative store, and a copy of a value that changes is derived.** The book requires a single point of truth for any value copied across a system, updated in one place (AoS L8153). Here the journal records every intent, order, acknowledgement, fill and cancel when it happens, and the broker is the truth for holdings and cash at the moment the platform asks. The two are independent records that reconciliation compares and never overwrites, and a mismatch halts trading. Positions and cash held anywhere else are derived and rebuilt once the two agree. Captured data, every snapshot a decision read, every backup of either or of the journal, and every broker statement the platform saved are recorded facts, not derived copies.
+1. **Each fact has one authoritative store, and a copy of a value that changes is derived.** The book requires a single point of truth for any value copied across a system, updated in one place (AoS L8153). Here the journal records every intent, order, acknowledgement, fill and cancel when it happens, and the broker is the truth for holdings and cash at the moment the platform asks. The two are independent records that reconciliation compares and never overwrites, and a mismatch halts trading. Positions and cash held anywhere else are derived and rebuilt once the two agree. Captured data, every snapshot a decision read, execution's account file, which holds the broker state its recover stage captured, every backup of any of them or of the journal, and every broker statement the platform saved are recorded facts, not derived copies.
 2. **The quantity that sizes an order counts every order already sent.** The book asks three questions of any replicated read, and one of them decides this case: will the value feed a later write (AoS L7901)? Here the gate and the sizing both measure against the broker's holdings plus every order the journal shows as sent, working or unknown, counted as if fully filled. A strategy's own position comes from the journal's fills, and reconciliation checks the strategies' sum against the account. Risk limits, instrument metadata and configuration may be cached with a maximum age. Their refresh, like every session boundary, reads the shared clock rather than the wall clock, so a backtest refreshes the same way live trading does.
-3. **One process sends for an account, and an order with no answer blocks the next.** State that must survive a restart is rebuilt from the journal and the broker, and a rebuild that cannot read either leaves the platform halted. The book's order of preference is to avoid state, then to move it out of the process (AoS L8393, L8827). Only the process holding the account's lease writes the journal or sends to the broker, and a standby takes the lease only after the old one has expired or been revoked, then reconciles before it sends. Each journal entry carries a client order id fixed by the decision before the send, the broker receives the same id, and a resend reuses it. An order the broker never acknowledged is unknown rather than failed. It blocks every further order on its account and instrument until reconciliation settles it, and if it stays unknown past a set time, trading halts and the owner is alerted. The simulated broker can withhold an acknowledgement, so replay runs this path. These rules go beyond the book, which discards a timed-out call (AoS L8698).
+3. **One handler at a time changes an account, and an order with no answer blocks the next.** State that must survive a restart is rebuilt from the journal and the broker, and a rebuild that cannot read either leaves the platform halted. The book's order of preference is to avoid state, then to move it out of the process (AoS L8393, L8827). Only the handler holding the account's lease writes an order's `sending` or cancel entry, or calls the broker to change the account. Every journal append, by any writer, is ordered by its create-only write at the next number, so monitoring, the supervisor and the `ithildin` tool append without the lease. A handler takes the lease only once it is free, expired past the skew margin, or cleared, and a handler that takes it re-reads the journal before it acts. Each journal entry carries a client order id fixed by the decision before the send, the broker receives the same id, and a resend reuses it. An order the broker never acknowledged is unknown rather than failed. It blocks every further order on its account and instrument until reconciliation settles it, and if it stays unknown past a set time, trading halts and the owner is alerted. The simulated broker can withhold an acknowledgement, so replay runs this path. These rules go beyond the book, which discards a timed-out call (AoS L8698).
 
 ### Every change can be undone or switched off
 
@@ -1633,7 +1736,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
 ### Data has a cost, except the data that cannot be recaptured
 
-1. **Every class of derived data has an owner and an end date.** Data costs more than its storage, and the book lists six costs that grow with it (AoS L8947). Most of its value falls with age, so keeping it forever needs a stated value and a time limit (AoS L8963, L9168). Diagnostic logs, intermediate backtest output and feature tables follow that rule. Recorded data is exempt as a class: captured data, every snapshot a decision read, the journal, every backup of any of them, and every broker statement the platform saved. No lifecycle or cleanup rule may match a path that holds it. A snapshot leaves the class only once a test rebuilds every stored snapshot of a run of sessions, byte for byte, from the sealed day it was read from. The operator's change log and incident evidence are kept as long as the operator sets on purpose, rather than by this rule.
+1. **Every class of derived data has an owner and an end date.** Data costs more than its storage, and the book lists six costs that grow with it (AoS L8947). Most of its value falls with age, so keeping it forever needs a stated value and a time limit (AoS L8963, L9168). Diagnostic logs, intermediate backtest output and feature tables follow that rule. Recorded data is exempt as a class: captured data, every snapshot a decision read, execution's account file, which holds the broker state its recover stage captured, the journal, every backup of any of them, and every broker statement the platform saved. No lifecycle or cleanup rule may match a path that holds it. A snapshot leaves the class only once a test has rebuilt that snapshot, byte for byte, from the sealed day it was read from, and only while the marketlake version it names still exists. A snapshot read from marketlake's segments before the day was sealed never leaves, because a segment and the partition built from it never share bytes. An account file never leaves, because nothing can read the broker's past state again. The operator's change log, restart records and incident evidence are kept as long as the operator sets on purpose, rather than by this rule.
 
 ### Buy what does not set the venture apart
 
@@ -1682,7 +1785,7 @@ glossing it.
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel and human override, written before the action it records, and of every order or fill the platform did not send, journaled as received before execution halts on it |
 | **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, which marks the order as the platform's and names its strategy |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue through its receive loop, which hands each item to a handler in its pool, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
-| **blob** | One object in storage, written once and never replaced |
+| **blob** | One object in storage, written once and never replaced, except a lease, which its holder rewrites only by a condition on the tag it last got |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
 | **stage** | One step a component takes in a decision. Execution's are recover and send, and monitoring's are reconcile and report. Every other component has one |
 | **decision result** | The blob a stage writes last for a decision, at a key fixed by the run, the stage and the decision, listing its output files by key and SHA-256 or saying the decision halted. One key, so a stage ends each decision exactly once |
@@ -1716,8 +1819,7 @@ Store, as a `SecureString` parameter encrypted under KMS, with AWS's managed
 `aws/ssm` key ruled fine, and on 2026-11-02 that each environment runs in an
 AWS account of its own, so each key sits in its own environment's account,
 as [architecture.md](architecture.md#where-it-runs)'s rule 3 and its
-`### Four environments` rule 11 say. This doc proposes the rest: each environment's key sits under a path of its own below `/ithildin/`, the roles that keep a broad parameter read refuse that
-path as a backstop, and every other credential is readable
+`### Four environments` rule 11 say. This doc proposes the rest: each environment's key sits under a path of its own below `/ithildin/`, which every role but execution's refuses, by the refusals and the service control policy that architecture.md's rule 3 of `## Where it runs` lists, and every other credential is readable
 only by the user that needs it, through a credential the VM's provisioning
 gives that user alone. Nothing here sits in a file tracked in this
 repository.
@@ -1759,7 +1861,7 @@ once rather than re-argued.
 | A JSON Lines file per log | It reads with `cat`, but a crash partway through an append tears a line, and a review found that a writer appending after a torn line hid every event after it, a journal entry among them. Every write is now a blob that S3 creates whole or not at all |
 | A messaging server such as NATS JetStream, Kafka or Redpanda | Each is a server that can fail and halt every worker, and workers would pass events through it rather than through files, which the owner's ruling asks for. Kafka and Redpanda are also built for far more than about nine events a decision on one VM. SQS and EventBridge, which carry events since 2026-10-31, escape the first reason because an event is only a hint and the blobs stay the record, and an outage of either stops monitoring's pings, which the dead-man check outside AWS raises |
 | A worker waking on file notifications through `watchdog`, or by polling its inputs | The owner ruled on 2026-10-29 for a queue per component instead, and on 2026-10-31 that S3's own events feed it, with no polling, as [How a component learns of a change](#how-a-component-learns-of-a-change) says. Watching a local folder sees nothing written in S3. The price is an EventBridge rule for each reader's prefix, generated from one table in `runtime` |
-| A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications, with one exception the owner ruled the same day: a kill switch pull sends its own message straight to execution, the supervisor and monitoring. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
+| A writer sending a message to each reader, and timed checks of the next key | The owner ruled on 2026-10-31 to avoid polling and to model the change event on S3's notifications. The kill switch follows the same rule since the owner dropped its direct message on 2026-11-01: a pull writes the switch blob, whose own event wakes execution, and execution also reads the switch when it starts and right before every order. A writer's message reached only the readers it knew on its own host, and a timed check cost a read every few seconds for each reader and still noticed late. The store's event covers every writer, a person off the VM included, and an absence is caught by a deadline instead |
 | A pull's direct message to the queues of execution, the supervisor and monitoring | The owner ruled for it on 2026-10-31 so a pull would not wait on S3's event, and dropped it on 2026-11-01. The supervisor cannot cancel anything, the switch blob's event already reaches the same three queues, and execution checks the switch before every submit. Dropping it removed three queue grants for people's roles, a refusal path in the tool, a fake message in the folder adapter and a drill row |
 | Delayed SQS messages or EventBridge Scheduler for deadlines, and a watchdog that reads heartbeats through S3 | A review of the first change-event design on 2026-10-31 found both wanting. A delayed message survives a restart in SQS but not in a named pipe, Scheduler needs a role passed to it that rule 5 of architecture.md's `### Four environments` refuses, and a heartbeat event can arrive a minute late. Deadlines are timers in memory, set again from storage on restart, and the watchdog watches local files |
 | A queue that pushes to the worker: SNS or EventBridge to an HTTPS endpoint, Amazon MQ, or Kinesis enhanced fan-out | The owner asked on 2026-10-31 for an alternative to long polling that pushes. None shortens the time from a write to a worker waking, which S3's handoff to EventBridge dominates, and each adds an inbound port, a broker that bills by the hour, or a stream's fees. Measured delay on paper from SQS's renewal would reopen Amazon MQ or Kinesis |
@@ -1795,6 +1897,6 @@ once rather than re-argued.
 | Calling the broker's REST API with an HTTP client passed in, rather than its SDK | The owner ruled on 2026-11-01 to use the broker's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake. The wrapper keeps the SDK's types out of every module, so the import rule still fences the broker to `execution.brokers` |
 | A long-running ECS Fargate service, or Lambda per component, as slice 1's host | Lambda's 15-minute limit rules out a worker that lasts the session, which execution needs. Fargate would remove the machine, but its task roles and placement have run zero times, while the VM's design is reviewed and its refusals are ruled. Since 2026-10-31 the VM uses the same SQS adapter Fargate would, so the queue no longer separates them. The owner ruled on 2026-10-30 for the VM for slice 1, and what running the VM costs is the evidence that would reopen it, as question 12 of [architecture.md](architecture.md#questions-for-the-owner) says |
 | Shadow, paper and live sharing one VM and one bucket, kept apart by key prefix and by the account a lease names | One wrong role or one wrong prefix in a command could reach every mode, such as a drill pulling the live switch or a shadow run reading a broker key. The owner ruled on 2026-10-30 for separate environments, one each for test, shadow, paper and live, on 2026-11-01 that shadow and paper share one environment in slice 1, and on 2026-11-02 that shadow keeps machines of its own after all, as [architecture.md](architecture.md#four-environments) says |
-| Shadow and paper sharing one environment in slice 1, each with its own containers, units, Unix users, pin and key prefix | The owner ruled for it on 2026-11-01 and reversed it on 2026-11-02, so shadow keeps its own cluster, bucket and roles. The price is a third cluster, bucket and set of roles once live runs, and a second in slice 1 |
+| Shadow and paper sharing one environment in slice 1, each with its own containers, units, Unix users, pin and key prefix | The owner ruled for it on 2026-11-01 and reversed it on 2026-11-02, so shadow keeps its own VM, bucket and roles. The price is a second VM, bucket and set of roles in slice 1, a third once live runs, and a cluster of three VMs for each once load calls for the scale-out |
 | The book's N+1 design, rule of three and multiple live sites | Redundant compute and a second live site guard availability the platform does not yet need, since it runs one paper account on one machine at 1x. The owner moved a three-VM cluster out of the first slice on 2026-11-02. They return when an availability target the platform has measured calls for them. What cannot wait is the copy of what cannot be recaptured, which the premise and the design principles already cover |
 | The book's "scale out, not up" and commodity hardware | For a sole operator a bigger machine is often the cheapest correct next step, and the hardware argument dates from 2009. The design principles keep the part that holds: each design names its next split, so moving to more machines takes configuration rather than a rewrite |
