@@ -1868,7 +1868,10 @@ each keeps its own rule.
    give. `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD`
    sit under prefixes of their own, keyed by writer and time and by worker
    and restart count, and heartbeats are the one prefix the bucket's
-   lifecycle expires.
+   lifecycle expires. A snapshot a decision read sits under its run's prefix
+   with data's other outputs and is recorded data, so no lifecycle rule may
+   match it, as design.md's `### Data has a cost, except the data that
+   cannot be recaptured` says.
 
 ### File formats and keys
 
