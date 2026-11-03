@@ -123,8 +123,8 @@ them.
 Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking
 the engine. Running it on paper promotes the platform's version, not the
-strategy, because a strategy enters the runtime only with a registered
-result from research, which this one does not have. Registered means
+strategy, because a strategy is promoted only by its registered test,
+which runs on paper with its hypothesis committed before paper starts. Registered means
 the hypothesis was committed in writing before the number was seen.
 
 ## Context: what the platform talks to
