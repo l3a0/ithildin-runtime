@@ -1014,8 +1014,9 @@ released, sends a removed event the same way. Each environment's bucket
 sends its events to EventBridge, as AWS's
 [S3 and EventBridge page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
 describes. One function in `runtime` turns the table that declares every
-worker's inputs, and the control blobs every component hears, into routes, execution's including the deletes under `leases/accounts/` so a lease's release reaches its queue,:
-a reader, a prefix and an event kind. The routes generate one EventBridge
+worker's inputs, and the control blobs every component hears, into routes:
+a reader, a prefix and an event kind. Execution's routes include the deletes
+under `leases/accounts/`, so a lease's release reaches its queue. The routes generate one EventBridge
 rule each, which copies each matching event to that reader's SQS queue, and
 the same routes drive the memory-backed folder adapter. Each rule's pattern
 matches `aws.s3` as the source, the event's kind, the environment's bucket
