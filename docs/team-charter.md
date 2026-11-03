@@ -456,11 +456,17 @@ that turns on money, contracts or law goes to the owner under a
 ### 5. Release
 
 A strategy and a platform version move through gates, and each gate is
-evidence, not elapsed time.
+evidence, not elapsed time. The owner ruled on 2026-11-02 that the backtest
+and shadow gates run no registered experiment. They check the platform: that
+it computes what research computed, and that its orders match a replay. A
+strategy's out-of-sample evidence comes from research, which judges a
+hypothesis registered in writing on data recorded after it was written down.
+Each day marketlake captures is fresh evidence, so no gate spends a holdout
+that a failed strategy would burn.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
-| Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
+| Backtest | Committed vintages | It reproduces the replication pins, and the strategy arrives from research with a registered result |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, the delay of each step's event is measured against the time before the cutoff, every strategy's off switch has been flipped in a drill with the others still trading, the last release and the last VM image have each been rolled back and forward again, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
