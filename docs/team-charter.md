@@ -13,7 +13,8 @@ owner's own highlights, and the rest point into the book's text, which no
 public notes file holds. Citations like (DDIA L9274) are Kindle locations in
 *Designing Data-Intensive Applications* (Kleppmann, 1st ed., O'Reilly Media,
 2017), of the owner's highlights or of the book's full text, and (DDIA
-L\~14160) marks a full-text location good to about one screen. The roles below
+L\~14160) marks a full-text location good to about one screen, as (BM L\~932) does for
+*Building Microservices*. The roles below
 also adopt its rules for faults, clocks, retries and records. Citations like (CC p. 481) are
 printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), whose practices for
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
@@ -306,7 +307,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's fourteen
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's fifteen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -328,13 +329,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
   and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate only as a skip whose reason
-  links an issue, here within a day of that issue, and fixes it or replaces it
+  links an issue, and fixes it or replaces it
   with a smaller one. A test that guards a hard limit leaves the gate only once
   a smaller replacement covering the same behavior passes there. Never reruns
   a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named
   the normalization of deviance (BM L2868, BM L2917). Keeps
   tests that run the full loop, beyond the injected faults, to a short named
-  list of journeys marked `full_loop` in `tests/`, and takes the book's order
+  list of journeys marked `full_loop` in `tests/` (BM L2948), and takes the book's order
   of magnitude more tests at each step down the pyramid as guidance
   (BM L2798).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
@@ -369,8 +370,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
   handover the design doc's rules describe: one artifact built once for every
   environment, its hash checked at every deploy, at startup and in every
-  heartbeat, and a new release that sends only after the old one has exited,
-  with cancels and the kill switch served throughout and an alarm when no
+  heartbeat during a session, and a new release that sends only after the old
+  one has gone, with cancels and the kill switch served throughout and an alarm when no
   release is consuming past a written bound
   (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
   rewrite-planning load, per the design doc.
@@ -579,16 +580,19 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
   with its name as the reason. Read only, compare every component's artifact
-  hash with the deploy tag, check the tracked configuration's keys against the
-  committed list, verify the journal's checksums and sequence to its head, and
-  check the clock's offset and sync age. Then wait for the host to show any
+  hash with the release's record, check the tracked configuration's keys
+  against the committed list, read the risk gate's hard caps, verify the
+  journal's checksums and sequence to its head, and check the clock's offset
+  and sync age. A failure of the release's own hash or the journal check halts
+  everything and pages the owner. A failure of any other check halts new
+  orders only, and the release still serves cancels and the kill switch. Then wait for the host to show any
   old release gone, or its machine no longer holding the deployment's lease,
   take the account's lease, reconcile, read the
   halt state, and only then enable strategies. Each later take of the lease,
   once per order, reads the journal and the broker's open orders and rebuilds
   the orders in doubt, without running startup again. While it waits, a
-  release whose read-only checks passed may take the lease only to serve a
-  cancel or the kill switch, under the design doc's release rule.
+  release whose own hash and journal checks passed may take the lease only to
+  serve a cancel or the kill switch, under the design doc's release rule.
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
@@ -670,3 +674,7 @@ doc's register.
 and team structure have no counterpart for agent sessions, which keep no
 morale and work no hours, and are left out. What it adds here is the planning of the work, in the
 design doc's rules for cutting it.
+
+*Building Microservices* dates from 2015 and argues for splitting a system into services. Its case for
+splitting further than one process per component, breaking production on purpose, and choreography
+inside one component's path are left out, with the reasons in the design doc's register.
