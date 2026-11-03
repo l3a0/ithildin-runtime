@@ -368,9 +368,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
   handover the design doc's rules describe: one artifact built once for every
-  environment, its hash checked at every deploy and startup, and a new release
-  that sends only after the old one has left execution's queue and exited,
-  with an alarm when no release is consuming past a written bound
+  environment, its hash checked at every deploy, at startup and in every
+  heartbeat, and a new release that sends only after the old one has exited,
+  with cancels and the kill switch served throughout and an alarm when no
+  release is consuming past a written bound
   (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
   rewrite-planning load, per the design doc.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
@@ -578,12 +579,16 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
   with its name as the reason. Read only, compare every component's artifact
-  hash with the deploy tag, verify the journal's checksums and sequence to its
-  head, and check the clock's offset and sync age. Then wait for the host to
-  show any old release gone, take the account's lease, reconcile, read the
+  hash with the deploy tag, check the tracked configuration's keys against the
+  committed list, verify the journal's checksums and sequence to its head, and
+  check the clock's offset and sync age. Then wait for the host to show any
+  old release gone, or its machine no longer holding the deployment's lease,
+  take the account's lease, reconcile, read the
   halt state, and only then enable strategies. Each later take of the lease,
   once per order, reads the journal and the broker's open orders and rebuilds
-  the orders in doubt, without running startup again.
+  the orders in doubt, without running startup again. While it waits, a
+  release whose read-only checks passed may take the lease only to serve a
+  cancel or the kill switch, under the design doc's release rule.
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
