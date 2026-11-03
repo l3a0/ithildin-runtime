@@ -295,7 +295,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's ten
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -319,9 +319,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and the measurement each tuning change carries, per the design doc.
   Checks, under the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
-  that the release suite's two runs are one suite with only its target changed, that each check
-  that starts something waits on readiness rather than a fixed sleep, and that each fault the group
-  handles has its test (DT p. 200, p. 247).
+  that the Startup checks run in CI as the same code that clears a release, that each check that
+  starts something waits on readiness rather than a fixed sleep, that each run-time fault the group
+  handles is among the injected faults, and that each deploy-time failure has its CI test beside its
+  drill (DT p. 200, p. 247).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -354,9 +355,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the dead-man check off the machine, and drills the restore on a schedule.
   Owns the rules of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
-  the release suite and its two runs, the infrastructure code and its scheduled check, the restart
-  cap of each component, the log pipeline off the machine, and the drill for each alarm the group
-  adds (DT p. 88, p. 247, p. 302).
+  the infrastructure code, its scheduled check and its rollback, the restart cap of each component
+  and the switch that stops restarts and scaling, the log pipeline off the machine, and the drill
+  for each alarm the group adds (DT p. 88, p. 302).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -374,11 +375,22 @@ time is the scarce resource, so work reaches the owner already reviewed.
   a fake credential against the simulated broker with the network off, and
   that every committed recording of a broker response is scrubbed of them.
   Checks the credential rules of the design doc's
-  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
-  no workflow run holds a broker or data-vendor credential, a deploy credential sits behind an
-  environment that admits `main` alone, the infrastructure code holds no credential, the step that
-  restarts cannot write the deploy tag, and every interface that can control a host or a container
-  takes only authenticated calls (DT p. 92).
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
+  which are eight.
+
+  1. No workflow run holds a broker or data-vendor credential.
+  2. A deploy credential sits behind an environment per cloud account that admits `main` alone,
+     names the owner as required reviewer and never serves a `pull_request_target` or
+     `workflow_run` job.
+  3. The infrastructure code holds no credential.
+  4. The deploy and apply roles deny deleting recorded data, writing the hard caps and releasing a
+     halt.
+  5. The drift check's role reads no data.
+  6. The step that restarts cannot write the release's record.
+  7. A log credential can only write.
+  8. Every interface that can control a host or a container takes only authenticated calls
+     (DT p. 92).
+
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -553,8 +565,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 2. **Code:** review checks the implementation against the design.
 3. **Test:** replays and stress tests run against the previous release's
    numbers.
-4. **Production:** the release suite runs before the release's first new
-   order and after its first reconciliation, under the design doc's
+4. **Production:** the Startup checks clear the release where it runs, as
+   the same code its tests ran, under the design doc's
    [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault).
    The operator then measures the first sessions after release against the
    sessions before it, and an unexplained change is a finding.
