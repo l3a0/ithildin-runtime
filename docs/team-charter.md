@@ -135,7 +135,9 @@ loop and can halt it.
 Narang's build-or-buy advice sets what the team writes itself. Adequate
 off-the-shelf solutions exist for data, risk models, portfolio construction and
 execution algorithms, and a standard cost model is easy to build (L7044). The
-alpha models and the research platform are what the team builds with care.
+alpha models and the research platform are what the team builds with care. The
+design doc's `### Buy what does not set the venture apart` names the options
+for each bought module and what slice 1 uses instead.
 
 ## Roles
 
