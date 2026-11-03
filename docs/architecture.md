@@ -456,7 +456,7 @@ flowchart LR
     d2[("D2 Security master")]
     d3[("D3 Journal")]
     d4[("D4 Run reports")]
-    d5[("D5 Account controls<br/>kill switch, hard caps, leases, overrides")]
+    d5[("D5 Account controls<br/>kill switch, strategy off switches, fired loss stop,<br/>hard caps, leases, overrides")]
 
     vendor -->|"bars"| p1
     d2 -->|"instrument ids"| p1
@@ -485,9 +485,9 @@ flowchart LR
     d3 -->|"orders and fills"| p9
     p9 -->|"report"| d4
     p9 -->|"alarms"| ownerx
-    ownerx -->|"switch, clears, overrides, hard caps"| d5
+    ownerx -->|"switch, strategy off, clears, overrides, hard caps"| d5
     ownerx -->|"clear and override entries"| d3
-    d5 -->|"switch, hard caps, lease tag, overrides"| p8
+    d5 -->|"switch, strategy off, loss stop, hard caps, lease tag, overrides"| p8
 ```
 
 Every arrow into or out of D1 is a blob kept after the run, whose header
@@ -587,6 +587,7 @@ sequenceDiagram
     P->>F: target portfolio and portfolio construction's result
     Note over X,J: Phase 3, send, in whichever execution instance receives the event
     F-->>X: an event: portfolio construction's result
+    X->>F: a create-only claim on the send stage, naming its handler
     X->>B: positions, open orders and fills since recover
     B-->>X: the broker's state now
     X->>J: any new fill journaled, under its fill id
@@ -610,7 +611,7 @@ sequenceDiagram
         X->>X: risk gate check
         X->>J: approval journaled
         X->>J: sending journaled
-        X->>F: switch absent, no halt of the run, own send result empty, lease tag unchanged, and before the cutoff?
+        X->>F: switch absent, strategy not off, no halt of the run, own send result empty, lease tag unchanged, and before the cutoff?
         X->>B: send, with its client order id
         B-->>X: ack
         X->>J: ack journaled
@@ -618,8 +619,11 @@ sequenceDiagram
     end
     X->>B: is every leg accepted?
     alt a leg rejected or unsent while another is accepted
+        X->>F: the account's lease taken
         X->>J: each cancel journaled
+        X->>F: lease tag unchanged, and before the cancel cutoff?
         X->>B: cancel the accepted legs
+        X->>F: the account's lease deleted
     end
     X->>F: send outcome and execution's send result
     F-->>M: an event: execution's result
@@ -634,13 +638,15 @@ The phases in order.
    it read before any model sees them. Execution waits for that snapshot, so
    it reads the broker at the decision's own time. It settles any order a crash left in
    doubt, journals the fills that arrived since the last decision, and writes
-   the strategies' books it replays from the journal beside the broker's positions and open orders. Monitoring then checks they agree, position by position and order by order, and each stamped order's filled quantity against the journal's. A run that starts on a book the broker disagrees with would trade
+   the strategies' books it replays from the journal beside the broker's positions and open orders. Execution compares them, position by position and order by order, and each stamped order's filled quantity against the journal's, and halts on a difference. Monitoring repeats the same check for its report, with nothing waiting on it. A run that starts on a book the broker disagrees with would trade
    the wrong difference.
 2. **Decide.** The alpha, risk and cost models run at once, each on the blobs
    it needs. The risk model sets the constraints, meaning the limits for this
    decision. Portfolio construction builds the target portfolio within them.
 3. **Send.** Whichever execution instance receives portfolio construction's
-   result reads the target portfolio it lists. Following the owner's ruling to
+   result reads the target portfolio it lists, and writes a create-only
+   claim on the send stage naming its handler, so an instance that finds a
+   claim it did not write never plans for that decision. Following the owner's ruling to
    fetch and sync before changing state, it first fetches the broker's
    positions, open orders and fills again, journals any fill that arrived
    since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person. Only then does it journal the target whole, with the planned
@@ -652,7 +658,7 @@ The phases in order.
    Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
    takes the account's lease, checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
+   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run is stored and the plan's lease says the run is running, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
    it looks up each leg, and cancels any accepted leg whose partner was
    rejected or never sent.
    Monitoring writes the decision's report and pings the heartbeat service
@@ -817,7 +823,19 @@ the account after a refusal until a person clears it waits for a strategy
 that decides minutes apart, as design.md's
 `### Strategies, schedules and decisions` says.
 
-The daily loss stop works through the same gate. Once the day's loss on the account passes the stop, the risk gate refuses every new order. The day's loss is the mark-to-market change from the account's valuation at the prior session's official closes, which the day's first decision stores, and a decision halts when that valuation is missing, which this doc proposes for [#7](https://github.com/l3a0/ithildin-runtime/issues/7). [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
+The daily loss stop works through the same gate. Once the day's loss on the account passes the stop, the risk gate refuses every new order. The day's loss is the mark-to-market change from the account's valuation at the prior session's official closes, which the day's first decision stores, and a decision halts when that valuation is missing, which this doc proposes for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+
+A fired stop latches, which this doc also proposes for
+[#7](https://github.com/l3a0/ithildin-runtime/issues/7). The first time the
+gate sees the day's loss past the stop, execution creates a blob at
+`accounts/<account>/stop.json` with a create-only write, as the kill switch
+is created, and journals it. The gate reads that blob before every new
+order, as it reads the switch, and refuses every new order while it exists,
+across sessions, so a price that recovers never resumes trading on its own.
+Any answer other than "no such blob" reads as fired. `ithildin stop clear
+--account <a>` deletes the blob and journals the clear. On a live account
+only the owner may, and on shadow and paper the operator may too, as the
+charter's owner and risk engineer sections say. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
 lists the limit as "an automatic unwind and stop", and an unwind is itself a
 trade. Slice 1 stops only, as question 8 settles.
 
@@ -872,11 +890,13 @@ sequenceDiagram
         F-->>M: the blob's event
     end
     X->>X: stop sending
+    X->>F: the account's lease taken
     X->>J: orders in doubt settled
     X->>J: each cancel journaled
     X->>B: cancel
     X->>A: alarm if any cancel failed
     X->>J: the switch's cancels done
+    X->>F: the account's lease deleted
     M->>J: cancels done within the deadline of the pull?
     M->>A: second alarm if not, naming the broker's own console
     Note over F,X: Every worker checks the switch when it starts and whenever an event wakes it,<br/>and execution right before every broker call
@@ -939,10 +959,11 @@ here, with the issue that builds its drill.
 | Execution restarted between a pair's legs | The decision and each leg's state | Kill execution after the first leg's ack, and again after it restarts, and expect leg 2 never sent and leg 1 cancelled before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | After the close, a pair whose filled legs differ from the planned hedge | Each leg's fill | A broker double that fills one leg in part | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A traded or held instrument whose price carries a spike flag | The instrument and both prices | A provisional segment with one spiked quote | [#5](https://github.com/l3a0/ithildin-runtime/issues/5), [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The loss stop fired and latched | "loss stop", the day's loss, the stop and the valuation it was measured from | Fire the stop in a replay, let the price recover within the session and into the next, and expect the next order refused until `ithildin stop clear` | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | Kill switch pulled | "kill switch", and how many resting orders it cancelled, stamped and not | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| The account's or the plan's lease taken over after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze an execution container while it holds the account's lease mid-send, expecting another execution instance to take the lease over after the lease period and the send stage once the host shows the frozen container gone or restarted, and the frozen container's next send refused by the tag check. The same drill across VMs is one of rule 11's scale-out drills. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The account's or the plan's lease taken over after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze an execution container while it holds the account's lease mid-send, expecting another execution instance to take the lease over after the lease period and the send stage once the host shows the frozen container gone or restarted, and the frozen container's next send refused by the tag check. The same drill across VMs is one of rule 11's scale-out drills. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup. Freeze a supervisor instance holding the plan's lease mid-halt, expecting another instance to take the lease over and finish the halt, and the frozen instance's next status write refused by the tag check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The Auto Scaling group replaced the VM | The VM, its zone and the group's activity | Terminate the VM outside a session, expecting the group to start a replacement that joins the next run. Counting a VM of the cluster as gone, and a zone going down, are rule 11's scale-out drills | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An instance refresh failed, rolled back or was refused | The refresh, the launch template versions, and the VM whose checks failed or the session that was open | Refresh with an image whose checks fail, and start one during a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor cannot take the plan's lease by its deadline | The lease's holder, the write it holds the lease for, and whether the host shows its container gone | Freeze a supervisor instance while it holds the plan's lease mid-halt, with the deadline shorter than the lease period | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -951,28 +972,31 @@ here, with the issue that builds its drill.
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, and one that never answers the cancel | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Monitoring killed after it claimed an alarm and before its push | The halt the alarm names | Kill monitoring right after its claim is stored, expecting the restarted instance or another to push the alarm, and a second push only when no sent record exists | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its limit, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| An object under live's journal or recorded captures whose retention ends within the set window, or that lacks its legal hold | The key, its retention date and its hold | Write a test object in a drill bucket with a retention date inside the window and no hold | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Load nears the 1x limit: a stage's run time passes 75% of its deadline, the day's decisions pass 75% of one deployment's written limit, which design.md puts at a decision a minute, 293 of a full session's 390 until the build writes its own, or the VM's memory use passes 75% | The stage, its run times against its deadline, the day's decision count, and the VM's memory use | Slow a stage with a test delay until it passes 75% of its deadline | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| An order in doubt past its limit | The order, its client order id, when it was sent, and each lookup tried | A simulated broker that never acknowledges an order | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A strategy switched off | "strategy off", the strategy and who switched it | Switch one strategy off mid-session with another still trading, expecting its orders abandoned and the other's sent, and switch it back on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Load nears the 1x limit: a stage's run time passes 75% of its deadline, the day's decisions, counted across every deployment of the environment as design.md counts them, pass 75% of the written limit, which design.md puts at a decision a minute for each deployment, 293 of a full session's 390 for slice 1's one deployment until the build writes its own, or the VM's memory use passes 75% | The stage, its run times against its deadline, the day's decision count, and the VM's memory use | Slow a stage with a test delay until it passes 75% of its deadline, run a test plan with the decision limit set low in configuration so the day's count passes 75% of it, and feed a test memory reading above 75% | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| An order first journaled `InDoubt`, and again once it is in doubt past its limit, the smaller of 30 minutes and the time left before the cancel cutoff | The order, its client order id, when it was sent, and each lookup tried | A simulated broker that never acknowledges an order, expecting the first alarm at once and the halt from the supervisor's deadline, once early in the session and once close to the cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A strategy switched off, raised by the `ithildin` tool when it creates the off switch | "strategy off", the strategy, who switched it and its resting orders | Switch one strategy off mid-session with another still trading and one of its orders resting, expecting its new orders abandoned, the other's sent, the resting order printed and left resting, and then switch it back on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A strategy's off switch unreadable | "strategy off switch unreadable" and the error | Deny execution's role read access to `accounts/<account>/strategies/`, expecting the decision halted and no order sent | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Broker requests pass 75% of an execution instance's share | The instance, its count this minute and its share | A replay that floods lookups past the threshold | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, and stop one, expecting none | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, stop one, expecting none, and fail a run, expecting it to raise one alarm and no second one for the supervisors that exit after it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure. Freeze one instance of three, and crash one of three past its restart limit, expecting an alarm naming that instance while the other two finish every decision and the run does not fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s | Run a step that puts the clock time in its output | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker and its last heartbeat | A worker that exits after its first decision, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s, and for a capturing stage the attempt key it stored the second capture at | Run a step that puts the clock time in its output, and resume data's stage with a fresh read that differs from its stored snapshot, expecting the second read stored at its attempt key and named in the decision result | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The ticker, the minute and both values, or the row the sealed day quarantined or lacks | Change or quarantine a sealed row a run's snapshot used | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A supervisor restarted mid-run | The plan it found and each worker's last heartbeat | Kill the supervisor between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A supervisor restarted mid-run | The plan it found and each worker's last heartbeat | Kill one supervisor instance between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An order the journal holds open that the broker no longer lists, in a state its time in force does not explain | The client order id and the broker's answer | A simulated broker that drops a good-till-cancelled order | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The Docker daemon stopped or restarted mid-run | The daemon's state and the run's last decision | Restart the daemon during a decision, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The supervisor's heartbeat stopped, or a unit or the Docker daemon reached its limit | The unit and its last exit, from the host's handler | Freeze the supervisor, and make it crash on start after the plan exists, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A unit or the Docker daemon reached its limit | The unit and its last exit, from the host's handler | Freeze every supervisor instance, and make every one crash on start after the plan exists, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The kill switch was pulled and execution has not journaled its cancels done within the deadline | The account and the orders still resting | Pull the switch with execution crash-looping on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person's journal entry names an identity that differs from the one AWS recorded for its write | The entry and both identities | Write an entry with a forged name | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's release pin is missing or unreadable | "release pin missing or unreadable", from the host's handler | Boot a VM whose pin is deleted, and one whose role cannot read it, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -981,6 +1005,10 @@ here, with the issue that builds its drill.
 | Live's drill job stopped running | None. Its own heartbeat check raises it | Disable the drill schedule past one interval, against live's check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A drill refused because a session is open on live | "drill refused: session open" and the open run's plan | Start a drill while a live session is open | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A live session refused because a drill is running or left something behind | "session refused: drill not clean" and what failed the check | Start a session while a drill's marker exists, and after a drill that leaves the switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A session refused because an instance refresh is open | "session refused: instance refresh open" and the refresh's marker | Start a session while a refresh's marker exists, and after the apply job has deleted it, expecting the refusal and then a normal start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A VM stopped its own units because its supervisor instances' own last heartbeat was past the limit | "own heartbeat stale past limit", from the restart record and the host's direct route | Freeze a VM past the limit, in the cluster and in slice 1's group of one, expecting its units stopped and restarted as a fresh member when it wakes | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A VM restarted its units on the release the run's plan names | "release differs from plan", from the restart record and the host's direct route | Move the pin between two VMs' boots, expecting the later VM to restart its units on the plan's release | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A service control policy detached or edited, a root password created, or a permission set assigned, anywhere in the organization | The event, the principal and the account, from the organization trail | Detach and edit a test policy on a test account, and assign a test permission set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM's pin names a digest without a valid attestation, or with no deploy record, promotion record or earlier run in that environment | "release pin not trusted" and the digest | Write an unattested digest to paper's pin with the operator's credential, directly, and expect the session to halt | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because a block record could not be read | The bucket and S3's answer | Deny the promotion role's read of one bucket's block records | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A promotion refused because paper is not clear | The open halt, set switch, pending override or held lease | Run a promotion with paper's switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -988,7 +1016,7 @@ here, with the issue that builds its drill.
 | A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | Deny a queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A rule the release's routes need is missing | "event rules do not match release" and the rule | Delete one rule, then start a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A decision's event delay passes its share of the time before the cutoff | Each step's delay | Delay events in the folder adapter past the share | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A pull whose event never reached execution | No "cancels done" at the tool's deadline | Turn off the bucket's EventBridge delivery and pull the switch, expecting the tool's warning to cancel at the broker's console, and kill the tool after it writes the blob, expecting cancels through the blob's event | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A pull whose event never reached execution | No "cancels done" at the tool's deadline | Turn off the bucket's EventBridge delivery and pull the switch, expecting the tool's warning to cancel at the broker's console, and kill the tool after it writes the blob, expecting cancels through the blob's event. One gap stays: if the tool dies after writing the blob while S3's delivery to EventBridge is off, only the CloudTrail data event for the switch's write remains, which monitoring reads at its next start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Dead-man | None. The heartbeat service raises it | A day of two decisions whose second ping is skipped, test 4, a halted day followed by a dead VM, and an empty plan with monitoring stopped, each run against each of shadow's, paper's and live's checks, and an empty plan with monitoring running, expecting no alarm | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each deadline that the supervisor enforces is set on
@@ -1031,7 +1059,8 @@ Two credentials hold what the VM's credential deliberately cannot.
 
 1. **The owner's**, which may do everything below on any account.
 2. **The operator's**, which acts on paper and shadow accounts only, plus
-   pulling a live account's switch, since a pull can only stop trading. It
+   pulling a live account's switch and switching a live strategy off, since
+   each can only stop trading. It
    cannot clear a live account's halt, switch or lease, or write a live
    account's override. The owner ruled on 2026-10-30 that only the owner
    resumes live trading. The charter makes the operator an agent role, and
@@ -1055,14 +1084,14 @@ is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). 
 apart from the journal. Only the owner's role may write a live account's
 overrides, and no runtime role may write any override. Journal entries are
 created, never replaced, by execution, monitoring and the supervisor, and by
-the `ithildin` tool for the person running it. On the live bucket, the switch, lease and override keys refuse every principal but the owner's, the pull aside.
+the `ithildin` tool for the person running it. On the live bucket, the switch, lease and override keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants rule 5 of `## Where it runs` gives them there.
 
 ### The commands
 
 Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, so the tool finds the environment it lives in.
 
 1. **`ithildin status`** shows, for every account, grouped by environment: whether the kill switch
-   is set, who holds each lease, every open halt with its reason and age,
+   is set, which strategies are switched off, whether a loss stop has fired, who holds each lease, every open halt with its reason and age,
    the latest decision's result for each stage, each worker's and the
    supervisor's last heartbeat and restart count, any pair leg left open
    since the last close, and when the heartbeat service last heard a ping. It also shows each environment's pin and the digest each recent run used.
@@ -1080,7 +1109,10 @@ Writing commands take more friction the more they can resume trading.
    stopping should never be slow. Execution reads it right before each of
    that strategy's orders, abandons them, and keeps sending the account's
    other strategies' orders. It never reads as a target of zero, so nothing
-   is flattened.
+   is flattened. The strategy's cancels still go out, but nothing cancels
+   its resting orders, so the command prints them and says they still fill
+   unless the kill switch or the broker's own console cancels them before
+   the cancel cutoff.
 3. **`ithildin clear <halt>`** records that a person has looked at a halt
    and why it may be left behind. It never reruns the halted decision, and
    the next decision runs as usual.
@@ -1097,16 +1129,21 @@ Writing commands take more friction the more they can resume trading.
    the clear.
 6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
    strategy's off switch and journals it. On a live account only the owner
-   may, as the owner ruled on 2026-11-02, and on shadow and paper the
-   operator may too.
-7. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
+   may, as the owner ruled on 2026-11-02. On shadow and paper the operator
+   may too, which is this doc's reading of the 2026-11-02 rulings rather
+   than a ruling of its own.
+7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's
+   blob and journals the clear, so the gate takes new orders again. On a
+   live account only the owner may, and on shadow and paper the operator
+   may too, as the owner ruled on 2026-11-02.
+8. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
    before it expires, and journals it, for when a person knows the holder is
    gone sooner than the expiry would show. It first asks EC2 whether the holder's instance is
    stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
-8. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
-9. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
+9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
+10. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
-The last seven each take a required `--reason`, print what they will do and
+The last eight each take a required `--reason`, print what they will do and
 to which account, show a live account's name in capitals, and for a live
 account make the person type the account's name to confirm. When there is
 nothing to do, a command says what it found and who acted on it, rather
@@ -1583,7 +1620,7 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails, the switch, run halt, own result key, lease tag or cutoff
+    Sending --> Abandoned: a check before the broker call fails, the switch, run halt, own result key, lease tag or cutoff, which halt, or strategy off, which abandons without halting
     Acknowledged --> Expired: day or market-on-close order not filled by the close
     PartlyFilled --> Expired: rest not filled by the close
     Sending --> Rejected: broker refuses the submit
