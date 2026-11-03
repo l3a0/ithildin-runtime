@@ -242,67 +242,102 @@ by what breaks while the skeleton runs on paper.
 
 Steve McConnell's *Rapid Development* (Microsoft Press, 1996) supplies the
 rules for estimating, cutting and tracking the work, cited by printed page,
-so RD p. 199 is page 199. Its case for them is a survey of more than 300
-projects, which found that a project behind schedule hardly ever makes up
-the lost time and tends to fall further behind (RD p. 199). The book writes
-for human teams, so its chapters on motivation, overtime and team structure
-have no counterpart for agent sessions and are not adopted. Seven rules
-follow.
+so RD p. 199 is page 199. The book writes from studies of human teams in the
+1980s and 1990s, so its rules are adopted for their method rather than their
+numbers, and how well they fit agent loops is untested. The estimate and
+actual pairs rule 2 starts are that test. Its chapters on motivation,
+overtime and team structure have no counterpart for agent sessions and are
+not adopted. Six rules follow.
 
-1. **Each slice ends releasable, and builds its most important behavior
-   first.** McConnell's staged delivery ends every stage with a truly
-   releasable product that meets its size, performance and quality targets
-   as well as its function, because hidden work accumulates otherwise, and
-   delivers capabilities from most to least important (RD p. 553). A working
-   product is a more accurate status report than any paper report
-   (RD p. 551). So a slice's parent issue orders its deliverables by
-   importance, and each one merges through the same checks as every other
-   pull request.
-2. **An estimate is a range from measured cost, posted as a dated comment,
-   and recalibrated at the first slip.** McConnell's multipliers put an
-   estimate of effort made at the first concept anywhere from a quarter to
-   four times the final figure, and the range narrows as the work is
-   specified (RD p. 169). He estimates from records of past projects rather
-   than memory (RD p. 178). Here those records are the `## Cost` comments, so
-   a build issue carries its estimate in dollars as a range drawn from
-   measured loops, and the `## Cost` comment at handover sets the actual
-   beside it. A loop that runs past its range multiplies what remains by the
-   slip so far, rather than counting on catching up (RD p. 199). Each
-   estimate is a new comment rather than an edit, so the record of how the
-   estimate moved stays readable.
-3. **A slip cuts behavior, never a check.** McConnell's timebox drops
-   features rather than quality, and he advises against boxing upstream work
-   such as planning, requirements and design, whose mistakes cost the most
-   downstream (RD p. 581). Here a build issue with a budget names, in order,
-   the behaviors it may drop. That list never holds a review, a test, a hard
-   limit, or anything that guards data the project cannot recapture. A slice
-   whose must-have behavior does not fit goes back to planning whole.
-4. **Done is a state a check shows, never a percentage.** McConnell's test of
-   a finished piece is whether it could be locked in a vault and shipped as
-   it stands, so a piece "99 percent done" is not done (RD p. 381). A report
-   of done links the merged pull request and the checks that passed on it.
-5. **Each slice keeps a ranked list of its top risks, and a loss that cannot
-   be undone ranks by its size alone.** McConnell's top-10 risks list gives
-   each risk its rank this week and last, its weeks on the list and the
-   progress on resolving it, and is reviewed weekly (RD p. 100 to p. 102). He
-   ranks risks by probability times size, then moves a larger loss above its
-   place in that order (RD p. 96). Here the three losses the premise names
-   rank first whatever their probability. The slice's parent issue carries
-   the list under a `## Risks` heading, and each status round reviews it.
-6. **A spike answers one stated question and never becomes production
-   code.** McConnell treats each throwaway prototype as an experiment with a
-   hypothesis, such as a sort finishing 10,000 records in under 30 seconds,
-   and stops it once the hypothesis is settled (RD p. 572). Whether a
-   prototype is thrown away or grown into the product is decided when it
-   starts (RD p. 592). Here a spike lives outside `src/`, reads only copies of
-   recorded data, and carries an estimate of its own.
-7. **Shared code is extracted at its second use, and made reusable only with
-   a third in sight.** A reusable component costs two to three times as much
-   as a one-off, so it pays back only from its third use, and McConnell's
-   rule of two builds the first as a one-off (RD p. 535). Code from a sibling
-   repository is salvaged into a design made for this one rather than the old
-   program adapted, because salvage needs only the small pieces understood
-   (RD p. 529). The pull request names the commit it salvaged from.
+1. **A slice builds its most important behavior first, and its usable end
+   includes every mechanism the design principles build from a path's first
+   run.** McConnell's staged delivery ends every stage with a product that
+   meets its size, performance and quality targets as well as its function,
+   and delivers capabilities from most to least important (RD p. 553). A
+   working product is a more accurate status report than any paper report
+   (RD p. 551). Here the order inside a slice is the build board's, set by
+   its band labels, its "blocked by" links and the parent issue's
+   `Board order:` line, and a slice is usable when the walking skeleton's
+   smoke test reaches every module it added with those mechanisms in place.
+2. **An estimate is a range drawn from loops of the same kind, posted under
+   its own heading, and the next estimate of that kind carries the slip.**
+   McConnell's multipliers, adapted from Boehm and others' COCOMO 2.0 of
+   1995, put an estimate of effort made at the first concept anywhere from a
+   quarter to four times the final figure (RD p. 169). Estimating from memory
+   of similar projects is the commonest practice and goes with overruns
+   (RD p. 178, citing Lederer and Prasad 1992). So a build issue carries a
+   comment opening with `## Estimate` that gives a range in dollars and names
+   the loops it was drawn from, which are earlier loops of the same kind, such
+   as module builds or review rounds, with the same coverage as the
+   `## Cost` figures they are compared with. Where no loop of that kind has
+   posted a cost, the first estimate is a labelled guess inside the widest of
+   McConnell's ranges. A survey of more than 300 projects found that a
+   project behind schedule hardly ever makes up the lost time
+   (RD p. 199, citing van Genuchten 1991), and McConnell recalibrates by
+   raising what remains by the share of the slip so far (RD p. 381). So when
+   a loop's `## Cost` lands above its range, the next estimate of that kind
+   raises its range by the same ratio. A later estimate is a new
+   `## Estimate` comment rather than an edit.
+3. **A loop that runs past its estimate drops behavior from a list written in
+   advance, and never a check.** McConnell's timebox drops features rather
+   than quality, and he advises against boxing planning, requirements and
+   design, whose mistakes cost the most downstream (RD p. 581). Here a build
+   issue lists, in order, the behaviors a slip may drop. That list never
+   holds anything the ranking rule's three exceptions name, a hard limit, the
+   risk gate or any of its limits, a halt, the loss stop, the kill switch, a
+   rollback, an alarm or the drill that shows it works, a review, a test, or a
+   part the design fixes from the first commit, such as the partition key and
+   count or the event and clock interface. A dropped behavior moves to an
+   issue of its own, and its acceptance tests stay in the suite as strict
+   expected failures that name that issue. A cut that touches the order
+   path, the gate or its limits goes to the risk lens before it takes
+   effect. A slice whose must-have behavior does not fit goes back to
+   planning whole.
+4. **Done is the charter's Definition of done, and never a percentage.**
+   McConnell's test of a finished piece is whether it could be locked in a
+   vault and shipped as it stands, so a piece "99 percent done" is not done
+   (RD p. 381). A report of done links the merged pull request that closed
+   the issue, its `## Review` comment with the mutation result, and the
+   checks that ran the changed code. A check that never ran the changed code
+   shows nothing.
+5. **Each slice keeps a list of the risks to its delivery, and a risk to
+   something that cannot be undone ranks above every one that can.**
+   McConnell's top-10 risks list names the risks to a project's schedule and
+   gives each its rank this week and last, its weeks on the list and the
+   progress on resolving it (RD p. 85, p. 100 to p. 102). He ranks risks by
+   probability times size, then moves a larger loss above its place in that
+   order (RD p. 95, p. 96). Here a risk that could lose one of the premise's
+   three things ranks above every other, ordered among themselves by the risk
+   engineer's severity and detection scores, which still decide splits and
+   detectors for each change. The list ranks what to watch, never what to
+   build next, which the ranking rule in [CLAUDE.md](../CLAUDE.md) decides.
+   It sits on the slice's parent issue under a `## Risks` heading, and the
+   delivery lead reviews it before taking each next card from the slice,
+   posting a dated comment opening with `## Risks review` even when nothing
+   changed, so the reviews can be counted.
+6. **A spike answers one stated question, is exploratory, and never becomes
+   production code, and shared code waits for a design that names it.**
+   McConnell treats each throwaway prototype as an experiment with a
+   hypothesis, and stops it once the hypothesis is settled (RD p. 572).
+   Prototyping is exploratory by nature, so a spike's result is
+   [exploratory](#vocabulary) whatever it stated in advance. A spike lives
+   in a top-level `spikes/` folder that no module under `src/` imports. It
+   reads data that cannot be recaptured only through copies, never reads the
+   holdout window, sends no order, paper included, and holds no broker
+   credential. A question about a strategy's returns goes through the
+   engine's backtest, never a spike. A spike that kills an idea is pinned
+   under CLAUDE.md's research pins rather than deleted. A reusable component
+   costs two to three times as much as a one-off and breaks even only after
+   two or three uses, McConnell citing Biggerstaff's rule of three, so his
+   rule of two builds a component as a one-off first and considers making it
+   reusable at its second use (RD p. 535, p. 536, citing Tracz 1995). The
+   shared types and interfaces that
+   [#22](https://github.com/l3a0/ithildin-runtime/issues/22) lands before
+   any module are a design named ahead of use, not reuse. Code the sibling
+   repositories keep using moves to
+   [ithildin-core](https://github.com/l3a0/ithildin-core) and is depended on
+   at a pinned version, and code salvaged from a sibling is only code that
+   sibling retires (RD p. 529).
 
 ## Vocabulary
 
