@@ -10,9 +10,12 @@ Citations like (AoS L4156) are Kindle locations in *The Art of Scalability*
 (Abbott and Fisher, 1st ed., Addison-Wesley, 2009), whose operating and review
 practices the roles and lifecycle below adopt. Most are the locations of the
 owner's own highlights, and the rest point into the book's text, which no
-public notes file holds. The architecture rules drawn from it live in the
-design doc's [Design principles](design.md#design-principles), and a role
-below points to a rule there by its title rather than restating it.
+public notes file holds. Citations like (DDIA L9274) are Kindle locations of
+the owner's highlights in *Designing Data-Intensive Applications* (Kleppmann,
+1st ed., O'Reilly Media, 2017), whose rules for faults, clocks, retries and
+records the roles below also adopt. The architecture rules drawn from both
+books live in the design doc's [Design principles](design.md#design-principles),
+and a role below points to a rule there by its title rather than restating it.
 
 ## Contents
 
@@ -132,9 +135,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   register, and its design principles. Keeps each module's written scale
   limit current, and draws the fault boundaries with the crossings the design
   doc lists. A crossing it does not list breaks the boundary (AoS L7170).
+  Names the load parameters each scale limit is measured in, since a design
+  built on the wrong ones is wasted (DDIA L627). Owns the shared clock's
+  monotonic and time-of-day readings and the seeded random source, per the
+  design doc's rules on time.
 - **Vetoes:** a second code path for any module, a dependency that nobody
-  argued for in a pull request body, and a synchronous dependency on the
-  order path beyond the minimum the design doc names.
+  argued for in a pull request body, a synchronous dependency on the
+  order path beyond the minimum the design doc names, a module that reads the
+  system clock or an unseeded random source directly, and a transaction or a
+  hand-written consensus algorithm spanning the journal and anything else.
 
 ### Quant researcher
 
@@ -143,6 +152,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   tries to falsify (L4017). Picks parameters from a plateau rather than a lone
   peak (L4337). Registers a hypothesis in writing before running it out of
   sample, and records a null result as code, a pinned test and a log entry.
+  Windows and joins history by event time, against the version of each
+  reference record that was current then, so a backtest sees what the
+  platform could have known (DDIA L14747, L14943).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -158,10 +170,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   little volume (L3856), tracks corporate actions independently (L3859), and stores when each
   value became available (L3884). Applies the design doc's rules on stored
   formats, on the capture key, and on capture's place outside every halt.
+  Stores captured data as received, with its event time and receive time, a
+  schema version and a checksum on every record (DDIA L12920, L16445). Backs
+  up closed segments only, and drills a restore that checks counts and
+  checksums (DDIA L7227).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
-  and any cleanup or retention rule, new or existing, that could match a path
-  holding recorded data as the design doc defines it. This path is never
-  deferred.
+  any cleanup or retention rule, new or existing, that could match a path
+  holding recorded data as the design doc defines it, a recorded format with
+  no schema version, and `pickle` anywhere near recorded data (DDIA L3626).
+  This path is never deferred.
 
 ### Trading systems engineer
 
@@ -171,9 +188,14 @@ time is the scarce resource, so work reaches the owner already reviewed.
   it, and makes resubmission idempotent. Applies the design doc's rules that
   every fact has one writer: sizing that counts every order already sent, a
   client order id fixed by the decision, one sender per account, and an
-  unknown order that blocks the next.
-- **Vetoes:** an order path without a journal entry, and a fill the
-  reconciliation cannot match.
+  unknown order that blocks the next. Enforces the one sender with a lease
+  number the journal checks, since a process paused past its lease can still
+  act (DDIA L9084, L9274), and applies each fill once by the broker's
+  execution id (DDIA L16438).
+- **Vetoes:** an order path without a journal entry, a fill the
+  reconciliation cannot match, a send that can run without the current lease
+  number, and a client order id drawn from a counter a failover could wind
+  back (DDIA L4868).
 
 ### Risk engineer
 
@@ -220,7 +242,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924).
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's six
+  injected faults in the replay suite, because error handling that never runs
+  is where critical bugs hide (DDIA L300). Compares timings as percentiles
+  from merged histograms, never as averages (DDIA L583).
 - **Vetoes:** a pull request whose new behavior no surviving test covers.
 
 ### Operator
@@ -243,7 +268,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   restoring service, for how long, and after how many recurrences the cause
   comes first (AoS L3421). Here restoring service means reconciling with the
   broker before trading resumes. Plans headroom for each component, per the
-  design doc, and runs the release's fourth check below.
+  design doc, and runs the release's fourth check below. Watches the clock's
+  offset from reference time and every queue's lag, each with an alarm,
+  since a drifting clock and a growing backlog both fail without an error
+  (DDIA L8913, L14056).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -253,9 +281,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
 
 - **Protects:** nobody but the owner can move the money.
 - **Does:** reviews credential handling, broker permissions, least privilege,
-  and the supply chain of each dependency.
-- **Vetoes:** a credential in a tracked file, and an API key with withdrawal or
-  transfer permission.
+  and the supply chain of each dependency. Checks that input from outside the
+  process is range-checked and size-limited before use, and never decoded by a
+  format that can run code (DDIA L3626, L9382).
+- **Vetoes:** a credential in a tracked file, an API key with withdrawal or
+  transfer permission, and deserialization of outside bytes into arbitrary
+  objects.
 
 ## The lifecycle
 
