@@ -118,14 +118,20 @@ finished. Each quality has a home in these two docs.
    of its own, and only the execution user reads the broker key, as
    architecture.md's rule 3 of `## Where it runs` says. The owner ruled on
    2026-11-02 that moving money out requires a human's sign-off, so no
-   money-out call may complete on the broker key alone. One check is still
-   open. Alpaca's trading API may offer crypto wallet transfer and
-   whitelist endpoints, so
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms
-   before the live gate that every path that moves money or crypto out of
-   the platform's account needs the account holder's sign-off outside the
-   key, such as a whitelisted address approved by email or a second
-   factor, or that the path is disabled on the account.
+   money-out call may complete on the broker key alone. Alpaca's trading
+   key can add a whitelisted withdrawal address, which turns approved on
+   its own after 24 hours with only an email notice, though withdrawals
+   themselves are made on Alpaca's web dashboard. The owner ruled after a
+   board sitting on 2026-11-02 that Alpaca stays the live broker, with
+   crypto never enabled on the platform's account and no whitelisted
+   withdrawal address, proven by a read-only check before the live gate
+   and on a schedule after, as
+   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records. The
+   check runs more often than every 24 hours, so a whitelist entry a stolen
+   key adds alarms and halts live trading before it can turn approved. Two
+   gaps stay open and are named rather than closed: the trading key can
+   change the account's margin, shorting and options settings, and a
+   stolen key can move value out by trading rather than by withdrawal.
 4. **Operability.** A person acts through the one `ithildin` tool, every
    halt says why, and every live halt holds until the owner clears it, as
    architecture.md's `## What a person runs` says.
