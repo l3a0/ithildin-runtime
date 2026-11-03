@@ -19,7 +19,10 @@ printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), wh
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
 Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
 1996), whose rules for estimating, cutting and tracking the work the design doc's
-[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. The
+[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries.
+Citations like (DT p. 247) are printed pages of Viktor Farcic's *The DevOps 2.0 Toolkit* (2016), whose
+rules for checking a release where it runs, building machines from code and healing without hiding a
+fault the roles below also adopt. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -314,6 +317,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
   and the measurement each tuning change carries, per the design doc.
+  Keeps the release suite of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
+  one command whose target is its only input (DT p. 247). Waits on a readiness check with a timeout,
+  never on a fixed sleep, wherever a test or a release check starts something, since the book
+  says of its own fixed pause that it should be rarely used (DT p. 200).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -344,6 +352,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   capture and of the off-machine copy, which alarms, since a drifting clock
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule.
+  Owns the rules of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
+  the release suite before and after each takeover, the infrastructure code and its second run, the
+  restart cap of each component, and the log pipeline off the machine (DT p. 88, p. 247, p. 302).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -360,6 +372,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
   that every committed recording of a broker response is scrubbed of them.
+  Checks that a workflow run started by a pull request holds no deploy or broker credential, and
+  that every interface able to control a host or a container takes only authenticated calls from
+  the deployer, where the book's own setup listens for remote requests from any address (DT p. 92).
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
