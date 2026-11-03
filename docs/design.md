@@ -311,10 +311,12 @@ not adopted. Six rules follow.
    engineer's severity and detection scores, which still decide splits and
    detectors for each change. The list ranks what to watch, never what to
    build next, which the ranking rule in [CLAUDE.md](../CLAUDE.md) decides.
-   It sits on the slice's parent issue under a `## Risks` heading, and the
-   delivery lead reviews it before taking each next card from the slice,
-   posting a dated comment opening with `## Risks review` even when nothing
-   changed, so the reviews can be counted.
+   It sits on the slice's parent issue under a `## Risks` heading. The
+   status round reviews it whenever it names a next card from the slice,
+   under the `/l3a0:sync-prune-next` skill's step for it, and posts a dated
+   comment opening with `## Risks review` even when nothing changed, so the
+   reviews can be counted. The round reports a slice with no list rather
+   than writing one.
 6. **A spike answers one stated question, is exploratory, and never becomes
    production code, and shared code waits for a design that names it.**
    McConnell treats each throwaway prototype as an experiment with a
