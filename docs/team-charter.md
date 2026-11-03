@@ -186,8 +186,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
   no schema identifier, a store that compacts recorded data by key, and
-  `pickle` in any reader or writer of captured data or the journal
-  (DDIA L3623, L3632). This path is never deferred.
+  Python's `pickle`, its built-in format for saving objects, in any reader or
+  writer of captured data or the journal (DDIA L3623, L3632). This path is
+  never deferred.
 
 ### Trading systems engineer
 
