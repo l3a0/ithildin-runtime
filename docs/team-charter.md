@@ -154,7 +154,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** owns the module interfaces, the event and clock model shared by
   backtest, paper and live, the design doc's considered-and-rejected
   register, and its design principles. Keeps each module's written scale
-  limit current, and draws the fault boundaries with the crossings the design
+  limit current, with the level at which planning a rewrite starts written
+  beside it, and holds the design doc's rules for cutting modules and
+  components (BM L740, BM L777), and draws the fault boundaries with the crossings the design
   doc lists. A crossing it does not list breaks the boundary (AoS L7170).
   Names the load parameters each scale limit is measured in, since a design
   built on the wrong ones is wasted (DDIA L627). Owns the shared clock's
@@ -233,7 +235,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   entry before its send, journals every broker message as received, and
   applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
   Keeps the design doc's procedure for orders in doubt when the journal
-  cannot be read.
+  cannot be read. Gives each dependency on the order path its timeout, its
+  limit and its breaker, and puts the decision's id inside each client order
+  id, under the design doc's faults and monitoring rules (BM L4252,
+  BM L3354).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, an order settled as unsent
@@ -262,6 +267,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Once the kill switch or a loss stop fires, only the owner releases it. Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
+  Holds that no caller carries a flag, a role or a credential that lets its
+  orders skip a limit, and checks the unwind and every cancel the gate
+  exempts against the design doc's rule for them (BM L3634).
   Scores each failure mode of a change to the order path by likelihood,
   severity and how hard the failure is to detect, each on a scale of 1, 3 or
   9, multiplied, so a silent failure scores worst (AoS L5635). Splits any
@@ -298,7 +306,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's thirteen
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's fourteen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -381,9 +389,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
   that every committed recording of a broker response is scrubbed of them. Checks
-  that each use holds its own credential, such as market data, the paper
-  account and the live account, so any one can be revoked alone
-  (BM L\~3564).
+  that each use holds its own credential where the vendor issues separate
+  ones, such as market data, the paper account and the live account, so any
+  one can be revoked alone (BM L\~3564).
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -569,9 +577,13 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
-  with its name as the reason: take the account's lease, verify the journal's
-  checksums and sequence to its head, check the clock's offset and sync age,
-  reconcile, read the halt state, and only then enable strategies.
+  with its name as the reason. Read only, compare every component's artifact
+  hash with the deploy tag, verify the journal's checksums and sequence to its
+  head, and check the clock's offset and sync age. Then wait for the host to
+  show any old release gone, take the account's lease, reconcile, read the
+  halt state, and only then enable strategies. Each later take of the lease,
+  once per order, reads the journal and the broker's open orders and rebuilds
+  the orders in doubt, without running startup again.
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
