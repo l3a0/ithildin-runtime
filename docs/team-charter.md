@@ -182,7 +182,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
-  Registers, before a strategy enters Paper and again before Live, the six
+  Registers, before a strategy enters Paper and again before Live, the seven
   things the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   rule 2 lists. Judges no strategy on one trade or one streak (TZ L2038,
@@ -289,9 +289,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   cannot compute, and alert the owner, and never refuse an order that only
   reduces the position for want of that figure, all as the design doc
   defines them. The gate refuses and never resizes, and a binding cap never
-  moves a strategy's exit. Checks that no strategy's size
-  reads its own recent results except through a rule the owner set
-  beforehand (TZ L3220, L919).
+  moves a strategy's exit (TZ L3220). Checks that no strategy raises its size
+  from its own recent results except through a rule the owner set beforehand
+  (TZ L919).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -576,8 +576,11 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading. A strategy whose requested changes and
-  recorded outcomes do not match halts alone, under the design doc's rules
-  for judging a strategy.
+  recorded outcomes do not match halts alone and pages the owner, while an
+  order or cancel that traces to no request, override or halt halts all
+  trading, under the design doc's rules for judging a strategy. Each
+  strategy's retiring check runs on its schedule, and the dead-man check
+  watches its last run.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
