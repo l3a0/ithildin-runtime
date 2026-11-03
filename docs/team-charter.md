@@ -307,7 +307,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's fifteen
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -335,7 +335,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named
   the normalization of deviance (BM L2868, BM L2917). Keeps
   tests that run the full loop, beyond the injected faults, to a short named
-  list of journeys marked `full_loop` in `tests/` (BM L2948), and takes the book's order
+  list of journeys in `tests/` (BM L2948), and takes the book's order
   of magnitude more tests at each step down the pyramid as guidance
   (BM L2798).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
@@ -369,10 +369,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
   handover the design doc's rules describe: one artifact built once for every
-  environment, its hash checked at every deploy, at startup and in every
-  heartbeat during a session, and a new release that sends only after the old
-  one has gone, with cancels and the kill switch served throughout and an alarm when no
-  release is consuming past a written bound
+  environment, its digest pinned for each session, a release that changes
+  only between sessions, and cancels and the kill switch served while a
+  session is open, with an alarm when no release reads execution's queue
+  past a written bound
   (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
   rewrite-planning load, per the design doc.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
@@ -580,19 +580,18 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
   with its name as the reason. Read only, compare every component's artifact
-  hash with the release's record and capture's with marketlake's, check the tracked configuration's keys
-  against the committed list, read the risk gate's hard caps, verify the
-  journal's checksums and sequence to its head, and check the clock's offset
-  and sync age. A failure of the release's own hash or the journal check halts
-  everything and pages the owner. A failure of any other check halts new
-  orders only, and the release still serves cancels and the kill switch. The old release keeps reading
-  execution's queue until this release's own checks pass. Then wait for the
-  host to show it gone, take the account's lease, reconcile, read the
-  halt state, and only then enable strategies. Each later take of the lease,
-  once per order, reads the journal and the broker's open orders and rebuilds
-  the orders in doubt, without running startup again. While it waits, a
-  release whose own hash and journal checks passed may take the lease only to
-  serve a cancel or the kill switch, under the design doc's release rule.
+  digest with the session's pin and capture's with marketlake's record, check
+  the tracked configuration's keys against the committed list, read the risk
+  gate's hard caps, verify the journal's checksums and sequence to its head,
+  and check the clock's offset and sync age. A failure of the release's own
+  digest or the journal check halts everything and pages the owner, naming
+  the broker's own interface. A failure of any other check halts new orders
+  only, and the release still serves cancels and the kill switch. Then take
+  the account's lease, reconcile, read the halt state, and only then enable
+  strategies. How a release takes over from the last session is
+  [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
+  take of the lease follows
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
