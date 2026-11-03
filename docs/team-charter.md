@@ -19,7 +19,11 @@ printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), wh
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
 Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
 1996), whose rules for estimating, cutting and tracking the work the design doc's
-[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. The
+[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries.
+Citations like (TZ L2038) are Kindle locations in Mark Douglas's book *Trading in the Zone* (Prentice
+Hall Press, 2000), and (TZ L\~2776) marks a location interpolated between the owner's highlights.
+Its rules for judging a strategy over a sample, and for the human acts around one, live in the
+design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -113,7 +117,10 @@ Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, deploys, and
 switches anything to live. The owner ruled on 2026-11-02 that two more
 actions are the owner's alone: releasing a loss stop or the kill switch once
-it has fired, and switching a strategy back on in live trading. The owner's
+it has fired, and switching a strategy back on in live trading. Before a
+strategy goes live, the owner's dated ruling records the loss the owner
+accepts over its first sample, under the design doc's rules for judging a
+strategy (TZ L3207). The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -178,6 +185,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
+  Registers, before a strategy enters Paper and again before Live, the sample
+  it is judged over and the result that retires it. Judges no strategy on
+  one trade or one streak, and reports the decisions a human override touched
+  apart from the evidence (TZ L2038, L3198). The design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  holds the rules.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -267,6 +280,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
+  Has the gate refuse an order whose worst-case loss it cannot compute, and
+  journal the figure beside the order. A cap that binds shrinks or refuses
+  the order and never moves a strategy's exit. Checks that no strategy's
+  size reads its own recent results except through a rule the owner set
+  beforehand (TZ L3220, L919).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -523,8 +541,8 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, and a backup of captured data and the journal has been restored and checked |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one commit and one configuration without reaching its retiring result |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states the worst case of the strategy's first live sample. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes, with the loss the owner accepts stated as a share of the cap |
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
@@ -565,7 +583,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   started to behave badly. "It logs errors" does not answer that question
   (AoS L10177).
 - **Human override** stays the exception, for information the model cannot
-  process (L887, L902). An override is journaled like an order.
+  process (L887, L902). An override is journaled like an order, and the
+  decisions it touched are reported apart from the strategy's evidence
+  (TZ L559).
 
 ### 7. Report cost
 
@@ -629,3 +649,10 @@ doc's register.
 and team structure have no counterpart for agent sessions, which keep no
 morale and work no hours, and are left out. What it adds here is the planning of the work, in the
 design doc's rules for cutting it.
+
+*Trading in the Zone* dates from 2000 and writes for traders who decide each trade themselves. Its
+chapters on how beliefs form and change, and its remedy of changing how the trader thinks, have no
+counterpart in a platform whose strategies are code, and are left out. Its figures, such as its
+sample of 20 trades, rest on the author's experience rather than data, and are not adopted. What it
+adds here is judging a strategy over a sample set in advance and keeping the human acts around it
+out of the evidence.
