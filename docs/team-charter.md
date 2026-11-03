@@ -236,15 +236,18 @@ time is the scarce resource, so work reaches the owner already reviewed.
   entry before its send, journals every broker message as received, and
   applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
   Keeps the design doc's procedure for orders in doubt when the journal
-  cannot be read. Whether a cancel with no answer may be resent waits for
-  the owner's ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and until it lands a review passes neither a
-  resend nor a rule against one. Gives each dependency on the order path its timeout, its
+  cannot be read. A cancel with no answer is resent only after a lookup
+  shows the order still working and no cancel pending, and only where the
+  contract suite shows the broker applies a repeated cancel at most once,
+  under the owner's 2026-11-03 ruling on
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
   limit and its breaker, and puts the decision's id inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
-  cannot match, any resend of an order in doubt, an order settled as unsent
+  cannot match, any resend of an order in doubt, a resend of a cancel the
+  owner's 2026-11-03 ruling does not allow, an order settled as unsent
   because a broker lookup found nothing, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
   (DDIA L4868), a vendor's type, string or exception that reaches past its
