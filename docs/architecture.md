@@ -1356,9 +1356,12 @@ classDiagram
         +str boot
         +str container
         +int restart_count
+        +str handler
         +str release
         +str run
         +datetime created
+        +datetime expires
+        +str status
     }
     class Plan {
         +str deployment
@@ -1410,6 +1413,8 @@ classDiagram
         <<Protocol>>
         +receive() Event
         +done(Event)
+        +extend(Event)
+        +release(Event)
     }
     class Broker {
         <<Protocol>>
@@ -1444,6 +1449,7 @@ classDiagram
         +get(key) bytes
         +head(key) StoredBlob
         +list(prefix, after) list
+        +replace_if_match(key, data, sha256, etag) str
         +delete_if_match(key, etag)
     }
     class Alerts {
@@ -1472,9 +1478,12 @@ classDiagram
     }
     class Monitoring {
         -Alerts alerts
-        +reconcile(Book, BrokerAccount) bool
         +alarm(reason)
         +report(run)
+    }
+    class core {
+        <<module>>
+        +reconcile(Book, BrokerAccount) list
     }
 
     Journal o-- BlobStore
@@ -1490,6 +1499,8 @@ classDiagram
     Broker ..> Ack
     Broker ..> Fill
     Journal ..> Book
+    OrderPath ..> core
+    Monitoring ..> core
 ```
 
 Eight choices in the two diagrams for a reviewer to check.
@@ -1545,13 +1556,20 @@ Eight choices in the two diagrams for a reviewer to check.
    and halts on the rest, and monitoring alarms.
    Alpaca's trading API allows 200 requests a minute for each account, a
    figure [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on the paper account
-   before anything relies on it. Execution reserves a quarter of it, 50 a
-   minute, for cancels and the kill switch's cancels, which new orders and
-   lookups never draw on. The rest is split evenly across the deployment's
-   execution instances, 50 a minute each for three, so each instance counts
-   its own requests against a fixed share and the sum stays under the limit
-   with no shared counter. An instance alarms at 75% of its share, and one
-   at its share waits rather than sending.
+   before anything relies on it. The budget that follows is this doc's
+   proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   Execution reserves a quarter of the limit, 50 a minute, for cancels and
+   for the kill switch's reads, lookups and cancels, which new orders and
+   other lookups never draw on. The rest is split evenly across the
+   deployment's execution instances, 50 a minute each for three, and the
+   reserve is split the same way, 16 a minute each, rounded down, so each instance
+   counts its own requests against fixed shares and the sum stays under the
+   limit with no shared counter. An instance alarms at 75% of its share.
+   An order that would pass its instance's share waits for the budget
+   before the order path takes the account's lease, so a wait never holds
+   the lease. A broker 429, its answer for too many requests, on a submit
+   leaves the order in doubt, settled by lookup like any other. On a cancel
+   it alarms, and execution retries the cancel inside the reserve.
 5. **The risk gate holds no state of its own.** `check` takes the order, the
    book, the snapshot and the run's `Constraints`. `send` replays the book from
    the journal just before each check, so the gate counts every order already
@@ -1593,10 +1611,16 @@ Eight choices in the two diagrams for a reviewer to check.
    deciding at it, built by one function in `core` from the schedules and the
    trading calendar, and
    `JournalEntry` is the one numbered record, chained to the entry before it.
+   `Lease` names its holder down to the handler, and when it expires, and
+   carries `status` only on a plan's lease, where it holds the run's status,
+   so an account's lease leaves it `null`.
    `BlobStore` is the storage port, S3 in shadow, paper and live and a
    memory-backed folder in a backtest, and one contract test suite runs
    against both. `create` returns the stored blob's tag and `head` its stored
-   time, so a lease can be deleted only by the tag its creator got. `Journal`
+   time. `replace_if_match` rewrites a blob only while it still carries the
+   tag it names, and returns the new tag, which is how a lease is renewed and
+   taken over and the one rewrite the port allows. So a lease can be
+   rewritten or deleted only by the tag S3 last returned to its holder. `Journal`
    writes through `BlobStore` too, for the account the broker adapter names,
    so the journal has no storage port of its own.
 
@@ -1864,7 +1888,7 @@ each keeps its own rule.
    component, decision and name. Each blob's header names the blobs it came from, and a halt says
    why a decision stopped. A deterministic component's blobs are regenerable
    from marketlake, the journal and the code, but data's snapshots and
-   execution's account files capture what was true at the moment, and the restart records the host's stop handler writes record exits, which the supervisor's halts name, so none of them can be. A
+   execution's account files capture what was true at the moment, so neither can be, and both are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
    backtest's blobs sit in a memory-backed folder and vanish when it ends,
    because a backtest can be regenerated. The blobs also make a question such
    as "how did the backtest's z-score on a decision differ from the shadow
@@ -1901,11 +1925,13 @@ each keeps its own rule.
    own lease and kill switch, so a backtest never shares the paper account's.
    This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 7. **The account's own blobs, outside every run,** hold `LEASE`, `OVERRIDE`,
-   the kill switch and the hard caps blob, at keys fixed by the account or the deployment under prefixes of their own, with the rules `## Where it runs` rules 4 and 5
+   the kill switch, each strategy's off switch, a fired loss stop and the
+   hard caps blob, at keys fixed by the account or the deployment under prefixes of their own, with the rules `## Where it runs` rules 4 and 5
    give. `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD`
    sit under prefixes of their own, keyed by writer and time and by worker
-   and restart count, and heartbeats are the one prefix the bucket's
-   lifecycle expires. A snapshot a decision read sits under its run's prefix
+   and restart count. The bucket's lifecycle expires heartbeats and the
+   noncurrent versions a lease's rewrites leave under `leases/`, and
+   nothing else. A snapshot a decision read sits under its run's prefix
    with data's other outputs and is recorded data, so no lifecycle rule may
    match it, as design.md's `### Data has a cost, except the data that
    cannot be recaptured` says.
@@ -2033,7 +2059,11 @@ against the journal instead: the client order id for `intent`, `sending` and
 `### Four environments` says. Deployments and accounts appear by the alias
 the release's table gives them, never by a broker's account number. A
 create-only write that S3 refuses, whose stored SHA-256 differs from the
-writer's, alarms, as `### Every alarm and its drill` lists.
+writer's, alarms, as `### Every alarm and its drill` lists. For a capturing
+stage, data's snapshot and execution's recover stage, the differing capture
+is also stored at the next attempt number, by `core`'s key builder for that
+row, and named in the decision result, so a second read of a source that may
+not come again is kept rather than discarded.
 
 | Store | Key |
 | --- | --- |
@@ -2041,11 +2071,14 @@ writer's, alarms, as `### Every alarm and its drill` lists.
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
+| A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
+| A send stage's claim, naming the handler running it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
 | The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
 | The plan's lease, holding the run's status | `leases/plans/<deployment>/<run>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
+| A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
@@ -2753,7 +2786,7 @@ new arrow.
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
-| 2. A replay emits pinned orders, through a missing feed, a stale price, a restart in the wrong order and an ack withheld across two decisions | Backtest | A recorded stretch of sessions with four faults injected. The restart kills a worker mid-run, and the host brings execution up before data. The simulated broker withholds one order's ack across two decisions | The orders on each day, a halt with no orders on each faulted day, and the second decision's order on the withheld order's instrument refused |
+| 2. A replay emits pinned orders, through a missing feed, a stale price, a restart in the wrong order and an ack withheld across two decisions | Backtest | A recorded stretch of sessions with four faults injected. The restart kills a worker mid-run, and the host brings execution up before data. The simulated broker withholds one order's ack across two decisions. A second run sets every cause to hold in the hard caps blob, as live sets it | The orders on each day, a halt with no orders on each faulted day, and the second decision's order on the withheld order's instrument refused. In the second run, every decision after the first halt halts until an `ithildin clear` entry names it |
 | 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, an order on an instrument with an order in doubt, a replacement whose old order fills during its cancel, the import rule test, and the fake broker | Seven refusals, the pair's, the refusal beside an order in doubt, a replacement cut by a fill that raced its cancel, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, pull it five minutes after a decision with a platform order and an order the platform did not send both resting, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", a journaled cancel for each resting order and a "cancels done" entry, and a dead-man alarm delivered |
 
@@ -2868,11 +2901,17 @@ three levels, from fast to slow.
      events to EventBridge and SQS, named and pinned by digest when
      [#22](https://github.com/l3a0/ithildin-runtime/issues/22) picks it, and
      against the test environment's bucket and queues on each push to
-     `main`. The suite also runs the receive loop over both adapters. A
-     message whose item is already in a handler is deleted rather than run
-     twice, the loop never holds more messages than it has free handlers, a
-     message whose handler is killed returns to the queue, and a hung
-     handler stops the heartbeat.
+     `main`. The queue port's `done` deletes a message, `extend` lengthens
+     its visibility timeout, and `release` returns it at once with
+     visibility 0. The named-pipe adapter implements `extend` and `release`
+     as no-ops, because a pipe hands each message to one reader once and
+     keeps nothing to hide or return. So the suite runs the receive loop
+     over both adapters only for what the pipe guarantees: a message whose
+     item is already in a handler is not run twice, the loop never holds
+     more messages than it has free handlers, and a hung handler stops the
+     heartbeat. The loop's extend, delete and return path, a message whose
+     handler is killed returning to the queue included, runs against the
+     SQS emulator.
    - **The broker suite** holds every `Broker` adapter to the methods
      `OrderPath` calls: a submit with a client order id, a lookup by that id
      and by the broker's order id, a cancel by the broker's order id, fills
@@ -2886,7 +2925,7 @@ three levels, from fast to slow.
    written before every container stops is still there after. Tests 1 and 2
    and test 3's fake-broker run go through this level, with the simulated
    broker and the history clock, and so do the drills that crash, freeze or
-   restart a worker, among them the crash between a pair's legs. Tests show that a write in one container reaches the queue of every container the table lists as its reader, and no other's.
+   restart a worker, among them the crash between a pair's legs. Tests show that a write in one container reaches the queue of every container the table lists as its reader, and no other's. This level runs three instances of each component and of the supervisor, as a deployment does, and runs test 2's replay a second time with one instance of each, expecting the same journal and the same blobs byte for byte.
 
 The required `test` check runs the first two levels. A second required check, which `.github/rulesets/default.json` gains when [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds it, runs the third on the same
 image, test 2 and the restart drills included, because the restart path is
@@ -2927,7 +2966,7 @@ accepted.
 | The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease, one blob per run, is held only while one supervisor instance changes the run, and carries the run's status, so a frozen holder's write after a takeover fails S3's tag check. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
-| Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | A cluster of three VMs per running environment, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | One VM per running environment in slice 1, three once load calls for the cluster, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each environment runs in an EC2 Auto Scaling group: of one VM in slice 1, and of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment, as the scale-out for 100 times slice 1's load | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01, and on 2026-11-02 that slice 1 starts on one VM. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
@@ -2966,6 +3005,11 @@ accepted.
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Alpaca's paper account is the paper broker, and Alpaca is the live broker too | Schwab, which is not known to offer an API paper account, or Interactive Brokers, which needs a gateway process beside the platform | The adapter is written to one broker's API, which paper and live share. Whether Alpaca refuses a second order with the same client order id is undocumented and is tested on paper as a second line of defence, never relied on | Paper ruled by the owner on 2026-10-30, question 1, and live on 2026-11-01. Built on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Talk to the broker through Alpaca's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake | Calling the REST API with an HTTP client passed in | One more dependency, argued in this pull request's body, and a wrapper to keep in step with the SDK | Ruled by the owner on 2026-11-01. Built on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution reserves a quarter of the broker's rate limit, 50 of Alpaca's 200 requests a minute, for cancels and the kill switch's reads, lookups and cancels, and splits both the reserve and the rest evenly across its instances, each counting against a fixed share | A counter shared across instances, or no reserve | An instance cannot borrow another's idle share, and an order waits at its instance's share | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| An order in doubt alarms when it is first journaled `InDoubt`, and halts the run once it stays unsettled past the smaller of 30 minutes and the time left before the cancel cutoff | Waiting out the order's time in force | A halt when a slow broker answers a lookup late | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A strategy's off switch is a blob any person may create, which execution reads before each of that strategy's submits, abandoning only its orders while its cancels still go out | A deploy to switch a strategy off, or a halt of the whole account | One more control blob, check, command and drill | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), beside the owner's ruling of 2026-11-02 on who switches it back on |
+| A fired loss stop creates a create-only blob that holds the account until `ithildin stop clear` | A stop that lifts once the day's loss recovers or a new session starts | A person's clear before trading resumes after any fired stop | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), which owns the loss stop |
+| Slice 1's one VM is sized so measured memory use stays at or under half its memory, an 8 GB machine at the estimate, and a VM group's written limit of deployments comes from 75% of its memory | Sizing the machine to the estimate alone | About 7 cents an hour for each environment, a figure to confirm, and a second VM group once the limit is reached | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 ## Questions for the owner
 
@@ -3167,8 +3211,7 @@ Each question says what was recommended and how the owner ruled.
        deploy roles off the VM, which the owner's ruling of 2026-11-02 on an
        account per environment removed.
     2. **A long-running ECS Fargate service**, started before the open and
-       stopped after the close, with the same containers, each a task. There is no machine to patch, and marketlake's EC2
-       permissions have no VM to reach. But ECS hands a task's IAM role to
+       stopped after the close, with the same containers, each a task. There is no machine to patch. But ECS hands a task's IAM role to
        every container in the task, and its
        [task role page](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html)
        says "containers are not a security boundary", while each Fargate
@@ -3178,18 +3221,23 @@ Each question says what was recommended and how the owner ruled.
 
     The recommendation is the VM for slice 1. Its design is complete and has
     been reviewed, and the refusals that guard it are already ruled. When the owner ruled, moving to Fargate changed the queue adapter, which needed its own contract tests and drills, on a path that had run zero times. The case for Fargate is
-    real, no machine and no reach from marketlake's EC2 roles, and the
-    evidence that would settle it is what running the VM costs: hours spent
-    patching and restarting it, and any marketlake apply that touches it.
+    real, no machine to patch, and the evidence that would settle it is
+    what running the VM costs in hours spent patching and restarting it.
+    Since the owner's ruling of 2026-11-02 on an account per environment,
+    marketlake's roles no longer reach the VM, so that reach no longer
+    argues for Fargate.
     The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
     on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, then on 2026-11-02 that shadow keeps machines of its own, so slice 1 runs a VM each for shadow and paper, with one more for live, each scaling out to a cluster of three, as `### Four environments` says.
 
-No open question this doc carries waits on the owner. The last two were
-ruled on 2026-11-01, and the review of that day lists four recommendations
-that change the design only once the owner accepts them.
+No open question this doc carries waits on the owner. The review of
+2026-11-01 made its recommendations, and the owner ruled on them that day,
+so they stand as rulings rather than proposals. The last two close the
+questions.
 
-1. Paper is part of slice 1, which the issues and this doc had deferred.
-2. `max_net`, the cap on the account's net exposure, is s × V ÷ m with the
+1. The owner ruled that paper is part of slice 1, which the issues and
+   this doc had deferred.
+2. The owner ruled that `max_net`, the cap on the account's net exposure,
+   is s × V ÷ m with the
    loss limit V the account's portfolio value and the share s at 1%, so one
    stranded leg's loss under the stress move is 1% of the portfolio, as
    design.md's `### Strategies, schedules and decisions` rule 5 says.
