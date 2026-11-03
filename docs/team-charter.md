@@ -16,7 +16,10 @@ public notes file holds. Citations like (DDIA L9274) are Kindle locations in
 L\~14160) marks a full-text location good to about one screen. The roles below
 also adopt its rules for faults, clocks, retries and records. Citations like (CC p. 481) are
 printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), whose practices for
-building, testing, reviewing and debugging code the roles and lifecycle below also adopt. The
+building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
+Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
+1996), whose rules for estimating, cutting and tracking the work the design doc's
+[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -125,8 +128,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the order path or the journal, or departs from a design principle, since a
   design the operator first sees in review is the costly case
   (AoS L4896, L4996). The price is four agent runs per plan that qualifies.
-- **Vetoes:** work that builds a layer nobody can run yet, and hardening on a
-  path that has run zero times, outside the exceptions in the premise.
+  Keeps each slice's estimate, its list of top risks and its ordered list of
+  behaviors a slip may drop, per the design doc's rules for cutting the work.
+  Adds a parallel session to late work only when that work splits into
+  pieces that need no exchange with the rest, which is the part of Brooks's
+  law McConnell asks readers to remember (RD p. 378).
+- **Vetoes:** work that builds a layer nobody can run yet, hardening on a
+  path that has run zero times, outside the exceptions in the premise, a
+  slip answered by dropping a check rather than a behavior, and progress
+  reported as a percentage (RD p. 381, p. 581).
 - **Does not:** write production code. A coordinator that builds stops
   coordinating.
 
@@ -380,7 +390,7 @@ what a session sets for the board to read.
 | Daily standup | A status round with the `/l3a0:sync-prune-next` skill: fetch, prune the worktrees and branches whose work is safe on GitHub, build the board from GitHub, and name what to take next from its ranked list |
 | Build | One session per issue in its own worktree, test-first against the test engineer's acceptance tests |
 | Sprint review | The pull request, reviewed before the owner reads it |
-| Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it. A module that keeps reappearing in defects is redesigned rather than patched again. IBM found 31 of 425 classes in one system error-prone, repaired or rebuilt them, and saw customer-reported defects fall tenfold within a year (CC p. 517) |
+| Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it. A module that keeps reappearing in defects is redesigned rather than patched again. IBM found 31 of 425 classes in one system error-prone, repaired or rebuilt them, and saw customer-reported defects fall tenfold within a year (CC p. 517). McConnell lists 36 classic mistakes and asks each team to keep its own list of worst practices (RD p. 49, p. 50), so the delivery lead reads the review step's checklist of this repository's own defects before a slice starts |
 
 ### 1. Plan
 
@@ -400,6 +410,13 @@ what a session sets for the board to read.
   build starts, as the delivery lead's role says. McConnell finds the worst
   design problems in the areas thought easy and left undesigned, and asks
   safety-critical work for the most detailed design (CC p. 116, p. 117).
+- A build issue carries its estimate in dollars, as a range drawn from the
+  `## Cost` comments of earlier loops, and its ordered list of behaviors a
+  slip may drop. A slice's parent issue carries its `## Risks` list. Both
+  follow the design doc's rules for cutting the work.
+- A change to what a deliverable must do reaches its issue before the code
+  does, with its effect on the estimate, so the estimate moves when the scope
+  moves rather than after the slip shows it (RD p. 199).
 
 ### 2. Build
 
@@ -552,6 +569,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 
 Every plan, build and review loop reports its cost in tokens and dollars from
 its agents' transcripts (`loop-cost`), and posts it on the issue it tracks.
+The `## Cost` comment sets the actual beside the estimate the issue carried,
+so the next estimate draws on measured loops rather than memory
+(RD p. 178).
 
 ## The first MVP
 
@@ -602,3 +622,8 @@ that fences nothing.
 statement-level tuning are left to the formatter, the linter and the measured-tuning rule rather
 than restated, and its default of compiling assertions out of production is rejected in the design
 doc's register.
+
+*Rapid Development* dates from 1996 and writes for human teams. Its chapters on motivation, overtime,
+team structure and personal productivity have no counterpart for agent sessions, which keep no
+morale and work no hours, and are left out. What it adds here is the planning of the work, in the
+design doc's rules for cutting it.
