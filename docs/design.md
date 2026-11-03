@@ -128,10 +128,25 @@ finished. Each quality has a home in these two docs.
    and on a schedule after, as
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records. The
    check runs more often than every 24 hours, so a whitelist entry a stolen
-   key adds alarms and halts live trading before it can turn approved. Two
-   gaps stay open and are named rather than closed: the trading key can
-   change the account's margin, shorting and options settings, and a
-   stolen key can move value out by trading rather than by withdrawal.
+   key adds alarms and halts live trading before it can turn approved. The
+   board named two more gaps, and the owner ruled on 2026-11-02 to accept
+   them unless mitigations exist. This doc proposes two, on the same
+   scheduled check, and accepts what they leave.
+   1. **The key can change the account's settings**, its margin multiplier,
+      shorting, options level and trade suspension. The check also reads
+      the account's configuration and compares it with the settings the
+      hard caps blob pins, which only the owner writes. Any difference
+      alarms and halts live trading. The risk gate's own limits never
+      depended on the broker's settings, so a changed margin cannot make
+      the platform itself trade larger.
+   2. **A stolen key can move value out by trading.** The check also lists
+      the account's open orders and recent fills, and any order without the
+      platform's stamp is journaled as unmatched, pulls the kill switch so
+      execution cancels what rests, and holds the account, as an unmatched
+      order already does at a decision.
+
+   What stays accepted is the value a thief moves between two checks,
+   which the capital the owner puts in the account bounds.
 4. **Operability.** A person acts through the one `ithildin` tool, every
    halt says why, and every live halt holds until the owner clears it, as
    architecture.md's `## What a person runs` says.
