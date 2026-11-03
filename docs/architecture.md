@@ -2217,22 +2217,39 @@ Eleven rules hold the deployment to the premise and the hard limits.
       in a runtime account, its root user included, as AWS's
       [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
       says. It refuses, to all but the owner's role, deleting a journal or
-      run version, changing a runtime bucket's policy, versioning, Object
-      Lock or notifications, and reading the broker path, and it refuses
-      leaving the organization. The organization's centralized root access
-      removes each member account's root password, so the management
-      account's root login is the one left to guard.
+      run version and changing a runtime bucket's policy, versioning, Object
+      Lock or notifications. It refuses reading the broker path to all but
+      the owner's role and that environment's execution role, each named by
+      its full ARN, path included, because execution has to read its own
+      key. It refuses IAM writes, `iam:UpdateAssumeRolePolicy`,
+      `iam:PutRolePolicy`, `iam:AttachRolePolicy`, `iam:CreateRole` and
+      `iam:DeleteRole`, on the owner's, execution, deploy and promotion
+      roles and on the GitHub OIDC provider, to every principal but the
+      owner's role, because rewriting a role's trust or policy would hand
+      its reach to someone else. It refuses leaving the organization. The
+      organization's centralized root access removes each member account's
+      root password, so the management account is the one left to guard,
+      and every principal in it is in scope, not only its root user. This
+      doc proposes for
+      [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that
+      `sts:AssumeRoot` and IAM Identity Center administration there are
+      limited to the owner's identity, behind a hardware key, and that an
+      alarm reads the organization trail for a service control policy
+      detached or edited, a root password created and a permission set
+      assigned.
    3. **The parameter lives in us-east-1**, and the owner writes its value by
       hand through standard input, as marketlake writes its own. No OpenTofu
       configuration, state or variable ever holds it.
    4. **A drill** tries to read the key without decryption with every role
       in the account but execution's, directly, by a recursive read from `/`
       and through its history, from a role that can assume no other, as the
-      owner ruled for live on 2026-10-31, and with marketlake's roles from
-      marketlake's account, and expects "access denied" every time.
+      owner ruled for live on 2026-10-31, with marketlake's roles from
+      marketlake's account, and with a role at another path that reuses the
+      execution role's name, and expects "access denied" every time.
 
-   The price is four runtime accounts, test, shadow, paper and live, and the
-   organization's management account, each set up once, with GitHub's
+   The price is four runtime accounts, test, shadow, paper and live, the
+   organization's management account, and a log-archive account for the
+   organization trail, as `### Four environments` rule 11 says, each set up once, with GitHub's
    deploy roles recreated in each and a read grant from marketlake's account
    for each environment's data role, as rule 8 says. The broker key moves
    out of marketlake's account, which reverses part of the owner's ruling of
@@ -2243,7 +2260,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    can create the switch, which pulls it, and can never delete it. The owner
    ruled on 2026-10-29 that only the owner's credential clears a live
    account's switch, and that the operator's may also clear a paper or shadow
-   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. The hard caps blob can be written or deleted only by the
+   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A fired loss stop's blob takes the same grants as the switch: execution's role may create it and never delete it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the owner's 2026-11-02 rulings. The hard caps blob can be written or deleted only by the
    owner's credential, which an explicit refusal in the bucket's policy for
    every other principal enforces, because raising a cap raises a capital
    limit, which hard limit 1 keeps for the owner. Copying an older version
@@ -2251,17 +2268,23 @@ Eleven rules hold the deployment to the premise and the hard limits.
    needs no deploy.
 5. **The runtime's credential does only what the rules need.** It can create
    and read blobs under the runs', the journal's and the simulated accounts'
-   prefixes, create and read the leases, create and read but not delete the switch, read the hard caps and the overrides, and list each of those prefixes, without which S3
+   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` for execution's role, and list each of those prefixes, without which S3
    answers a missing key with "access denied" rather than "no such blob". A
    drill reads an absent switch with that list right and expects "no such
    blob". It can also create heartbeats and restart records under their own
-   prefixes, the heartbeats being the one prefix the bucket's lifecycle
-   expires. Only execution's credential may delete an account's lease,
-   only with the tag the creator got, which leaves a delete marker
-   so the lease's history survives, besides the owner's and the operator's
-   off the VM, as `## What a person runs` says. Only the supervisor's may
-   write a plan's lease, always with a condition on its tag, and none
-   deletes it. No credential the runtime
+   prefixes, and the bucket's lifecycle expires heartbeats and the
+   noncurrent versions of leases, and nothing else. The lease grants are
+   narrower than the rest, as this doc proposes for
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Only
+   execution's role may create, rewrite and delete under
+   `leases/accounts/`, a rewrite or a delete only with the tag S3 last
+   returned to its holder, and a delete leaves a delete marker so the
+   lease's history survives. The owner's and the operator's credentials
+   may also delete an account's lease off the VM, as `## What a person
+   runs` says. Only the supervisor's role may write under `leases/plans/`,
+   creating a plan's lease with `If-None-Match` and rewriting it with
+   `If-Match` on its tag, and none deletes it. Every other role may read
+   the leases at most. No credential the runtime
    holds can delete a version, or change the bucket's policy, versioning or
    lifecycle, or its notification configuration, and no credential but the owner's can change those four. The
    bucket's policy, whose refusals name the runtime's principals, refuses any
@@ -2323,7 +2346,13 @@ Eleven rules hold the deployment to the premise and the hard limits.
    each environment has an AWS account of its own, that credential is the
    data worker's role in its environment's account, allowed by its own IAM
    policy and by one read-only statement in marketlake's bucket policy that
-   names it, limited to the partitions, the segments and the manifest.
+   names it, limited to the partitions, the segments and the manifest. The
+   statement grants `s3:GetObject` and `s3:GetObjectVersion`, since the
+   snapshot names each segment by its S3 version, and `s3:ListBucket`
+   limited by prefix to those three, without which S3 answers a missing
+   partition with "access denied" rather than "no such blob". A drill reads
+   an absent partition with that grant and expects "no such blob", which
+   the data worker reads as "data not ready".
    marketlake's bucket is encrypted with SSE-S3, so no KMS key is shared.
 9. **A replacement VM's supervisor reads the run's plan, then runs.**
    The supervisor instance holding the plan's lease writes the plan, the
@@ -2395,7 +2424,9 @@ Eleven rules hold the deployment to the premise and the hard limits.
     the test job, rebuilds the image, publishes it to GitHub's container
     registry tagged with its commit and attests its build provenance. It
     runs no project code beyond the image build, so nothing the tests load
-    can sign an attestation. That job alone holds `packages: write` and `attestations: write`. It and each deploy and promotion job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
+    can sign an attestation. Its image build installs every dependency from
+    wheels only, with `uv`'s `--no-build`, so the job that signs runs no
+    dependency's build code either. That job alone holds `packages: write` and `attestations: write`. It and each deploy and promotion job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
     `refs/heads/main`, and the deploy runbook on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a
     digest that fails. Every action is pinned to a full commit hash. The
@@ -2422,8 +2453,10 @@ Eleven rules hold the deployment to the premise and the hard limits.
     lost VM without a person, and that VM runs every instance of its
     deployment, under rule 7's units. Scaling out raises the group to three,
     one VM a zone, each running one supervisor instance and one instance of
-    each component. The items below describe the cluster, and the first,
-    second and fourth hold for the group of one as well.
+    each component. The items below describe the cluster. The first, second,
+    fourth, sixth and seventh hold for the group of one as well, and so does
+    the third's self-fence, a VM stopping its own units when its supervisor
+    instances find their own last heartbeat past the limit.
     1. **The group replaces a lost VM.** A VM that fails EC2's status checks
        or stops is terminated and replaced from the group's launch template,
        which holds the VM image and rule 3's provisioning step, in the same
@@ -2432,7 +2465,10 @@ Eleven rules hold the deployment to the premise and the hard limits.
     2. **A VM joins the run its plan names.** A VM that starts mid-session
        runs the release the run's plan names, its supervisor reads the plan
        as design.md's rule 9 says, and its path unit then starts
-       its workers, which find their place by checking their keys in S3.
+       its workers, which find their place by checking their keys in S3. A
+       VM that started on another release stops its units and starts them
+       again on the plan's, and writes the reason "release differs from
+       plan" to the restart record and to the host's direct alarm route.
     3. **A VM counts as gone when its supervisors go quiet.** Each supervisor
        instance's heartbeat blob names its VM. Another VM counts a VM as gone
        once no supervisor instance on it has written a heartbeat within a
@@ -2441,7 +2477,9 @@ Eleven rules hold the deployment to the premise and the hard limits.
        VM's handler was running. A VM whose supervisor instances find their
        own last heartbeat older than that limit, as after a freeze, stops its
        units, which start again as a fresh member, so a woken VM never
-       carries on work another VM took over. Execution's check of the
+       carries on work another VM took over. This self-fence writes the
+       reason "own heartbeat stale past limit" to the restart record and to
+       the host's direct alarm route. Execution's check of the
        account's lease tag before every broker call stops its send even if
        it tried.
     4. **The VMs share no disk.** Each keeps its own watchdog, heartbeat
@@ -2455,10 +2493,14 @@ Eleven rules hold the deployment to the premise and the hard limits.
        an OS patch, a Docker upgrade or a new machine image in the launch
        template, rolls out through the group's instance refresh. The apply
        that changes the launch template starts it, and on live that apply is
-       the owner's. The refresh keeps at least 66 percent of the group
-       healthy, so it replaces one of the three VMs at a time and two stay
-       up throughout. In slice 1's group of one it replaces the one VM,
-       which is one more reason it runs only outside sessions. A launch lifecycle hook holds each new VM out of
+       the owner's. The rest of this item is this doc's proposal for
+       [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The
+       refresh keeps at least 66 percent of the group healthy, so it
+       replaces one of the three VMs at a time and two stay up throughout.
+       In slice 1's group of one the refresh sets a maximum healthy
+       percentage of 200, so the group starts the new VM beside the old one
+       and terminates the old one only once the new one completes its hook.
+       It still runs only outside sessions. A launch lifecycle hook holds each new VM out of
        service until its provisioning step has verified the pin's provenance
        and pulled the image, and the read-only drill checks pass, and only
        then does the VM complete the hook. The VM's role may complete the
@@ -2468,11 +2510,27 @@ Eleven rules hold the deployment to the premise and the hard limits.
        earlier launch template. A refresh first creates a marker with a
        create-only write and refuses to go on while a session is open, by the
        same two-sided check that keeps a drill and a session apart, so a
-       session never starts on a group with two VM images in it. An app
+       session never starts on a group with two VM images in it. A session
+       that finds the marker refuses to start, with the reason "session
+       refused: instance refresh open". The apply job that started the
+       refresh waits for the refresh's end event and then deletes the
+       marker. `ithildin` gets no command for it, so a person clears a stale
+       marker by running the apply job again, whose run records who started
+       it. A VM image that passes its refresh and fails later rolls back in
+       one step: apply the previous launch template version, which starts a
+       refresh outside sessions under the same session check. An app
        release never rolls out this way, because two releases in one run
        write different bytes to one key, which the create-only rule turns
        into a halt. A release changes only at a session's start, through the
        pin and the promotion from shadow to paper to live.
+    7. **Auto Scaling's own events reach the alert channel.** An
+       EventBridge rule in each environment's account matches Auto
+       Scaling's instance refresh failed, instance refresh rollback and
+       instance launch events, and sends each to the alert channel's push
+       topic, as this doc proposes for
+       [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These
+       alarms start in AWS rather than on a VM, so they reach the owner
+       while no VM is up.
 
     Slice 1's one VM runs 24 containers, about 2.4 GB at an estimated
     100 MB each. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) measures that and sizes
@@ -2485,8 +2543,10 @@ Eleven rules hold the deployment to the premise and the hard limits.
     until the group starts a replacement. Scaling out costs three VMs per
     environment, each running 8 containers on a 2 GB machine such as
     `t4g.small`, at roughly 2 cents an hour, and subnets in three zones, and
-    it brings four drills, which run before anything relies on the
-    cluster.
+    it brings five drills, which run before anything relies on the
+    cluster. Each VM group has a written limit of deployments, and the next
+    split past it is an account-to-group mapping in configuration, as
+    design.md's `## Design for 100x, build at 1x` says.
     1. Terminate a VM mid-decision, expecting the other two to finish the
        decision and the group to replace the VM.
     2. Take one zone's subnet down, expecting the group to start its VM in
@@ -2495,6 +2555,11 @@ Eleven rules hold the deployment to the premise and the hard limits.
     4. Refresh with an image whose checks fail, expecting the hook to abandon
        the new VM, the refresh to roll back with two VMs up throughout, and a
        refresh started during a session to be refused.
+    5. Refresh to a good image, then roll back by applying the previous
+       launch template version, and forward again, expecting each refresh to
+       finish outside a session with the group healthy throughout. This one
+       also runs on slice 1's group of one, because the charter's paper gate
+       asks for a VM image rolled back and forward again.
 
 ### Four environments
 
@@ -2521,15 +2586,16 @@ run exactly one mode, the one with the same name. Test is GitHub's CI, which
 runs backtest mode among its checks, and backtest mode also runs on a
 developer's machine, outside every environment. Where the rest of this doc
 says the runtime's VM or the runtime's bucket, it means the one in the
-environment at hand, and the VM means each of that environment's three
-VMs, as rule 11 of `## Where it runs` says.
+environment at hand. The VM means that environment's one VM in slice 1, or
+each of its three VMs once it scales out to the cluster in rule 11 of
+`## Where it runs`.
 
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
 | Shadow | Shadow mode on live data | The shadow VM, scaling out to a cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
 | Paper | Paper mode | The paper VM, scaling out to a cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
-| Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate that Alpaca's trading API offers no call that moves money out, which is hard limit 5 | Moved only by the owner, by hand |
+| Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. Alpaca's trading API may offer crypto wallet transfer and whitelist endpoints, so [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms before the live gate either that none of them can move money out of the platform's account, or that crypto is disabled on it with no whitelisted address, which is hard limit 5 | Moved only by the owner, by hand |
 
 The owner ruled on 2026-11-01 that shadow and paper share one environment in
 slice 1, and on 2026-11-02 that shadow keeps machines of its own after all.
@@ -2537,16 +2603,6 @@ So shadow, paper and live each have their own VM, bucket and roles,
 and shadow's simulated account never shares a machine with paper's broker
 key. The drills that try one environment's roles against another's run
 between every pair.
-
-The price of sharing is three things, accepted because paper holds no real
-money.
-
-1. Each merge's release runs on the machine that holds paper's key and
-   journal before shadow has judged it, kept apart only by Unix users and
-   key prefixes.
-2. A release that crashes the shared Docker daemon stops paper too.
-3. One machine role serves both, so the AWS permission split between them
-   gives way to the split between their Unix users and prefixes.
 
 Eleven rules keep the environments apart.
 
@@ -2569,7 +2625,8 @@ Eleven rules keep the environments apart.
    digest, and writes a promotion record holding the counts beside paper's
    pin. It refuses while paper has an open halt, a set switch, an override
    not yet applied, or an account's lease held by a lost VM, and alarms with that
-   reason.
+   reason. A strategy's off switch on paper does not block it, because
+   switching one strategy off says nothing against the digest.
 3. **A digest has run in an environment** when a run there recorded it in
    its plan, and that run's decisions finished without a "release changed"
    or restart-limit halt.
@@ -2602,7 +2659,7 @@ Eleven rules keep the environments apart.
    rule 5 says. A
    deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
-   the operator may pull the switch, as the owner ruled, and read, which is this doc's proposal. Each broker key sits under its environment's
+   the operator may pull the switch, as the owner ruled, and create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and rule 3's refusals cover
    every broker path. Ping addresses sit apart, under
@@ -2614,9 +2671,13 @@ Eleven rules keep the environments apart.
    principal but the owner's refuses to add, change or remove it. The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries rule 3's refusals. The tags and paths
    are this doc's proposal.
 6. **GitHub's tokens reach a role only from one workflow file on `main`.**
-   The repository's OIDC subject includes the calling workflow's
-   `job_workflow_ref`, and each role's trust matches it exactly, pinned to
-   its one workflow file on `refs/heads/main`. The deploy and promotion
+   The repository's OIDC subject template includes `context`, which
+   carries `environment:<name>` for a job that runs in a GitHub
+   environment, and the calling workflow's `job_workflow_ref`. Each deploy,
+   promotion and publish role's trust matches both exactly: its own GitHub
+   environment, and its one workflow file on `refs/heads/main`. The test
+   job runs in no deploy environment, so its token matches none of those
+   roles. The deploy and promotion
    workflows have no `pull_request_target`, `workflow_run`, `issues` or
    `issue_comment` trigger, check out only the commit that started them,
    and read no event payload. Each GitHub environment's branch rule names
@@ -2642,12 +2703,14 @@ Eleven rules keep the environments apart.
    account the table does not name. So a switch pull for a live account
    cannot land in the paper bucket, and the pull stays one command.
 9. **Every running environment has its own heartbeat check, and so does
-   the pipeline.** Shadow, paper and live each get a check on healthchecks.io
-   named after the environment, whose description carries the first command
-   to run and its runbook row, so the push on a phone says what to do. The
+   the pipeline.** Each deployment gets a check on healthchecks.io named
+   after its environment and deployment, whose description carries the
+   first command to run and its runbook row, so the push on a phone says what to do. The
    promotion job pings a check of its own after each run, so a dropped
    schedule alarms. Test needs no check, because a failed CI run is its
-   alarm. The owner placed the checks in marketlake's healthchecks.io
+   alarm. Slice 1 runs one deployment in each of shadow, paper and live, so
+   that is one check each, and each portfolio added at 100x adds a check,
+   a change of configuration. The owner placed the checks in marketlake's healthchecks.io
    project, so the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) confirms that marketlake holds only ping
    addresses there, and no API key that could pause a check. The promotion
    job reads the project with a read-only API key, which cannot pause or
@@ -2661,14 +2724,14 @@ Eleven rules keep the environments apart.
    cutoff.
 10. **Every drill that depends on an environment's own resources runs in
     each environment that has them.** These are the dead-man check, the
-    host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, and the event rules, queues and their policies. Shadow's and paper's drills run before paper's gate. Live's run
+    host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. Shadow's and paper's drills run before paper's gate. Live's run
     before the owner switches, in a live session started with the kill
     switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch, as the owner ruled on 2026-10-31 on a board sitting's recommendation. Drills that end in a clear only the owner can make run once a month, as the owner ruled, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one, as the owner ruled on 2026-10-31. No agent runs a drill on live. Drills that depend only on code
     run once, in test. Rule 3's drill grows to try each environment's roles
     against every other environment's bucket, key and VM, by each route rule 3's item 4 lists and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
     1. Each environment's monitoring role and VM role read their own ping
       addresses, and every other role is refused.
-    2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the one live write that role holds by pulling the switch while no session runs, and clears it.
+    2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the two live writes that role holds, by pulling the switch and by switching a strategy off while no session runs, and clears both.
     3. A deploy role is refused every key but its pin.
     4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
     5. A pin moved mid-session leaves a restarted worker on the session's
@@ -2681,10 +2744,25 @@ Eleven rules keep the environments apart.
     firewall rules and memory-backed directories come from the environment's
     infrastructure plan, through the instance's launch configuration, and so
     do its SQS queues and its EventBridge rules, generated from the routes. A
-    change to any of them is an apply, approved like marketlake's, followed
-    by that environment's read-only checks. A release whose routes need a new
-    rule waits for that apply, because the session-start check refuses it.
-    This is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+    change to any of them is an apply, followed by that environment's
+    read-only checks. A release whose routes need a new rule waits for that
+    apply, because the session-start check refuses it. This doc proposes
+    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) two
+    credentials in each runtime account.
+    1. **The plan credential** is assumed only by the infrastructure
+       workflow's plan job, through rule 6's OIDC trust, and reads what a
+       plan compares. On a pull request run it holds neither
+       `ReadOnlyAccess` nor any `ssm:Get*`, because the pull request's own
+       code runs in that job, and either grant would let it read the
+       environment's secrets.
+    2. **The apply credential** is assumed only by the apply job on `main`,
+       in that environment's GitHub environment, once the apply is
+       approved. It can change the VM's launch template and role, so reach
+       to the VM counts as reach to that environment's broker key, and the
+       apply credential is guarded as the key is.
+
+    Shadow's and paper's applies are approved by the owner or the
+    operator, and live's by the owner alone.
 11. **Each environment has an AWS account of its own.** The owner ruled on
     question 11 that the runtime's resources live in marketlake's account,
     confirmed on 2026-10-31 that live stays there, and on 2026-11-02
@@ -2696,7 +2774,12 @@ Eleven rules keep the environments apart.
     promotion job's one read of shadow's bucket crosses from paper's account
     through a statement in shadow's bucket policy naming the promotion role,
     limited to the records it judges. An organization trail records every
-    account's API calls in one place, for the drills that read CloudTrail.
+    account's API calls in one place, for the drills that read CloudTrail,
+    and writes them to a bucket in a log-archive account of its own, as
+    this doc proposes for
+    [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so no
+    principal of a runtime account can change the record of its own
+    calls.
 
 The price is one VM per running environment in slice 1, one for shadow
 and one for paper, each running three instances of each component and of
@@ -2721,7 +2804,9 @@ flowchart TB
     execution["execution<br/>order manager, order path"]
     brokers["execution.brokers<br/>simulated, Alpaca through its SDK"]
     monitoring["monitoring"]
-    runtime["runtime<br/>supervisor, worker entry points, receive loop, modes, CLI"]
+    runtime["runtime<br/>worker entry points, modes, CLI"]
+    loop["runtime.loop<br/>the receive loop"]
+    supervisor["runtime.supervisor<br/>the supervisor"]
 
     data --> core
     alpha --> core
@@ -2741,6 +2826,12 @@ flowchart TB
     runtime --> execution
     runtime --> brokers
     runtime --> monitoring
+    runtime --> loop
+    runtime --> supervisor
+    loop --> core
+    supervisor --> core
+    supervisor --> adapters
+    supervisor --> loop
 ```
 
 An arrow means "may import". The diagram draws four rules.
@@ -2755,17 +2846,20 @@ An arrow means "may import". The diagram draws four rules.
    lives there, and so does the one receive loop every worker and the
    supervisor run. It picks the adapters for the mode it is given, and the
    execution worker's entry point hands the risk module's `RiskGate` to the
-   order path. The supervisor lives there too, and imports only `core`. It
-   starts no worker. It writes nothing but the plan's lease, whose conditional writes carry the run's status, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
+   order path. The supervisor lives there too, in `runtime.supervisor`, and
+   imports `core`, `adapters` and the receive loop's module, `runtime.loop`,
+   and nothing else. `runtime.loop` itself imports only `core`, so the
+   supervisor reaches no worker module through it. It starts no worker. It writes nothing but the plan's lease, whose conditional writes carry the run's status, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
    only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
 4. Only `runtime` imports `adapters`, which holds the S3, memory-backed
    folder, SQS and named-pipe adapters, so boto3 is imported there alone,
    marketlake's package only in `data`, and Alpaca's SDK only in
-   `execution.brokers`. The supervisor and the `ithildin` tool, which live in
-   `runtime`, import only `core` and `adapters`, and the import test gives
-   them that narrower arrow of their own.
+   `execution.brokers`. The `ithildin` tool, which lives in `runtime`,
+   imports only `core` and `adapters`. The supervisor imports those two and
+   `runtime.loop`, as rule 2 says. The import test gives each of them that
+   narrower arrow of its own and allows nothing more.
 
 A test reads every module's imports with Python's `ast` module and fails on an
 arrow the diagram does not draw. A second test runs a day under the supervisor
