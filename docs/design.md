@@ -655,16 +655,22 @@ Ten rules make the blobs something a worker can trust.
       same way before its next send, and applies from the next decision's
       sync.
    4. **Right before every submit**, after the order's `sending` entry
-      is stored, execution checks five things.
+      is stored, execution checks six things.
       1. The kill switch is absent.
-      2. No halt of the run is stored.
-      3. Its own send-stage result key is still empty.
-      4. The account's lease still carries the tag execution got when it
+      2. The order's strategy is not switched off.
+      3. No halt of the run is stored.
+      4. Its own send-stage result key is still empty.
+      5. The account's lease still carries the tag execution got when it
          took it for this order.
-      5. The market-on-close cutoff has not passed, for such an order.
+      6. The market-on-close cutoff has not passed, for such an order.
 
       Any one failing journals the
-      order `Abandoned`, sends nothing, and halts the decision. So a run the
+      order `Abandoned`, sends nothing, and halts the decision, except the
+      second, which abandons only that strategy's orders and leaves the
+      account's other strategies sending, since a strategy's off switch,
+      `accounts/<account>/strategies/<strategy>/off.json`, stops one
+      strategy without a deploy and never reads as a target of zero, as rule
+      1 of `### Every change can be undone or switched off` asks. So a run the
       supervisor has halted, a switch pulled mid-loop, or a lease another
       execution has taken over stops the next send, even when the message
       saying so is lost or unread. A cancel has checks of its own, because
@@ -711,6 +717,15 @@ Ten rules make the blobs something a worker can trust.
    book until the broker confirms it. Without this, an order left resting
    from one decision lets the next decision plan a trade that passes
    `max_position` if both fill.
+
+   An order in doubt also blocks the next order beside it, as rule 3 of
+   `### Every fact has one writer` asks. The gate refuses any order on an
+   account and instrument that hold an `InDoubt` order, so a decision never
+   sends a second order beside one the platform cannot see. An `InDoubt`
+   order still unsettled a written time after it was sent, 30 minutes by
+   this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), halts the run
+   and alerts the owner, rather than waiting out a time in force that a
+   good-till-cancelled order may not reach for weeks.
 
    No other worker's output can loosen the gate, because its hard caps come
    from a blob the bucket's policy lets only the owner's credential write,

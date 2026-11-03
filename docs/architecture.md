@@ -306,8 +306,8 @@ flowchart TB
     subgraph workers["Workers, one process per module, identical in every mode"]
         direction TB
         data["Data"]
-        exec_recover["Execution, first<br/>orders in doubt, fills,<br/>positions, open orders"]
-        mon_recon["Monitoring, first<br/>reconcile"]
+        exec_recover["Execution, first<br/>orders in doubt, fills,<br/>positions, open orders, reconcile"]
+        mon_recon["Monitoring<br/>reconcile again, off the path"]
         alpha["Alpha model<br/>Bollinger band"]
         risk["Risk model"]
         cost["Cost model"]
@@ -329,7 +329,8 @@ flowchart TB
     plan --> exec_recover
     snap --> exec_recover
     data --> snap
-    exec_recover --> acct --> mon_recon --> book
+    exec_recover --> acct --> mon_recon
+    exec_recover --> book
     snap --> alpha --> fc
     snap --> risk
     book --> risk --> cons
@@ -374,13 +375,13 @@ leaves out to stay legible. Each dotted arrow from an adapter is a port,
 labelled with its name, and each mode is one choice of adapter for each port.
 Execution and monitoring each appear twice because each has two stages in one
 process, and each stage writes its own decision result. Execution recovers first and then, once the target portfolio
-exists, sends. Monitoring reconciles first and reports last.
+exists, sends. Execution's recover stage reconciles the book with the broker, and monitoring reconciles again with nothing waiting on it and reports last.
 
 Two groups of workers run at the same time.
 
 1. Execution's recovery for a decision waits for data's snapshot and for its
    own send result for the decision before, so it reads the broker at the
-   decision's own time. Monitoring's reconcile follows it.
+   decision's own time, and reconciles the book with the broker itself, halting on a difference. Monitoring's reconcile repeats the check for its report and alarm, and no decision waits on it.
 2. Alpha and cost need only the snapshot, and risk also needs the reconciled
    book, so the three models overlap.
 
@@ -443,7 +444,7 @@ flowchart LR
 
     p1["1 Data: record the snapshot"]
     p2["2 Execution: recover"]
-    p3["3 Monitoring: reconcile"]
+    p3["3 Monitoring: reconcile again and alarm"]
     p4["4 Alpha: forecast the spread"]
     p5["5 Risk: set constraints"]
     p6["6 Cost: write the cost schedule"]
@@ -463,9 +464,9 @@ flowchart LR
     brokerx -->|"order states, fills, positions"| p2
     p2 -->|"orders settled, fills"| d3
     d3 -->|"replayed book"| p2
-    p2 -->|"book, broker positions and open orders"| d1
+    p2 -->|"reconciled book, broker positions and open orders"| d1
     d1 -->|"book, broker positions and open orders"| p3
-    p3 -->|"reconciled book"| d1
+    p3 -->|"reconcile report"| d1
     d1 -->|"snapshot"| p4
     p4 -->|"forecast, hedge ratio, z-score"| d1
     d1 -->|"snapshot, reconciled book"| p5
@@ -503,7 +504,7 @@ Three things the diagram rules out.
    against the account file execution wrote rather than asking the broker itself.
    Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says. Execution journals a fill into a strategy's book only when its order is one the journal sent, within that order's quantity. Any other order or fill, a broker's liquidation included, is journaled as received and halts, because a fill nobody journaled would otherwise enter the book and agree with the broker.
 2. **The current book comes from the journal.** The book is the platform's own
-   record of what it holds and what orders are open. Process 2 replays it from the journal, and the broker's positions and open orders are used only at process 3 and at the sync that opens process 8. A disagreement at either one halts trading rather than quietly replacing the platform's record.
+   record of what it holds and what orders are open. Process 2 replays it from the journal, and the broker's positions and open orders are used only at process 2's reconcile, at process 3's second check and at the sync that opens process 8. A disagreement at process 2 or 8 halts trading rather than quietly replacing the platform's record, and one at process 3 alarms.
 3. **Bars reach the models only after process 1 has recorded which ones were
    read.** A model never reads a feed directly, so every number it acted on can
    be read back later from marketlake. Captured market data is the first of the
@@ -567,9 +568,10 @@ sequenceDiagram
     X->>J: each fill journaled
     X->>B: positions and open orders
     B-->>X: positions and open orders
-    X->>F: account file, naming the journal entry it replayed through, and execution's recover result
+    X->>X: book from the journal agrees with the broker?
+    X->>F: account file and reconciled book, naming the journal entry it replayed through, and execution's recover result
     F-->>M: an event: execution's recover result
-    M->>F: reconciled book and monitoring's reconcile result
+    M->>F: monitoring's reconcile result, which no decision waits on
     Note over V,P: Phase 2, decide
     par
         F-->>A: an event: data's result
@@ -578,10 +580,10 @@ sequenceDiagram
         F-->>C: an event: data's result
         C->>F: cost schedule and cost's result
     and
-        F-->>K: events: data's and monitoring's results
+        F-->>K: events: data's and execution's recover results
         K->>F: constraints and risk's result
     end
-    F-->>P: events: alpha's, risk's, cost's and monitoring's results
+    F-->>P: events: alpha's, risk's, cost's and execution's recover results
     P->>F: target portfolio and portfolio construction's result
     Note over X,J: Phase 3, send, in whichever execution instance receives the event
     F-->>X: an event: portfolio construction's result
@@ -650,7 +652,7 @@ The phases in order.
    Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
    takes the account's lease, checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval and journals that it is sending. Right before the broker call it checks five things: the kill switch is absent, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
+   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run is stored, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
    it looks up each leg, and cancels any accepted leg whose partner was
    rejected or never sent.
    Monitoring writes the decision's report and pings the heartbeat service
@@ -829,17 +831,15 @@ sequenceDiagram
     participant J as Journal
     participant L as Alert channel
 
-    X->>F: book holds 100 USO, broker holds 90 USO
-    M->>M: reconcile, mismatch of 10 USO
-    M->>F: a halt as monitoring's result, with both positions
-    F-->>X: an event: a halt passed on from monitoring's
-    X->>F: a halt as execution's send result, without sending
+    X->>X: reconcile, book holds 100 USO, broker holds 90 USO
+    X->>F: a halt as execution's recover result, with both positions
+    F-->>M: an event: execution's halt
     M->>J: halt journaled
     M->>L: alarm
     Note over X,L: No model reads a book until a person<br/>explains the difference
 ```
 
-Monitoring compares the broker with the sum of the strategies' books. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person. Monitoring compares open
+Execution's recover stage compares the broker with the sum of the strategies' books, and monitoring compares them again for its report. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person. Both compare open
 orders as well as positions, so an order the broker holds and the journal
 marks lost or abandoned halts the day it appears, not the day it fills. Reconciliation lives on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The charter has the
@@ -942,8 +942,8 @@ here, with the issue that builds its drill.
 | Kill switch pulled | "kill switch", and how many resting orders it cancelled, stamped and not | Pull it before a run, test 4 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| The account's or the plan's lease taken over from another VM after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze one VM of the cluster while it holds the account's lease mid-send, expecting another VM to take the lease over after the lease period and the send stage once the frozen VM counts as gone, the frozen VM's units stopped when it wakes, and its next send refused by the tag check. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A VM of the cluster counts as gone, or the Auto Scaling group replaced one | The VM, its zone, its supervisors' last heartbeats and the group's activity | Terminate a VM mid-decision, and take one zone's subnet down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The account's or the plan's lease taken over after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze an execution container while it holds the account's lease mid-send, expecting another execution instance to take the lease over after the lease period and the send stage once the host shows the frozen container gone or restarted, and the frozen container's next send refused by the tag check. The same drill across VMs is one of rule 11's scale-out drills. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The Auto Scaling group replaced the VM | The VM, its zone and the group's activity | Terminate the VM outside a session, expecting the group to start a replacement that joins the next run. Counting a VM of the cluster as gone, and a zone going down, are rule 11's scale-out drills | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An instance refresh failed, rolled back or was refused | The refresh, the launch template versions, and the VM whose checks failed or the session that was open | Refresh with an image whose checks fail, and start one during a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor cannot take the plan's lease by its deadline | The lease's holder, the write it holds the lease for, and whether the host shows its container gone | Freeze a supervisor instance while it holds the plan's lease mid-halt, with the deadline shorter than the lease period | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution cannot take the account's lease by its deadline | The lease's holder, the order it holds the lease for, and whether the host shows its container gone | Freeze an execution instance while it holds the lease, with the deadline shorter than the lease period. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -955,7 +955,10 @@ here, with the issue that builds its drill.
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Load nears the 1x limit: a stage's run time passes half its deadline, or the day's decisions near what one VM carries | The stage, its run times against its deadline, and the day's decision count | Slow a stage with a test delay until it passes half its deadline | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Load nears the 1x limit: a stage's run time passes 75% of its deadline, the day's decisions pass 75% of one deployment's written limit, which design.md puts at a decision a minute, 293 of a full session's 390 until the build writes its own, or the VM's memory use passes 75% | The stage, its run times against its deadline, the day's decision count, and the VM's memory use | Slow a stage with a test delay until it passes 75% of its deadline | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| An order in doubt past its limit | The order, its client order id, when it was sent, and each lookup tried | A simulated broker that never acknowledges an order | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A strategy switched off | "strategy off", the strategy and who switched it | Switch one strategy off mid-session with another still trading, expecting its orders abandoned and the other's sent, and switch it back on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Broker requests pass 75% of an execution instance's share | The instance, its count this minute and its share | A replay that floods lookups past the threshold | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, and stop one, expecting none | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1072,10 +1075,16 @@ Writing commands take more friction the more they can resume trading.
 1. **`ithildin switch pull --account <a>`** is one command with a default
    reason, because stopping should never be slow. It creates the kill switch blob, journals the pull and raises the alarm, and the blob's own event wakes execution. Execution reads the switch itself and cancels every resting order in the account, stamped or not, as rule 10 of `design.md`'s ten rules says. The tool then reads the journal once at a deadline set before the cancel cutoff for execution's entry saying the cancels are done, and if it is not there, tells the
    person to cancel at the broker's own console.
-2. **`ithildin clear <halt>`** records that a person has looked at a halt
+2. **`ithildin strategy off --account <a> --strategy <s>`** creates the
+   strategy's off switch with a default reason and journals it, because
+   stopping should never be slow. Execution reads it right before each of
+   that strategy's orders, abandons them, and keeps sending the account's
+   other strategies' orders. It never reads as a target of zero, so nothing
+   is flattened.
+3. **`ithildin clear <halt>`** records that a person has looked at a halt
    and why it may be left behind. It never reruns the halted decision, and
    the next decision runs as usual.
-3. **`ithildin override --account <a>`** records a correction the book
+4. **`ithildin override --account <a>`** records a correction the book
    cannot work out alone, such as a fill the broker shows and the journal
    lacks after an outage, or an order the platform did not send. It names the strategy's book it changes, or the unmatched entry it brings in, and each position or open order it changes,
    with the broker's evidence and, for a fill, the broker's fill id, and the
@@ -1084,16 +1093,20 @@ Writing commands take more friction the more they can resume trading.
    Execution's next sync applies it only when the blob exists there and its
    hash matches, and refuses it if the replayed book has moved from the
    values it names. It never sends an order.
-4. **`ithildin switch clear --account <a>`** deletes the switch and journals
+5. **`ithildin switch clear --account <a>`** deletes the switch and journals
    the clear.
-5. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
+6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
+   strategy's off switch and journals it. On a live account only the owner
+   may, as the owner ruled on 2026-11-02, and on shadow and paper the
+   operator may too.
+7. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
    before it expires, and journals it, for when a person knows the holder is
    gone sooner than the expiry would show. It first asks EC2 whether the holder's instance is
    stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
-6. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
-7. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
+8. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
+9. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
-The last six each take a required `--reason`, print what they will do and
+The last seven each take a required `--reason`, print what they will do and
 to which account, show a live account's name in capitals, and for a live
 account make the person type the account's name to confirm. When there is
 nothing to do, a command says what it found and who acted on it, rather
@@ -1489,10 +1502,19 @@ Eight choices in the two diagrams for a reviewer to check.
    still fetched. The adapter wraps Alpaca's SDK, alpaca-py, as the owner
    ruled on 2026-11-01, so a test hands `OrderPath` a fake and no module sees
    the SDK's types. One reconciliation function in `core`,
-   `core.reconcile(book, broker_account)`, lists the differences, and both
-   execution's send-stage sync and monitoring's reconcile stage call it. Each
+   `core.reconcile(book, broker_account)`, lists the differences, and
+   execution's recover stage, its send-stage sync and monitoring's reconcile stage all call it. Each
    decides only what to do with them: execution journals its own outcomes
    and halts on the rest, and monitoring alarms.
+   Alpaca's trading API allows 200 requests a minute for each account, a
+   figure [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on the paper account
+   before anything relies on it. Execution reserves a quarter of it, 50 a
+   minute, for cancels and the kill switch's cancels, which new orders and
+   lookups never draw on. The rest is split evenly across the deployment's
+   execution instances, 50 a minute each for three, so each instance counts
+   its own requests against a fixed share and the sum stays under the limit
+   with no shared counter. An instance alarms at 75% of its share, and one
+   at its share waits rather than sending.
 5. **The risk gate holds no state of its own.** `check` takes the order, the
    book, the snapshot and the run's `Constraints`. `send` replays the book from
    the journal just before each check, so the gate counts every order already
@@ -1627,7 +1649,7 @@ stateDiagram-v2
     Failed --> Reporting: the run's halt reaches every worker as an event
 ```
 
-`Preparing` is the first phase of a decision: data reads the snapshot, then execution, once that snapshot and its own send result for the decision before exist, settles orders in doubt, journals fills and writes the book, and monitoring reconciles. The supervisor holds none of these states in
+`Preparing` is the first phase of a decision: data reads the snapshot, then execution, once that snapshot and its own send result for the decision before exist, settles orders in doubt, journals fills, writes the book and reconciles it with the broker. Monitoring reconciles again, and no decision waits on it. The supervisor holds none of these states in
 memory. It reads them from storage: which components have a decision result,
 and whether a result is a halt. A restarted supervisor finds the state the
 same way, while the workers keep running. A worker the host restarts checks its
@@ -1984,6 +2006,7 @@ writer's, alarms, as `### Every alarm and its drill` lists.
 | The plan's lease, holding the run's status | `leases/plans/<deployment>/<run>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
+| A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
@@ -2147,7 +2170,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    can create the switch, which pulls it, and can never delete it. The owner
    ruled on 2026-10-29 that only the owner's credential clears a live
    account's switch, and that the operator's may also clear a paper or shadow
-   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. The hard caps blob can be written or deleted only by the
+   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. The hard caps blob can be written or deleted only by the
    owner's credential, which an explicit refusal in the bucket's policy for
    every other principal enforces, because raising a cap raises a capital
    limit, which hard limit 1 keeps for the owner. Copying an older version
@@ -2379,9 +2402,12 @@ Eleven rules hold the deployment to the premise and the hard limits.
        pin and the promotion from shadow to paper to live.
 
     Slice 1's one VM runs 24 containers, about 2.4 GB at an estimated
-    100 MB each, so a 4 GB machine such as `t4g.medium` fits, at roughly 3
-    cents an hour on demand, a figure to confirm against AWS's price list on
-    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Until load
+    100 MB each. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) measures that and sizes
+    the machine so measured use stays at or under half its memory, as rule 4
+    of design.md's `### Design ahead, and write down where the build stops`
+    asks, which at the estimate means an 8 GB machine such as `t4g.large`,
+    at roughly 7 cents an hour on demand, a figure to confirm against AWS's
+    price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Until load
     calls for the cluster, losing the VM or its zone stops the environment
     until the group starts a replacement. Scaling out costs three VMs per
     environment, each running 8 containers on a 2 GB machine such as
@@ -2687,8 +2713,8 @@ new arrow.
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
-| 2. A replay emits pinned orders, through a missing feed, a stale price and a restart in the wrong order | Backtest | A recorded stretch of sessions with three faults injected. The restart kills a worker mid-run, and the host brings execution up before data | The orders on each day, and a halt with no orders on each faulted day |
-| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, a replacement whose old order fills during its cancel, the import rule test, and the fake broker | Seven refusals, the pair's, a replacement cut by a fill that raced its cancel, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
+| 2. A replay emits pinned orders, through a missing feed, a stale price, a restart in the wrong order and an ack withheld across two decisions | Backtest | A recorded stretch of sessions with four faults injected. The restart kills a worker mid-run, and the host brings execution up before data. The simulated broker withholds one order's ack across two decisions | The orders on each day, a halt with no orders on each faulted day, and the second decision's order on the withheld order's instrument refused |
+| 3. The risk gate refuses an order over each limit, and nothing bypasses it | Unit and import | `RiskGate` against one order over each of the seven limits, including a market-on-close order past the cutoff, and a pair whose second leg alone breaks `max_net`, an order on an instrument with an order in doubt, a replacement whose old order fills during its cancel, the import rule test, and the fake broker | Seven refusals, the pair's, the refusal beside an order in doubt, a replacement cut by a fill that raced its cancel, no import of `execution.brokers` outside `runtime`, and no order reaching the fake broker without a journaled approval and `sending` entry, or twice |
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, pull it five minutes after a decision with a platform order and an order the platform did not send both resting, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", a journaled cancel for each resting order and a "cancels done" entry, and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
@@ -2774,7 +2800,7 @@ and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) build, in
 three levels, from fast to slow.
 
 1. **Module tests, in one process.** Each module's logic, the risk gate's
-   seven refusals, the import rule and the journal's replay run as ordinary
+   seven refusals and its refusal beside an order in doubt, the import rule and the journal's replay run as ordinary
    tests, as the existing suite does today.
 2. **Contract tests for the three swappable pieces.** Each runs every adapter
    against the same rules.
@@ -2878,7 +2904,7 @@ accepted.
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside the execution worker, one instance at a time per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
-| Monitoring reconciles positions and open orders between execution's recovery and the models, and journals and alarms every halt | A second comparison written in execution, rather than the one `core.reconcile` both call, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution's recover stage reconciles positions and open orders before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it. The move off the path was recorded on the owner's instruction of 2026-11-02 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack. Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it | Ignoring unstamped orders, or an outside book for hand trades | One more mapping per ack, and a halt on a broker's liquidation even when it is harmless | The stamp ruled by the owner on 2026-10-31, the mapping asked for and hand trading ruled out on 2026-11-01. The rest is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Each portfolio trades an account and capital of its own, at Alpaca for paper and for live, and nobody trades by hand in it | Hand trades beside the platform in one account, or Schwab at live | Hand trades stay out of the strategies' instruments in every account the owner holds, for the wash sale rule | Ruled by the owner on 2026-10-31, and on 2026-11-01 for an account per portfolio, no hand trading and Alpaca at live. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms the live account's facts before the live gate |
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
