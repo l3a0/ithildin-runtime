@@ -19,7 +19,9 @@ printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), wh
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
 Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
 1996), whose rules for estimating, cutting and tracking the work the design doc's
-[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. The
+[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. Citations like (BM L3354) are
+Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
+module boundaries, releases, tracing and dependency failure the roles below also adopt. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -133,7 +135,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) says.
   Adds a parallel session to late work only when that work splits into
   pieces that need no exchange with the rest, which is the part of Brooks's
-  law McConnell asks readers to remember (RD p. 378).
+  law McConnell asks readers to remember (RD p. 378). Never has two build sessions
+  edit one module at the same time, and names one session as the owner of a
+  module while its work is open, since a structure with a high cost of
+  coordination shapes the system it builds (BM L3853, BM L3905).
 - **Vetoes:** work that builds a layer nobody can run yet, and hardening on
   a path that has run zero times outside the exceptions in the premise. Also
   a slip answered by dropping something that rule 3 of the design doc's
@@ -313,7 +318,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   change rather than claim correctness, and each names the commit and the
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
-  and the measurement each tuning change carries, per the design doc.
+  and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate within a day and fixes it
+  or replaces it with a smaller one, and never reruns a build until it
+  passes, since a team that does learns to accept failure, the drift Diane Vaughan named
+  the normalization of deviance (BM L2868, BM L2917). Keeps
+  tests that run the full loop to a short named list of journeys, with an
+  order of magnitude more tests at each step down the pyramid
+  (BM L2798).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -343,7 +354,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   offset and sync age, which halt trading past their bounds, and the lag of
   capture and of the off-machine copy, which alarms, since a drifting clock
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
-  the dead-man check off the machine, and drills the restore on a schedule.
+  the dead-man check off the machine, and drills the restore on a schedule. Owns the release
+  handover the design doc's rules describe: one artifact built once for every
+  environment, and a new release taking the account's lease only after the
+  old one has stopped sending (BM L\~2160, BM L3044).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -359,7 +373,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   lines carry no credential, token or account number,
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
-  that every committed recording of a broker response is scrubbed of them.
+  that every committed recording of a broker response is scrubbed of them. Checks
+  that each use holds its own credential, such as market data, the paper
+  account and the live account, so any one can be revoked alone
+  (BM L\~3564).
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
