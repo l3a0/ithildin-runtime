@@ -639,20 +639,43 @@ Ten rules make the blobs something a worker can trust.
       status saying what happened, so the next holder writes those blobs,
       which land once. A halt as a worker's result needs nothing more,
       because it shares its key with the worker's result, so whichever lands
-      first counts. Another instance that needs the lease waits, and alarms
-      if it cannot take it by a deadline, and a holder's lease is taken over
-      once it expires unrenewed, as the account's is.
+      first counts. Another instance that needs the lease does not wait for
+      it, as the account's lease below says, and a holder's lease is taken
+      over once it expires unrenewed, as the account's is.
    2. **The account's lease.** Every execution instance receives from
       execution's queue, and the owner ruled on 2026-11-01 that an instance
       holds the account's lease only while it changes the account. It takes
       the lease before it re-reads the journal for a submit or a cancel, and
       deletes it once the journal holds the broker's answer or the order's
-      doubt. A handler that needs the lease while another handler, in its own
-      instance or another, holds it waits, and alarms if it cannot take it
-      by a deadline. A plan of several orders
-      therefore takes the lease once per order, so a pull's cancels, run by
-      whichever instance received the switch's event, wait for at most one
-      order in flight.
+      doubt. A plan of several orders therefore takes the lease once per
+      order, so a pull's cancels wait for at most one order in flight.
+
+      The owner ruled on 2026-11-02 that work waiting on a held lease is
+      woken by the lease's own event, so nothing reads storage on a clock
+      to wait for it. Three rules carry it.
+      1. **No handler waits.** A handler that finds the lease held puts its
+         item back on the queue with a short visibility delay, two seconds
+         by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and is free at once.
+      2. **The release wakes the work.** Deleting the account's lease is a
+         write whose S3 event reaches execution's queue, as every route
+         does. Whichever instance receives it checks the work that waits on
+         the lease, in the plan's order: the kill switch's cancels, a
+         stranded leg's cancel, and a send stage's next planned order or
+         cancel. It takes the lease for the first and does it.
+      3. **Any lease holder sends a planned order.** The claim keeps two
+         instances from planning one decision, and once the planned list is
+         journaled, whichever instance holds the lease may send its next
+         order or cancel while the claim's runner is alive, under the same
+         checks before the broker call. Each order is guarded three times:
+         its `sending` entry is journaled first, its client order id is
+         fixed by the plan, and the lease's tag is checked right before the
+         call. Once the runner is gone, the fifth item below applies.
+
+      A lost release event delays the work only until the item it was put
+      back with comes back, which is SQS's own redelivery rather than a
+      read on a clock. An item returned more times than a written limit, read
+      from SQS's own receive count, alarms with the lease's holder. The price
+      is that one decision's orders may go out from different instances.
 
    A holder record names the VM, its boot, the worker's container, its
    restart count and the handler, rather than a process id, which means nothing outside one
@@ -832,7 +855,7 @@ Ten rules make the blobs something a worker can trust.
     the runtime's credential can list the switch's prefix, without which S3
     answers a missing key with "access denied". Pulling it, per the owner's
     ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Whichever execution instance receives that event takes the account's lease, which waits for at most one order in flight, and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. Every other instance stops sending at its next check of the switch. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
+    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first, as the owner ruled again on 2026-10-31. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Whichever execution instance receives that event takes the account's lease, which is free after at most one order in flight, or wakes on the lease's release as rule 9 says, and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. Every other instance stops sending at its next check of the switch. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock, as the owner ruled on 2026-10-31. A
     starting execution instance checks the switch before anything else, and
     takes the account's lease to cancel if it is set, as rule 9's fifth item
     says, so a switch pulled
@@ -991,7 +1014,7 @@ released, sends a removed event the same way. Each environment's bucket
 sends its events to EventBridge, as AWS's
 [S3 and EventBridge page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
 describes. One function in `runtime` turns the table that declares every
-worker's inputs, and the control blobs every component hears, into routes:
+worker's inputs, and the control blobs every component hears, into routes, execution's including the deletes under `leases/accounts/` so a lease's release reaches its queue,:
 a reader, a prefix and an event kind. The routes generate one EventBridge
 rule each, which copies each matching event to that reader's SQS queue, and
 the same routes drive the memory-backed folder adapter. Each rule's pattern
@@ -1090,12 +1113,9 @@ doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
    lease, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process exits and the
    host restarts it, as rule 5 says.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
-   every blob write, journal append and broker call it finishes, and at
-   each attempt to take a lease, so a handler waiting for a held lease is
-   not taken for a hung one. The deadline at which a lease wait alarms sits
-   below the watchdog's limit, so a wait that cannot end alarms before
-   anything kills the container, and the handler keeps trying after the
-   alarm. The loop
+   every blob write, journal append and broker call it finishes. No handler
+   waits for a held lease, as rule 9 says, so a lease never holds a handler
+   long enough to stop its reports. The loop
    touches the worker's heartbeat file only while every busy handler has
    reported within the heartbeat limit, so a hung handler lets the host's
    watchdog kill the container, and rule 9's takeover applies. The loop
