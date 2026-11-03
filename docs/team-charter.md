@@ -155,10 +155,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   peak (L4337). Registers a hypothesis in writing before running it out of
   sample, and records a null result as code, a pinned test and a log entry.
   Reads history only through the Data module's point-in-time interface, which
-  windows by event time and joins against the version of each reference
-  record current then, so a backtest sees what the platform could have known
-  and runs no second copy of that join (DDIA L14747, L14943). A gap in the
-  interface goes to the data engineer.
+  reads by knowable time, as the design doc defines it, and joins against the
+  version of each reference record current then, so a backtest sees what the
+  platform could have known and runs no second copy of that join (L3884,
+  DDIA L14943). A gap in the interface goes to the data engineer.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -174,12 +174,14 @@ time is the scarce resource, so work reaches the owner already reviewed.
   little volume (L3856), tracks corporate actions independently (L3859), and stores when each
   value became available (L3884). Applies the design doc's rules on stored
   formats, on the capture key, and on capture's place outside every halt.
-  Stores captured data as received, with its event, send and receive times, a
-  schema identifier and a checksum on every record (DDIA L12920, L16445).
-  Checks the vendor's sequence numbers against what capture recorded. Backs
-  up closed segments with the journal position they cover, keeps a copy off
-  the machine, runs the scheduled read-back of recorded data, and drills a
-  restore that checks counts and checksums (DDIA L7227, L4777).
+  Stores captured data as received, with its event, send, receive and
+  knowable times, its own receive sequence, a schema identifier and a checksum
+  on every record (DDIA L12920, L16445). Checks the vendor's sequence numbers
+  against what capture recorded. Closes each capture segment within its
+  stated age, backs up closed segments with the journal position they cover,
+  keeps a copy off the machine and alarms on its lag, runs the scheduled
+  read-back of recorded data, and drills a restore that checks counts and
+  checksums (DDIA L7227, L4777).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -194,19 +196,23 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the broker adapters and reconciliation. Journals each order before sending
   it, and makes resubmission idempotent. Applies the design doc's rules that
   every fact has one writer: sizing that counts every order already sent, a
-  client order id fixed by the decision, one sender per account, and an
-  unknown order that blocks the next. Holds the one sender with a lock the
-  operating system releases only when its holder exits, records a lease number
-  in every journal entry and client order id, and builds the journal's lease
-  check with the first lease that expires on a timer, since the broker fences
-  nothing (DDIA L9084, L9286). Waits for each journal entry to reach stable
-  storage before its send, shows that the broker rejects a repeated client
-  order id, and applies each fill once by the broker's execution id through a
-  uniqueness constraint (DDIA L16438, L7635).
-- **Vetoes:** an order path without a journal entry, a send before its journal
-  entry is on stable storage, a fill the reconciliation cannot match, a
-  resend to a broker not shown to reject a repeated client order id, and a
-  client order id drawn from a counter a failover could wind back
+  client order id fixed by the decision, one holder of the account's lease
+  sending at a time, and an order in doubt that blocks the next. Builds the
+  lease the owner ruled for on
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10), with its tag
+  check before every broker call and the four guards the design doc names for
+  the window the broker leaves unfenced (DDIA L9084, L9286). Owns the
+  journal's sequence numbers, its checksums and the halt-state read just
+  before each send. Waits for durable storage to acknowledge each journal
+  entry before its send, journals every broker message as received, and
+  applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
+  Keeps the design doc's procedure for orders in doubt when the journal
+  cannot be read.
+- **Vetoes:** an order path without a journal entry, a send before durable
+  storage has acknowledged its journal entry, a fill the reconciliation
+  cannot match, any resend of an order in doubt, an order settled as unsent
+  because a broker lookup found nothing, and a client order id or lease
+  number drawn from a counter a failover or a restore could wind back
   (DDIA L4868).
 
 ### Risk engineer
@@ -220,8 +226,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, which Narang's highlights do not
-  cover, and the halt on clock offset. Decides what each halt and the kill
-  switch do to orders still working at the broker, per the design doc.
+  cover, and the halts on clock offset and sync age. Decides what each halt
+  and the kill switch cancel and keep at the broker, per the design doc. The
+  kill switch acts as a holder of the account's lease, never as a second
+  sender.
   Once the kill switch or a loss stop fires, only the owner releases it. Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
@@ -256,7 +264,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's eight
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's ten
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -284,10 +292,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   comes first (AoS L3421). Here restoring service means reconciling with the
   broker before trading resumes. Plans headroom for each component, per the
   design doc, and runs the release's fourth check below. Watches the clock's
-  offset, which halts trading past its bound, and the lag of the capture
-  buffer and the journal writer, which alarms, since a drifting clock and a
-  growing backlog both fail without an error (DDIA L8913, L14056). Keeps the
-  owner's procedure for orders in doubt when the journal cannot be read.
+  offset and sync age, which halt trading past their bounds, and the lag of
+  capture and of the off-machine copy, which alarms, since a drifting clock
+  and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
+  the dead-man check off the machine, and drills the restore on a schedule.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -426,8 +434,12 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   latency (L4973 to L5006).
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
+  The order path then starts in a fixed order, and a step that fails halts
+  with its name as the reason: take the account's lease, verify the journal's
+  checksums and sequence to its head, check the clock's offset and sync age,
+  reconcile, read the halt state, and only then enable strategies.
 - **Reconciliation** compares the journal with the broker on every fill and at
-  a set interval, reading both at one consistent point, and in full every
+  a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
@@ -490,5 +502,7 @@ answer pointing at code or a test (L5568).
 Narang's highlights are silent on survivorship bias, paper trading, order management
 and reconciliation. The rules above on those topics come from the owner's existing repositories
 and standard practice, not from that book, and should be read as such. The exceptions are the
-lease number, the journal's durability before a send, and applying each fill once, which come
-from *Designing Data-Intensive Applications*.
+lease number, the journal's durability before a send, applying each fill once, and reconciling on
+every fill from a recorded position, which are built on the fencing, durability, end-to-end id
+and read-skew arguments of *Designing Data-Intensive Applications* and adapted here to a broker
+that fences nothing.
