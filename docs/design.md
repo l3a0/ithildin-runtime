@@ -116,13 +116,16 @@ finished. Each quality has a home in these two docs.
 3. **Security.** No agent places a live order or moves money, a broker key
    never carries withdrawal permission, each environment has an AWS account
    of its own, and only the execution user reads the broker key, as
-   architecture.md's rule 3 of `## Where it runs` says. One check is still
+   architecture.md's rule 3 of `## Where it runs` says. The owner ruled on
+   2026-11-02 that moving money out requires a human's sign-off, so no
+   money-out call may complete on the broker key alone. One check is still
    open. Alpaca's trading API may offer crypto wallet transfer and
    whitelist endpoints, so
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms
-   before the live gate either that none of them can move money out of the
-   platform's account, or that crypto is disabled on it with no
-   whitelisted address.
+   before the live gate that every path that moves money or crypto out of
+   the platform's account needs the account holder's sign-off outside the
+   key, such as a whitelisted address approved by email or a second
+   factor, or that the path is disabled on the account.
 4. **Operability.** A person acts through the one `ithildin` tool, every
    halt says why, and every live halt holds until the owner clears it, as
    architecture.md's `## What a person runs` says.
