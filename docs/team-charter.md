@@ -269,7 +269,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
   Holds that no caller carries a flag, a role or a credential that lets its
-  orders skip a limit, and checks the unwind and every cancel the gate
+  orders skip a limit, and checks every cancel the gate
   exempts against the design doc's rule for them (BM L3634).
   Scores each failure mode of a change to the order path by likelihood,
   severity and how hard the failure is to detect, each on a scale of 1, 3 or
@@ -580,14 +580,14 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
   with its name as the reason. Read only, compare every component's artifact
-  hash with the release's record, check the tracked configuration's keys
+  hash with the release's record and capture's with marketlake's, check the tracked configuration's keys
   against the committed list, read the risk gate's hard caps, verify the
   journal's checksums and sequence to its head, and check the clock's offset
   and sync age. A failure of the release's own hash or the journal check halts
   everything and pages the owner. A failure of any other check halts new
-  orders only, and the release still serves cancels and the kill switch. Then wait for the host to show any
-  old release gone, or its machine no longer holding the deployment's lease,
-  take the account's lease, reconcile, read the
+  orders only, and the release still serves cancels and the kill switch. The old release keeps reading
+  execution's queue until this release's own checks pass. Then wait for the
+  host to show it gone, take the account's lease, reconcile, read the
   halt state, and only then enable strategies. Each later take of the lease,
   once per order, reads the journal and the broker's open orders and rebuilds
   the orders in doubt, without running startup again. While it waits, a
@@ -675,6 +675,7 @@ and team structure have no counterpart for agent sessions, which keep no
 morale and work no hours, and are left out. What it adds here is the planning of the work, in the
 design doc's rules for cutting it.
 
-*Building Microservices* dates from 2015 and argues for splitting a system into services. Its case for
-splitting further than one process per component, breaking production on purpose, and choreography
-inside one component's path are left out, with the reasons in the design doc's register.
+*Building Microservices* dates from 2015 and argues for splitting a system into services. A split
+further than one process per component needs the evidence the design doc's module rule 2 asks for.
+Breaking production on purpose, choreography inside one component's path, and storing only the data
+an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
