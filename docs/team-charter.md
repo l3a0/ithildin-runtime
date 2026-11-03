@@ -13,8 +13,7 @@ owner's own highlights, and the rest point into the book's text, which no
 public notes file holds. Citations like (DDIA L9274) are Kindle locations in
 *Designing Data-Intensive Applications* (Kleppmann, 1st ed., O'Reilly Media,
 2017), of the owner's highlights or of the book's full text, and (DDIA
-L\~14160) marks a full-text location good to about one screen, as (BM L\~932) does for
-*Building Microservices*. The roles below
+L\~14160) marks a full-text location good to about one screen. The roles below
 also adopt its rules for faults, clocks, retries and records. Citations like (CC p. 481) are
 printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), whose practices for
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
@@ -22,7 +21,8 @@ Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* 
 1996), whose rules for estimating, cutting and tracking the work the design doc's
 [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. Citations like (BM L3354) are
 Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
-module boundaries, releases, tracing and dependency failure the roles below also adopt. The
+module boundaries, releases, tracing and dependency failure the roles below also adopt, and (BM L\~932)
+marks a location good to about one screen. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -236,7 +236,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   entry before its send, journals every broker message as received, and
   applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
   Keeps the design doc's procedure for orders in doubt when the journal
-  cannot be read. Gives each dependency on the order path its timeout, its
+  cannot be read. Whether a cancel with no answer may be resent waits for
+  the owner's ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and until it lands a review passes neither a
+  resend nor a rule against one. Gives each dependency on the order path its timeout, its
   limit and its breaker, and puts the decision's id inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
@@ -674,7 +676,8 @@ and team structure have no counterpart for agent sessions, which keep no
 morale and work no hours, and are left out. What it adds here is the planning of the work, in the
 design doc's rules for cutting it.
 
-*Building Microservices* dates from 2015 and argues for splitting a system into services. A split
-further than one process per component needs the evidence the design doc's module rule 2 asks for.
+*Building Microservices* dates from 2015 and argues for splitting a system into services. Cutting a
+component into new components needs the evidence the design doc's module rule 2 asks for, and its clones
+and splits by key follow the scale rules instead.
 Breaking production on purpose, choreography inside one component's path, and storing only the data
 an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
