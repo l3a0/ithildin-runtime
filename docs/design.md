@@ -127,11 +127,15 @@ finished. Each quality has a home in these two docs.
    withdrawal address, proven by a read-only check before the live gate
    and on a schedule after, as
    [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records. The
-   check runs more often than every 24 hours, so a whitelist entry a stolen
-   key adds alarms and halts live trading before it can turn approved. The
-   board named two more gaps, and the owner ruled on 2026-11-02 to accept
-   them unless mitigations exist. This doc proposes two, on the same
-   scheduled check, and accepts what they leave.
+   owner ruled the same day that execution runs the check at each session's
+   start, before its first decision, and once more after its last. A
+   whitelist entry a stolen key adds between sessions can turn approved
+   before the next check, over a weekend for one, so Alpaca's email to the
+   owner is the warning there, and an approved address still needs the
+   owner's web login to withdraw anything. The board named two more gaps,
+   and the owner ruled on 2026-11-02 to accept them unless mitigations
+   exist. This doc proposes two, on the same check, and accepts what they
+   leave.
    1. **The key can change the account's settings**, its margin multiplier,
       shorting, options level and trade suspension. The check also reads
       the account's configuration and compares it with the settings the
@@ -146,7 +150,8 @@ finished. Each quality has a home in these two docs.
       order already does at a decision.
 
    What stays accepted is the value a thief moves between two checks,
-   which the capital the owner puts in the account bounds.
+   nights and weekends included, which the capital the owner puts in the
+   account bounds.
 4. **Operability.** A person acts through the one `ithildin` tool, every
    halt says why, and every live halt holds until the owner clears it, as
    architecture.md's `## What a person runs` says.
