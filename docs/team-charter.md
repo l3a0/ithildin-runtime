@@ -14,8 +14,10 @@ public notes file holds. Citations like (DDIA L9274) are Kindle locations in
 *Designing Data-Intensive Applications* (Kleppmann, 1st ed., O'Reilly Media,
 2017), of the owner's highlights or of the book's full text, and (DDIA
 L\~14160) marks a full-text location good to about one screen. The roles below
-also adopt its rules for faults, clocks, retries and records. The architecture rules drawn from both
-books live in the design doc's [Design principles](design.md#design-principles),
+also adopt its rules for faults, clocks, retries and records. Citations like (CC p. 481) are
+printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), whose practices for
+building, testing, reviewing and debugging code the roles and lifecycle below also adopt. The
+architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
 ## Contents
@@ -139,13 +141,18 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Names the load parameters each scale limit is measured in, since a design
   built on the wrong ones is wasted (DDIA L627). Owns the shared clock's
   monotonic and time-of-day readings and the seeded random source, per the
-  design doc's rules on time.
+  design doc's rules on time. Owns the import rule test that
+  [#22](https://github.com/l3a0/ithildin-runtime/issues/22) specifies, which
+  enforces which package may import which, because Python enforces no
+  boundary between modules itself.
 - **Vetoes:** a second code path for any module, a dependency that nobody
   argued for in a pull request body, a synchronous dependency on the
   order path beyond the minimum the design doc names, a module that reads the
   system clock or an unseeded random source directly, a distributed
   transaction between the journal and the broker or any system outside the
-  journal's own store, and a consensus algorithm written here.
+  journal's own store, a consensus algorithm written here, and a rule on the
+  order path or on recorded data held only by an `assert`, a comment or a
+  convention.
 
 ### Quant researcher
 
@@ -214,7 +221,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   cannot match, any resend of an order in doubt, an order settled as unsent
   because a broker lookup found nothing, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
-  (DDIA L4868).
+  (DDIA L4868), a vendor's type, string or exception that reaches past its
+  adapter other than the raw record kept as received (CC p. 204), and a send
+  that does not check its journal entry, under the design doc's rules for the
+  code.
 
 ### Risk engineer
 
@@ -246,7 +256,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
 - **Vetoes:** any change to the order path, the gate or the limits, as a
-  required reviewer.
+  required reviewer, any handling that answers bad input wherever trading
+  reads it with a neutral value, the closest legal value, a logged warning
+  and carrying on, or any of the four forms the design doc's rules for the
+  code forbid (CC p. 194, p. 197), and any check on input that can stop a
+  cancel.
 
 ### Test engineer
 
@@ -269,8 +283,28 @@ time is the scarce resource, so work reaches the owner already reviewed.
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
-  replies (DDIA L583, L551).
-- **Vetoes:** a pull request whose new behavior no surviving test covers.
+  replies (DDIA L583, L551). Tests every limit one step below it, at it and
+  one step above it, where a step is the instrument's tick, lot or decimal
+  quantum, and the issue or the limit table says whether the limit itself is
+  allowed. McConnell finds boundaries among the most fruitful places to test,
+  where `>=` written for `>` hides (CC p. 513). Writes the dirty-data tests
+  the design doc's rules for the code list, since McConnell finds that mature
+  test teams write about five dirty tests for each clean one (CC p. 504). He
+  also finds that developers who believe they cover 95% of their code
+  typically cover 50 to 60% (CC p. 504), so branch coverage is measured in
+  CI with a floor that fails new code, and the mutation run decides whether a
+  covered branch is tested. Takes each expected value that claims
+  correctness from the specification rather than from the code's own output,
+  and works it by hand on numbers chosen to make the check easy (CC p. 503,
+  p. 516). The replay suite's pinned orders are regression pins, which detect
+  change rather than claim correctness, and each names the commit and the
+  run that produced it. Keeps the contract suite each stand-in adapter
+  passes, the second implementation of the money arithmetic in the tests,
+  and the measurement each tuning change carries, per the design doc.
+- **Vetoes:** a pull request whose new behavior no surviving test covers, and
+  a fix for a defect a test can reproduce whose new test does not fail at the
+  pull request's merge base on an assertion about the defect, rather than at
+  import or collection.
 
 ### Operator
 
@@ -308,7 +342,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** reviews credential handling, broker permissions, least privilege,
   and the supply chain of each dependency. Checks that input from outside the
   process is range-checked and size-limited before use, and never decoded by a
-  format that can run code (DDIA L3626, L9382).
+  format that can run code (DDIA L3626, L9382). Checks that exceptions and log
+  lines carry no credential, token or account number,
+  since attackers read error messages (CC p. 196), by causing a failure with
+  a fake credential against the simulated broker with the network off, and
+  that every committed recording of a broker response is scrubbed of them.
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -342,12 +380,15 @@ what a session sets for the board to read.
 | Daily standup | A status round with the `/l3a0:sync-prune-next` skill: fetch, prune the worktrees and branches whose work is safe on GitHub, build the board from GitHub, and name what to take next from its ranked list |
 | Build | One session per issue in its own worktree, test-first against the test engineer's acceptance tests |
 | Sprint review | The pull request, reviewed before the owner reads it |
-| Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it |
+| Retrospective | A measured failure becomes a written rule in `CLAUDE.md`, with the incident that produced it. A module that keeps reappearing in defects is redesigned rather than patched again. IBM found 31 of 425 classes in one system error-prone, repaired or rebuilt them, and saw customer-reported defects fall tenfold within a year (CC p. 517) |
 
 ### 1. Plan
 
 - An issue states what the deliverable is, what it must do, what it waits on,
-  and which module interfaces it touches.
+  and which module interfaces it touches. It states the problem before any
+  solution, and what counts as success and as failure in terms a test can
+  check (CC p. 37, p. 42). A session that finds those missing or in
+  conflict comments on the issue rather than guessing.
 - Before work starts, the delivery lead runs `git log` on the files the issue
   names, audits the plan if they moved, and searches the sibling repositories
   (`marketlake`, `trading-strategies`, `quantitative-trading`, `ithildin-core`) for code that already
@@ -356,7 +397,9 @@ what a session sets for the board to read.
   design doc before code, and a rejected option gets a register row.
 - A plan that touches the order path or the journal, or departs from a design
   principle, goes to the architect, operator, risk and data lenses before the
-  build starts, as the delivery lead's role says.
+  build starts, as the delivery lead's role says. McConnell finds the worst
+  design problems in the areas thought easy and left undesigned, and asks
+  safety-critical work for the most detailed design (CC p. 116, p. 117).
 
 ### 2. Build
 
@@ -366,10 +409,40 @@ what a session sets for the board to read.
   adapters on the same code.
 - A commit carries only the issue's work. Anything found on the way is filed as
   its own issue with a milestone and a label.
+- The formatter, the linter at its strictest settings, the type checker in
+  strict mode and a limit of 10 on each function's cyclomatic complexity, the
+  count of paths through it, are set up before the first module, as the
+  third kind of mechanism the design doc builds from the first run, and a
+  warning fails CI
+  (CC p. 231, p. 458). A suppressed warning names its reason
+  beside it, because suppressing a warning nobody understood hides the one
+  that mattered (CC p. 826).
+- The walking skeleton's end-to-end run is the smoke test. It runs on every
+  pull request in replay against the simulated broker, so no broker
+  credential reaches CI, and the change that adds a module extends it to reach that
+  module (CC p. 703). Integrating each piece as it lands finds interface
+  errors early, which were 39% of all errors on one project
+  (CC p. 693). A branch that goes more than a couple of days without
+  integrating is work at risk (CC p. 704).
+- A refactoring changes no behavior and no existing test, and ships apart
+  from any change in behavior. Changing broken code until it works is not
+  refactoring (CC p. 582).
+- A defect is found before it is fixed. The builder makes it repeat,
+  states a cause, and tests that cause, which is McConnell's scientific method
+  for debugging (CC p. 541). The fix changes one thing at a time (CC p. 553),
+  since one study found that more than half of first fixes were wrong
+  (CC p. 550). Where a test can reproduce the defect, the test fails at the
+  merge base on an assertion about it. Otherwise the pull request says how
+  the fix was checked. Either way it names the cause and the similar code it
+  searched.
 
 ### 3. Test
 
-Four layers, each catching what the one before cannot.
+Four layers, each catching what the one before cannot. No layer is trusted
+alone. Testing steps combined often find fewer than 60% of defects
+(CC p. 500), and in one experiment any two methods together, even two groups
+using the same one, found nearly twice what one found (CC p. 471), so review and static checks sit beside these four rather than after
+them.
 
 1. **Unit tests** per module, against its interface.
 2. **Replication pins.** The strategies already replicated in
@@ -404,6 +477,23 @@ posted on the pull request in one comment opening with `## Review`. A finding
 that turns on money, contracts or law goes to the owner under a
 `### For the owner` heading in that comment, for a board sitting through
 `/l3a0:ask-board` if the owner asks for one.
+
+*Code Complete* supplies the evidence behind four parts of this step.
+
+1. **Every change is reviewed, one-line changes included.** In one
+   maintenance organization 55% of one-line changes were wrong before reviews
+   began and 2% after (CC p. 481).
+2. **Lenses prepare alone.** A study of 13 reviews at AT&T found 90% of
+   defects in preparation and about 10% in the meeting (CC p. 494), which is
+   why the lenses here never see each other.
+3. **Each lens's yield is recorded.** More than two or three reviewers seldom
+   found more defects (CC p. 487). The lenses here differ by objective
+   rather than by number, so the `## Review` comment names the lens behind
+   each surviving finding, which shows over time which lenses earn their
+   seat.
+4. **The checklist is this repository's own.** A one-page list of the
+   defect types past reviews here have found grows after each round and drops
+   the types that stop occurring (CC p. 489).
 
 ### 5. Release
 
@@ -507,3 +597,8 @@ lease number, the journal's durability before a send, applying each fill once, a
 every fill from a recorded position, which are built on the fencing, durability, end-to-end id
 and read-skew arguments of *Designing Data-Intensive Applications* and adapted here to a broker
 that fences nothing.
+
+*Code Complete* dates from 2004 and writes for any language. Its chapters on layout, naming and
+statement-level tuning are left to the formatter, the linter and the measured-tuning rule rather
+than restated, and its default of compiling assertions out of production is rejected in the design
+doc's register.
