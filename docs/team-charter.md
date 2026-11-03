@@ -84,6 +84,43 @@ The live system is three models feeding a fourth, which feeds a fifth (L920,
 L941, L994). Data and research sit outside that loop and feed it (L920, L970).
 Each box below is a module with a typed interface, and each has one owning role.
 
+```mermaid
+flowchart LR
+    vendor(["Vendor feeds"])
+    broker(["Broker"])
+    data["Data<br/>data engineer"]
+    research["Research<br/>quant researcher"]
+    subgraph live["The live loop"]
+        alpha["Alpha model<br/>quant researcher"]
+        risk["Risk model<br/>risk engineer"]
+        cost["Transaction cost model<br/>trading systems engineer"]
+        pc["Portfolio construction<br/>trading systems engineer"]
+        exec["Execution<br/>trading systems engineer"]
+    end
+    mon["Monitoring<br/>operator"]
+
+    vendor -->|"feeds"| data
+    data -->|"history"| research
+    research -->|"a registered strategy"| alpha
+    data -->|"point-in-time data"| alpha
+    data -->|"positions, data"| risk
+    data -->|"liquidity, own fills"| cost
+    alpha -->|"forecast"| pc
+    risk -->|"constraints"| pc
+    cost -->|"cost estimate"| pc
+    pc -->|"target portfolio"| exec
+    exec -->|"orders"| broker
+    broker -->|"fills"| exec
+    exec -->|"fills"| data
+    live -. "everything" .-> mon
+    mon -. "alerts, a halt" .-> live
+```
+
+The three models on the left of the loop each feed portfolio construction,
+which feeds execution, the only module that talks to the broker. Data and
+research sit outside the loop and feed it, and monitoring watches the whole
+loop and can halt it.
+
 | Module | Job | Input | Output | Owning role |
 | --- | --- | --- | --- | --- |
 | Data | Capture, clean, timestamp and serve point-in-time data (L3605) | Vendor feeds, broker fills | Vintages, a security master, bars | Data engineer |
