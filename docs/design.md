@@ -291,7 +291,7 @@ not adopted. Six rules follow.
    issue of its own, and its acceptance tests stay in the suite as strict
    expected failures that name that issue. A cut that touches the order
    path, the gate or its limits goes to the risk lens before it takes
-   effect. A slice whose must-have behavior does not fit goes back to
+   effect, and the risk engineer may veto it. A slice whose must-have behavior does not fit goes back to
    planning whole.
 4. **Done is the charter's Definition of done, and never a percentage.**
    McConnell's test of a finished piece is whether it could be locked in a
