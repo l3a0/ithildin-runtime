@@ -141,16 +141,18 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Names the load parameters each scale limit is measured in, since a design
   built on the wrong ones is wasted (DDIA L627). Owns the shared clock's
   monotonic and time-of-day readings and the seeded random source, per the
-  design doc's rules on time. Owns the written rules for which package may
-  import which, and the check in CI that enforces them, since Python enforces
-  none of them itself (CC p. 69).
+  design doc's rules on time. Owns the import rule test that
+  [#22](https://github.com/l3a0/ithildin-runtime/issues/22) specifies, which
+  enforces which package may import which, because Python enforces no
+  boundary between modules itself.
 - **Vetoes:** a second code path for any module, a dependency that nobody
   argued for in a pull request body, a synchronous dependency on the
   order path beyond the minimum the design doc names, a module that reads the
   system clock or an unseeded random source directly, a distributed
   transaction between the journal and the broker or any system outside the
   journal's own store, a consensus algorithm written here, and a rule on the
-  order path held only by an `assert`, a comment or a convention.
+  order path or on recorded data held only by an `assert`, a comment or a
+  convention.
 
 ### Quant researcher
 
@@ -219,8 +221,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   cannot match, any resend of an order in doubt, an order settled as unsent
   because a broker lookup found nothing, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
-  (DDIA L4868), and a vendor's type, string or exception that reaches past its
-  adapter (CC p. 204).
+  (DDIA L4868), a vendor's type, string or exception that reaches past its
+  adapter other than the raw record kept as received (CC p. 204), and a send
+  that does not check its journal entry, under the design doc's rules for the
+  code.
 
 ### Risk engineer
 
@@ -252,9 +256,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
 - **Vetoes:** any change to the order path, the gate or the limits, as a
-  required reviewer, and any handling that answers bad input on the order path
-  or at data intake with a neutral value, the closest legal value, or a
-  logged warning and carrying on (CC p. 194, p. 197).
+  required reviewer, any handling that answers bad input wherever trading
+  reads it with a neutral value, the closest legal value, a logged warning
+  and carrying on, or any of the four forms the design doc's rules for the
+  code forbid (CC p. 194, p. 197), and any check on input that can stop a
+  cancel.
 
 ### Test engineer
 
@@ -277,22 +283,28 @@ time is the scarce resource, so work reaches the owner already reviewed.
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
-  replies (DDIA L583, L551). Tests every limit at one below it, at it and
-  one above it, since McConnell finds boundaries among the most fruitful
-  places to test, where `>=` written for `>` hides (CC p. 513).
-  Gives every input from outside the process tests with dirty data, meaning
-  absent, stale, empty, oversized and wrong-typed values, each asserting a
-  halt. McConnell finds that mature test teams write about five dirty tests
-  for each clean one, and that developers who believe they cover 95% of their
-  code typically cover 50 to 60% (CC p. 504), so coverage of branches is
-  measured in CI rather than estimated. Takes each expected value from the
-  specification rather than from the code's own output, and works it by hand
-  on numbers chosen to make the check easy, as McConnell advises
-  (CC p. 516). Keeps the contract suite each
-  stand-in adapter passes and the comparison with the second implementation
-  of the money arithmetic, per the design doc.
+  replies (DDIA L583, L551). Tests every limit one step below it, at it and
+  one step above it, where a step is the instrument's tick, lot or decimal
+  quantum, and the issue or the limit table says whether the limit itself is
+  allowed. McConnell finds boundaries among the most fruitful places to test,
+  where `>=` written for `>` hides (CC p. 513). Writes the dirty-data tests
+  the design doc's rules for the code list, since McConnell finds that mature
+  test teams write about five dirty tests for each clean one (CC p. 504). He
+  also finds that developers who believe they cover 95% of their code
+  typically cover 50 to 60% (CC p. 504), so branch coverage is measured in
+  CI with a floor that fails new code, and the mutation run decides whether a
+  covered branch is tested. Takes each expected value that claims
+  correctness from the specification rather than from the code's own output,
+  and works it by hand on numbers chosen to make the check easy (CC p. 503,
+  p. 516). The replay suite's pinned orders are regression pins, which detect
+  change rather than claim correctness, and each names the commit and the
+  run that produced it. Keeps the contract suite each stand-in adapter
+  passes, the second implementation of the money arithmetic in the tests,
+  and the measurement each tuning change carries, per the design doc.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
-  a bug fix whose test passes on the commit before the fix.
+  a fix for a defect a test can reproduce whose new test does not fail at the
+  pull request's merge base on an assertion about the defect, rather than at
+  import or collection.
 
 ### Operator
 
@@ -330,7 +342,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** reviews credential handling, broker permissions, least privilege,
   and the supply chain of each dependency. Checks that input from outside the
   process is range-checked and size-limited before use, and never decoded by a
-  format that can run code (DDIA L3626, L9382).
+  format that can run code (DDIA L3626, L9382). Checks that exceptions and log
+  lines carry no credential, token or account number,
+  since attackers read error messages (CC p. 196), by causing a failure with
+  a fake credential against the simulated broker with the network off, and
+  that every committed recording of a broker response is scrubbed of them.
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -395,12 +411,15 @@ what a session sets for the board to read.
   its own issue with a milestone and a label.
 - The formatter, the linter at its strictest settings, the type checker in
   strict mode and a limit of 10 on each function's cyclomatic complexity, the
-  count of paths through it, are set up before the first module, and a
-  warning fails CI (CC p. 231, p. 458). A suppressed warning names its reason
+  count of paths through it, are set up before the first module, as the
+  third kind of mechanism the design doc builds from the first run, and a
+  warning fails CI
+  (CC p. 231, p. 458). A suppressed warning names its reason
   beside it, because suppressing a warning nobody understood hides the one
   that mattered (CC p. 826).
 - The walking skeleton's end-to-end run is the smoke test. It runs on every
-  pull request, and the change that adds a module extends it to reach that
+  pull request in replay against the simulated broker, so no broker
+  credential reaches CI, and the change that adds a module extends it to reach that
   module (CC p. 703). Integrating each piece as it lands finds interface
   errors early, which were 39% of all errors on one project
   (CC p. 693). A branch that goes more than a couple of days without
@@ -412,15 +431,17 @@ what a session sets for the board to read.
   states a cause, and tests that cause, which is McConnell's scientific method
   for debugging (CC p. 541). The fix changes one thing at a time (CC p. 553),
   since one study found that more than half of first fixes were wrong
-  (CC p. 550). Its test fails on the commit before the fix, and the pull
-  request names the cause and the similar code it searched.
+  (CC p. 550). Where a test can reproduce the defect, the test fails at the
+  merge base on an assertion about it. Otherwise the pull request says how
+  the fix was checked. Either way it names the cause and the similar code it
+  searched.
 
 ### 3. Test
 
 Four layers, each catching what the one before cannot. No layer is trusted
-alone. Testing steps combined often find fewer than 60% of defects, while two
-different methods together find nearly twice what one finds (CC p. 471,
-p. 500), so review and static checks sit beside these four rather than after
+alone. Testing steps combined often find fewer than 60% of defects
+(CC p. 500), and in one experiment any two methods together, even two groups
+using the same one, found nearly twice what one found (CC p. 471), so review and static checks sit beside these four rather than after
 them.
 
 1. **Unit tests** per module, against its interface.
@@ -579,5 +600,5 @@ that fences nothing.
 
 *Code Complete* dates from 2004 and writes for any language. Its chapters on layout, naming and
 statement-level tuning are left to the formatter, the linter and the measured-tuning rule rather
-than restated, and its advice to compile checks out of production is rejected in the design doc's
-register.
+than restated, and its default of compiling assertions out of production is rejected in the design
+doc's register.
