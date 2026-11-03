@@ -317,11 +317,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
   and the measurement each tuning change carries, per the design doc.
-  Keeps the release suite of the design doc's
-  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
-  one command whose target is its only input (DT p. 247). Waits on a readiness check with a timeout,
-  never on a fixed sleep, wherever a test or a release check starts something, since the book
-  says of its own fixed pause that it should be rarely used (DT p. 200).
+  Checks, under the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
+  that the release suite's two runs are one suite with only its target changed, that each check
+  that starts something waits on readiness rather than a fixed sleep, and that each fault the group
+  handles has its test (DT p. 200, p. 247).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -354,8 +354,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the dead-man check off the machine, and drills the restore on a schedule.
   Owns the rules of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
-  the release suite before and after each takeover, the infrastructure code and its second run, the
-  restart cap of each component, and the log pipeline off the machine (DT p. 88, p. 247, p. 302).
+  the release suite and its two runs, the infrastructure code and its scheduled check, the restart
+  cap of each component, the log pipeline off the machine, and the drill for each alarm the group
+  adds (DT p. 88, p. 247, p. 302).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -372,9 +373,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
   that every committed recording of a broker response is scrubbed of them.
-  Checks that a workflow run started by a pull request holds no deploy or broker credential, and
-  that every interface able to control a host or a container takes only authenticated calls from
-  the deployer, where the book's own setup listens for remote requests from any address (DT p. 92).
+  Checks the credential rules of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
+  no workflow run holds a broker or data-vendor credential, a deploy credential sits behind an
+  environment that admits `main` alone, the infrastructure code holds no credential, the step that
+  restarts cannot write the deploy tag, and every interface that can control a host or a container
+  takes only authenticated calls (DT p. 92).
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -549,8 +553,11 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 2. **Code:** review checks the implementation against the design.
 3. **Test:** replays and stress tests run against the previous release's
    numbers.
-4. **Production:** the operator measures the first sessions after release
-   against the sessions before it, and an unexplained change is a finding.
+4. **Production:** the release suite runs before the release's first new
+   order and after its first reconciliation, under the design doc's
+   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault).
+   The operator then measures the first sessions after release against the
+   sessions before it, and an unexplained change is a finding.
 
 ### 6. Operate
 
