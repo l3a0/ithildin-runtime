@@ -182,14 +182,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
-  Registers, before a strategy enters Paper and again before Live, the
-  sample's size, its measures after costs, the result that counts as the
-  edge holding with the smallest effect the sample can detect, the range of
-  drawdowns to expect, and the result that retires it. Judges no strategy on
-  one trade or one streak (TZ L2038, L3198). Counts every sample opened for a
-  strategy, ended early or not, under the research pins in
-  [CLAUDE.md](../CLAUDE.md#research-pins), and scores each overridden
-  decision as the strategy's own would have played out (TZ L559). The design doc's
+  Registers, before a strategy enters Paper and again before Live, the six
+  things the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  rule 2 lists. Judges no strategy on one trade or one streak (TZ L2038,
+  L3198). Judges a passing result across every sample the project opened
+  toward promotion, under the research pins in
+  [CLAUDE.md](../CLAUDE.md#research-pins), and scores each decision a human
+  override touched as the strategy's own would have played out, which is
+  this project's method rather than the book's. The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   holds the rules.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
@@ -242,6 +243,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
   Keeps the design doc's procedure for orders in doubt when the journal
   cannot be read.
+  Writes each order's recorded outcome and the match of requests to outcomes,
+  under the design doc's rules for judging a strategy, with
+  [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holding the mechanism.
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, an order settled as unsent
@@ -281,12 +285,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Has the gate compute each position's worst loss from every leg's stress
-  move, refuse an order that adds to a position whose worst loss it cannot
-  compute and halt that strategy, and never refuse an order that only
-  reduces one, all as the design doc defines them. The gate passes or
-  refuses a decision's orders together, refuses and never resizes, and a
-  binding cap never moves a strategy's exit. Checks that no strategy's size
+  Has the gate refuse an order that adds to a position whose worst loss it
+  cannot compute, and alert the owner, and never refuse an order that only
+  reduces the position for want of that figure, all as the design doc
+  defines them. The gate refuses and never resizes, and a binding cap never
+  moves a strategy's exit. Checks that no strategy's size
   reads its own recent results except through a rule the owner set
   beforehand (TZ L3220, L919).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
@@ -543,10 +546,10 @@ evidence, not elapsed time.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
-| Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
+| Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits, and its Paper sample is registered |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, a backup of captured data and the journal has been restored and checked, and then the strategy's registered sample has run to its end on one version of its decision path and reached its passing result. A drill pauses the sample |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states the loss under the stress case over the strategy's first live sample, per unit of the capital cap, whose registration comes before the step. Every alarm, off switch and rollback has been drilled on the release being promoted. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
@@ -589,9 +592,10 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   started to behave badly. "It logs errors" does not answer that question
   (AoS L10177).
 - **Human override** stays the exception, for information the model cannot
-  process (L887, L902). An override is journaled like an order, and the
-  decisions it touched are reported apart from the strategy's evidence
-  (TZ L559).
+  process (L887, L902). An override is journaled like an order. Each
+  decision it touched stays in the strategy's sample, scored as the
+  strategy's own would have played out, and the override's own effect is
+  reported apart.
 
 ### 7. Report cost
 
