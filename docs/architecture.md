@@ -986,6 +986,7 @@ here, with the issue that builds its drill.
 | The live account's configuration differs from the settings the hard caps blob pins | Each setting that differs, its pinned value and the broker's | Change the paper account's shorting setting, expecting the alarm and a halt at the next check | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An order or fill without the platform's stamp, found by the account check at a session's start or end | The order or fill as the broker reports it, and the kill switch pull it caused | Place an order by hand on the paper account between sessions, expecting it journaled as unmatched at the next session's start, the switch pulled and the order cancelled | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Crypto enabled, or a withdrawal address whitelisted, on the live account | The account's crypto status and every whitelist entry, with its state | Add a whitelist entry on the paper account, which offers the same two reads, expecting the alarm and a halt at the next session's start or end | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The journal's head differs from the replica's at the same sequence number, or a book snapshot differs from a full replay | The two hashes and the sequence number, or the snapshot's sequence number and each differing position | Alter a replica entry in a test account, and a book snapshot in a test bucket, expecting the alarm and a halt | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, stop one, expecting none, and fail a run, expecting it to raise one alarm and no second one for the supervisors that exit after it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1565,9 +1566,13 @@ Eight choices in the two diagrams for a reviewer to check.
    for the kill switch's reads, lookups and cancels, which new orders and
    other lookups never draw on. The rest is split evenly across the
    deployment's execution instances, 50 a minute each for three, and the
-   reserve is split the same way, 16 a minute each, rounded down, so each instance
-   counts its own requests against fixed shares and the sum stays under the
-   limit with no shared counter. An instance alarms at 75% of its share.
+   reserve is split the same way, 16 a minute each, rounded down. Each
+   instance holds two token buckets, one for its share of orders and
+   lookups and one for its share of the reserve, refilled continuously and
+   holding at most 10 tokens each, so a burst cannot spend a minute's share
+   in a second and the sum stays under the limit with no shared counter. A
+   request takes a token or waits the time the bucket names. An instance
+   alarms when its buckets have run empty for 75% of a minute.
    An order that would pass its instance's share waits for the budget
    before the order path takes the account's lease, so a wait never holds
    the lease. A broker 429, its answer for too many requests, on a submit
@@ -2046,7 +2051,7 @@ re-encoding of the parsed fields. A reader also checks that those bytes are
 the canonical encoding of what it parsed, that each key's number equals the
 `seq` inside it, and that it knows the entry's `format`, and halts
 otherwise. Every journal format ever written stays readable by every later
-release, because the book is replayed from the first entry, and each
+release, because the book can be replayed from the first entry, whatever book snapshot a rebuild starts from, and each
 format has a committed fixture entry and a test that replays it.
 
 The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `cancel`,
@@ -2078,6 +2083,8 @@ not come again is kept rather than discarded.
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A send stage's claim, naming the handler running it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
+| A journal checkpoint | `journal/<account>/checkpoints/<seq>.json` |
+| A book snapshot, derived | `accounts/<account>/books/<seq>.json` |
 | The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
 | The plan's lease, holding the run's status | `leases/plans/<deployment>/<run>.json` |
 | The account's lease | `leases/accounts/<account>.json` |

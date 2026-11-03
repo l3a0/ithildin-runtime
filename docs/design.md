@@ -13,6 +13,7 @@ draws how slice 1's modules fit together.
 - [Every design weighs the whole lifecycle](#every-design-weighs-the-whole-lifecycle)
 - [One runtime](#one-runtime)
 - [Processes and files](#processes-and-files)
+- [Data structures](#data-structures)
 - [Design principles](#design-principles)
 - [How work is cut and ordered](#how-work-is-cut-and-ordered)
 - [Vocabulary](#vocabulary)
@@ -311,7 +312,11 @@ Ten entries define the design's terms.
    stage's output files for the decision, by key and SHA-256, or it is a
    **halt**, saying why the decision cannot go on. A stage has one result key
    per decision, so it ends each decision exactly once, with outputs or with a
-   halt. An **event** is the store's announcement that a blob was created or deleted, which reaches the queue of every component that reads it.
+   halt. The result's own SHA-256 is the decision's **root hash**: the result
+   lists each output by hash, and each output's header names its inputs by
+   hash, so the root covers the decision's whole history. Two copies, or a
+   rerun and the original, compare by that one hash, and monitoring's report
+   names each stage's root. An **event** is the store's announcement that a blob was created or deleted, which reaches the queue of every component that reads it.
 4. A **worker** is one component run as its own process. It listens on its
    queue, reads its input blobs, writes its output blobs, and reaches the
    outside world only through the adapter at its edge, such as the broker or
@@ -625,7 +630,10 @@ Ten rules make the blobs something a worker can trust.
    what it has just read, so an order is never sent on a stale book or after a
    pull, and starts again from the new end. Two writers can therefore never
    take one number, and no entry is ever written twice. Each entry is
-   stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
+   stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   1. **Checkpoints.** After a full check, the reader writes a checkpoint, a create-only blob at `journal/<account>/checkpoints/<seq>.json` holding the sequence number and that entry's hash. A later startup checks from the newest checkpoint whose entry still hashes to the value it names.
+   2. **A head anchor.** The account check at each session's start and end compares the journal's newest entry with the replica's entry at the same sequence number, through a read-only grant on the replica's bucket. Equal hashes mean identical histories, and a difference alarms and halts, so a rewrite of the whole chain, which recomputed hashes would hide, still shows.
+   3. **Book snapshots.** A snapshot of the book, keyed by the sequence number it was replayed through, lets a rebuild replay only the entries after it, from the newest snapshot at or before the newest checkpoint. Snapshots are derived data with an owner and an end date, and a weekly full replay from the first entry compares its book with the newest snapshot and halts on a difference. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
 9. **Leases make one supervisor change a run, and one sender change an account, at a time.** A lease is a blob a
    process creates with the condition that it not exist, recording its
    holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. The
@@ -1737,6 +1745,27 @@ The price of this subsection is four things.
 4. Execution reads the clock for the cutoff, a reading that a backtest never
    exercises and only a drill with a test clock does.
 
+## Data structures
+
+The owner asked on 2026-11-02 that the design name the formal data structure behind each part and say why it fits, and ruled the same day for four upgrades this section marks. Each structure is named for what it is, so a reader can look up its known properties rather than reverse them from the prose.
+
+| Part | Formal structure | Why it fits |
+| --- | --- | --- |
+| The journal | A hash chain: an append-only log in which each entry carries the SHA-256 of the entry before it, numbered in sequence | One writer per account appends in order, and a chain shows any edited, missing or reordered entry on a walk from the start |
+| Journal checkpoints and the head anchor, an upgrade | Verified checkpoints of the hash chain, and its head witnessed in a second, independent store | A checkpoint bounds the walk at startup to the entries since it, and a head held in the second account shows a rewrite of the whole chain, which hashes alone cannot |
+| The blobs of one decision | A Merkle DAG: each blob's header names its inputs by key and SHA-256, and each decision result lists its outputs by hash | Every output's history can be checked to the bars it was made from, as Git checks a commit's |
+| A decision's root hash, an upgrade | The root of that Merkle DAG: the SHA-256 of the decision result | One hash covers the decision's whole history, so two copies, or a rerun and the original, compare by one value |
+| The book | An event-sourced state: a left fold of the journal's entries | The journal is the record, and the book is derived, so it can always be rebuilt and never disagrees with its source for long |
+| Book snapshots, an upgrade | A materialized view of that fold, keyed by the sequence number it was folded through | A rebuild replays only the entries after the newest snapshot, which keeps replay short as the journal grows |
+| The account's lease and the plan's lease | A compare-and-swap register with an expiry, held through S3's conditional write, whose lease number fences each journal entry | It gives one holder at a time without a lock server, and the number marks every entry with the grant it was written under |
+| Claims, alarm records, halts and outputs | Idempotency keys: a create-only write at a key fixed by the work, so the first write wins | Duplicate events and several instances collapse to one outcome without coordination |
+| Each component's queue | An at-least-once work queue with competing consumers | Events are only hints and the state lives in the keys, so the queue needs no ordering and any free instance can take an item |
+| An order's lifecycle | A finite state machine whose transitions are journal entries | Each move is recorded before it happens, so replay reaches the same state |
+| The stages within a decision | A directed acyclic graph of stages, declared in one table in `runtime` | One declaration drives both the event routes and the order stages wait in |
+| The broker's request budget, an upgrade | A token bucket per execution instance, one for its share of orders and lookups and one for its share of the cancel reserve | It refills continuously rather than at a minute's edge, so a burst cannot spend a minute's share in a second, and a refused request knows how long to wait |
+
+The four upgrades are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as the rules they sit in say. Five structures were weighed and turned down, as the register records: a Merkle tree for the journal, CRDTs, a consensus log, an ordered queue per account, and a Bloom filter for duplicate fills.
+
 ## Design principles
 
 A principle earns a place here only when a design can pass or fail it, which is the test *The Art of Scalability* sets for its own (Abbott and Fisher, 1st ed., Addison-Wesley, 2009, Kindle location 4588, cited below as AoS L4588). A principle like "scales infinitely" fails that test, because no design can be checked against it. Each rule below names the check a review runs, and the reason for it.
@@ -2021,6 +2050,10 @@ once rather than re-argued.
 | Test's bucket and queues in shadow's AWS account, scoped by resource name | The owner ruled on 2026-11-02 that test keeps an account of its own. Test is not all in memory: on each push to `main` the store and queue suites run against a real bucket and real queues, through a role GitHub assumes, and one drill lets a test principal delete a journal version on purpose. Sharing shadow's account would save one account, at the price of test and shadow kept apart by policy alone and an organization policy scoped to shadow's bucket rather than the whole account |
 | AWS Backup with a logically air-gapped vault, in place of S3 Replication, for the live copy in a second account | The owner ruled on 2026-11-02 to keep S3 Replication. Its copies are ordinary objects the replay reads with no restore step, and its rule copies only the journal, the overrides and the captures tagged as recorded. AWS Backup restores a whole bucket or prefix to a point in time through a restore job, and copies derived outputs too. Wanting a point-in-time restore of the whole bucket would reopen it |
 | Another instance finishing a decision's planned orders once its planner has died | The owner ruled on 2026-11-02 to keep halting the decision. The plan rests on the broker's state at its planner's last sync, and the planner may have died partway through an order, so finishing would send on a plan nothing checked again. The taking-over instance settles each order in doubt, abandons the unsent ones, cancels a half-accepted pair's accepted leg before the cancel cutoff, and halts that decision, and the next decision plans afresh from the book. The price is a decision's remaining orders never going out when its planner dies |
+| A Merkle tree for the journal, as in Certificate Transparency | It proves one entry, or one copy's history, in about log2 of the journal's length, which matters when outsiders check a log they do not trust. The owner is the only auditor and a hash chain with checkpoints and a head anchor already compares two copies by one hash. Many outside verifiers, or a journal too long to walk, would reopen it |
+| CRDTs, structures that merge copies written in parallel | Every fact here has one writer, so nothing is ever merged |
+| An ordered queue per account, such as SQS FIFO | A kill switch's event could wait behind a plan's, and nothing needs the ordering, since the state lives in the keys |
+| A Bloom filter for duplicate fills | The set of fill ids is small and exact and already sits in the journal, and a Bloom filter answers only probably |
 | One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out for 100 times the load. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
 | A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | Rolling a new release out VM by VM during a session, by instance refresh, CodeDeploy or an ECS rolling deployment | Each tool assumes two versions can serve side by side while it rolls. Here two releases in one run write different bytes to one key, which the create-only rule turns into a halt, so a release changes only at a session's start, through the pin and the promotion from shadow to paper to live. The owner ruled on 2026-11-01 that instance refresh rolls out changes to the VM image instead, outside sessions |
