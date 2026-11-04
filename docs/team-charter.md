@@ -277,7 +277,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
-  Once the kill switch or a loss stop fires, only the owner releases it. Each
+  Once the kill switch or a loss stop fires on a live account, only the owner releases it,
+  and on paper and shadow the operator may too, under the owner's rulings on
+  [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
   Holds that no caller carries a flag, a role or a credential that lets its
@@ -354,7 +356,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Checks, under the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
   that the Startup checks run in CI as the same code that clears a release, that each check that
-  starts something waits on readiness rather than a fixed sleep, that no Startup check sends anything, that each run-time fault the group
+  starts something waits on readiness rather than a fixed sleep, that no Startup check sends an order or a cancel, that each run-time fault the group
   handles is among the injected faults or, for the restart cap and a crash loop slower than its
   window, runs under the host's real supervisor as the group says, and that each deploy-time failure
   has its CI test beside its drill (DT p. 200, p. 247).
@@ -377,7 +379,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names. In an incident, once
   trading is halted and the journal preserved, asks what changed most
   recently and proposes undoing it before diagnosing anything (AoS L4028).
-  The owner performs the undo when it is a deploy, and an undo never restores
+  The owner performs the undo when it is a deploy, apart from a release's rollback
+  by its pin on paper or shadow, which the operator may do under the owner's 2026-10-30
+  ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and an undo never restores
   a rotated credential. Keeps an incident, the event, apart from a problem,
   its cause, and closes the problem only when the fix holds in production
   (AoS L3311, L3404). Decides in advance what evidence to capture before
@@ -619,8 +623,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   gate's hard caps, verify the journal's checksums and sequence to its head,
   check the journal and every protected store as rule 3 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
-  says, which also says what each finding serves, read execution's restart
-  count and switch, and check the clock's offset and sync age. A failure of the release's own
+  says, which also says what each finding serves, read every component's restart
+  and scaling switch and execution's restart count, and check the clock's offset and sync age. A failure of the release's own
   digest or the journal check halts everything and pages the owner, naming
   the broker's own interface. A failure of any other check, apart from a store finding, which follows that
   rule, halts new orders only, and the release still serves cancels and the kill switch. Then take
