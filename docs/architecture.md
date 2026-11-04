@@ -85,7 +85,9 @@ idea, because the strategy's numbers are already pinned there.
 
 The proposal is Chan's Bollinger band on the price spread between GLD, a gold
 ETF, and USO, an oil ETF. It is Example 3.2 of *Algorithmic Trading* and
-Entry 26 of that repository's replication log. A Bollinger band is a moving
+Entry 26 of that repository's replication log, and
+[a post in its blog](https://github.com/l3a0/quantitative-trading/blob/main/blog/bollinger-band-lessons.md)
+walks through it. A Bollinger band is a moving
 average with a band of one standard deviation on each side, and this strategy
 trades when the spread leaves its band. Read at quantitative-trading's commit
 `19aadbeb`, the rule is four steps.
