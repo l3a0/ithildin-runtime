@@ -684,7 +684,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   process (L887, L902). An override is journaled like an order, and the
   decisions it touched stay in the strategy's sample under the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
-  One that changes a position, or a trade at the broker the owner confirms, leaves the
+  One that changes a position, or a change at the broker the owner confirms, leaves the
   strategy switched off until a person switches it back on, under that section's rule 4.
 
 ### 7. Report cost
