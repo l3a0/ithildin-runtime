@@ -340,7 +340,8 @@ has already acted. The read has five parts.
    ```mermaid
    flowchart LR
        seg["Segment in the bucket"] --> sha["Match its SHA-256<br/>against the manifest"]
-       sha --> read["read_segment<br/>refuses a damaged file"]
+       sha -- "Mismatch" --> halt["Halt the decision"]
+       sha -- "Match" --> read["read_segment<br/>refuses a damaged file"]
        read --> join["Runtime joins a<br/>ticker-day's segments"]
        join --> rows["Quote rows"]
    ```
@@ -355,8 +356,7 @@ has already acted. The read has five parts.
    case for [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
 2. **What is checked before deciding.** The data worker runs its own minimum
    checks before anything decides. A missing or stale quote at the decision time
-   halts the decision, and a price spike is flagged in the snapshot without
-   halting.
+   halts the decision, a segment whose SHA-256 does not match its manifest entry halts it too, and a price spike is flagged in the snapshot without halting.
 3. **Which read a decision uses.** A decision's own time against the day's seal
    time in marketlake's manifest picks the read, never whether the day is sealed
    when the read happens.
@@ -1164,6 +1164,7 @@ here, with the issue that builds its drill.
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure. Freeze one instance of three, and crash one of three of a component other than execution past its restart limit, expecting an alarm naming that instance while the other two finish every decision and the run does not fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A capture segment whose SHA-256 does not match its manifest entry | The segment's key and both hashes | Change a byte in a copy of a segment the data worker downloads, expecting the decision halted and no order sent | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s, and for a capturing stage the attempt key it stored the second capture at | Run a step that puts the clock time in its output, and resume data's stage with a fresh read that differs from its stored snapshot, expecting the second read stored at its attempt key and named in the decision result | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker other than execution exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2555,8 +2556,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    partition a decision's lookback names from marketlake's bucket into a local
    mirror, checks it against the checksum in marketlake's manifest, and reads
    it through the same bar query. A partition not yet in the bucket is "data
-   not ready", which halts. A capture segment read before sealing is checked
-   the same way, against its own manifest entry, and the read credential
+   not ready", which halts. A capture segment read before sealing is checked the same way, against its own manifest entry, and a mismatch halts the decision, and the read credential
    covers the segments' prefix too. The mirror is a copy, so losing it costs only a
    download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
    [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it. Each
