@@ -364,10 +364,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   its data outside its normal use, such as a deploy, a config edit or a
   credential rotation (AoS L3991, L3995). Whoever makes a change writes its
   line at the time: code changes come from git and the deploy tags, an
-  override or a strategy's switch flip goes in the journal, a restart or
-  scaling switch's flip goes off the machine, where
-  [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names, and a change
-  on the host goes in a file under `~/.config/ithildin-runtime/`. In an incident, once
+  override or a strategy's switch flip goes in the journal, and a restart or
+  scaling switch's flip and a change on the host go off the machine, where
+  [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names. In an incident, once
   trading is halted and the journal preserved, asks what changed most
   recently and proposes undoing it before diagnosing anything (AoS L4028).
   The owner performs the undo when it is a deploy, and an undo never restores
@@ -609,11 +608,14 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   with its name as the reason. Read only, compare every component's artifact
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
-  gate's hard caps, verify the journal's checksums and sequence to its head
-  and that its head is not behind its second copy or the newest backup's
-  journal position, and check the clock's offset and sync age. A failure of the release's own
+  gate's hard caps, verify the journal's checksums and sequence to its head,
+  that a head read after them is not behind the second copy or the newest
+  backup's journal position where its environment holds one, that an empty
+  journal carries its first-start record and that every store the design's
+  infrastructure rule protects is present, and check the clock's offset and sync age. A failure of the release's own
   digest or the journal check halts everything and pages the owner, naming
-  the broker's own interface. A failure of any other check halts new orders
+  the broker's own interface. A failure of any other check, which includes a copy's position
+  that cannot be read on a journal verified to a non-empty head, halts new orders
   only, and the release still serves cancels and the kill switch. Then take
   the account's lease, reconcile, read the halt state, and only then enable
   strategies. How a release takes over from the last session is
