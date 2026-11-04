@@ -1687,7 +1687,8 @@ still arrive after the lookup. A fill on an order the journal holds as `Lost`
 or `Abandoned` halts. A cancel the broker reports as pending leaves the order
 `CancelSent`, still counted at its worst case, and a refused cancel returns it
 to the state it was in, still counted, with the alarm for a cancel that
-failed.
+failed. A cancel whose answer is lost stays `CancelSent`, and design.md's
+faults rule 6 says when it is sent again and when it halts new orders.
 
 `Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Each way the cancel is journaled first, and the sync then counts it as the platform's own.
 
