@@ -321,8 +321,10 @@ has already acted. The read has five parts.
 1. **What is read.** marketlake's capture daemon writes a segment each cycle and
    never rewrites it once its manifest entry lands, and marketlake uploads each
    segment to its bucket as soon as that entry lands, refusing to replace an
-   existing key. Any decision time inside marketlake's capture hours reads those
-   segments, and the data worker reads them up to the decision time. The runtime
+   existing key. Any decision time inside marketlake's capture hours reads those segments, and
+   the data worker reads them up to the decision time. The skeleton's close−20 is
+   one such time, and the decision minute [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for its shadow run on SPY
+   and QQQ, ten minutes before the close, is another. The runtime
    turns the segments into quote rows itself, when it reads what it needs, with
    marketlake's package, a dependency at a pinned commit. Once a downloaded
    segment matches the SHA-256 in its manifest entry, as rule 8 of
