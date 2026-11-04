@@ -74,9 +74,10 @@ Building at 1x means slice 1 runs the smallest deployment that design
 allows. Each environment runs on one VM, in an Auto Scaling group of one so
 a lost VM is still replaced without a person, and the cluster of three VMs
 across three availability zones in rule 11 of architecture.md's
-`## Where it runs` is the scale-out path for 10x. The three instances of
-each component the owner ruled for on 2026-11-01 run on that one VM, where
-they cover a process that crashes or hangs.
+`## Where it runs` is the scale-out path for 10x. The cluster buys survival
+of a lost VM or zone, and the mapping below buys capacity. The three
+instances of each component the owner ruled for on 2026-11-01 run on that
+one VM, where they cover a process that crashes or hangs.
 
 A VM group also has a written limit of deployments, which this doc
 proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). It
@@ -86,40 +87,60 @@ process, one deployment's 24 containers take about 2.4 GB, so slice 1's
 8 GB VM holds two deployments under that limit, a figure the measurement
 replaces. The next split past the limit is configuration rather than
 code: a mapping from account to VM group, with one Auto Scaling group per
-set of accounts, and each VM in a group still running every container of
-its accounts' deployments. At the same estimate, ten portfolios' 240
-containers take five such VMs.
+set of accounts. The release's table carries the mapping beside each
+environment's deployments, and the provisioning step tells a VM its group
+as it tells it its environment. Each group gets its own queue for each
+component and its own generated routes, so a VM receives only its group's
+messages. The mapping is a direct lookup, which suits a handful of
+accounts, rather than the hash rule 3 of `### Design ahead, and write down
+where the build stops` uses for partitions. A table test generates routes
+and units for two deployments, and a drill runs a second deployment in
+shadow before anything relies on the mapping.
+
+At the same estimate, ten portfolios' 240 containers take five such VMs per
+environment in groups of one, or six 8 GB VMs in two groups of three. A
+group of three of rule 11's 2 GB machines holds one deployment, so on those
+machines raising a group to three adds survival and no deployments.
 
 Past 10x the design expects a rewrite rather than promising to avoid one,
-so it writes down three things, each proposed for
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11) until the owner rules on it.
+so it writes down three things, the first two proposed for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) until the owner rules on them.
 
-1. **Where the rewrite's planning starts.** Two load parameters carry a
-   level, each read on the busiest environment. One is portfolios, at 8,
-   which is 75% of the 10 this design reaches by configuration, rounded up.
-   The other is decisions a day across every deployment, at 75, which is
-   75% of 100 times the first load. One deployment's written limit allows
-   more decisions than that, so the decision level sits well inside what
-   configuration reaches. The owner adds each portfolio by hand, so the two
-   between the level and the ten are the lead time.
+1. **Where the rewrite's planning starts.** The load parameter is
+   portfolios in an environment, meaning the deployments the release's
+   table lists for it, and the level is 8, which is 75% of the 10 this
+   design promises, rounded up. Each environment reads its own entry,
+   because no runtime role reaches another environment's resources, so one
+   level can page up to three times. The lead time is the two portfolios
+   between the level and the ten. Each needs an account of its own and a
+   release, and the owner holds at ten until the rewrite lands. This assumes
+   Alpaca lets one owner hold ten accounts, which nothing here has
+   confirmed. Decisions a day carry no level, because configuration alone
+   takes them past 100 times the first load: one deployment's ceiling of a
+   decision a minute is 390 in a full session, and the 1x alarm covers it.
 2. **What the rewrite is expected to replace.** The price of one deployment
-   for each portfolio is that containers grow with every portfolio, so the
-   expected rewrite shares workers across portfolios and moves them from
-   VM groups mapped by hand to a container orchestrator. The evidence for
-   this is thin, because no load has been measured, and the load that trips
-   a level may point somewhere else.
+   for each portfolio is that containers grow with every portfolio. So the
+   expected rewrite shares the workers that hold no account, which are data,
+   alpha, risk, cost and portfolio construction, across portfolios, and
+   moves them from VM groups mapped by hand to Fargate or a container
+   orchestrator. The evidence for this is thin, because no load has been
+   measured, and the load that trips the level may point somewhere else.
 3. **What must survive the rewrite unchanged.** Captured data, the journal,
    their formats and the partition layout, and the tests of the risk gate's
    refusals, the halts and the kill switch, as
-   [Design principles](#design-principles) says.
+   [Design principles](#design-principles) says. For this rewrite the
+   partition layout means captured data's layout and the `runs/<deployment>/`
+   and `accounts/<account>/` key shapes. Execution, its broker key, the
+   account's lease and the journal also stay one per account, because hard
+   limit 2's one order path rests on them.
 
 Two things are built at 1x all the same.
 
-1. The measure of load and its alarms. The measure is the decisions a day
-   across every deployment, the portfolios in each environment, and how
-   long each stage takes against its deadline. One alarm says when load
-   nears the 1x limit, and another says when it reaches a level above.
-   Otherwise the first sign of either is a missed deadline.
+1. The measure of load and its alarms. The measure is the decisions a day,
+   the portfolios in each environment, and how long each stage takes against
+   its deadline. One alarm says when load nears the 1x limit, and another
+   says when the portfolio count reaches the level above. Otherwise the
+   first sign of either is a missed deadline.
 2. Least privilege, so each credential carries only what its 1x use needs
    from the first day.
 
@@ -128,7 +149,7 @@ a VM on another machine has gone, the instance refresh across three VMs and
 the move to another zone are designed now and built when load calls for
 them, under the ranking rule in [CLAUDE.md](../CLAUDE.md), and each is
 drilled before anything relies on it. The second price is a rewrite if
-load passes the levels above, paid so that the design does not build for
+load passes the level above, paid so that the design does not build for
 load it may never see.
 
 ## Every design weighs the whole lifecycle
@@ -1684,9 +1705,9 @@ runs several instances too, which point 4 above now carries, and on
 says. So a deployment runs 21 worker containers and
 three supervisor containers, and shadow and paper together run 48. The owner ruled the same day that each environment can run as a
 cluster of three VMs, one in each of three availability zones, and on
-2026-11-02 that this cluster is the scale-out path, which the directive of
-2026-11-03 sizes at 10 times slice 1's load, while slice 1 starts on one
-VM per environment, as
+2026-11-02 that this cluster is the scale-out path, for a design load the
+directive of 2026-11-03 sets at 10 times slice 1's, while slice 1 starts on
+one VM per environment, as
 [Design for 10x, plan the rewrite before 100x, build at 1x](#design-for-10x-plan-the-rewrite-before-100x-build-at-1x) says. So in
 slice 1 one VM runs all 24 of its deployment's containers, and the cluster
 would spread them 8 to a VM. Shadow runs on machines of its own rather
@@ -1804,7 +1825,7 @@ The four upgrades are this doc's proposal for [#10](https://github.com/l3a0/ithi
 
 A principle earns a place here only when a design can pass or fail it, which is the test *The Art of Scalability* sets for its own (Abbott and Fisher, 1st ed., Addison-Wesley, 2009, Kindle location 4588, cited below as AoS L4588). A principle like "scales infinitely" fails that test, because no design can be checked against it. Each rule below names the check a review runs, and the reason for it.
 
-The owner's standing directive, adopted on 2026-11-03, is Jeff Dean's rule as *Building Microservices* quotes it: design for 10 times the first load, plan to rewrite before 100 times, and build for the first load (BM L4428, cited below). A design passes when reaching 10 times takes configuration and more machines, and it writes down, for growth beyond that, the load at which planning a rewrite starts, what the rewrite would replace, and what must survive it unchanged, which here is captured data, the journal, their formats and the partition layout, and the tests of the risk gate's refusals, the halts and the kill switch. Two alarms are built at the first load. One trips at 75% of each written scale limit in the running system, beside the test of rule 2 of [Design ahead](#design-ahead-and-write-down-where-the-build-stops). The other trips when measured load on a named load parameter, read on its busiest key, reaches the level written for planning the rewrite, and pages the owner through the alert path once per parameter and level, naming both, and the owner files the issue. The page is recorded where a change of release cannot lose it, it reports under the first monitors' heartbeat, and a test feeds load at the level and asserts one page, then starts a second session above the level and asserts none. The level sits below the most that configuration alone reaches, with a stated lead time. The architect writes it beside the scale limits, and the operator runs the alarm. The book states the same idea as designing every major system so it can be split along at least two axes, while building only the split that today's load needs (AoS L4684, L8205). Its three axes are clones of the whole system (x), a split by function or by kind of data (y), and a split by a key such as account or symbol (z) (AoS L7432).
+The owner's standing directive, adopted on 2026-11-03, is Jeff Dean's rule as *Building Microservices* quotes it: design for 10 times the first load, plan to rewrite before 100 times, and build for the first load (BM L4428, cited below). A design passes when reaching 10 times takes configuration and more machines, and it writes down, for growth beyond that, the load at which planning a rewrite starts, what the rewrite would replace, and what must survive it unchanged, which here is captured data, the journal, their formats and the partition layout, and the tests of the risk gate's refusals, the halts and the kill switch. Two alarms are built at the first load. One trips at 75% of each written scale limit in the running system, beside the test of rule 2 of [Design ahead](#design-ahead-and-write-down-where-the-build-stops). The other trips when measured load on a named load parameter, read on its busiest key, reaches the level written for planning the rewrite, and pages the owner through the alert path once per parameter, level and environment, naming all three, and the owner files the issue. The page is recorded where a change of release cannot lose it, it reports under the first monitors' heartbeat, and a test feeds load at the level and asserts one page, then starts a second session above the level and asserts none. The level sits below the most that configuration alone reaches, with a stated lead time. The architect writes it beside the scale limits, and the operator runs the alarm. The book states the same idea as designing every major system so it can be split along at least two axes, while building only the split that today's load needs (AoS L4684, L8205). Its three axes are clones of the whole system (x), a split by function or by kind of data (y), and a split by a key such as account or symbol (z) (AoS L7432).
 
 *Designing Data-Intensive Applications*, cited in [One runtime](#one-runtime), adds the rules for data that the first book leaves out: what to do about faults, clocks, retries, concurrent writers and records that must outlive every bug. A citation like DDIA L9286 is the Kindle location of one of the owner's highlights or of a screen of the book's full text. One like DDIA L\~14160 points into the full text at a location good to about one screen, because the reader shows this book's Kindle pages rather than its locations, so the location of a screen with no highlight on it is interpolated. Where its rules restate one already here, the rule below cites both books rather than appearing twice.
 
@@ -1850,7 +1871,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
 ### Faults are expected, and the platform checks itself while it runs
 
 1. **Every fault the design says it handles is injected on purpose, in replay.** DDIA separates a fault, one part leaving its specification, from a failure, the whole system no longer serving (DDIA L293). It finds many critical bugs in poor error handling, and recommends causing faults on purpose to keep that handling exercised, and testing even unlikely ones (DDIA L300, L8461). This doc reads "poor" as handling that rarely runs. Here the simulated broker and the replay harness can inject seventeen faults, the harness working on its own copy of the journal and capture files, and a test runs each through the full loop and fails when the handling is removed.
-   1. An acknowledgment of an order or of a cancel that never arrives, and one that arrives late. For a cancel the test checks each branch of rule 6: a lookup that settles the cancel, a resend journaled first, resends at one below the written number, at it and at one above, a run from another account, either way, opening no resend, a kill switch's repeat going out with no run and held back when the lookup shows a cancel pending and once the written number is used up, for every other outcome, a halt's or a decision's cancel with no run among them, no resend, and, wherever the cancel stays unsettled, a resend included, a halt and a page past the written time counted from the first entry, its reason read back from the halt-state monitor, and a cancel still passing during the halt.
+   1. An acknowledgment of an order or of a cancel that never arrives, and one that arrives late. For a cancel the test checks each branch of rule 6: a lookup that settles the cancel, a resend journaled first, resends at one below the written number, at it and at one above, a run from another account, either way, opening no resend, a kill switch's repeat going out with no run and held back when the lookup shows a cancel pending and once the written number is used up, for every other outcome, a halt's or a decision's cancel with no run among them, no resend, and, wherever the cancel stays unsettled, a resend included, a halt and a page past the written time counted from the first entry, its reason read back from the halt-state monitor, and a cancel still passing during the halt. For a plan's cancel the test also loses the answer, accepts the resend with the order still working and then fills the old order, and expects no replacement sent, the old order counted at its worst case throughout, and the replacement `Abandoned` or cut by that fill.
    2. A fill delivered twice, a fill that arrives after a cancel was acknowledged, a fill the broker later corrects or busts, and a second message under one execution id that differs from the first.
    3. A process killed between the journal write and the broker call, and killed in the middle of a write to a local file.
    4. A lease holder paused after its tag check and before its request leaves, past the end of its lease.
@@ -2227,9 +2248,9 @@ once rather than re-argued.
 | CRDTs, structures that merge copies written in parallel | Every fact here has one writer, so nothing is ever merged |
 | An ordered queue per account, such as SQS FIFO | A kill switch's event could wait behind a plan's, and nothing needs the ordering, since the state lives in the keys |
 | A Bloom filter for duplicate fills | The set of fill ids is small and exact and already sits in the journal, and a Bloom filter answers only probably |
-| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out path, which the directive of 2026-11-03 sizes at 10 times the load. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
+| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out path, for a design load the directive of 2026-11-03 sets at 10 times slice 1's. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
 | Designing for 100 times the first load | The owner ruled for it on 2026-11-02 and adopted Jeff Dean's rule in its place on 2026-11-03, because a design that promises no rewrite at 100 times tends to build for load it may never see. The design now promises 10 times and writes down where the rewrite's planning starts |
-| A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
+| A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it, which groups of identical VMs mapped by hand do not, and so would the rewrite past 10x that `## Design for 10x, plan the rewrite before 100x, build at 1x` expects |
 | Rolling a new release out VM by VM during a session, by instance refresh, CodeDeploy or an ECS rolling deployment | Each tool assumes two versions can serve side by side while it rolls. Here two releases in one run write different bytes to one key, which the create-only rule turns into a halt, so a release changes only at a session's start, through the pin and the promotion from shadow to paper to live. The owner ruled on 2026-11-01 that instance refresh rolls out changes to the VM image instead, outside sessions |
 | AWS CodeDeploy for the cluster | Its agent installs a release on each VM, which the pin and the image pull already do, and it adds an agent and a role to every VM. Instance refresh covers the VM image without either |
 | One execution process holding the account's lease for its whole life, with standbys that receive nothing until they take it over | The owner ruled on 2026-11-01 that every execution instance competes for execution's queue and holds the account's lease only while it changes the account. The price is an S3 round trip to take and delete the lease for each order, and a send stage another instance has to take over when its runner dies |
