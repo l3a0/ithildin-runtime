@@ -391,7 +391,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   session is open, with an alarm when no release reads execution's queue
   past a written bound
   (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
-  rewrite-planning load, per the design doc.
+  rewrite-planning load, per the design doc. Confirms in the journal, on shadow
+  and paper, after a stop of the kind rule 4 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  names, once the runbook's checks pass.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -607,7 +610,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the account's lease, reconcile, read the halt state, hold every strategy off
   after a stop of the kind rule 4 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  names, until whoever that rule names confirms in the journal, and only then enable strategies. How a release takes over from the last session is
+  names, paging whoever that rule names until they confirm in the journal, and only then enable strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
   take of the lease follows
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
