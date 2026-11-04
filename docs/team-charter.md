@@ -252,7 +252,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   unsettled past a written time halts new orders and pages the owner, under
   the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
-  limit and its breaker, and puts the decision's id inside each client order
+  limit and its breaker, and puts the decision's id, or an override entry's, inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
   Writes each order's recorded outcome and the match of requests to outcomes,
@@ -302,8 +302,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Holds the gate's worst-loss refusal, the retiring check's halt and the limit
-  on raising risk, under rules 1, 2 and 5 of the design doc's
+  Holds the gate's worst-loss refusal, the retiring check's halt, the halt on
+  an order or cancel that traces to nothing, and the limit on raising risk,
+  under rules 1, 2, 3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -625,8 +626,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading. The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  adds a running match of requests to outcomes and a retiring check, each with
-  its own halt, and the dead-man check watches the last run of both.
+  adds a running match of requests to outcomes and of orders back to their
+  causes, and a retiring check, each with its own halt, and the dead-man check
+  watches the last run of each.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
