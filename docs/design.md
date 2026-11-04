@@ -9,7 +9,7 @@ draws how slice 1's modules fit together.
 ## Contents
 
 - [Premise](#premise)
-- [Design for 100x, build at 1x](#design-for-100x-build-at-1x)
+- [Design for 10x, plan the rewrite before 100x, build at 1x](#design-for-10x-plan-the-rewrite-before-100x-build-at-1x)
 - [Every design weighs the whole lifecycle](#every-design-weighs-the-whole-lifecycle)
 - [One runtime](#one-runtime)
 - [Processes and files](#processes-and-files)
@@ -43,18 +43,20 @@ from those three. That asymmetry is what the ranking rule in
 order record is never deferred, and a path that can lose capital sits behind
 the hard limits, which no ranking overrides.
 
-## Design for 100x, build at 1x
+## Design for 10x, plan the rewrite before 100x, build at 1x
 
-The owner ruled on 2026-11-02 that the architecture is always designed for
-100 times the load it first carries, and that the first version, the MVP,
-starts at that first load. Slice 1's load is one portfolio deciding once a
-day. A hundred times that is a hundred portfolios, or a portfolio deciding
-every few minutes, or a mix, and the design's own ceiling for one
-deployment is a decision a minute, as `### Strategies, schedules and
-decisions` says.
+The owner ruled on 2026-11-02 that the architecture is designed for 100
+times the load it first carries, and on 2026-11-03 adopted Jeff Dean's rule
+in its place, as [Design principles](#design-principles) states it: design
+for 10 times the first load, plan the rewrite before 100 times, and build
+at the first load. The first version, the MVP, starts at that first load.
+Slice 1's load is one portfolio deciding once a day. Ten times that is ten
+portfolios, or a portfolio deciding ten times a day, or a mix. The design's
+own ceiling for one deployment is higher, at a decision a minute, as
+`### Strategies, schedules and decisions` says.
 
-Designing for 100x means a choice made now does not need rewriting to
-scale. A design passes when reaching 100x takes configuration and more
+Designing for 10x means a choice made now does not need rewriting to reach
+10x. A design passes when reaching 10x takes configuration and more
 infrastructure, such as more instances, more VMs or more portfolios, and no
 rewrite of a component, a file format or a rule. The pieces that carry that
 are already in this doc.
@@ -72,9 +74,9 @@ Building at 1x means slice 1 runs the smallest deployment that design
 allows. Each environment runs on one VM, in an Auto Scaling group of one so
 a lost VM is still replaced without a person, and the cluster of three VMs
 across three availability zones in rule 11 of architecture.md's
-`## Where it runs` is the scale-out for 100x. The three instances of each
-component the owner ruled for on 2026-11-01 run on that one VM, where they
-cover a process that crashes or hangs.
+`## Where it runs` is the scale-out path for 10x. The three instances of
+each component the owner ruled for on 2026-11-01 run on that one VM, where
+they cover a process that crashes or hangs.
 
 A VM group also has a written limit of deployments, which this doc
 proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). It
@@ -85,20 +87,49 @@ process, one deployment's 24 containers take about 2.4 GB, so slice 1's
 replaces. The next split past the limit is configuration rather than
 code: a mapping from account to VM group, with one Auto Scaling group per
 set of accounts, and each VM in a group still running every container of
-its accounts' deployments.
+its accounts' deployments. At the same estimate, ten portfolios' 240
+containers take five such VMs.
 
-Two things are built at 1x all the same. The first is the measure of load
-and the alarm that says when it nears the 1x limit, which here is the
-decisions a day across every deployment and how long each stage takes
-against its deadline, because otherwise the first sign of needing 100x is
-a missed deadline. The second is least privilege, so each credential
-carries only what its 1x use needs from the first day.
+Past 10x the design expects a rewrite rather than promising to avoid one,
+so it writes down three things, each proposed for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) until the owner rules on it.
 
-The price is that the 100x paths run zero times at 1x. The test of whether
+1. **Where the rewrite's planning starts.** Two load parameters carry a
+   level, each read on the busiest environment. One is portfolios, at 8,
+   which is 75% of the 10 this design reaches by configuration, rounded up.
+   The other is decisions a day across every deployment, at 75, which is
+   75% of 100 times the first load. One deployment's written limit allows
+   more decisions than that, so the decision level sits well inside what
+   configuration reaches. The owner adds each portfolio by hand, so the two
+   between the level and the ten are the lead time.
+2. **What the rewrite is expected to replace.** The price of one deployment
+   for each portfolio is that containers grow with every portfolio, so the
+   expected rewrite shares workers across portfolios and moves them from
+   VM groups mapped by hand to a container orchestrator. The evidence for
+   this is thin, because no load has been measured, and the load that trips
+   a level may point somewhere else.
+3. **What must survive the rewrite unchanged.** Captured data, the journal,
+   their formats and the partition layout, and the tests of the risk gate's
+   refusals, the halts and the kill switch, as
+   [Design principles](#design-principles) says.
+
+Two things are built at 1x all the same.
+
+1. The measure of load and its alarms. The measure is the decisions a day
+   across every deployment, the portfolios in each environment, and how
+   long each stage takes against its deadline. One alarm says when load
+   nears the 1x limit, and another says when it reaches a level above.
+   Otherwise the first sign of either is a missed deadline.
+2. Least privilege, so each credential carries only what its 1x use needs
+   from the first day.
+
+The price is that the 10x paths run zero times at 1x. The test of whether
 a VM on another machine has gone, the instance refresh across three VMs and
 the move to another zone are designed now and built when load calls for
 them, under the ranking rule in [CLAUDE.md](../CLAUDE.md), and each is
-drilled before anything relies on it.
+drilled before anything relies on it. The second price is a rewrite if
+load passes the levels above, paid so that the design does not build for
+load it may never see.
 
 ## Every design weighs the whole lifecycle
 
@@ -109,8 +140,9 @@ ten qualities. A design that serves one stage and breaks another, such as a
 fast path no test can reach or a deployment nobody can roll back, is not
 finished. Each quality has a home in these two docs.
 
-1. **Scalability.** Every part is designed for 100 times its first load and
-   built at that first load, as the section above says.
+1. **Scalability.** Every part is designed for 10 times its first load,
+   with the rewrite planned before 100 times, and built at that first load,
+   as the section above says.
 2. **Availability.** Three instances of each component, an Auto Scaling
    group that replaces a lost VM, and leases that fail over on their own,
    as rule 9 and architecture.md's rule 11 of `## Where it runs` say.
@@ -180,7 +212,7 @@ finished. Each quality has a home in these two docs.
     rolled out by instance refresh outside sessions, as architecture.md's
     `### Four environments` and rule 11 of `## Where it runs` say.
 
-[CLAUDE.md](../CLAUDE.md)'s `## Design for 100x, across the whole
+[CLAUDE.md](../CLAUDE.md)'s `## Design for 10x, across the whole
 lifecycle` says what a design pull request states about the ten. A
 `## Qualities` section in the pull request body, which CLAUDE.md's
 `## Pull requests` names, is this repo's convention for stating it. The
@@ -1652,9 +1684,10 @@ runs several instances too, which point 4 above now carries, and on
 says. So a deployment runs 21 worker containers and
 three supervisor containers, and shadow and paper together run 48. The owner ruled the same day that each environment can run as a
 cluster of three VMs, one in each of three availability zones, and on
-2026-11-02 that this cluster is the scale-out for 100 times slice 1's
-load, while slice 1 starts on one VM per environment, as
-[Design for 100x, build at 1x](#design-for-100x-build-at-1x) says. So in
+2026-11-02 that this cluster is the scale-out path, which the directive of
+2026-11-03 sizes at 10 times slice 1's load, while slice 1 starts on one
+VM per environment, as
+[Design for 10x, plan the rewrite before 100x, build at 1x](#design-for-10x-plan-the-rewrite-before-100x-build-at-1x) says. So in
 slice 1 one VM runs all 24 of its deployment's containers, and the cluster
 would spread them 8 to a VM. Shadow runs on machines of its own rather
 than sharing paper's, as the owner ruled the same day. The supervisor's instances compete for its queue
@@ -2194,7 +2227,8 @@ once rather than re-argued.
 | CRDTs, structures that merge copies written in parallel | Every fact here has one writer, so nothing is ever merged |
 | An ordered queue per account, such as SQS FIFO | A kill switch's event could wait behind a plan's, and nothing needs the ordering, since the state lives in the keys |
 | A Bloom filter for duplicate fills | The set of fill ids is small and exact and already sits in the journal, and a Bloom filter answers only probably |
-| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out for 100 times the load. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
+| One VM per environment, with a replacement started by hand | The owner ruled on 2026-11-01 for a cluster of three VMs across three availability zones, and on 2026-11-02 that slice 1 starts on one VM per environment, with the cluster as the scale-out path, which the directive of 2026-11-03 sizes at 10 times the load. Even the one VM sits in an Auto Scaling group of one, which replaces it without a person |
+| Designing for 100 times the first load | The owner ruled for it on 2026-11-02 and adopted Jeff Dean's rule in its place on 2026-11-03, because a design that promises no rewrite at 100 times tends to build for load it may never see. The design now promises 10 times and writes down where the rewrite's planning starts |
 | A container orchestrator, such as ECS on EC2, EKS or Nomad, placing containers across the cluster | Three identical VMs that each run one instance of everything need no placement, and an orchestrator's control plane has run zero times here, which is also why Fargate is turned down for slice 1. VMs that need different mixes of containers would reopen it |
 | Rolling a new release out VM by VM during a session, by instance refresh, CodeDeploy or an ECS rolling deployment | Each tool assumes two versions can serve side by side while it rolls. Here two releases in one run write different bytes to one key, which the create-only rule turns into a halt, so a release changes only at a session's start, through the pin and the promotion from shadow to paper to live. The owner ruled on 2026-11-01 that instance refresh rolls out changes to the VM image instead, outside sessions |
 | AWS CodeDeploy for the cluster | Its agent installs a release on each VM, which the pin and the image pull already do, and it adds an agent and a role to every VM. Instance refresh covers the VM image without either |
