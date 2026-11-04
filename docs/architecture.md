@@ -597,13 +597,16 @@ sequenceDiagram
     opt a resting order the plan cancels or replaces
         X->>F: the account's lease taken
         X->>J: cancel journaled
-        X->>F: no run or account halt, own send result empty, lease tag unchanged, and before the cancel cutoff?
+        X->>F: no run or account halt stored or on the plan's lease, own send result empty, lease tag unchanged, and before the cancel cutoff?
         X->>B: cancel, by the broker's order id the ack journaled
-        B-->>X: cancelled, filled first, or no answer
+        B-->>X: cancelled, filled first, accepted, or no answer
+        opt accepted, or no answer
+            X->>B: one lookup, by client order id
+        end
         X->>J: the old order's outcome or its doubt journaled, any fill included
         X->>F: the account's lease deleted
     end
-    loop each order the order manager plans, a replacement included
+    loop each order the order manager plans, a replacement only if its old order settled
         X->>F: the account's lease taken
         X->>X: kill switch blob absent, and before the cutoff?
         X->>J: intent journaled
@@ -660,7 +663,8 @@ The phases in order.
    journal so the risk gate sees every order already approved, asks the gate,
    journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run or of the account is stored and the plan's lease says the run is running, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
    it looks up each leg, and cancels any accepted leg whose partner was
-   rejected or never sent.
+   rejected or never sent, and any leg whose plan cancel was stopped after its
+   partner's was confirmed.
    Monitoring writes the decision's report and pings the heartbeat service
    last, so a decision that dies or hangs never pings.
 
@@ -971,7 +975,7 @@ here, with the issue that builds its drill.
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, one that never answers the cancel, and one that loses the answer and then fills the old order, expecting no resend and no replacement sent before the old order settles | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A plan's cancel left `CancelSent` after its one lookup, and its replacement abandoned | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, one that never answers the cancel, and one that loses the answer and then fills the old order, expecting no resend, as design.md proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and no replacement sent before the old order settles | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Monitoring killed after it claimed an alarm and before its push | The halt the alarm names | Kill monitoring right after its claim is stored, expecting the restarted instance or another to push the alarm, and a second push only when no sent record exists | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1653,7 +1657,7 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails, the switch, run halt, own result key, lease tag or cutoff, which halt, or strategy off, which abandons without halting
+    Sending --> Abandoned: a check before the broker call fails, the switch, run or account halt, own result key, lease tag or cutoff, which halt, or strategy off, which abandons without halting
     Acknowledged --> Expired: day or market-on-close order not filled by the close
     PartlyFilled --> Expired: rest not filled by the close
     Sending --> Rejected: broker refuses the submit
@@ -1713,7 +1717,7 @@ stateDiagram-v2
     Preparing --> Deciding: snapshot written, book reconciled
     Deciding --> Halted: a worker halts
     Deciding --> Sending: target portfolio written
-    Sending --> Halted: risk gate refuses, kill switch set, run halted, lease lost, cutoff passed, clocks disagree, a flagged price, an order in doubt, or a restart mid-send
+    Sending --> Halted: risk gate refuses, kill switch set, run or account halted, lease lost, cutoff passed, clocks disagree, a flagged price, an order in doubt, or a restart mid-send
     Sending --> Reporting: every order journaled and answered
     Halted --> Reporting: a halt written as a result, then journaled and alarmed by monitoring
     Reporting --> Done: report written, heartbeat pinged
@@ -2288,7 +2292,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    needs no deploy.
 5. **The runtime's credential does only what the rules need.** It can create
    and read blobs under the runs', the journal's and the simulated accounts'
-   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` for execution's role, and list each of those prefixes, without which S3
+   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's role, and list each of those prefixes, without which S3
    answers a missing key with "access denied" rather than "no such blob". A
    drill reads an absent switch with that list right and expects "no such
    blob". It can also create heartbeats and restart records under their own
