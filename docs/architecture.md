@@ -2115,7 +2115,6 @@ not come again is kept rather than discarded.
 | --- | --- |
 | A run's plan, which only the supervisor's role may create | `runs/<deployment>/<run>/plan.json` |
 | The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
-| A consumer's attempt record, naming the record before it is consumed | `runs/<deployment>/<run>/attempts/<component>/<record>.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
@@ -2486,7 +2485,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
     runs no project code beyond the image build, so nothing the tests load
     can sign an attestation. Its image build installs every dependency from
     wheels only, with `uv`'s `--no-build`, so the job that signs runs no
-    dependency's build code either. That job alone holds `packages: write` and `attestations: write`. It and each deploy and promotion job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
+    dependency's build code either. That job alone holds `packages: write` and `attestations: write`. It and each deploy, promotion, plan, apply and VM change job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
     `refs/heads/main`, and the deploy runbook on
     [#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a
     digest that fails. Every action is pinned to a full commit hash. The
@@ -2707,7 +2706,7 @@ Eleven rules keep the environments apart.
    "release pin not trusted" and alarms. The checks run here because a pin
    is a plain S3 write, so a check inside a tool can be skipped by writing
    the pin directly. It then resolves the pin once into a release file in memory-backed
-   storage, and every unit start and restart that session uses it. A
+   storage, beside the bundle it verified, and every unit start and restart that session uses them, so a restart on the same VM reaches no outside service. A
    replacement VM that starts mid-session runs the release the run's
    plan names, so a pin moved since the session started waits for the next
    session, as rule 11 says. A VM that finds its pin missing or
@@ -2730,7 +2729,7 @@ Eleven rules keep the environments apart.
    `/ithildin/<environment>/heartbeat/`. Each environment's worker roles
    trust only that environment's VM role, by its exact ARN. Every role but
    the owner's refuses `iam:PassRole` on every runtime role, apart from the
-   VM change credential on the VM's role alone, for EC2, and
+   VM change credential, and on shadow the apply credential, on the VM's role alone, for EC2, and
    `sts:AssumeRole` on another environment's roles. Every VM and volume
    carries a tag naming its environment, and every
    principal but the owner's refuses to add, change or remove it. The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries rule 3's refusals. The tags and paths
@@ -2860,7 +2859,7 @@ and one for paper, each running three instances of each component and of
 the supervisor, a third once live exists, and three VMs per environment
 once load calls for rule 11's cluster, as question 12 now says. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
-written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy and promotion jobs hold
+written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy, promotion, plan, apply and VM change jobs hold
 AWS roles in a public repository's workflows, guarded by the trust rules of
 rule 6. And the drills run once per environment and grow with each pair.
 
