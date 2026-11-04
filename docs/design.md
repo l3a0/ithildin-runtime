@@ -1414,7 +1414,7 @@ would take about 9 minutes at the standard library's cost, 35 to 52 minutes at
 pyarrow's and 3 hours at pandas'.
 
 The event pipeline makes the span cheap. A worker starts once and runs its
-receive loop until it has a result for every decision in the plan. In
+receive loop until the run's stop. In
 shadow, paper and live the plan holds one trading day's decisions. In a
 backtest it holds the whole history. Each worker hands every decision to its pool
 of handlers, in the plan's order, and the exit rule is the same in both. A worker carries nothing from one
