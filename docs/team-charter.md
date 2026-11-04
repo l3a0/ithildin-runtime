@@ -19,7 +19,10 @@ printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), wh
 building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
 Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
 1996), whose rules for estimating, cutting and tracking the work the design doc's
-[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. The
+[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. Citations like (BM L3354) are
+Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
+module boundaries, releases, tracing and dependency failure the roles below also adopt, and (BM L\~932)
+marks a location good to about one screen. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -133,7 +136,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) says.
   Adds a parallel session to late work only when that work splits into
   pieces that need no exchange with the rest, which is the part of Brooks's
-  law McConnell asks readers to remember (RD p. 378).
+  law McConnell asks readers to remember (RD p. 378). Here never has two build sessions edit
+  one module at the same time, and names one session as the owner of a module
+  while its work is open. That is this charter's reading of Newman's finding
+  that a structure with a high cost of coordination shapes the system it
+  builds (BM L3853, BM L3905).
 - **Vetoes:** work that builds a layer nobody can run yet, and hardening on
   a path that has run zero times outside the exceptions in the premise. Also
   a slip answered by dropping something that rule 3 of the design doc's
@@ -148,7 +155,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** owns the module interfaces, the event and clock model shared by
   backtest, paper and live, the design doc's considered-and-rejected
   register, and its design principles. Keeps each module's written scale
-  limit current, and draws the fault boundaries with the crossings the design
+  limit current, with the level at which planning a rewrite starts written
+  beside it, and holds the design doc's rules for cutting modules and
+  components (BM L740, BM L777), and draws the fault boundaries with the crossings the design
   doc lists. A crossing it does not list breaks the boundary (AoS L7170).
   Names the load parameters each scale limit is measured in, since a design
   built on the wrong ones is wasted (DDIA L627). Owns the shared clock's
@@ -227,10 +236,16 @@ time is the scarce resource, so work reaches the owner already reviewed.
   entry before its send, journals every broker message as received, and
   applies each fill once through a uniqueness constraint (DDIA L16438, L7635).
   Keeps the design doc's procedure for orders in doubt when the journal
-  cannot be read.
+  cannot be read. A cancel is never sent again. Whether an order still needs
+  one is decided by the next decision, or by the recovery that runs when a
+  decision times out, under the owner's 2026-11-03 ruling on
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
+  limit and its breaker, and puts the decision's id inside each client order
+  id, under the design doc's faults and monitoring rules (BM L4252,
+  BM L3354).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
-  cannot match, any resend of an order in doubt, an order settled as unsent
+  cannot match, any resend of an order or a cancel, an order settled as unsent
   because a broker lookup found nothing, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
   (DDIA L4868), a vendor's type, string or exception that reaches past its
@@ -256,6 +271,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Once the kill switch or a loss stop fires, only the owner releases it. Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
+  Holds that no caller carries a flag, a role or a credential that lets its
+  orders skip a limit, and checks every cancel the gate
+  exempts against the design doc's rule for them (BM L3634).
   Scores each failure mode of a change to the order path by likelihood,
   severity and how hard the failure is to detect, each on a scale of 1, 3 or
   9, multiplied, so a silent failure scores worst (AoS L5635). Splits any
@@ -292,7 +310,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's ten
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -313,7 +331,16 @@ time is the scarce resource, so work reaches the owner already reviewed.
   change rather than claim correctness, and each names the commit and the
   run that produced it. Keeps the contract suite each stand-in adapter
   passes, the second implementation of the money arithmetic in the tests,
-  and the measurement each tuning change carries, per the design doc.
+  and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate only as a skip whose reason
+  links an issue, and fixes it or replaces it
+  with a smaller one. A test that guards a hard limit leaves the gate only once
+  a smaller replacement covering the same behavior passes there. Never reruns
+  a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named
+  the normalization of deviance (BM L2868, BM L2917). Keeps
+  tests that run the full loop, beyond the injected faults, to a short named
+  list of journeys in `tests/` (BM L2948), and takes the book's order
+  of magnitude more tests at each step down the pyramid as guidance
+  (BM L2798).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -343,7 +370,14 @@ time is the scarce resource, so work reaches the owner already reviewed.
   offset and sync age, which halt trading past their bounds, and the lag of
   capture and of the off-machine copy, which alarms, since a drifting clock
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
-  the dead-man check off the machine, and drills the restore on a schedule.
+  the dead-man check off the machine, and drills the restore on a schedule. Owns the release
+  handover the design doc's rules describe: one artifact built once for every
+  environment, its digest pinned for each session, a release that changes
+  only between sessions, and cancels and the kill switch served while a
+  session is open, with an alarm when no release reads execution's queue
+  past a written bound
+  (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
+  rewrite-planning load, per the design doc.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -359,7 +393,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   lines carry no credential, token or account number,
   since attackers read error messages (CC p. 196), by causing a failure with
   a fake credential against the simulated broker with the network off, and
-  that every committed recording of a broker response is scrubbed of them.
+  that every committed recording of a broker response is scrubbed of them. Checks
+  that each use holds its own credential where the vendor issues separate
+  ones, such as market data, the paper account and the live account, so any
+  one can be revoked alone (BM L\~3564).
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -545,9 +582,19 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
-  with its name as the reason: take the account's lease, verify the journal's
-  checksums and sequence to its head, check the clock's offset and sync age,
-  reconcile, read the halt state, and only then enable strategies.
+  with its name as the reason. Read only, compare every component's artifact
+  digest with the session's pin and capture's with marketlake's record, check
+  the tracked configuration's keys against the committed list, read the risk
+  gate's hard caps, verify the journal's checksums and sequence to its head,
+  and check the clock's offset and sync age. A failure of the release's own
+  digest or the journal check halts everything and pages the owner, naming
+  the broker's own interface. A failure of any other check halts new orders
+  only, and the release still serves cancels and the kill switch. Then take
+  the account's lease, reconcile, read the halt state, and only then enable
+  strategies. How a release takes over from the last session is
+  [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
+  take of the lease follows
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
   day. A mismatch halts trading.
@@ -629,3 +676,9 @@ doc's register.
 and team structure have no counterpart for agent sessions, which keep no
 morale and work no hours, and are left out. What it adds here is the planning of the work, in the
 design doc's rules for cutting it.
+
+*Building Microservices* dates from 2015 and argues for splitting a system into services. Cutting a
+component into new components needs the evidence the design doc's module rule 2 asks for, and its clones
+and splits by key follow the scale rules instead.
+Breaking production on purpose, choreography inside one component's path, and storing only the data
+an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
