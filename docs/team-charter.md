@@ -239,8 +239,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   cannot be read. A cancel with no answer is resent only after a lookup
   shows the order still working and no cancel pending, and only where the
   contract suite's latest scheduled run against the broker's paper account
-  shows the broker applies a repeated cancel at most once,
-  under the owner's 2026-11-03 ruling on
+  shows the broker applies a repeated cancel at most once, a run counting
+  only for the account it ran against, and one unsettled past a written
+  time halts new orders and pages the owner, under the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
   limit and its breaker, and puts the decision's id inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
