@@ -348,8 +348,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
   that the Startup checks run in CI as the same code that clears a release, that each check that
   starts something waits on readiness rather than a fixed sleep, that a Startup run against the simulated broker sends nothing, that each run-time fault the group
-  handles is among the injected faults, and that each deploy-time failure has its CI test beside its
-  drill (DT p. 200, p. 247).
+  handles is among the injected faults or, for the restart cap and a crash loop slower than its
+  window, runs under the host's real supervisor as the group says, and that each deploy-time failure
+  has its CI test beside its drill (DT p. 200, p. 247).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -580,7 +581,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has left cancels and the kill switch served, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that finds a protected store missing has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
@@ -614,8 +615,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   says, which also says what each finding serves, read execution's restart
   count and switch, and check the clock's offset and sync age. A failure of the release's own
   digest or the journal check halts everything and pages the owner, naming
-  the broker's own interface. A failure of any other check halts new orders
-  only, and the release still serves cancels and the kill switch. Then take
+  the broker's own interface. A failure of any other check, apart from a store finding, which follows that
+  rule, halts new orders only, and the release still serves cancels and the kill switch. Then take
   the account's lease, reconcile, read the halt state, and only then enable
   strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
@@ -708,3 +709,8 @@ component into new components needs the evidence the design doc's module rule 2 
 and splits by key follow the scale rules instead.
 Breaking production on purpose, choreography inside one component's path, and storing only the data
 an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
+
+*The DevOps 2.0 Toolkit* dates from 2016, and its tools are examples rather than choices made here.
+Deploying every passing commit, feature toggles that hold unfinished work, a service registry with a proxy,
+restarts without limit, fixed sleeps and switching back on its own after a failed check are left out,
+with the reasons in the design doc's register.
