@@ -322,8 +322,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
   Holds that no caller carries a flag, a role or a credential that lets its
-  orders skip a limit, and checks every cancel the gate
-  exempts against the design doc's rule for them (BM L3634).
+  orders skip a limit, and checks every cancel that skips the gate's
+  limits against the design doc's rule for them (BM L3634).
   Scores each failure mode of a change to the order path by likelihood,
   severity and how hard the failure is to detect, each on a scale of 1, 3 or
   9, multiplied, so a silent failure scores worst (AoS L5635). Splits any
@@ -661,7 +661,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the clock's offset and sync age. A failure of the release's own digest or
   the journal check halts everything and pages the owner, naming the broker's
   own interface. A failure of any other check halts new orders only, and the
-  release still serves cancels and the kill switch. Then reconcile, read the
+  release still serves cancels, except a plan's own while a halt is stored,
+  and the kill switch. Then reconcile, read the
   halt state, and only then enable strategies. Execution takes the account's
   lease only around each change to the account, as the design doc's rule 9
   says, and how a release takes over from the last session is
