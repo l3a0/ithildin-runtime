@@ -597,18 +597,11 @@ sequenceDiagram
     opt a resting order the plan cancels or replaces
         X->>F: the account's lease taken
         X->>J: cancel journaled
-        X->>F: halt state clear, own send result empty, lease tag unchanged, and before the cancel cutoff?
+        X->>F: no run or account halt, own send result empty, lease tag unchanged, and before the cancel cutoff?
         X->>B: cancel, by the broker's order id the ack journaled
         B-->>X: cancelled, filled first, or no answer
         X->>J: the old order's outcome or its doubt journaled, any fill included
         X->>F: the account's lease deleted
-        loop no answer, while the stage's wait lasts, as proposed for design.md's faults rule 6
-            X->>F: the account's lease taken, and the same four checks
-            X->>B: lookup by client order id
-            X->>J: a new cancel journaled, when rule 6 allows one
-            X->>B: the new cancel
-            X->>F: the account's lease deleted
-        end
     end
     loop each order the order manager plans, a replacement included
         X->>F: the account's lease taken
@@ -618,14 +611,14 @@ sequenceDiagram
         X->>X: risk gate check
         X->>J: approval journaled
         X->>J: sending journaled
-        X->>F: switch absent, strategy not off, no halt of the run, own send result empty, lease tag unchanged, and before the cutoff?
+        X->>F: switch absent, strategy not off, no run or account halt, own send result empty, lease tag unchanged, and before the cutoff?
         X->>B: send, with its client order id
         B-->>X: ack
         X->>J: ack journaled
         X->>F: the account's lease deleted
     end
     X->>B: is every leg accepted?
-    alt a leg rejected or unsent while another is accepted
+    alt a leg rejected or unsent while another is accepted, or a leg's plan cancel stopped after its partner's was confirmed
         X->>F: the account's lease taken
         X->>J: each cancel journaled
         X->>F: lease tag unchanged, and before the cancel cutoff?
@@ -665,7 +658,7 @@ The phases in order.
    Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
    takes the account's lease, checks the kill switch again, journals the intent, replays the book from the
    journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run is stored and the plan's lease says the run is running, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
+   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run or of the account is stored and the plan's lease says the run is running, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
    it looks up each leg, and cancels any accepted leg whose partner was
    rejected or never sent.
    Monitoring writes the decision's report and pings the heartbeat service
@@ -978,7 +971,7 @@ here, with the issue that builds its drill.
 | A journal entry that changes the book lies past the send stage's sync, or an override whose blob is missing, whose hash differs or whose book has moved | The entry, the sync entry and the override's key | Write an override between the sync and the first send, and one naming stale book values | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The broker key cannot be read | The secret store's answer | Deny the execution user's read of the secret | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cancel failed or timed out | How many orders were cancelled and which failed | A broker double that refuses a cancel | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, one that never answers the cancel, and one that loses the answer, accepts the resend and then fills the old order, expecting no replacement sent before the old order settles | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A plan's cancel left `CancelSent`, or its replacement abandoned at the send cutoff | The old order's client order id, the cancel's answer and the replacement's | A broker double that fills an order while its cancel is in flight, expecting the replacement cut by that fill, one that never answers the cancel, and one that loses the answer and then fills the old order, expecting no resend and no replacement sent before the old order settles | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Monitoring killed after it claimed an alarm and before its push | The halt the alarm names | Kill monitoring right after its claim is stored, expecting the restarted instance or another to push the alarm, and a second push only when no sent record exists | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1672,6 +1665,7 @@ stateDiagram-v2
     CancelSent --> Filled: it filled before the cancel landed
     CancelSent --> Expired: not filled by the close, the cancel refused after the freeze
     CancelSent --> Acknowledged: the broker refuses the cancel, or a check before the broker call stopped it, journaled
+    CancelSent --> PartlyFilled: the same, for an order already part filled
     Refused --> [*]
     Abandoned --> [*]
     Lost --> [*]
@@ -1698,10 +1692,9 @@ or `Abandoned` halts. A cancel the broker reports as pending leaves the order
 to the state it was in, still counted, with the alarm for a cancel that
 failed. A cancel whose answer is lost stays `CancelSent`, and design.md's
 faults rule 6 says when it is sent again and when it halts new orders. For a
-plan's cancel the send stage runs that lookup and resend inside its own
-deadline, holding no lease between tries, as design.md proposes for
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10). A cancel a check stopped before the broker call journals that, and
-returns the order the same way.
+plan's cancel no stage resends yet, as design.md proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and the
+next recover stage settles what it can by lookup. A cancel a check stopped
+before the broker call journals that, and returns the order the same way.
 
 `Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Each way the cancel is journaled first, and the sync then counts it as the platform's own.
 
@@ -1721,7 +1714,7 @@ stateDiagram-v2
     Deciding --> Halted: a worker halts
     Deciding --> Sending: target portfolio written
     Sending --> Halted: risk gate refuses, kill switch set, run halted, lease lost, cutoff passed, clocks disagree, a flagged price, an order in doubt, or a restart mid-send
-    Sending --> Reporting: every order journaled and answered, and each plan's cancel settled or its wait over
+    Sending --> Reporting: every order journaled and answered
     Halted --> Reporting: a halt written as a result, then journaled and alarmed by monitoring
     Reporting --> Done: report written, heartbeat pinged
     Done --> [*]
@@ -2104,6 +2097,7 @@ not come again is kept rather than discarded.
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
+| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
@@ -3114,7 +3108,7 @@ accepted.
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
 | Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan cancels a resting stamped order the target no longer wants and replaces one that should change, by a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | Ruled by the owner on 2026-10-31. The method is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A stored halt stops a plan's own cancel, the one cancel a halt stops, and the send stage runs that cancel's lookup and resend inside its own deadline | A plan's cancel that goes on through a halt, a stage held until the cancel cutoff, which stalls every later decision, or a resend left to the next decision | An unwanted order can rest through a halt, and a lost plan cancel the stage cannot settle in time ends in rule 6's halt | The exception was ruled by the owner on 2026-11-04 on [#10](https://github.com/l3a0/ithildin-runtime/issues/10). The stage's wait is proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A stored halt stops a plan's own cancel, the one cancel a halt stops, and no stage resends a plan's cancel until a strategy rests orders across decisions | A plan's cancel that goes on through a halt, or a send stage that waits to resend, which stalls later decisions while it waits | An unwanted order can rest through a halt, and a lost plan cancel the next lookup cannot settle ends in rule 6's halt | The exception was ruled by the owner on 2026-11-04 on [#10](https://github.com/l3a0/ithildin-runtime/issues/10). The deferred resend is proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
