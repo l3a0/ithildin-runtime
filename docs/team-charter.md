@@ -22,7 +22,10 @@ Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* 
 [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. Citations like (BM L3354) are
 Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
 module boundaries, releases, tracing and dependency failure the roles below also adopt, and (BM L\~932)
-marks a location good to about one screen. The
+marks a location good to about one screen.
+Citations like (DT p. 247) are printed pages of Viktor Farcic's *The DevOps 2.0 Toolkit* (2016), whose
+rules for checking a release where it runs, building machines from code, healing without hiding a
+fault and gathering logs off the machine the roles below also adopt. The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -274,7 +277,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
-  Once the kill switch or a loss stop fires, only the owner releases it. Each
+  Once the kill switch or a loss stop fires on a live account, only the owner releases it,
+  and on paper and shadow the operator may too, under the owner's rulings on
+  [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each
   account's loss limit is its own, and no loss limit spans accounts, on the
   owner's ruling of 2026-11-02.
   Holds that no caller carries a flag, a role or a credential that lets its
@@ -317,7 +322,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
+  negative testing, checks recovery (AoS L5924). Keeps the design doc's twenty-two
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -348,6 +353,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   list of journeys in `tests/` (BM L2948), and takes the book's order
   of magnitude more tests at each step down the pyramid as guidance
   (BM L2798).
+  Checks, under the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
+  that the Startup checks run in CI as the same code that clears a release, that each check that
+  starts something waits on readiness rather than a fixed sleep, that no Startup check sends an order or a cancel, that each run-time fault the group
+  handles is among the injected faults or, for the restart cap and a crash loop slower than its
+  window, runs under the host's real supervisor as the group says, and that each deploy-time failure
+  has its CI test beside its drill (DT p. 200, p. 247).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -362,11 +374,14 @@ time is the scarce resource, so work reaches the owner already reviewed.
   its data outside its normal use, such as a deploy, a config edit or a
   credential rotation (AoS L3991, L3995). Whoever makes a change writes its
   line at the time: code changes come from git and the deploy tags, an
-  override or a switch flip goes in the journal, and a change on the host
-  goes in a file under `~/.config/ithildin-runtime/`. In an incident, once
+  override or a strategy's switch flip goes in the journal, and a restart or
+  scaling switch's flip and a change on the host go off the machine, where
+  [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names. In an incident, once
   trading is halted and the journal preserved, asks what changed most
   recently and proposes undoing it before diagnosing anything (AoS L4028).
-  The owner performs the undo when it is a deploy, and an undo never restores
+  The owner performs the undo when it is a deploy, apart from a release's rollback
+  by its pin on paper or shadow, which the operator may do under the owner's 2026-10-30
+  ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and an undo never restores
   a rotated credential. Keeps an incident, the event, apart from a problem,
   its cause, and closes the problem only when the fix holds in production
   (AoS L3311, L3404). Decides in advance what evidence to capture before
@@ -385,6 +400,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   past a written bound
   (BM L\~2160, BM L3044). Owns the synthetic event and the alarm at the
   rewrite-planning load, per the design doc.
+  Owns the rules of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
+  the infrastructure code, its scheduled check and its rollback, the restart cap of each component
+  and the switch that stops restarts and scaling, the log pipeline off the machine, and the drills
+  the Release table's Paper row lists for them (DT p. 88, p. 302).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -404,6 +424,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   that each use holds its own credential where the vendor issues separate
   ones, such as market data, the paper account and the live account, so any
   one can be revoked alone (BM L\~3564).
+  Checks the credential rules in rules 2 to 5 of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
+  and the policy tests [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds for them, and that every
+  interface that can control a host or a container takes only authenticated calls, where the book's own setup listens on any address (DT p. 92).
+
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
   objects.
@@ -567,7 +592,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, and a backup of captured data and the journal has been restored and checked |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
@@ -578,8 +603,11 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 2. **Code:** review checks the implementation against the design.
 3. **Test:** replays and stress tests run against the previous release's
    numbers.
-4. **Production:** the operator measures the first sessions after release
-   against the sessions before it, and an unexplained change is a finding.
+4. **Production:** the Startup checks clear the release where it runs, as
+   the same code its tests ran, under the design doc's
+   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault).
+   The operator then measures the first sessions after release against the
+   sessions before it, and an unexplained change is a finding.
 
 ### 6. Operate
 
@@ -593,10 +621,13 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
   gate's hard caps, verify the journal's checksums and sequence to its head,
-  and check the clock's offset and sync age. A failure of the release's own
+  check the journal and every protected store as rule 3 of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
+  says, which also says what each finding serves, read every component's restart
+  and scaling switch and execution's restart count, and check the clock's offset and sync age. A failure of the release's own
   digest or the journal check halts everything and pages the owner, naming
-  the broker's own interface. A failure of any other check halts new orders
-  only, and the release still serves cancels and the kill switch. Then take
+  the broker's own interface. A failure of any other check, apart from a store finding, which follows that
+  rule, halts new orders only, and the release still serves cancels and the kill switch. Then take
   the account's lease, reconcile, read the halt state, and only then enable
   strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
@@ -689,3 +720,8 @@ component into new components needs the evidence the design doc's module rule 2 
 and splits by key follow the scale rules instead.
 Breaking production on purpose, choreography inside one component's path, and storing only the data
 an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
+
+*The DevOps 2.0 Toolkit* dates from 2016, and its tools are examples rather than choices made here.
+Deploying every passing commit, feature toggles that hold unfinished work, a service registry with a proxy,
+restarts without limit, fixed sleeps and switching back on its own after a failed check are left out,
+with the reasons in the design doc's register.
