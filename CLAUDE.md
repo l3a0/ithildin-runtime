@@ -97,10 +97,11 @@ Two places keep the bare form.
 
 ## The design doc carries the reasoning
 
-Two conventions keep [docs/design.md](docs/design.md) usable as the project grows.
+Three conventions keep [docs/design.md](docs/design.md) usable as the project grows.
 
 - **The considered-and-rejected register.** Cut machinery is pinned in the doc with its rationale, so nothing gets re-proposed after it was decided against. When something new is cut, pin it the same way.
 - **Pinned vocabulary.** Terms with exact definitions are listed and reused. Do not coin synonyms for a term the doc already defines.
+- **One section holds every decision (owner directive, 2026-11-04).** Body text in `docs/` says what the platform does, and never who decided it, when, or on which issue. Write "Paper and live never share a VM", never "The owner ruled on 2026-10-30 that paper and live never share a VM". Every decision is one entry in design.md's `## Decisions`, ordered by the date it was decided, oldest first, with what was decided, a link to where it was decided, and the section it governs. A decision that changes an earlier one gets its own entry at its own date, and the earlier entry stays, while the body changes to what now stands. A new ruling therefore lands in two places in the same change: the body states it as plain fact, and the section gains its entry. A proposal is not a decision, so it keeps its "this doc proposes" label in the body until the owner rules, because without that label it would read as a rule. The price is that a reader of a rule goes to the section to learn why it binds. A dated line on the issue still records each ruling, per the tracker directive.
 
 One lesson is worth keeping in view. Reviews armor what exists. They rarely ask whether it should exist. Ask "why is this needed" before "is this correct."
 

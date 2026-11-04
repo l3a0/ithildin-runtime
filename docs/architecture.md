@@ -12,27 +12,22 @@ the platform in which every module exists in its simplest form and one
 strategy runs end to end, every trading day, in shadow mode and on Alpaca's
 paper account. Shadow decides on live data and fills every order in the
 platform's own simulated broker. Paper, a practice account at a broker that
-trades with no real money, sends the same decisions to Alpaca. The owner
-ruled on 2026-10-29 that the paper account waited, and on 2026-11-01 that
-paper is part of slice 1. Each
+trades with no real money, sends the same decisions to Alpaca. Each
 module issue, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), still decides what
 its module must do. Where this doc and an issue disagree, the issue wins.
 
-The owner ruled on 2026-10-29 that each component runs as its own process and
+Each component runs as its own process and
 passes everything to the others through files, so a failure stays inside one
-process and every input and output can be read afterwards. So the diagrams draw one worker per module, each a process the host keeps running and the supervisor only messages, rather than one program calling each module in turn. The owner added the same day that the platform
-is an event pipeline with a queue per component: each component listens for events on its queue, and an event reaches a component's queue whenever there is something new for it. The owner ruled on 2026-10-31 that the event is S3's own notification of the write, with no polling of storage. S3 hands that notification to EventBridge, AWS's event router, which copies it to SQS, AWS's queue service, where the worker waits for it. Every file is a blob in S3, written once at a key
+process and every input and output can be read afterwards. So the diagrams draw one worker per module, each a process the host keeps running and the supervisor only messages, rather than one program calling each module in turn. The platform
+is an event pipeline with a queue per component: each component listens for events on its queue, and an event reaches a component's queue whenever there is something new for it. The event is S3's own notification of the write, with no polling of storage. S3 hands that notification to EventBridge, AWS's event router, which copies it to SQS, AWS's queue service, where the worker waits for it. Every file is a blob in S3, written once at a key
 fixed by the run, the stage and the decision, and the VM keeps no state.
 The journal is the one numbered log.
 [design.md](design.md#processes-and-files)'s `## Processes and files` carries
 the rules the workers follow.
 
-The owner's part in reviewing this doc is two sections at the end.
-
-1. [Decisions](#decisions), a table where each row says what this doc chose, what it
-   turned down and where the choice gets settled. Object to a row there.
-2. [Questions for the owner](#questions-for-the-owner), twelve questions the build depended on, each with what was recommended and how the owner ruled. The owner has answered all twelve, and the section ends with the last two the owner ruled.
+The owner's part in reviewing this doc is one section at the end, [Proposals awaiting a ruling](#proposals-awaiting-a-ruling), a table where each row says what this doc proposes, what it
+turned down, the price and the issue it goes on. Object to a row there. Settled choices sit in [design.md](design.md)'s `## Decisions`, ordered by when they were decided.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
 what it shows and what to look for. Nothing here is built yet.
@@ -73,8 +68,7 @@ broker on its own, off the path that sends orders.
 - [Where it runs](#where-it-runs), with [Four environments](#four-environments)
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
 - [How the four acceptance tests exercise it](#how-the-four-acceptance-tests-exercise-it)
-- [Decisions](#decisions)
-- [Questions for the owner](#questions-for-the-owner)
+- [Proposals awaiting a ruling](#proposals-awaiting-a-ruling)
 
 ## The strategy the skeleton runs
 
@@ -190,7 +184,7 @@ Four facts make it the simplest candidate there.
    Sharpe ratio at 0.96467289, both to 5e-9, over 1,480 rows. It also pins 162
    changes of unit, made of 77 entries, 76 exits and 9 reversals.
 
-The replication has four quirks. The owner ruled on 2026-11-01 that the
+The replication has four quirks. The
 engine carries none of them: it runs any strategy, and it keeps a capital
 account. So each quirk lives in the strategy's own pieces or in test 1's
 comparison, never in a shared module, and a second strategy changes none of
@@ -261,8 +255,8 @@ that captures market data before anything computes on it. The sources differ
 in volume, cadence and shape, so each is transformed into marketlake once,
 stored durably there, and read by every mode through one query. The runtime
 runs on a VM of its own and reads a local mirror of the partitions it
-downloads from marketlake's bucket, as `## Where it runs` says. The owner ruled
-so on 2026-10-29, and [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
+downloads from marketlake's bucket, as `## Where it runs` says.
+[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
 bar.
 
 1. **Captured bars,** which shadow, paper and live trading read. Shadow
@@ -289,16 +283,15 @@ VM deletes older partitions from its own disk once its backup bucket holds
 them, but the runtime reads a mirror of that bucket, which keeps every
 session, and never the VM's disk. So the 2006 to 2012 history and a lookback
 of any length stay readable.
-[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) recorded this on 2026-10-30, which corrects an earlier reading here that the VM's 22-session window
-would drop them. The owner's ruling of 2026-10-29 to make that window
-configurable went ahead in marketlake for its own readers.
+[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) records this: the VM's 22-session window does not drop them. marketlake makes that window
+configurable for its own readers.
 [l3a0/marketlake PR #959](https://github.com/l3a0/marketlake/pull/959), which closes
 [l3a0/marketlake#953](https://github.com/l3a0/marketlake/issues/953), gives option chains,
 quotes and bars their own windows on the VM and keeps every bars session
 there. The override per ticker is deferred as
 [l3a0/marketlake#954](https://github.com/l3a0/marketlake/issues/954), since nothing reads it.
 
-The owner ruled on 2026-10-29 that the runtime may read the day's data before
+The runtime may read the day's data before
 marketlake seals it. marketlake's capture daemon already writes a segment
 each cycle and never rewrites it once its manifest entry lands, so marketlake
 uploads each segment to its bucket as soon as that entry lands, refusing to
@@ -308,9 +301,9 @@ hours reads those segments, and the decision minute
 running, ten minutes before the close, is one such time. The data worker reads
 the segments up to the decision time, as a provisional read, because marketlake's validation
 battery runs only when it seals a day at the close plus fifteen minutes. So the data worker runs its own minimum checks before anything decides. The
-owner ruled on 2026-10-30 that the runtime turns the segments into quote rows
-itself, when it reads what it needs, with marketlake's package, which the
-Decisions table records as a dependency at a pinned commit. Once a downloaded
+runtime turns the segments into quote rows
+itself, when it reads what it needs, with marketlake's package, a dependency
+at a pinned commit. Once a downloaded
 segment matches the SHA-256 in its manifest entry, as rule 8 of
 `## Where it runs` requires, that package's
 `lake.journal.read_segment(path)` reads it and refuses a damaged file or bytes
@@ -321,7 +314,7 @@ through, which is [l3a0/marketlake#143](https://github.com/l3a0/marketlake/issue
 doc proposes a test of that case for
 [#5](https://github.com/l3a0/ithildin-runtime/issues/5). A
 missing or stale quote at the decision time halts the decision, and a price
-spike is flagged in the snapshot without halting. The owner ruled on question 10 that the skeleton's strategy trades the close and decides this way, and asked on 2026-11-01 for times stated as minutes before the close, so it decides at close−20, 15:40 on a full day. Whether a decision reads segments or sealed partitions follows from its own time against the day's seal time in marketlake's manifest, never from whether the day is sealed when the read happens. So a backtest that replays a close−20 decision reads the segments that existed then, as the live decision did, and test 2 can pin a stretch read before sealing. A decision after the seal time reads sealed partitions and needs none of this. The snapshot names each segment it read by key, S3 version and SHA-256, and marks the read provisional. Once marketlake seals the day,
+spike is flagged in the snapshot without halting. The skeleton's strategy trades the close, so its fill lands on the close the backtest fills at, and decides this way. Times are stated as minutes before the close, so it decides at close−20, 15:40 on a full day. Whether a decision reads segments or sealed partitions follows from its own time against the day's seal time in marketlake's manifest, never from whether the day is sealed when the read happens. So a backtest that replays a close−20 decision reads the segments that existed then, as the live decision did, and test 2 can pin a stretch read before sealing. A decision after the seal time reads sealed partitions and needs none of this. The snapshot names each segment it read by key, S3 version and SHA-256, and marks the read provisional. Once marketlake seals the day,
 monitoring compares each quote the snapshot used with the sealed row of the
 same ticker and minute, by bid, ask and last as received, because a segment
 and the partition built from it never share bytes. It journals and alarms a
@@ -343,8 +336,8 @@ bar when its 16:15 quote was missed.
 The 15:40 decision on a session needs the previous session's official daily
 bar for its lookback. Until now marketlake fetched a session's bar only after
 the next session's quotes sealed, so at 15:40 the newest bar in the lake was
-two sessions old, and the lookback would halt for the missing one, as data not ready under rule 8 of `## Where it runs`. On
-2026-10-30 the owner chose to remove that wait rather than serve a provisional
+two sessions old, and the lookback would halt for the missing one, as data not ready under rule 8 of `## Where it runs`. marketlake removes that
+wait rather than serve a provisional
 bar. [l3a0/marketlake#952](https://github.com/l3a0/marketlake/issues/952) is closed as not planned,
 and [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) fetches each bar at its own
 session's 18:30 sweep, still checked against that session's 16:15 quote.
@@ -358,12 +351,12 @@ close. That is the timing gap item 1 of
 `## How the four acceptance tests exercise it` names, which shadow running
 measures.
 
-It sends orders to one place, Alpaca's paper account, which the owner ruled into slice 1 on 2026-11-01. Shadow fills its own orders in the simulator, so they reach no broker.
+It sends orders to one place, Alpaca's paper account. Shadow fills its own orders in the simulator, so they reach no broker.
 
 Two switches come from outside the loop.
 
 1. **The live switch** is the live environment, which only the owner builds, gives the live key and pins a release in, which is hard limit 1 in [CLAUDE.md](../CLAUDE.md). Paper and live never share a VM, a bucket or a key, as `### Four environments` says.
-2. **The kill switch** halts trading. The owner ruled on 2026-10-28 that the
+2. **The kill switch** halts trading. The
    risk engineer builds it and writes when to pull it, and the operator pulls
    it by that guidance. The owner can pull it too.
 
@@ -371,7 +364,10 @@ A dead-man check raises an alarm when a ping it expects fails to arrive. Here
 monitoring pings a heartbeat service as each decision's last step, and the
 service alarms when a ping is late against the deployment's schedule. The service sits outside the machine because a
 check on the same machine dies with it, and a machine where nothing runs is
-the failure the check exists for.
+the failure the check exists for. The heartbeat service is healthchecks.io, in the
+project marketlake already runs, and its ntfy push and email integrations are
+the alert channel.
+
 
 ## The loop and its adapters
 
@@ -381,8 +377,8 @@ name for that shape is ports and adapters. A port is an interface the modules
 define, and an adapter is one implementation of it that talks to the outside
 world. No module imports an adapter.
 
-The owner ruled on 2026-10-29 that each component runs as its own process,
-that processes pass everything through files, and that the platform is an
+Each component runs as its own process,
+processes pass everything through files, and the platform is an
 event pipeline. [design.md](design.md#processes-and-files)'s
 `## Processes and files` gives the reasoning and the rules. So each module
 here runs as one worker, a process of its own that the host keeps running.
@@ -608,11 +604,11 @@ Three things the diagram rules out.
 ## One trading day
 
 A sequence diagram shows the same pieces in time order. This is one paper
-decision with nothing wrong, for the skeleton's daily strategy. The owner
-ruled on 2026-10-29 that the platform trades at any time of day and as often
+decision with nothing wrong, for the skeleton's daily strategy. The
+platform trades at any time of day and as often
 as a strategy needs, so the time comes from the strategy's schedule, as
-design.md's `### Strategies, schedules and decisions` says. The owner ruled on
-question 10 that the skeleton trades the close, so the diagram draws its
+design.md's `### Strategies, schedules and decisions` says. The
+skeleton trades the close, so the diagram draws its
 decision at close−20, 15:40 on a full day, on marketlake's segments read before sealing, with
 market-on-close orders that fill at the close. A strategy that decides
 several times a day runs the same three phases once per decision, with the
@@ -761,8 +757,8 @@ The phases in order.
 3. **Send.** Whichever execution instance receives portfolio construction's
    result reads the target portfolio it lists, and writes a create-only
    claim on the send stage naming its handler, so an instance that finds a
-   claim it did not write never plans for that decision. Following the owner's ruling to
-   fetch and sync before changing state, it first fetches the broker's
+   claim it did not write never plans for that decision. Since every
+   step fetches and syncs before changing state, it first fetches the broker's
    positions, open orders and fills again, journals any fill that arrived
    since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person. Only then does it journal the target whole, with the planned
    orders and their client order ids, the journal entry it synced through, a
@@ -785,8 +781,7 @@ journaled before it is sent. If the execution worker dies after "sending
 journaled" and before the ack, the journal holds an order in doubt. The next
 execution worker asks the broker for it by its client order id, an id the
 platform chooses and sends with the order, rather than sending it again.
-Alpaca, the broker the owner chose on 2026-10-30 for paper and on 2026-11-01
-for live, accepts a client order id and can look an order up by it. Its order
+Alpaca, the broker for paper and for live, accepts a client order id and can look an order up by it. Its order
 reference does not say whether it refuses a second order with the same id, so
 nothing here relies on that, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) tests it on the paper account as
 a second line of defence.
@@ -953,7 +948,7 @@ Any answer other than "no such blob" reads as fired. `ithildin stop clear
 only the owner may, and on shadow and paper the operator may too, as the
 charter's owner and risk engineer sections say. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
 lists the limit as "an automatic unwind and stop", and an unwind is itself a
-trade. Slice 1 stops only, as question 8 settles.
+trade. Slice 1 stops only.
 
 ### The book and the broker disagree
 
@@ -1039,7 +1034,8 @@ it. Monitoring's report says the switch is set. A switch that cannot be read hal
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close, so a switch
 pulled in that window stops nothing already sent unless it also cancels
-them, which is why it does, as question 7 settles. The exchange stops taking
+them, which is why it does. Cancelling an unfilled order sells nothing, so
+the pull is still a stop and not a flatten. The exchange stops taking
 cancels of closing-auction orders some minutes before the close, so a switch
 pulled after that cannot stop the fill, and execution's report of its
 cancels says so. The cancel cutoff is the earlier of Alpaca's and the exchange's.
@@ -1168,8 +1164,8 @@ reads.
 
 The platform halts rather than guess, so every halt that needs judgement
 waits for a person, and the person's actions are as much a part of the
-record as the platform's. The owner ruled on 2026-10-29 that the owner or
-the operator clears a halt, and that only the owner clears a live account's
+record as the platform's. The owner or
+the operator clears a halt, and only the owner clears a live account's
 kill switch. Until now the docs said only that each is "a command". This
 section is this doc's proposal for what those commands are and how an alarm
 leads to one, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
@@ -1181,7 +1177,7 @@ owner's or the operator's own machine with their own AWS credential, never
 on the runtime's VM. Its writes go through the same journal and storage
 contract in `core` that the workers use, so a person's entry is checked,
 chained and refused on a stale number exactly as a worker's is, and the
-tool fetches the journal's end before it writes, as design.md's ruling 6, fetch and sync before changing state, asks. It reads
+tool fetches the journal's end before it writes, since every step fetches and syncs before changing state, as design.md's `## Processes and files` says. It reads
 and writes S3 only, so it needs nothing from the VM and works while the VM
 is down.
 
@@ -1199,7 +1195,7 @@ Two credentials hold what the VM's credential deliberately cannot.
    pulling a live account's switch and switching a live strategy off, since
    each can only stop trading. It
    cannot clear a live account's halt, switch or lease, or write a live
-   account's override. The owner ruled on 2026-10-30 that only the owner
+   account's override. Only the owner
    resumes live trading. The charter makes the operator an agent role, and
    hard limit 1 keeps agents to simulated and paper brokers.
 
@@ -1249,11 +1245,9 @@ Writing commands take more friction the more they can resume trading.
    is flattened. The strategy's cancels still go out. As with the kill switch,
    this doc proposes that the blob's event wakes execution, which takes the
    account's lease and cancels the strategy's working and in-doubt orders
-   that add to a position, journaled first, and keeps those that reduce one,
-   as the owner ruled on 2026-11-04 on
-   [#43](https://github.com/l3a0/ithildin-runtime/issues/43). A pair with one
-   leg of each kind stays whole, as the owner ruled that day on
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Rule 1 of design.md's `### Every change can be undone or switched off` proposes the steps of this pass, the sort, including that execution cancels the adding leg first and the reducing leg only once that cancel is confirmed with nothing filled. The command prints the orders resting and says execution's journaled sort decides which stay. It then reads the journal once at a deadline set before the cancel cutoff for the `sort_done` entry and prints which orders went, which stayed and which were lost with a partner, and if the entry is not there tells the person to cancel at the broker's own console. A kept order still fills unless the kill switch, which cancels every order in the account, or the broker's console cancels it before the cancel cutoff, and a cancel at the console traces to nothing, so it halts all trading until the owner confirms it. Past the cutoff the command says no order can be stopped and lists the adding orders that will still fill.
+   that add to a position, journaled first, and keeps those that reduce one.
+   A pair with one
+   leg of each kind stays whole. Rule 1 of design.md's `### Every change can be undone or switched off` proposes the steps of this pass, the sort, including that execution cancels the adding leg first and the reducing leg only once that cancel is confirmed with nothing filled. The command prints the orders resting and says execution's journaled sort decides which stay. It then reads the journal once at a deadline set before the cancel cutoff for the `sort_done` entry and prints which orders went, which stayed and which were lost with a partner, and if the entry is not there tells the person to cancel at the broker's own console. A kept order still fills unless the kill switch, which cancels every order in the account, or the broker's console cancels it before the cancel cutoff, and a cancel at the console traces to nothing, so it halts all trading until the owner confirms it. Past the cutoff the command says no order can be stopped and lists the adding orders that will still fill.
 3. **`ithildin clear <halt>`** records that a person has looked at a halt
    and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual. This doc proposes it as the confirmation after a stop that rule 4 of design.md's `### A strategy is judged over a sample, and runs unchanged through it` asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
 4. **`ithildin override --account <a>`** records a correction the book
@@ -1268,18 +1262,18 @@ Writing commands take more friction the more they can resume trading.
 5. **`ithildin switch clear --account <a>`** deletes the switch and journals
    the clear.
 6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
-   strategy's off switch and journals it, journals the release of any strategy halt, which ends its sort, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may, as the owner ruled on 2026-11-02. On shadow and paper the operator
-   may too, which is this doc's reading of the 2026-11-02 rulings rather
-   than a ruling of its own.
+   strategy's off switch and journals it, journals the release of any strategy halt, which ends its sort, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may. On shadow and paper the operator
+   may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather
+   than a rule of its own.
 7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's
    blob and journals the clear, so the gate takes new orders again. On a
    live account only the owner may, and on shadow and paper the operator
-   may too, as the owner ruled on 2026-11-02.
+   may too.
 8. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
    before it expires, and journals it, for when a person knows the holder is
    gone sooner than the expiry would show. It first asks EC2 whether the holder's instance is
    stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
-9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
+9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live.
 10. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
 The last eight each take a required `--reason`, print what they will do and
@@ -1302,8 +1296,7 @@ Most alarms on shadow and paper need no writing command at all. A missing
 bar, a gate refusal or a pair leg left open clears itself at the next
 decision, which plans again from the book, and the person's job is to read
 the reason and decide whether something larger is wrong. On live, every
-halt holds the account until the owner clears it, as the owner ruled on
-2026-11-01. The writing commands are for the cases the platform cannot
+halt holds the account until the owner clears it. The writing commands are for the cases the platform cannot
 resolve alone: a book that disagrees with the broker, an order the platform
 did not send, a kill switch, and any halt on live.
 
@@ -1686,8 +1679,7 @@ Eight choices in the two diagrams for a reviewer to check.
    as design.md's `### Orders the platform did not send` says. `fills(since)`
    takes the last decision's time less a stated overlap, and the journal
    drops a fill whose id it already holds, so a fill the broker posts late is
-   still fetched. The adapter wraps Alpaca's SDK, alpaca-py, as the owner
-   ruled on 2026-11-01, so a test hands `OrderPath` a fake and no module sees
+   still fetched. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees
    the SDK's types. One reconciliation function in `core`,
    `core.reconcile(book, broker_account)`, lists the differences, and
    execution's recover stage, its send-stage sync and monitoring's reconcile stage all call it. Each
@@ -1826,15 +1818,15 @@ or `Abandoned` halts. A cancel the broker reports as pending leaves the order
 to the state it was in, still counted, with the alarm for a cancel that
 failed. A cancel whose answer is lost stays `CancelSent`, and design.md's
 faults rule 6 says when it is sent again and when it halts new orders. For a
-plan's cancel no stage resends yet, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and the
+plan's cancel no stage resends yet, and the
 next recover stage settles what it can by lookup. A cancel a check stopped
 before the broker call journals that, and returns the order the same way.
 
 `Cancelled` is reached four ways.
 
-1. Through the kill switch, as question 7 settles.
+1. Through the kill switch.
 2. When one leg of a pair is accepted and the other fails.
-3. When a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says.
+3. When a later decision's plan no longer wants an unfilled order or replaces it, as design.md's `### Strategies, schedules and decisions` says.
 4. Through a sort, under a strategy's off switch or a halt that cancels this way, as rule 1 of design.md's `### Every change can be undone or switched off` says.
 
 A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Each way the cancel is journaled first, and the sync then counts it as the platform's own.
@@ -1877,8 +1869,7 @@ A halt and a failure differ in what they stop. A halt stops one decision, and in
 failure address so the owner hears even if the alarm from the machine is lost.
 If monitoring itself is what failed, no ping arrives, and the dead-man check
 raises the alarm. A halt is final for its decision, which is this doc's choice.
-The owner ruled on 2026-10-29 that the owner or the operator clears it, and
-narrowed it on 2026-10-30 so that only the owner clears a live account's
+The owner or the operator clears it, and only the owner clears a live account's
 halt. Clearing never reruns the decision. The next decision starts fresh, and it
 halts again while the kill switch is set or the cause is still there.
 
@@ -2030,9 +2021,9 @@ each keeps its own rule.
    versioning keeps, so [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says lake partitions are not vintages. A
    bar's `vintage_id` is therefore its partition's path and S3 version id,
    which together name one copy, and a re-read fetches by that version. marketlake's lake is private
-   and backed up off the machine, which is what question 4 and the premise ask
-   of captured bars. The checksums
-   question 4 asks to commit are the partition checksums a snapshot records,
+   and backed up off the machine, which is what the premise asks
+   of captured bars, and it keeps them out of this public repository. The checksums
+   this repository commits are the partition checksums a snapshot records,
    for any run a test or a report pins. Imported history
    from quantitative-trading arrives with that repository's own checksums,
    from its `data/vintages.jsonl`, so the import can prove it read the
@@ -2053,10 +2044,7 @@ each keeps its own rule.
    that changes only through a pull request.
 4. **The journal, D3, holds `JOURNAL_ENTRY`.** It is the one numbered log:
    one per broker account, outside every run, because the book is replayed
-   from it across runs. Each entry is a blob at a key fixed by the account and its sequence number, holding its number, the time it was built, to the microsecond, its body and the hash of the entry before it, so the entry itself is the record. Its own hash is the SHA-256 of those bytes, as `### File formats and keys` says. The owner's ruling that the journal is the only
-   numbered log, when SQLite was dropped, replaced the earlier ruling on
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that kept entries
-   in SQLite rows. `Journal` writes through `BlobStore` for the account the
+   from it across runs. Each entry is a blob at a key fixed by the account and its sequence number, holding its number, the time it was built, to the microsecond, its body and the hash of the entry before it, so the entry itself is the record. Its own hash is the SHA-256 of those bytes, as `### File formats and keys` says. `Journal` writes through `BlobStore` for the account the
    broker adapter names.
    `ORDER` and `FILL` are read from journal entries rather than kept as
    records of their own. Each entry is stored before the step it records
@@ -2127,7 +2115,7 @@ rules of its own for numbers, times and empty fields.
    such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a
    bar's volume, are JSON integers. Share counts are decimals, because the
    GLD leg is fractional.
-4. Every time the platform writes is UTC, as the owner ruled on 2026-10-30, in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
+4. Every time the platform writes is UTC, in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
 5. A field with no value is `null`, never left out, so a reader can tell an
    empty field from a format that lacks it. A list keeps its order when the
    order means something, such as a plan's decisions, and is sorted by its
@@ -2239,7 +2227,7 @@ not come again is kept rather than discarded.
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
-| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
+| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<cause>-<raised id>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
@@ -2263,8 +2251,8 @@ lifecycle name, with `release/` read by each VM's role for its own pin, as
 
 ## Where it runs
 
-A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has one VM in slice 1, scaling out to a cluster of three, and a bucket and roles of its own, as `### Four environments` says. The owner ruled on 2026-10-29 that the VM keeps no state
-that matters, and that the storage is S3, so everything the platform must
+A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has one VM in slice 1, scaling out to a cluster of three, and a bucket and roles of its own, as `### Four environments` says. The VM keeps no state
+that matters, and the storage is S3, so everything the platform must
 keep sits in the runtime's bucket, and an Auto Scaling group replaces a lost
 VM by starting a new one on the release the run uses, as rule 11 says.
 
@@ -2350,13 +2338,13 @@ Eleven rules hold the deployment to the premise and the hard limits.
    which is hard limit 5. A drill on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a worker other than execution
    try each route to the key, the metadata service, the start-up data, another
    process's environment and the unit's settings, and expects every one to
-   fail. The owner ruled on 2026-10-29 that the store is the one marketlake
+   fail. The store is the one marketlake
    uses, AWS Systems Manager Parameter Store, holding the key as a
-   `SecureString` parameter encrypted under KMS, and on 2026-11-02 that the
-   runtime moves out of marketlake's AWS account into an account per
-   environment, reversing the choice of question 11. So each environment's
+   `SecureString` parameter encrypted under KMS, and the
+   runtime sits outside marketlake's AWS account, in an account per
+   environment. So each environment's
    broker key sits in that environment's own account, under the account's
-   AWS managed `aws/ssm` key, which the owner ruled fine on 2026-10-29. No
+   AWS managed `aws/ssm` key. No
    marketlake role can reach it, because a role acts in another account only
    where that account grants it, and no runtime account grants one. Inside
    each environment's account four controls hold.
@@ -2405,8 +2393,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
       configuration, state or variable ever holds it.
    4. **A drill** tries to read the key without decryption with every role
       in the account but execution's, directly, by a recursive read from `/`
-      and through its history, from a role that can assume no other, as the
-      owner ruled for live on 2026-10-31, with marketlake's roles from
+      and through its history, from a role that can assume no other, with
+      marketlake's roles from
       marketlake's account, and with a role at another path that reuses the
       execution role's name, and expects "access denied" every time.
 
@@ -2415,15 +2403,14 @@ Eleven rules hold the deployment to the premise and the hard limits.
    organization trail, as `### Four environments` rule 11 says, each set up once, with GitHub's
    deploy roles recreated in each and a read grant from marketlake's account
    for each environment's data role, as rule 8 says. The broker key moves
-   out of marketlake's account, which reverses part of the owner's ruling of
-   2026-10-29. marketlake's refusals for the runtime's VM, key and queues,
+   out of marketlake's account. marketlake's refusals for the runtime's VM, key and queues,
    which [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
    held, are no longer on the runtime's path.
 4. **The kill switch and the hard caps are blobs.** The runtime's credential
-   can create the switch, which pulls it, and can never delete it. The owner
-   ruled on 2026-10-29 that only the owner's credential clears a live
-   account's switch, and that the operator's may also clear a paper or shadow
-   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A fired loss stop's blob takes the same grants as the switch: execution's role may create it and never delete it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the owner's 2026-11-02 rulings. The hard caps blob can be written or deleted only by the
+   can create the switch, which pulls it, and can never delete it. Only the
+   owner's credential clears a live
+   account's switch, and the operator's may also clear a paper or shadow
+   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A fired loss stop's blob takes the same grants as the switch: execution's role may create it and never delete it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop. The hard caps blob can be written or deleted only by the
    owner's credential, which an explicit refusal in the bucket's policy for
    every other principal enforces, because raising a cap raises a capital
    limit, which hard limit 1 keeps for the owner. Copying an older version
@@ -2471,7 +2458,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
 6. **A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
 7. **systemd keeps every process running, up to a limit.** Each
    supervisor instance and each worker instance, three of each per
-   deployment as the owner ruled on 2026-11-01, has a unit of its own, the
+   deployment, has a unit of its own, the
    instances of each from one template unit, all part of one
    `ithildin.target`, with systemd's `Restart=on-failure`, a
    `StartLimitBurst`, and a `StartLimitIntervalSec` of a whole trading day,
@@ -2496,8 +2483,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
    and a unit stopped that way stays down until the next day's timer starts
    the target. A restarted supervisor alarms that it restarted, and the
    dead-man check covers systemd stopping too.
-8. **The runtime has a VM of its own, apart from marketlake's.** The owner
-   ruled on 2026-10-29 that the runtime runs on a VM separate from the one
+8. **The runtime has a VM of its own, apart from marketlake's.** The
+   runtime runs on a VM separate from the one
    marketlake's capture daemon runs on, and downloads the parts of the lake its
    strategies need. So a run on the runtime cannot starve capture, and a
    failure on one VM leaves the other running. At each decision the data
@@ -2513,8 +2500,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
    the same way, against its own manifest entry, and the read credential
    covers the segments' prefix too. The mirror is a copy, so losing it costs only a
    download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
-   [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it. Since the owner's ruling of 2026-11-02 that
-   each environment has an AWS account of its own, that credential is the
+   [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it. Each
+   environment has an AWS account of its own, so that credential is the
    data worker's role in its environment's account, allowed by its own IAM
    policy and by one read-only statement in marketlake's bucket policy that
    names it, limited to the partitions, the segments and the manifest. The
@@ -2533,8 +2520,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    its place by checking its own keys in S3. When a person clears an
    account's lease early with `ithildin lease clear` is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 10. **The release is one container image, and each component runs in a
-    container of its own.** This is this doc's proposal, raised by the owner
-    on 2026-10-30. One Docker image holds the whole runtime: one Python
+    container of its own.** This is this doc's proposal. One Docker image holds the whole runtime: one Python
     version, every dependency installed from `uv.lock` with its hashes
     enforced, and an entry point per worker. Each component runs as its own
     container from that image, and the supervisor as one more, so a
@@ -2545,7 +2531,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
     rule 7, starts the supervisor before the session and each worker once the supervisor has read the run's plan, restarts it when it exits or
     its heartbeat stops, and stops it after the close. No container holds the
     Docker socket or the system D-Bus, because either one is root on the
-    host. The owner said on 2026-10-30 that eventually each component could
+    host. Eventually each component could
     run on a machine of its own, or serverless. Results, heartbeats and the events that announce them all pass through S3, EventBridge and SQS, so moving a component changes only where its container runs. The queue is a port in `core`, with SQS as its adapter in shadow, paper and live and a named pipe fed by the memory-backed folder in a backtest and in CI, both held to one contract test suite.
 
     If adopted, rule 10 changes these:
@@ -2611,14 +2597,13 @@ Eleven rules hold the deployment to the premise and the hard limits.
     The price is a Docker daemon on the VM, running as root, to patch outside
     sessions, a unit per container to keep in step, an image build on every
     pull request, and a verification step before each deploy. On Fargate the
-    same containers become tasks, each with its own role, and only the queue
-    adapter changes, as question 12 says.
+    same containers become tasks, each with its own role, and the queue
+    adapter stays SQS, as it already is on the VM.
 11. **An environment scales out to a cluster of three VMs, and slice 1 runs
-    one.** The owner ruled on 2026-11-01 that the containers spread across a
-    cluster of VMs, on this doc's recommendation of three identical VMs in an
-    EC2 Auto Scaling group, one in each of three availability zones, and on
-    2026-11-02 that the cluster is the scale-out path, for a design load the
-    directive of 2026-11-03 sets at 10 times slice 1's, while the MVP starts
+    one.** The containers spread across a
+    cluster of three identical VMs in an
+    EC2 Auto Scaling group, one in each of three availability zones. The cluster
+    is the scale-out path, for a design load of 10 times slice 1's, while the MVP starts
     on a single VM, as design.md's
     `## Design for 10x, plan the rewrite before 100x, build at 1x` says. So slice 1 runs each
     environment's one VM in an Auto Scaling group of one, which replaces a
@@ -2664,7 +2649,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
        its own zone, and nothing a VM needs to reach S3, SQS or the secret
        store lives in only one zone.
     6. **A new VM image rolls out by instance refresh, outside sessions.**
-       The owner ruled on 2026-11-01 that a change to the VM itself, such as
+       A change to the VM itself, such as
        an OS patch, a Docker upgrade or a new machine image in the launch
        template, rolls out through the group's instance refresh. The apply
        that changes the launch template starts it, and on paper and live that
@@ -2739,17 +2724,16 @@ Eleven rules hold the deployment to the premise and the hard limits.
 
 ### Four environments
 
-What this section says an agent cannot reach, it says of the design. Until agents move off the owner's admin login, which the owner deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), those statements are rules agents follow, as rule 2 of design.md's `### A release is checked where it runs, and nothing heals by hiding a fault` says.
+What this section says an agent cannot reach, it says of the design. Until agents move off the owner's admin login, a move deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), those statements are rules agents follow, as rule 2 of design.md's `### A release is checked where it runs, and nothing heals by hiding a fault` says.
 
-The owner ruled on 2026-10-30 that test, shadow, paper and live run in
-separate environments. The same day the owner ruled that GitHub's CI is the
-test environment, that a merge to `main` deploys to shadow, and that a
-healthy shadow then deploys to paper. The owner's words ended "and then
-live". The owner confirmed the same day that the last step is the owner's own, by hand, which hard limit 1 requires.
+Test, shadow, paper and live run in
+separate environments. GitHub's CI is the
+test environment, a merge to `main` deploys to shadow, and a
+healthy shadow then deploys to paper. The last step, to live, is the owner's own, by hand, which hard limit 1 requires.
 
-Before those rulings, this doc kept the modes apart inside one VM and one
-bucket, by key prefix and by the account a lease names. So one wrong role or
-one wrong prefix could reach every mode: a drill could pull the live switch,
+Modes kept apart inside one VM and one
+bucket, by key prefix and by the account a lease names, would let one wrong role or
+one wrong prefix reach every mode: a drill could pull the live switch,
 or a shadow run could read a broker key. With an environment each, no
 runtime role of one environment can reach another environment's resources.
 The owner's and the operator's credentials still span environments by
@@ -2757,7 +2741,7 @@ design, one read-only grant lets the promotion job judge shadow, and rule 11
 says which AWS account each environment lives in. The rest of this subsection
 is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-The owner reworded hard limit 6, in CLAUDE.md and in the charter, the same day to match: merging to `main` is the owner's, a merge deploys to shadow and, once shadow is healthy, to paper, and deploying to live is the owner's, by hand.
+Hard limit 6, in CLAUDE.md and in the charter, matches: merging to `main` is the owner's, a merge deploys to shadow and, once shadow is healthy, to paper, and deploying to live is the owner's, by hand.
 
 An environment is a set of resources: a machine, a bucket, roles, a broker credential, a heartbeat check, a release pin, and the EventBridge rules, SQS queues and dead-letter queues that carry its events. Shadow, paper and live each
 run exactly one mode, the one with the same name. Test is GitHub's CI, which
@@ -2773,11 +2757,9 @@ each of its three VMs once it scales out to the cluster in rule 11 of
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
 | Shadow | Shadow mode on live data | The shadow VM, scaling out to a cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
 | Paper | Paper mode | The paper VM, scaling out to a cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
-| Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, as the owner ruled on 2026-11-01, for the platform's own account, which nobody trades by hand. Alpaca's trading API may offer crypto wallet transfer and whitelist endpoints, so the owner ruled on 2026-11-02, after a board sitting, that crypto is never enabled on the platform's account and no withdrawal address is whitelisted, proven by a read-only check of `GET /v2/account` and `GET /v2/wallets/whitelists` before the live gate and at each session's start and end after. A whitelist entry the key adds between sessions turns approved on its own after 24 hours, so Alpaca's email to the owner warns of it, and withdrawing still needs the owner's web login. That, with the owner's ruling that moving money out requires a human's sign-off, is how hard limit 5 holds, as [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records | Moved only by the owner, by hand |
+| Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, for the platform's own account, which nobody trades by hand. Alpaca's trading API may offer crypto wallet transfer and whitelist endpoints, so crypto is never enabled on the platform's account and no withdrawal address is whitelisted, proven by a read-only check of `GET /v2/account` and `GET /v2/wallets/whitelists` before the live gate and at each session's start and end after. A whitelist entry the key adds between sessions turns approved on its own after 24 hours, so Alpaca's email to the owner warns of it, and withdrawing still needs the owner's web login. That, with the rule that moving money out requires a human's sign-off, is how hard limit 5 holds, as [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records | Moved only by the owner, by hand |
 
-The owner ruled on 2026-11-01 that shadow and paper share one environment in
-slice 1, and on 2026-11-02 that shadow keeps machines of its own after all.
-So shadow, paper and live each have their own VM, bucket and roles,
+Shadow, paper and live each have their own VM, bucket and roles,
 and shadow's simulated account never shares a machine with paper's broker
 key. The drills that try one environment's roles against another's run
 between every pair.
@@ -2799,7 +2781,7 @@ Eleven rules keep the environments apart.
    decisions wrote a result that lists outputs rather than a halt,
    healthchecks.io's API shows every expected ping received, and every one
    of those decisions' orders matched what a replay of the same day emits.
-   The owner set N to one session and M to one decision for slice 1 on 2026-10-30, a ruling recorded on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Health is counted per digest, so a larger N would stall paper while merges come faster than every N sessions, and a bad promotion costs a halted paper session and no money. N rises once merges come less often than weekly, or the first time a defect gets past shadow. The promotion fires once per
+   For slice 1, N is one session and M is one decision. Health is counted per digest, so a larger N would stall paper while merges come faster than every N sessions, and a bad promotion costs a halted paper session and no money. N rises once merges come less often than weekly, or the first time a defect gets past shadow. The promotion fires once per
    digest, and writes a promotion record holding the counts beside paper's
    pin. It refuses while paper has an open halt, a set switch, an override
    not yet applied, or an account's lease held by a lost VM, and alarms with that
@@ -2828,7 +2810,7 @@ Eleven rules keep the environments apart.
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
    run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So the next promotion cannot undo a rollback of either environment.
-   The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
+   The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 5. **Each role reaches only its own environment's resources, by ARN and
    path, never by tag.** Each bucket's policy refuses every principal but
    that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's
@@ -2836,7 +2818,7 @@ Eleven rules keep the environments apart.
    rule 5 says. A
    deploy role may only put its own environment's pin and create its deploy record under `release/deploys/`. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats, block records and deploy records, which shadow's policy names as its one grant across environments. On the live bucket
-   the operator may pull the switch, as the owner ruled, and create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
+   the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and rule 3's refusals cover
    every broker path. Ping addresses sit apart, under
@@ -2888,7 +2870,7 @@ Eleven rules keep the environments apart.
    schedule alarms. Test needs no check, because a failed CI run is its
    alarm. Slice 1 runs one deployment in each of shadow, paper and live, so
    that is one check each, and each portfolio added on the way to 10x adds a check,
-   a change of configuration. The owner placed the checks in marketlake's healthchecks.io
+   a change of configuration. The checks sit in marketlake's healthchecks.io
    project, so the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) confirms that marketlake holds only ping
    addresses there, and no API key that could pause a check. The promotion
    job reads the project with a read-only API key, which cannot pause or
@@ -2904,7 +2886,7 @@ Eleven rules keep the environments apart.
     each environment that has them.** These are the dead-man check, the
     host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. Shadow's and paper's drills run before paper's gate. Live's run
     before the owner switches, in a live session started with the kill
-    switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch, as the owner ruled on 2026-10-31 on a board sitting's recommendation. Drills that end in a clear only the owner can make run once a month, as the owner ruled, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one, as the owner ruled on 2026-10-31. No agent runs a drill on live. Drills that depend only on code
+    switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch. Drills that end in a clear only the owner can make run once a month, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live. Drills that depend only on code
     run once, in test. Rule 3's drill grows to try each environment's roles
     against every other environment's bucket, key and VM, by each route rule 3's item 4 lists and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
     1. Each environment's monitoring role and VM role read their own ping
@@ -2924,10 +2906,9 @@ Eleven rules keep the environments apart.
     do its SQS queues and its EventBridge rules, generated from the routes. A
     change to any of them is an apply, followed by that environment's
     read-only checks. A release whose routes need a new rule waits for that
-    apply, because the session-start check refuses it. Under the owner's
-    2026-11-04 rulings on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), and with detail this doc proposes
-    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) three
-    credentials in each runtime account.
+    apply, because the session-start check refuses it. With detail this doc proposes
+    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), each runtime account
+    holds three credentials.
     1. **The plan credential** is assumed only by the infrastructure
        workflow's plan job on `main`, through rule 6's OIDC trust, and reads
        what a plan compares. It holds neither `ReadOnlyAccess` nor any
@@ -2949,11 +2930,8 @@ Eleven rules keep the environments apart.
 
     Shadow's and paper's applies follow the owner's merge with no second
     approval, a paper VM change apart, and live's is approved by the owner
-    alone, under the owner's 2026-11-04 rulings on [#32](https://github.com/l3a0/ithildin-runtime/issues/32).
-11. **Each environment has an AWS account of its own.** The owner ruled on
-    question 11 that the runtime's resources live in marketlake's account,
-    confirmed on 2026-10-31 that live stays there, and on 2026-11-02
-    reversed both. Test, shadow, paper and live each run in an AWS account of
+    alone.
+11. **Each environment has an AWS account of its own.** Test, shadow, paper and live each run in an AWS account of
     their own, members of one organization, so an IAM mistake in one
     environment's account cannot reach another's, and rule 10's drill checks
     that every such try fails at the account's edge. The owner and the
@@ -2971,7 +2949,7 @@ Eleven rules keep the environments apart.
 The price is one VM per running environment in slice 1, one for shadow
 and one for paper, each running three instances of each component and of
 the supervisor, a third once live exists, and three VMs per environment
-once load calls for rule 11's cluster, as question 12 now says. Live's rules and drills here are designed now and
+once load calls for rule 11's cluster. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy, promotion, plan, apply and VM change jobs hold
 AWS roles in a public repository's workflows, guarded by the trust rules of
@@ -3072,7 +3050,7 @@ new arrow.
 | 4. The kill switch and the dead-man check fire in a drill | Paper, drill | Set the switch before a run, pull it five minutes after a decision with a platform order and an order the platform did not send both resting, and skip the second ping of a day of two decisions | A halt journaled with reason "kill switch", a journaled cancel for each resting order and a "cancels done" entry, and a dead-man alarm delivered |
 
 Test 1 fills at the close of the day the signal used, because that is what
-Chan's script assumes. The owner ruled on question 10 that the paper run
+Chan's script assumes. The paper run
 trades that close too, with market-on-close orders, so both fill at the same
 price. The two still decide at different times. Test 1's deployment decides
 at the close, on the imported daily bars, through a simulated account whose
@@ -3107,7 +3085,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 | Piece | Written on |
 | --- | --- |
 | Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) |
-| `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the decision result, the plan, the queue port with its SQS and named-pipe adapters and their contract suite, the S3 and memory-backed folder adapters with one contract test suite, the import rule test, as question 9 settles | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the decision result, the plan, the queue port with its SQS and named-pipe adapters and their contract suite, the S3 and memory-backed folder adapters with one contract test suite, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
@@ -3120,8 +3098,8 @@ Each module issue also writes its own worker's entry point under `runtime`,
 the code that picks that worker's adapters for a mode.
 
 Equal risk weight sizes each forecast's basket so they all carry the same
-risk. With one basket in slice 1, it reduces to sizing that basket, which
-question 3 settles.
+risk. With one basket in slice 1, it reduces to sizing that basket, so the
+gross position is a fixed dollar amount the owner sets, recorded in the run's configuration.
 
 Two pieces belong to no single module.
 
@@ -3130,15 +3108,14 @@ Two pieces belong to no single module.
    result and its halt, the plan and the queue message.
 2. The import rule test, which reads every module's imports.
 
-Both are written on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), which every module issue waits on, as question 9
-settles.
+Both are written on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), which every module issue waits on.
 
 The supervisor imports no module, but it cannot run a day until every worker
 exists, so it is built last. This doc proposes building it on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which owns the startup order and waits on every
 other module. The fake-broker test goes there too, since it runs a whole day
 under the supervisor. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s body names neither today, and its acceptance
-covers tests 2 and 4 but not test 3, so the Decisions table lists both as a
+covers tests 2 and 4 but not test 3, so `## Proposals awaiting a ruling` lists both as a
 proposal.
 
 ### How CI runs them
@@ -3225,305 +3202,55 @@ The price is a CI run that builds an image and starts several containers on
 every pull request, a second required check, an S3 emulator and a test
 bucket to keep, and drills that only the VM can run.
 
-## Decisions
+## Proposals awaiting a ruling
 
-Each row is a choice this doc makes, what it turned down, the price, and where
-the choice is settled. A row settled here is a shape every module shares. A row
-marked with an issue is a proposal: once the owner accepts it, it goes on that
-issue, which then decides. Either way, each turned-down alternative gets a row
-in [design.md](design.md#considered-and-rejected)'s register when the row is
-accepted.
+Each row is a proposal this doc makes for an issue, what it turned down, the
+price and the issue it goes on. Nothing in this table is decided. Once the
+owner accepts a row, it goes on that issue, which then decides, and each
+turned-down alternative gets a row in
+[design.md](design.md#considered-and-rejected)'s register. Settled choices sit
+in [design.md](design.md)'s `## Decisions`.
 
-| Decision | Turned down | Price | Settled on |
+| Proposal | Turned down | Price | Goes on |
 | --- | --- | --- | --- |
-| Each component runs as its own process, in parallel, passing files | One process calling every module in memory, or a process per action | A file format and a round-trip test for every type that crosses between modules | Ruled by the owner on 2026-10-29, with the rules in [design.md](design.md#processes-and-files) |
-| The platform is an event pipeline: each component runs its processing loop when there is something new for it, and its outputs trigger those downstream | A controller that calls each component in a fixed order | A worker waits for a message on its queue instead of being called | Ruled by the owner on 2026-10-29 |
-| Pure steps write create-only blobs at decision keys, data's first write wins, a halt is a blob at the same kind of key, and the journal is the only numbered log | An event log per component, as a SQLite file or as numbered blobs, with or without Litestream | A deterministic step's format must be canonical, and the journal alone keeps sequence numbers | Ruled by the owner on 2026-10-29, after the SQLite and numbered-blob designs before it |
 | A decision result per stage, listing its outputs or holding a halt, with execution and monitoring each split into two stages, and each stage's kind declared in the `runtime` table that the storage contract alone acts on | One result per component per decision, which put execution's account file behind its own send | Two more result keys a decision, and a canonical format for every deterministic stage | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
-| A backtest uses an in-memory store through the same port, which this doc takes as a memory-backed folder every worker process can reach | S3 for backtests, which would cost minutes of round trips | A second adapter, held to S3's rules by one contract test suite | Ruled by the owner on 2026-10-29, the folder this doc's reading of it |
-| Each component keeps a queue, listens for events on it, and reads its inputs from files and writes its outputs to files. An event reaches a component's queue whenever there is something new for it | File notifications through `watchdog`, or polling | An event has to reach every component with something new | Ruled by the owner on 2026-10-29, and on 2026-10-31 that the event is S3's own notification with no polling of storage |
 | Each queue is SQS in shadow, paper and live, fed by EventBridge rules generated from the table in `runtime`, and a named pipe fed by the memory-backed folder in a backtest and in CI, with one contract suite for both | A named pipe on the VM fed by writers' messages, a socket, a queue server of the runtime's own, or a queue that pushes, such as SNS to an HTTPS endpoint, Amazon MQ or Kinesis enhanced fan-out | A rule and a queue per reader in each environment, and long polling's requests, about 1.2 million a month for shadow and paper and about 1.9 million once live runs, a little past SQS's free million | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
-| The VM keeps no state that matters, and every file is a blob in S3 | Durable state on the VM's disk | A round trip to S3 per blob | Ruled by the owner on 2026-10-29 |
-| The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease, one blob per run, is held only while one supervisor instance changes the run, and carries the run's status, so a frozen holder's write after a takeover fails S3's tag check. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
-| Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | One VM per running environment in slice 1, three once load calls for the cluster, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Each environment runs in an EC2 Auto Scaling group: of one VM in slice 1, and of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment, as the scale-out path, for a design load the directive of 2026-11-03 sets at 10 times slice 1's | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and mid-session until the owner releases execution's halt, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01, and on 2026-11-02 that slice 1 starts on one VM. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Work waiting on a held account's lease goes back on the queue with a short delay, the lease's release event wakes it, and any lease holder sends a decision's next planned order while its runner is alive | A handler blocking until the lease frees, or reading the lease on a timer | One decision's orders going out from different instances, and an SQS redelivery as the fallback for a lost release event | Ruled by the owner on 2026-11-02. The delay and the limit are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Alpaca stays the live broker, with crypto never enabled on the platform's account and no whitelisted withdrawal address, checked read-only before the live gate and at each session's start and end after | An OAuth credential that cannot reach wallets, Alpaca's written answer by 2026-12-31 with a move on a yes, deferring to the live gate, or another broker | Two gaps the board named, narrowed by the same check: it compares the account's configuration with the settings the hard caps blob pins, and treats any unstamped order or fill as unmatched, pulling the kill switch. The value a thief moves between two checks, nights and weekends included, is accepted, bounded by the account's capital | Ruled by the owner on 2026-11-02 after a board sitting, on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| The runtime runs on a VM of its own and downloads the partitions its strategies need into a local mirror | Running on marketlake's VM beside the capture daemon, or a long-running ECS Fargate service for slice 1 | A second VM, and a read-only credential for marketlake's bucket | Ruled by the owner on 2026-10-29, and on 2026-10-30 that a VM rather than a Fargate service hosts slice 1, question 12 |
-| The skeleton's strategy decides at close−20, 15:40 on a full day, on marketlake's segments read before sealing and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) rules | Deciding in the evening and trading the next open, on the official daily bar or on marketlake's captured close | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, and a kill switch cannot stop a closing-auction fill after the exchange's cancel cutoff | Trading the close ruled by the owner on 2026-10-29, question 10. The times are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
-| `max_net` is set from the venture's loss limit: one leg's stress move, from a recorded vintage over at least a weekend, sized to a share of the loss limit the owner sets, stored with its input's hash. Monitoring tallies stranded legs after each close, and the simulator strands legs on a seeded fault | A cap equal to the larger leg, which never refuses anything, or closing a stranded leg at the next open, after the overnight gap has landed | A smaller pair at live size, and a stress move to derive and pin | Ruled by the owner on 2026-10-29, on a board sitting's recommendation, and on 2026-11-01 that the loss limit is the account's portfolio value, so the gate computes the cap at each decision from the account's valuation at the prior closes, shrinking and growing with it, while the share and the stress move stay the owner's to write. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) for the cap, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the tally, [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the simulator |
-| The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | Raised by the owner on 2026-10-30. This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail. The operator's credential acts on paper and shadow accounts only, plus a live pull, as the owner ruled on 2026-10-30 | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, each behind a hardware key | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 what a person runs. Only the owner resumes live trading, ruled by the owner on 2026-10-30 |
-| Each worker, and the supervisor, runs one receive loop, an `asyncio` event loop in `runtime` that reads its queue and hands each item, a stage and a decision, to a pool of handler threads that work independently. Stages that read the journal keep the plan's order | One message at a time per worker, or a loop of each component's own | A thread pool in every worker, a progress report at every step, an order rule for the stages that read the journal, and a backtest run at two pool sizes in CI | Ruled by the owner on 2026-11-01. The design is proposed for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A component learns of a new blob from S3's own event, sent through EventBridge to its SQS queue, and waits by long polling the queue, never storage. An absence is caught by a deadline an earlier event set, held in the setter's memory, and the host's watchdog watches local heartbeat files. A pull reaches execution through the switch blob's own event, the owner having dropped its direct message on 2026-11-01, and no component reads the switch on a clock. Each event is a hint, the keys come from the plan, and anything that touches money re-reads the blob right before it acts | A writer messaging its readers, timed checks of the next key, or trusting an event as the change itself | S3's delivery delay on each step of a decision and on a pull, a rule and a queue per reader, dead-letter queues, refusals that keep other roles off them, and deadlines long enough for delivery's slow tail | Ruled by the owner on 2026-10-31. The design is proposed for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), after the owner asked on 2026-10-30 how CI works for containers that pass messages |
-| Each environment, test, shadow, paper and live, runs in an AWS account of its own in one organization, apart from marketlake's. Each broker key sits in its environment's account under AWS's managed `aws/ssm` key, read by the execution user alone, service control policies bind each account's root user, and each data role reads marketlake's bucket through one read-only statement in marketlake's bucket policy | The runtime in marketlake's account behind lists of refusals, which the owner ruled for on 2026-10-29 and reversed on 2026-11-02 | Four runtime accounts and a management account to set up, deploy roles in each, the broker key moved out of marketlake's account, and a read grant from marketlake for each environment | Ruled by the owner on 2026-11-02, reversing question 11's ruling. The layout is proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The runtime reads marketlake's capture segments before the day is sealed, as a provisional read, with its own minimum checks and a comparison with the sealed day afterwards | Waiting for marketlake's upload at the close plus fifteen minutes, or sealing continuously in marketlake | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the runtime turns the segments into quote rows itself with marketlake's package. The read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
-| A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart. The owner ruled on 2026-10-29 that the owner or the operator clears a halt, and on 2026-10-30 that only the owner clears a live account's | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes, after the owner asked on 2026-10-30 for a supervisor that sends messages |
+| The journal is numbered blobs per account, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Leases, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned and deleted only with that condition. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
+| Each environment's layout, as `### Four environments` draws it | Keeping the modes apart inside one VM and one bucket by key prefix | One VM per running environment in slice 1, three once load calls for the cluster, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The layout of each environment's EC2 Auto Scaling group, as rule 11 of `## Where it runs` draws it, with each VM of the scale-out cluster running one supervisor and one instance of every component per deployment | A container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and mid-session until the owner releases execution's halt, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| How a VM image's instance refresh runs: one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback | AWS CodeDeploy | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The delay on work put back on the queue while an account's lease is held, and the limit on how many times it goes back | None named | An SQS redelivery as the fallback for a lost release event | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The skeleton's strategy decides at close−20, 15:40 on a full day, and sends market-on-close orders by close−12, 15:48 on a full day, a cutoff for market-on-close orders in the paper account's hard caps that execution checks before every send and again before each broker call. Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so on those days the plan drops the 15:40 decision, which falls after the 13:00 close, and the strategy does not trade. A missing input on a day halts that decision rather than switching to another time. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says. Alpaca's paper account accepts market-on-close orders, but its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time", and Alpaca staff on its forum say paper does not tell a market-on-close order from a market order. So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole | None named | A signal twenty minutes before the close it trades, execution reads the clock for the cutoff, a pair whose second leg can be rejected after the first is accepted, which execution then cancels while the exchange still takes cancels, and a kill switch that cannot stop a closing-auction fill after the exchange's cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, each behind a hardware key | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The receive loop's design: an `asyncio` event loop in `runtime` with a pool of handler threads, in which stages that read the journal keep the plan's order | One message at a time per worker, or a loop of each component's own | A thread pool in every worker, a progress report at every step, an order rule for the stages that read the journal, and a backtest run at two pool sizes in CI | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| S3's event reaches a component through EventBridge and its SQS queue, and the component waits by long polling the queue. An absence is caught by a deadline an earlier event set, held in the setter's memory, and the host's watchdog watches local heartbeat files. Each event is a hint, the keys come from the plan, and anything that touches money re-reads the blob right before it acts | A writer messaging its readers, timed checks of the next key, or trusting an event as the change itself | S3's delivery delay on each step of a decision and on a pull, a rule and a queue per reader, dead-letter queues, refusals that keep other roles off them, and deadlines long enough for delivery's slow tail | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The accounts' layout: one organization apart from marketlake's, each broker key in its environment's account under AWS's managed `aws/ssm` key, read by the execution user alone, service control policies binding each account's root user, and each data role reading marketlake's bucket through one read-only statement in marketlake's bucket policy | None named | Four runtime accounts and a management account to set up, deploy roles in each, the broker key moved out of marketlake's account, and a read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
+| A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| Only the order path talks to the broker, for sends, lookups, fills, positions and cancels, inside the execution worker, one instance at a time per broker account | Letting the supervisor or monitoring call the broker | One more method on `OrderPath` per kind of broker call | This doc |
-| Execution's recover stage reconciles positions and open orders before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it. The move off the path was recorded on the owner's instruction of 2026-11-02 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack. Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that rule 2 of design.md's `### Faults are expected` lets an outside entry explain | Ignoring unstamped orders, or an outside book for hand trades | One more mapping per ack, and a halt on a broker's liquidation even when it is harmless | The stamp ruled by the owner on 2026-10-31, the mapping asked for and hand trading ruled out on 2026-11-01. The rest is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Each portfolio trades an account and capital of its own, at Alpaca for paper and for live, and nobody trades by hand in it | Hand trades beside the platform in one account, or Schwab at live | Hand trades stay out of the strategies' instruments in every account the owner holds, for the wash sale rule | Ruled by the owner on 2026-10-31, and on 2026-11-01 for an account per portfolio, no hand trading and Alpaca at live. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms the live account's facts before the live gate |
-| Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
-| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A plan cancels a resting stamped order the target no longer wants and replaces one that should change, by a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | Ruled by the owner on 2026-10-31. The method is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A halt stops new work and keeps every working order except the cancel that keeps a pair whole and the adding orders a strategy's off switch, or a halt rule 3 or rule 4 of design.md's `### A strategy is judged over a sample, and runs unchanged through it` names, cancels through a sort, with a reducing leg going with its adding partner, unless that partner filled by this doc's proposal, a stored halt stops a plan's own cancel, no stage resends a plan's cancel until a strategy rests orders across decisions, and the pair step resends a pair-keeping cancel inside its deadline | Each halt listing cancels beyond what a sort makes, a plan's cancel that goes on through a halt, or a send stage that waits ahead of its planned orders to resend, which stalls later decisions | An unwanted order can rest through a halt, and a lost plan cancel the next lookup cannot settle ends in rule 6's halt | The exception was ruled by the owner on 2026-11-04 on [#10](https://github.com/l3a0/ithildin-runtime/issues/10). So was the deferred resend, and the pair step's lookup and resend. The off switch's exception was ruled on [#43](https://github.com/l3a0/ithildin-runtime/issues/43) later that day, and keeping its pairs whole on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) after that |
+| Execution's recover stage reconciles positions and open orders before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that rule 2 of design.md's `### Faults are expected` lets an outside entry explain | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A plan's method for changing a resting stamped order: a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| In a sort, a reducing leg goes with its adding partner unless that partner filled | None named | A reducing order lost with its partner, so the position stays as it was until a person acts | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
-| The current book comes from the journal, and the broker is only reconciled against | Reading positions from the broker each run | A journal bug halts trading instead of being silently patched over by the broker's numbers | This doc |
-| The blob store, which holds the journal, the queue and the alert channel are adapters chosen per mode | Writing records and alarms the same way in every mode | Three more ports in `core`, which design.md's `## One runtime` now lists | This doc |
-| A missing, stale or empty input raises `Halt` | Defaulting a gap to the last value or to zero | A day with a data hiccup is a day with no trading | This doc, with the staleness rule on [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | A forecast names a basket | A forecast per instrument, with the pair logic in portfolio construction | One more type in `core`, and a change to the charter's module table | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | The supervisor and the fake-broker test are built last, on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Building the supervisor with `core`, which cannot run a day before every worker exists, or a separate issue. Writing the fake-broker test with the import rule test in `core`'s sub-issue, which cannot run before the supervisor exists | No end-to-end run happens until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) lands, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) grows past its Monitoring row and takes on part of test 3 | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries none of the strategy's quirks and keeps a capital account, as the owner ruled on 2026-11-01, so test 1's comparison recomputes Chan's return over gross dollars from the recorded positions and prices | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
-| The platform trades at any time of day and as often as a strategy needs. A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | One run per trading session after marketlake's evening sweep, filling at the next open | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | Ruled by the owner on 2026-10-29, and on 2026-10-30 that the architecture runs through every session and trades continuously, at decisions as often as once a minute, with S3 holding everything. The shape is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and question 10 sets the skeleton's strategy at 15:40 |
-| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account belongs to one environment and carries one deployment there, and strategies on one account share it and meet in portfolio construction, one target per strategy until combining is settled. One account holds one portfolio, one scale unit of components serves it, and the platform scales out by adding portfolios, with every component but the supervisor able to run as several instances | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | Open to other strategies ruled by the owner on 2026-10-29. Scale units and instances set by the owner on 2026-11-01. The shape is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| Run the Bollinger band on GLD and USO for test 1 | Entry 21's linear rule on the same data, which is always in the market with continuous units, or the Kalman-filter hedge on EWA and EWC, which adds a model to verify first | The engine carries none of the strategy's quirks and keeps a capital account, so test 1's comparison recomputes Chan's return over gross dollars from the recorded positions and prices | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), which also sets [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s ETFs |
+| A decision is keyed by its time, a run in shadow, paper and live is one trading day of one deployment, and its plan lists the day's decisions, built by one function in `core` from the schedules and the trading calendar | None named | The workers run all trading day, every key carries a decision time, recover waits for data at every decision, and the fastest useful decision is about one a minute, marketlake's capture rate | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A strategy is a set of rows in the one table in `runtime`: its instruments, schedule, data needs, alpha model as a stage of its own, and configuration. An account belongs to one environment and carries one deployment there, and strategies on one account share it and meet in portfolio construction, one target per strategy until combining is settled | A runtime per strategy, or the strategy's logic spread through the shared modules | Every key carries the deployment and every forecast its strategy. How strategies combine and a halt that holds the account wait for the first strategy that needs them, written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The risk gate counts every open order at its worst case, as filled on the side that grows exposure and unfilled on the other, until the broker confirms it | Counting open orders at their net | An order left resting can block a trade that would have fitted | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), as [design.md](design.md#processes-and-files) proposes |
-| marketlake is the one bar provider: every source is imported into it, and every mode reads one query | A bar store in this repository, or a reader per source | It reverses marketlake's rule that it holds no history from before capture, so every bar carries whether it was captured or imported. This repository also depends on marketlake's package at a pinned commit | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5), ruled by the owner on 2026-10-29 |
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
-| Alpaca's paper account is the paper broker, and Alpaca is the live broker too | Schwab, which is not known to offer an API paper account, or Interactive Brokers, which needs a gateway process beside the platform | The adapter is written to one broker's API, which paper and live share. Whether Alpaca refuses a second order with the same client order id is undocumented and is tested on paper as a second line of defence, never relied on | Paper ruled by the owner on 2026-10-30, question 1, and live on 2026-11-01. Built on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Talk to the broker through Alpaca's SDK, alpaca-py, wrapped in an adapter of the platform's own so a test hands in a fake | Calling the REST API with an HTTP client passed in | One more dependency, argued in this pull request's body, and a wrapper to keep in step with the SDK | Ruled by the owner on 2026-11-01. Built on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Execution reserves a quarter of the broker's rate limit, 50 of Alpaca's 200 requests a minute, for cancels and the kill switch's reads, lookups and cancels, and splits both the reserve and the rest evenly across its instances, each counting against a fixed share | A counter shared across instances, or no reserve | An instance cannot borrow another's idle share, and an order waits at its instance's share | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An order in doubt alarms when it is first journaled `InDoubt`, and halts the run once it stays unsettled past the smaller of 30 minutes and the time left before the cancel cutoff | Waiting out the order's time in force | A halt when a slow broker answers a lookup late | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A strategy's off switch is a blob any person may create, which execution reads before each of that strategy's submits, abandoning only its orders while its cancels still go out, and which sorts its orders, cancelling those that add to a position and keeping a pair whole | A deploy to switch a strategy off, or a halt of the whole account | One more control blob, check, command and drill, and a pending adding order lost when a switch-off was a mistake | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), beside the owner's ruling of 2026-11-02 on who switches it back on |
+| A strategy's off switch is a blob any person may create, which execution reads before each of that strategy's submits, abandoning only its orders while its cancels still go out, and which sorts its orders, cancelling those that add to a position and keeping a pair whole | A deploy to switch a strategy off, or a halt of the whole account | One more control blob, check, command and drill, and a pending adding order lost when a switch-off was a mistake | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A fired loss stop creates a create-only blob that holds the account until `ithildin stop clear` | A stop that lifts once the day's loss recovers or a new session starts | A person's clear before trading resumes after any fired stop | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), which owns the loss stop |
 | Slice 1's one VM is sized so measured memory use stays at or under half its memory, an 8 GB machine at the estimate, and a VM group's written limit of deployments comes from 75% of its memory | Sizing the machine to the estimate alone | About 7 cents an hour for each environment, a figure to confirm, and a second VM group once the limit is reached | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The rewrite's planning starts at 8 portfolios in an environment, the owner holds at ten until the rewrite lands, decisions a day carry no level, and the expected rewrite shares the workers that hold no account | A level on decisions, which would page while each deployment sits far below its ceiling, or no level until load is measured | An alarm and a key of their own, and a rewrite named before any load shows it is the right one | Proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) under the directive of 2026-11-03 |
-
-## Questions for the owner
-
-Each question says what was recommended and how the owner ruled.
-
-1. **Which paper broker?** The recommendation is Alpaca's paper account. It is
-   free, it has a REST API, and a paper key cannot move money. Schwab, which
-   marketlake already reads, is not known to offer an API paper account, so
-   confirm that before choosing it. Interactive Brokers has one, but it needs a
-   gateway process running beside the platform. The owner ruled for Alpaca's
-   paper account on 2026-10-30, and the ruling is on
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). On 2026-11-01 the owner chose Alpaca for live too, since the
-   platform's account is separate anyway.
-2. **Where do live GLD and USO bars come from?** The recommendation was to add
-   both to marketlake's `config/tickers.yaml`, and [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) did on
-   2026-10-29. The owner onboarded both on marketlake's VM on 2026-10-30, so
-   capture starts with Monday 2026-11-02's session, which
-   [l3a0/marketlake#961](https://github.com/l3a0/marketlake/issues/961) tracks.
-   marketlake captures forward from that day and keeps no history from before
-   it. So the first z-score's 40 or so sessions come from a vintage recorded
-   once from a vendor download, or the paper run waits that long before its
-   first trade. The owner ruled on 2026-10-29 that every
-   source goes through marketlake, so that download is imported there too, and
-   [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
-3. **How large is one unit on paper?** The replication has no capital account.
-   The recommendation is to size one unit so the gross position is a fixed
-   dollar amount the owner sets, recorded in the run's configuration. The owner
-   accepted it on 2026-10-29, and the ruling is on
-   [#9](https://github.com/l3a0/ithildin-runtime/issues/9).
-4. **May captured bars be committed to this public repository?** Vendor terms
-   can forbid redistributing data. The recommendation follows
-   quantitative-trading's archive pattern: keep the files in a private store,
-   and commit only their checksums, so a reader can still check that a run's
-   inputs are the ones recorded. The owner accepted it on 2026-10-29, and the
-   ruling is on [#5](https://github.com/l3a0/ithildin-runtime/issues/5). The
-   owner's later ruling the same day made marketlake's private lake that
-   store.
-5. **Where does the platform run?** The recommendation is one machine the owner
-   controls with a daily scheduler, either the owner's own machine or the VM
-   marketlake runs on. The VM keeps the run beside the lake it reads, but it
-   can power itself off each day, so the run's time has to fit inside its
-   window. The owner's machine needs no new host. The owner accepted one owner
-   controlled machine with a daily scheduler on 2026-10-29, and the ruling is
-   on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Later the same
-   day the owner ruled that the runtime runs on a VM of its own, separate from
-   marketlake's, and downloads the parts of the lake it needs, as
-   `## Where it runs` says.
-6. **Which heartbeat service?** The recommendation is a hosted check that
-   alarms when a ping is late, outside every machine the platform uses. A
-   GitHub Actions schedule is not one, because quantitative-trading measured
-   only about 11% of its scheduled board runs firing over 185 hours. The owner
-   chose healthchecks.io on 2026-10-29, in the project marketlake already runs,
-   with its ntfy push and email integrations as the alert channel. The ruling
-   is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
-7. **Does pulling the kill switch cancel orders resting at the broker?** The
-   recommendation is yes: execution, on seeing the switch, cancels each
-   resting order through the order path and journals it. Cancelling an order
-   that has not filled sells nothing, so it is still a stop and not a flatten,
-   and without it a switch pulled between 15:48 and the exchange's cancel
-   cutoff stops nothing already sent.
-   The owner accepted it on 2026-10-29, and the ruling is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The owner narrowed it on 2026-10-31 to the platform's stamped orders while hand trades shared the account, and returned to every resting order later that day, once the platform's account held no hand trades.
-8. **Does the daily loss stop also unwind positions?** The recommendation is
-   no for slice 1. Crossing the stop makes the risk gate refuse every new
-   order. An unwind is a trade of its own, so it would need its own path
-   through the gate and its own tests, and
-   [#7](https://github.com/l3a0/ithildin-runtime/issues/7) can add it later.
-   The owner accepted it on 2026-10-29, and the ruling is on [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
-   A later ruling the same day, for a pair leg left filled alone at the close,
-   kept the unwind out too, and set `max_net` from the venture's loss limit
-   instead, as design.md's `### Strategies, schedules and decisions` rule 5
-   says.
-9. **Where are `core` and the import rule test written?** The
-   recommendation is a new sub-issue of
-   [#4](https://github.com/l3a0/ithildin-runtime/issues/4), built first, which
-   every module issue waits on through a "blocked by" link. Every module
-   imports `core`, so the dependency is real. The price is one step before any
-   module starts. In return the shared shapes land once, reviewed on their own,
-   rather than inside whichever module happens to go first. The owner accepted
-   it on 2026-10-29, and the work is [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
-10. **When does the skeleton's strategy decide, and which close does it
-    read?** The owner ruled on 2026-10-29 that it trades the close: it decides
-    before the close on marketlake's segments read before sealing, and sends
-    market-on-close orders, so the fill lands on the close the backtest fills
-    at. Two evening choices were turned down. When the owner ruled, the
-    official daily bar arrived a session later, so deciding on it filled two
-    nights after the signal. Deciding on marketlake's captured 16:15 close
-    fills at the next open, one night after the signal. Once
-    [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962)
-    ships, the official bar arrives at the 18:30 sweep the same evening, so
-    deciding on it would also fill at the next open, one night after the
-    signal. Either evening choice fills at an open rather than at the close
-    the backtest fills at, which is the reason the ruling rests on, as the
-    owner asked this doc to record on 2026-10-30.
-
-    This doc proposes the times. Alpaca's order documentation says
-    market-on-close orders "submitted after 3:50pm but before 7:00pm ET will
-    be rejected", so the decision runs at 15:40 and every market-on-close
-    order goes out by 15:48, a cutoff the paper account's hard caps hold.
-    Execution checks it before every send and again just before each broker
-    call. Alpaca's order page does not state a cutoff for an early-close
-    day, so on those days the plan drops the 15:40 decision, which falls
-    after the 13:00 close, and the strategy does not trade. Alpaca's paper
-    account accepts market-on-close orders, but its
-    [paper trading page](https://docs.alpaca.markets/docs/paper-trading)
-    says it fills "based on the real-time quotes" and gives "partial fills for
-    a random size 10% of the time", and Alpaca staff on its forum say paper
-    does not tell a market-on-close order from a market order. So paper fills
-    measure the quote near the close rather than the closing auction's
-    price, and the random partial fills exercise the path that keeps a pair
-    whole. The price
-    is a signal computed twenty minutes before the close it trades, a pair
-    whose second leg can be rejected after the first is accepted, which
-    execution then cancels while the exchange still takes cancels, and a kill
-    switch that cannot stop a closing-auction fill after the exchange's
-    cancel cutoff. A missing input on a day halts that decision rather than
-    switching to another time.
-11. **Which AWS account holds the runtime's bucket and VM?** The owner ruled
-    on 2026-10-29 for the second choice, marketlake's account, against the
-    board's recommendation of the first, and later that day that AWS's
-    managed key is fine. The controls listed under that choice are this
-    doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), not part of the ruling. Rule 3 and
-    rule 5 now carry it. Rule 3 had assumed marketlake's account, where the
-    owner ruled earlier that day that the broker key lives. Three facts about that account matter. marketlake's plan role
-    holds AWS's `ReadOnlyAccess`, which reads every bucket and every parameter
-    in the account, and runs on pull requests of a public repository, which
-    [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
-    narrows to what `tofu plan` reads whichever choice the owner makes. Its
-    apply role holds `ec2:*`, so an approved apply can reach any VM in the
-    account as root. And a refusal added to one role protects nothing from a
-    role added later. Two choices follow.
-    1. **A separate AWS account for the bucket, the VM and the broker key.**
-       It refuses every marketlake role by default, the VM included, and
-       reads the lake through one read-only grant on marketlake's bucket. A
-       member account in AWS Organizations costs nothing, as the
-       [Organizations pricing page](https://docs.aws.amazon.com/organizations/latest/userguide/pricing.html)
-       says. The price is a second root login and recovery email to guard,
-       the setup hours, and moving the key out of marketlake's account, which
-       reverses part of the owner's ruling. The key cannot stay in
-       marketlake's account while the runtime runs elsewhere, because a
-       parameter encrypted under AWS's managed key cannot be shared across
-       accounts, as AWS's
-       [shared parameters page](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-shared-parameters.html)
-       says.
-    2. **marketlake's account, with the data behind lists of who may reach
-       it.** Four controls do the work.
-       1. The narrowed plan role reads no parameter and no object outside
-          marketlake's state bucket, so a pull request cannot print the
-          runtime's data, and a grant added by mistake later still meets
-          the next two controls.
-       2. The runtime's bucket policy refuses every S3 action to any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on `aws:PrincipalArn`, and refuses changes to the policy itself to all but the owner. An explicit refusal in a bucket policy overrides any role's own grant, as AWS's
-          [policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
-          says, so a role marketlake adds later is refused without anyone
-          remembering it.
-       3. The broker key's parameter is encrypted under a KMS key of the
-          runtime's own, whose policy names only the execution user's
-          principal and the owner's, and leaves out the statement that lets
-          IAM policies grant access. Without that statement, "IAM policies
-          that allow access to the key are ineffective", as AWS's
-          [default key policy page](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)
-          says. The key costs $1 a month. The owner later ruled AWS's
-          managed key fine instead, so the parameter rests on IAM grants and
-          refusals, as rule 3 says.
-       4. The VM cannot be listed that way, so marketlake's apply and deploy
-          roles carry explicit refusals of EC2 actions on instances tagged as
-          the runtime's, and of any change to that tag. That part is still a
-          list of refusals, and a check in marketlake's CI fails any role
-          that lacks it.
-
-       The price is that the VM stays behind a list someone has to keep
-       right, and that the account's root user can still edit every one of
-       these policies. Only a service control policy binds a root user, and
-       it does so only in a member account of an organization, as the
-       [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
-       says.
-
-    A board sitting on 2026-10-29 recommended the first, with one condition:
-    no role in the runtime's account can be assumed from a pull request on
-    either public repository, since ithildin-runtime is public too. It
-    weighed the separate account's setup hours against the second choice's
-    list of refusals that has to be kept right as marketlake grows, and
-    judged the journal, which cannot be recovered, worth the hours. The owner ruled for the second choice the same day, and on 2026-11-02 reversed it for an account per environment, as rule 11 of `### Four environments` says, so the first choice's price applies once for each environment, less the root logins that centralized root access removes.
-12. **What hosts the runtime: a VM, or a long-running Fargate service?** The
-    owner ruled on 2026-10-30 that the platform runs through every session
-    and trades continuously, at decisions as often as once a minute, so the
-    host keeps the supervisor and the workers running from before the open
-    until after the close. Lambda per component is turned down for now.
-    Lambda's
-    [15-minute limit](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html)
-    rules out a worker that lasts the session, and execution's watch over a
-    pair's legs and over the kill switch while orders rest needs one. A
-    message-driven supervisor would let the other components run as
-    functions triggered by their queues later, which rule 10 keeps open. Two choices were weighed.
-    1. **The VM, as `## Where it runs` draws it.** The workers run as Unix
-       users of their own, the queues are SQS, and only the
-       execution user's credential reads the broker key. The price is a
-       machine to patch and restart, the firewall rule that keeps worker
-       users off the instance metadata service, and, while the runtime shared
-       marketlake's account, the refusals that kept marketlake's apply and
-       deploy roles off the VM, which the owner's ruling of 2026-11-02 on an
-       account per environment removed.
-    2. **A long-running ECS Fargate service**, started before the open and
-       stopped after the close, with the same containers, each a task. There is no machine to patch. But ECS hands a task's IAM role to
-       every container in the task, and its
-       [task role page](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html)
-       says "containers are not a security boundary", while each Fargate
-       task has its own. With a container per component, as rule 10
-       proposes, each becomes a task with its own role, so only execution's
-       reads the broker key. The supervisor already only sends messages and the kill switch is a blob read from anywhere. When the owner ruled, the one change was the queue, from a named pipe to SQS. Since the owner's ruling of 2026-10-31 that components learn of changes from S3's events, the queues are SQS on the VM too, so that change is already made.
-
-    The recommendation is the VM for slice 1. Its design is complete and has
-    been reviewed, and the refusals that guard it are already ruled. When the owner ruled, moving to Fargate changed the queue adapter, which needed its own contract tests and drills, on a path that had run zero times. The case for Fargate is
-    real, no machine to patch, and the evidence that would settle it is
-    what running the VM costs in hours spent patching and restarting it.
-    Since the owner's ruling of 2026-11-02 on an account per environment,
-    marketlake's roles no longer reach the VM, so that reach no longer
-    argues for Fargate.
-    The owner ruled for the VM for slice 1 on 2026-10-30, and the ruling is
-    on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). That evidence is what would reopen the question. This doc's proposal for the owner's ruling of the same day on separate environments gave shadow and paper a VM each, and the owner ruled on 2026-11-01 that the two share one VM in slice 1, then on 2026-11-02 that shadow keeps machines of its own, so slice 1 runs a VM each for shadow and paper, with one more for live, each scaling out to a cluster of three, as `### Four environments` says.
-
-No open question this doc carries waits on the owner. The review of
-2026-11-01 made its recommendations, and the owner ruled on them that day,
-so they stand as rulings rather than proposals. The last two close the
-questions.
-
-1. The owner ruled that paper is part of slice 1, which the issues and
-   this doc had deferred.
-2. The owner ruled that `max_net`, the cap on the account's net exposure,
-   is s × V ÷ m with the
-   loss limit V the account's portfolio value and the share s at 1%, so one
-   stranded leg's loss under the stress move is 1% of the portfolio, as
-   design.md's `### Strategies, schedules and decisions` rule 5 says.
-   [#7](https://github.com/l3a0/ithildin-runtime/issues/7) builds it.
+| The rewrite's planning starts at 8 portfolios in an environment, the owner holds at ten until the rewrite lands, decisions a day carry no level, and the expected rewrite shares the workers that hold no account | A level on decisions, which would page while each deployment sits far below its ceiling, or no level until load is measured | An alarm and a key of their own, and a rewrite named before any load shows it is the right one | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |

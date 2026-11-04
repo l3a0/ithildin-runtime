@@ -90,7 +90,7 @@ These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.m
 3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
-6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper, as the owner ruled on 2026-10-30. Deploying to live is the owner's, by hand.
+6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper. Deploying to live is the owner's, by hand.
 
 ## The product, as the book draws it
 
@@ -158,17 +158,15 @@ for each bought module and what slice 1 uses instead.
 ### The owner (human)
 
 Product owner and the only person who can put capital at risk. Sets the order
-of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. Until agents move off the owner's admin login, which the owner deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), hard limits 1 and 6 hold by instruction alone. The owner ruled on 2026-11-02 that two more
+of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. Moving agents off the owner's admin login is deferred, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds that work. Until the move, hard limits 1 and 6 hold by instruction alone. Two more
 actions are the owner's alone in live trading: releasing a loss stop or the
 kill switch once it has fired, and switching a strategy back on. In shadow
-and paper the operator may release a fired loss stop or kill switch too, as
-the owner ruled on 2026-11-02. That the operator may also switch a strategy
-back on there is the design's reading of those rulings, not a ruling of its
+and paper the operator may release a fired loss stop or kill switch too.
+That the operator may also switch a strategy
+back on there is the design's reading of those rules, not a decision of its
 own. On a live
-account the owner alone releases any halt, on the ruling of 2026-10-30 on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11), and alone returns a
-tightened limit, on the ruling of 2026-11-04 on
-[PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). The owner's
+account the owner alone releases any halt and alone returns a
+tightened limit. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -284,8 +282,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   every fact has one writer: sizing that counts every order already sent, a
   client order id fixed before the send, one holder of the account's lease
   sending at a time, and an order in doubt that blocks the next. Builds the
-  lease the owner ruled for on
-  [#10](https://github.com/l3a0/ithildin-runtime/issues/10), with its tag
+  lease, with its tag
   check before every broker call and the four guards the design doc names for
   the window the broker leaves unfenced (DDIA L9084, L9286). Owns the
   journal's sequence numbers, its checksums and the halt-state read just
@@ -298,9 +295,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   contract suite's latest scheduled run against that account shows the
   broker applies a repeated cancel at most once, a run counting only for the
   account it ran against. The kill switch alone needs no run. A cancel
-  unsettled past a written time halts new orders and pages the owner, under
-  the owner's rulings on
-  [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
+  unsettled past a written time halts new orders and pages the owner.
+  Gives each dependency on the order path its timeout, its
   limit and its breaker, and puts the decision's id, an override entry's or a contract-suite run's, inside
   each client order id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
@@ -336,10 +332,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   kill switch acts as a holder of the account's lease, never as a second
   sender.
   Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
-  and on paper and shadow the operator may too, under the owner's rulings on
-  [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each
-  account's loss limit is its own, and no loss limit spans accounts, on the
-  owner's ruling of 2026-11-02.
+  and on paper and shadow the operator may too. Each
+  account's loss limit is its own, and no loss limit spans accounts.
   Holds that no caller carries a flag, a role or a credential that lets its
   orders skip a limit, and checks every cancel that skips the gate's
   limits against the design doc's rule for them (BM L3634).
@@ -362,11 +356,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   reads it with a neutral value, the closest legal value, a logged warning
   and carrying on, or any of the four forms the design doc's rules for the
   code forbid (CC p. 194, p. 197), a cut to the order path, the gate or its
-  limits, which the owner made a veto on 2026-11-03, and any check on input
+  limits, and any check on input
   that can stop a cancel. That last item has two exceptions: the conditions the design
   doc's faults rule 6 sets on repeating a cancel whose answer is lost, and
-  the stored halt that stops a plan's own cancel, under the owner's
-  2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+  the stored halt that stops a plan's own cancel.
 
 ### Test engineer
 
@@ -434,10 +427,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Protects:** the system stops safely and says so.
 - **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the shadow and paper environments day to day.
-  Rolls shadow and paper back with `ithildin pin set`, recorded with who and why (owner, 2026-10-30). Clears a paper or shadow account's halt, kill switch and lease, journaled,
+  Rolls shadow and paper back with `ithildin pin set`, recorded with who and why. Clears a paper or shadow account's halt, kill switch and lease, journaled,
   which the owner can do too, and may pull any account's kill switch. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
-  live account's override (owner, 2026-10-30). The owner runs every drill on live, and no agent does (owner, 2026-10-31).
+  live account's override. The owner runs every drill on live, and no agent does.
   Keeps a change log, where a change is any action that modifies the system or
   its data outside its normal use, such as a deploy, a config edit or a
   credential rotation (AoS L3991, L3995). Whoever makes a change writes its
@@ -448,8 +441,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   trading is halted and the journal preserved, asks what changed most
   recently and proposes undoing it before diagnosing anything (AoS L4028).
   The owner performs the undo when it is a deploy, apart from a release's rollback
-  by its pin on paper or shadow, which the operator may do under the owner's 2026-10-30
-  ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and an undo never restores
+  by its pin on paper or shadow, which the operator may do, and an undo never restores
   a rotated credential. Keeps an incident, the event, apart from a problem,
   its cause, and closes the problem only when the fix holds in production
   (AoS L3311, L3404). Decides in advance what evidence to capture before
@@ -657,8 +649,8 @@ that turns on money, contracts or law goes to the owner under a
 ### 5. Release
 
 A strategy and a platform version move through gates, and each gate is
-evidence, not elapsed time. The owner ruled on 2026-11-02 that the backtest
-and shadow gates run no registered experiment, and that a strategy's
+evidence, not elapsed time. The backtest
+and shadow gates run no registered experiment, and a strategy's
 registered test runs on paper. Backtest and shadow check the platform: that
 it computes what research computed, and that its orders match a replay. The strategy's hypothesis, its span and its pass rule are committed in writing before its sample opens, and paper's own fills after costs decide it. Every day of the sample is data no one had seen when the hypothesis was written, so no gate
 spends a historical holdout that a failed strategy would burn. The price is
@@ -667,12 +659,12 @@ much.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
-| Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
-| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
+| Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment |
+| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, the delay of each step's event is measured against the time before the cutoff, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, once with a reducing order working, which it keeps, and once with a pair with one leg of each kind, which it cancels whole, the last release and the last VM image have each been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
-The owner ruled on 2026-10-30 that test, shadow, paper and live run in separate environments, and that a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
+Test, shadow, paper and live run in separate environments, and a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
