@@ -302,9 +302,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Holds the gate's worst-loss refusal, the retiring check's halt, the halt on
-  an order or cancel that traces to nothing, and the limit on raising risk,
-  under rules 1, 2, 3 and 5 of the design doc's
+  Holds the gate's worst-loss refusal, the retiring check's halt, the
+  outcome-match halt, the halts when those checks stop, the halt on an order or
+  cancel that traces to nothing, and the limit on raising risk, under rules 1, 2,
+  3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -332,7 +333,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's seventeen
+  negative testing, checks recovery (AoS L5924). Replays the open sample's sessions for
+  each release under the design doc's rules for judging a strategy. Keeps the design doc's
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
