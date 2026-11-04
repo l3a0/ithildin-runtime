@@ -201,7 +201,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   lists, and reads the verdict a fixed step computes at the sample's end, under
-  that section's rules.
+  that section's rules. States on every quoted result the tries behind it, what
+  a search's selection scores with no edge, how the universe was chosen, the
+  size of wins and losses, and what the sample could not show, under rules 1 to
+  3 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -225,6 +229,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   keeps a copy off the machine and alarms on its lag, runs the scheduled
   read-back of recorded data, and drills a restore that checks counts and
   checksums (DDIA L7227, L4777).
+  Keeps instruments that later delisted in the security master, under rule 2
+  of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -315,6 +322,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds every halt and refusal, and the limit on raising risk, under rules 1, 2,
   3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+  Holds that the worst case behind a limit never comes from a strategy's own
+  record, under rule 4 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -675,7 +685,10 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the size, every review runs all three. From the first incident on, a
   recurring issue each quarter carries a pass over incidents and problems that
   picks what to isolate or harden next, starting with whatever causes the
-  most incidents (AoS L3555, L7140).
+  most incidents (AoS L3555, L7140). A review of a strategy's result, or of a
+  loss past the worst case a limit assumed, follows rules 4 and 5 of the design
+  doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Monitoring is designed with the module.** A design states how the
   platform knows the module is working and how it knows the module has
   started to behave badly. "It logs errors" does not answer that question
@@ -734,7 +747,10 @@ answer pointing at code or a test (L5568).
 
 Narang's highlights are silent on survivorship bias, paper trading, order management
 and reconciliation. The rules above on those topics come from the owner's existing repositories
-and standard practice, not from that book, and should be read as such. The exceptions are the
+and standard practice, not from that book, and should be read as such. The exceptions are
+survivorship bias, which rule 2 of the design doc's
+[A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it)
+takes from *Fooled by Randomness*, and the
 lease number, the journal's durability before a send, applying each fill once, and reconciling on
 every fill from a recorded position, which are built on the fencing, durability, end-to-end id
 and read-skew arguments of *Designing Data-Intensive Applications* and adapted here to a broker
