@@ -53,7 +53,7 @@ flowchart LR
 It shows the order of the work, condensed from the diagram in
 [The loop and its adapters](#the-loop-and-its-adapters). Look for execution
 appearing twice: once to learn what is true at the broker, and once, at the
-end, to send orders. Every arrow is really a file written to S3 with an event
+end, to send orders. Every arrow between workers is really a file written to S3 with an event
 telling the next worker it exists. Monitoring also compares the book with the
 broker on its own, off the path that sends orders.
 
