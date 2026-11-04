@@ -250,46 +250,33 @@ flowchart LR
     github -->|"pinned release"| loop
 ```
 
-The platform reads bars from one place, marketlake, the sibling repository
-that captures market data before anything computes on it. The sources differ
-in volume, cadence and shape, so each is transformed into marketlake once,
-stored durably there, and read by every mode through one query. The runtime
-runs on a VM of its own and reads a local mirror of the partitions it
-downloads from marketlake's bucket, as `## Where it runs` says.
-[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds it. marketlake then holds three kinds of
-bar.
+The platform reads every bar from one place, marketlake, the sibling repository
+that captures market data before anything computes on it. Each source is
+transformed into marketlake once, stored durably there, and read by every mode
+through one query, so a backtest and a live run never read bars by different
+paths. The runtime runs on a VM of its own and reads a local mirror of the
+partitions it downloads from marketlake's bucket, as `## Where it runs` says.
+marketlake holds three kinds of bar.
 
-1. **Captured bars,** which shadow, paper and live trading read. Shadow
-   mode decides on live data exactly as paper would, but fills every order
-   in the platform's own simulator, so no order reaches a broker.
-   [l3a0/marketlake PR #928](https://github.com/l3a0/marketlake/pull/928) added GLD and USO, with daily and minute bars, to
-   marketlake's roster on 2026-10-29. The owner onboarded both on marketlake's
-   VM on 2026-10-30, so capture starts with Monday 2026-11-02's session,
-   which [l3a0/marketlake#961](https://github.com/l3a0/marketlake/issues/961) tracks.
-2. **quantitative-trading's committed vintages,** imported once, which the
-   backtest reads.
-3. **A one-time vendor download** of the most recent sessions, imported once.
-   The strategy's first z-score needs about 40 sessions of closes: 20 to fit
-   the first hedge ratio, which Chan's script then drops with the first 20
-   rows, and 20 more spreads to fill the z-score's 20-day window. Without the
-   drop it is 39. This download covers them until capture does.
+| Kind of bar | Comes from | Read by |
+| --- | --- | --- |
+| Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow, paper and live trading |
+| Committed vintages | quantitative-trading, imported once | The backtest |
+| Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
 
-Every bar says whether it was captured or imported, and where an imported one
-came from, so a consumer can refuse imported history where only captured data
-will do. Imported history never overwrites a captured partition.
+The vendor download exists because the strategy's first z-score needs about 40
+sessions of closes: 20 to fit the first hedge ratio, and 20 more spreads to fill
+the z-score's 20-day window.
 
-How long marketlake keeps data needs no change for the runtime. marketlake's
-VM deletes older partitions from its own disk once its backup bucket holds
-them, but the runtime reads a mirror of that bucket, which keeps every
-session, and never the VM's disk. So the 2006 to 2012 history and a lookback
-of any length stay readable.
-[l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) records this: the VM's 22-session window does not drop them. marketlake makes that window
-configurable for its own readers.
-[l3a0/marketlake PR #959](https://github.com/l3a0/marketlake/pull/959), which closes
-[l3a0/marketlake#953](https://github.com/l3a0/marketlake/issues/953), gives option chains,
-quotes and bars their own windows on the VM and keeps every bars session
-there. The override per ticker is deferred as
-[l3a0/marketlake#954](https://github.com/l3a0/marketlake/issues/954), since nothing reads it.
+Every bar says whether it was captured or imported, in `origin`, and where an
+imported one came from, in `vintage_id`, so a consumer can refuse imported
+history where only captured data will do. Imported history never overwrites a
+captured partition.
+
+No session ages out for the runtime. marketlake's VM can delete older partitions
+from its own disk once its backup bucket holds them, but the runtime reads a
+mirror of that bucket, which keeps every session, and never the VM's disk. So
+the 2006 to 2012 history and a lookback of any length stay readable.
 
 A decision at close−20, 15:40 on a full day, needs today's quotes, but
 marketlake runs its validation battery only when it seals a day, at the close
@@ -2051,7 +2038,7 @@ each keeps its own rule.
    for any run a test or a report pins. Imported history
    from quantitative-trading arrives with that repository's own checksums,
    from its `data/vintages.jsonl`, so the import can prove it read the
-   recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) builds the import.
+   recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
 2. **The run, D1, holds `SNAPSHOT`, `SIGNAL`, `DECISION_RESULT` and
    `OUTPUT_FILE`,** as blobs in S3 under the run's prefix, each written once at
    a key fixed by the run, the stage, the decision and, for an output file, its name. A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, and marks a read before sealing provisional. A signal record holds a value the run computed,
