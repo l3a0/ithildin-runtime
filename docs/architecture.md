@@ -1025,8 +1025,8 @@ here, with the issue that builds its drill.
 | An order the journal holds open that the broker no longer lists, in a state its time in force does not explain | The client order id and the broker's answer | A simulated broker that drops a good-till-cancelled order | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The Docker daemon stopped or restarted mid-run | The daemon's state and the run's last decision | Restart the daemon during a decision, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A unit or the Docker daemon reached its limit | The unit and its last exit, from the host's handler | Freeze every supervisor instance, and make every one crash on start after the plan exists, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A sort has no `sort_done` entry within its deadline | The account, the strategy, its orders still resting and the broker's console as the next step | Turn off the bucket's EventBridge delivery and switch a strategy off, and kill execution between a pair's two cancels, expecting the alarm, and a start that resumes the journaled list | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A sort finished, raised from its `sort_done` entry | Each order cancelled, kept or in doubt, each pair's outcome, the positions left open and the person's next step | Every switch-off drill reads this text | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A sort has no `sort_done` entry within its deadline | The account, the strategy, its orders still resting and the broker's console as the next step | Turn off the bucket's EventBridge delivery and switch a strategy off, expecting the tool's warning and monitoring's alarm from its own read. Repeat with a halt the platform raises, and kill execution between a pair's two cancels, expecting a start that resumes the journaled list | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A sort finished, raised from its `sort_done` entry | Each order cancelled, kept or in doubt, each pair's outcome, the positions left open and the person's next step | Every switch-off drill reads this text, and one switches the strategy back on mid-sort, expecting the unfinished list journaled and no more cancels | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A strategy's outcome match found a dropped or duplicated outcome | The strategy, the decision's id, the open position and the owner's step | Drop one outcome and duplicate one, each expecting that strategy halted and the others trading | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A strategy's retiring result was reached, or its measure could not be computed | The strategy, the result or the missing measure, and the owner's step | Inject a result under a drill's journal entry on a strategy with no open sample, and an absent measure, as [#33](https://github.com/l3a0/ithildin-runtime/issues/33)'s fault list says | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A retiring check, an outcome match, or the check of orders back to their causes has stopped | Which check, its last run and what the stale halt stopped | Stop each check, expecting the strategy's halt, or for orders back to their causes a halt of all trading, and the dead-man check's page | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
@@ -1174,7 +1174,7 @@ Writing commands take more friction the more they can resume trading.
 5. **`ithildin switch clear --account <a>`** deletes the switch and journals
    the clear.
 6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
-   strategy's off switch and journals it, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may, as the owner ruled on 2026-11-02. On shadow and paper the operator
+   strategy's off switch and journals it, and any strategy halt, which ends its sort, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may, as the owner ruled on 2026-11-02. On shadow and paper the operator
    may too, which is this doc's reading of the 2026-11-02 rulings rather
    than a ruling of its own.
 7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's
@@ -2147,6 +2147,7 @@ not come again is kept rather than discarded.
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
 | A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
+| A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halt.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A rewrite-planning page's claim and its sent record, one for each load parameter and level in the environment | `load/<parameter>-<level>/claim.json`, `load/<parameter>-<level>/sent.json` |
