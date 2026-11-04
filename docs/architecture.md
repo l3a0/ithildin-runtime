@@ -304,6 +304,8 @@ marketlake runs its validation battery only when it seals a day, at the close
 plus fifteen minutes. So the runtime may read the day's data before marketlake
 seals it, as a provisional read, and it checks that data twice: its own minimum
 checks before anything decides, and a comparison with the sealed day afterwards.
+The skeleton decides this way because it trades the close, so its fill lands on
+the close the backtest fills at.
 
 ```mermaid
 sequenceDiagram
@@ -327,44 +329,63 @@ side of the seal, and for monitoring's comparison, which runs after the decision
 has already acted. The read has five parts.
 
 1. **What is read.** marketlake's capture daemon writes a segment each cycle and
-   never rewrites it once its manifest entry lands, and marketlake uploads each
-   segment to its bucket as soon as that entry lands, refusing to replace an
-   existing key. Any decision time inside marketlake's capture hours reads those segments, and
-   the data worker reads them up to the decision time. The skeleton's close−20 is
-   one such time, and the decision minute [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for its shadow run on SPY
-   and QQQ, ten minutes before the close, is another. The runtime
-   turns the segments into quote rows itself, when it reads what it needs, with
-   marketlake's package, a dependency at a pinned commit. Once a downloaded
-   segment matches the SHA-256 in its manifest entry, as rule 8 of
-   `## Where it runs` requires, that package's
-   `lake.journal.read_segment(path)` reads it and refuses a damaged file or bytes
-   after the segment's end-of-stream marker. Joining a ticker-day's segments is
-   the runtime's own code. marketlake's internal joiner,
-   `measure.read_surface_cycles`, breaks when a day's schema changes partway
-   through, which is [l3a0/marketlake#143](https://github.com/l3a0/marketlake/issues/143), so this doc proposes a test of that case for
-   [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
+   never rewrites it once its manifest entry lands, which makes an early read
+   safe. marketlake uploads each segment to its bucket as soon as that entry
+   lands, refusing to replace an existing key. Any decision time inside
+   marketlake's capture hours reads those segments, up to the decision time. The
+   skeleton's close−20 is one such time, and the decision minute [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for
+   its shadow run on SPY and QQQ, ten minutes before the close, is another. The
+   runtime turns the segments into quote rows itself, when it reads what it needs.
+
+   ```mermaid
+   flowchart LR
+       seg["Segment in the bucket"] --> sha["Match its SHA-256<br/>against the manifest"]
+       sha --> read["read_segment<br/>refuses a damaged file"]
+       read --> join["Runtime joins a<br/>ticker-day's segments"]
+       join --> rows["Quote rows"]
+   ```
+
+   The diagram shows one segment becoming quote rows. Look for which steps are
+   the runtime's. The SHA-256 match is the check rule 8 of `## Where it runs`
+   requires. `lake.journal.read_segment(path)` comes from marketlake's package, a
+   dependency at a pinned commit, and it also refuses bytes after the segment's
+   end-of-stream marker. The join is the runtime's own code because marketlake's
+   internal joiner, `measure.read_surface_cycles`, breaks when a day's schema
+   changes partway through, which is [l3a0/marketlake#143](https://github.com/l3a0/marketlake/issues/143), so this doc proposes a test of that
+   case for [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
 2. **What is checked before deciding.** The data worker runs its own minimum
    checks before anything decides. A missing or stale quote at the decision time
    halts the decision, and a price spike is flagged in the snapshot without
    halting.
-3. **Which read a decision uses.** The skeleton's strategy trades the close, so
-   its fill lands on the close the backtest fills at, and decides this way. Times
-   are stated as minutes before the close, so it decides at close−20, 15:40 on a
-   full day. Whether a decision reads segments or sealed partitions follows from
-   its own time against the day's seal time in marketlake's manifest, never from
-   whether the day is sealed when the read happens. So a backtest that replays a
+3. **Which read a decision uses.** A decision's own time against the day's seal
+   time in marketlake's manifest picks the read, never whether the day is sealed
+   when the read happens.
+
+   ```mermaid
+   flowchart TD
+       t{"Is the decision's time before<br/>the day's seal time?"}
+       t -- "Yes" --> seg["Read segments, provisional"]
+       t -- "No" --> part["Read sealed partitions"]
+       seg --> same["A replay of that decision<br/>reads the same segments"]
+   ```
+
+   The diagram shows the choice. Look for the replay: a backtest that replays a
    close−20 decision reads the segments that existed then, as the live decision
-   did, and test 2 can pin a stretch read before sealing. A decision after the
-   seal time reads sealed partitions and needs none of this.
+   did, so test 2 can pin a stretch read before sealing. A decision after the
+   seal time needs none of this.
 4. **What is compared after the seal.** The snapshot names each segment it read
    by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
    seals the day, monitoring compares each quote the snapshot used with the sealed
    row of the same ticker and minute, by bid, ask and last as received, because a
-   segment and the partition built from it never share bytes. It journals and
-   alarms a value that differs, and a row the sealed day quarantined or lacks. It
-   also reports the gap between the price the decision used and the official
-   close, and between each market-on-close fill and that close, as report lines
-   rather than alarms, since the two differ by design.
+   segment and the partition built from it never share bytes.
+
+   | Monitoring finds | It does |
+   | --- | --- |
+   | A value that differs from the sealed row | Journals and alarms |
+   | A row the sealed day quarantined or lacks | Journals and alarms |
+   | A gap between the price the decision used and the official close | A report line, since the two differ by design |
+   | A gap between a market-on-close fill and that close | A report line, since the two differ by design |
+
 5. **What this rests on.** The comparison needs marketlake to keep each segment,
    create-only and never deleted, which [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) states as a rule. Only the
    uploader refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself
