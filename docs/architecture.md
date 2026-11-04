@@ -1008,7 +1008,7 @@ here, with the issue that builds its drill.
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s, and for a capturing stage the attempt key it stored the second capture at | Run a step that puts the clock time in its output, and resume data's stage with a fresh read that differs from its stored snapshot, expecting the second read stored at its attempt key and named in the decision result | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run, and every execution instance exiting so, expecting each to restart rather than the run to fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The ticker, the minute and both values, or the row the sealed day quarantined or lacks | Change or quarantine a sealed row a run's snapshot used | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor restarted mid-run | The plan it found and each worker's last heartbeat | Kill one supervisor instance between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1020,6 +1020,13 @@ here, with the issue that builds its drill.
 | A VM's release pin is missing or unreadable | "release pin missing or unreadable", from the host's handler | Boot a VM whose pin is deleted, and one whose role cannot read it, in each of shadow, paper and live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The promotion job stopped running | None. Its own heartbeat check raises it | Disable the promotion schedule for a day | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A live drill is overdue | The drill and when it last ran | Let a drill's monthly turn pass unrun in a drill environment | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A drift check found a difference | The resource and the difference | Change a resource by hand in the test account and run the check | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| A scheduled check's result is missing past its bound, the drift check's among them | The check and its last result's time | Stop a scheduled check | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| The log buffer's fill or the shipping lag passes 75% of its bound | The component, the fill and the lag | Stall the log store, expecting the alarm before a line drops | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| A component's restarts pass the written count over a session or a day, or a component the order path depends on restarts during a session | The component, its count and its last exit | A crash loop slower than the cap's window | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| A restart or scaling switch found off at a session's start, flipped or unreadable | The component and the switch's position | Flip the switch, and deny its read | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| A protected store missing, created again, empty or behind, or a comparison with a copy that cannot finish | The store, the copy, whether any instance can serve, and the broker's interface when none can | Remove or empty each store in the test account, and block a copy | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
+| A deployment state that cannot be read | What could not be read | Feed a deploy an unreadable state in CI | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
 | Live's drill job stopped running | None. Its own heartbeat check raises it | Disable the drill schedule past one interval, against live's check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A drill refused because a session is open on live | "drill refused: session open" and the open run's plan | Start a drill while a live session is open | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A live session refused because a drill is running or left something behind | "session refused: drill not clean" and what failed the check | Start a session while a drill's marker exists, and after a drill that leaves the switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2346,7 +2353,12 @@ Eleven rules hold the deployment to the premise and the hard limits.
    `ithildin.target`, with systemd's `Restart=on-failure`, a
    `StartLimitBurst`, and a `StartLimitIntervalSec` of a whole trading day,
    since systemd's default of ten seconds would never reach the limit for a
-   process that crashes once a minute. `RestartSec` is long enough to ride
+   process that crashes once a minute. Execution's units, and capture's once
+   this platform runs it, are the exception under design.md's rule 4 of
+   `### A release is checked where it runs, and nothing heals by hiding a
+   fault`: they have no start limit, use a growing delay, come up halted
+   past the count, and restart on any exit while a session is open, a clean
+   one included, so something always serves a cancel. `RestartSec` is long enough to ride
    out a short restart of the Docker daemon, rather than spending the whole
    burst in a second. Each unit's stop handler, `ExecStopPost`, runs on the
    host and records why the container stopped, for the restart record
@@ -2553,7 +2565,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
        marker. `ithildin` gets no command for it, so a person clears a stale
        marker by running the apply job again, whose run records who started
        it. A VM image that passes its refresh and fails later rolls back in
-       one step: apply the previous launch template version, which starts a
+       one step: a revert commit on `main` applies the previous launch template version, which starts a
        refresh outside sessions under the same session check. An app
        release never rolls out this way, because two releases in one run
        write different bytes to one key, which the create-only rule turns
@@ -2786,16 +2798,16 @@ Eleven rules keep the environments apart.
     for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) two
     credentials in each runtime account.
     1. **The plan credential** is assumed only by the infrastructure
-       workflow's plan job, through rule 6's OIDC trust, and reads what a
-       plan compares. On a pull request run it holds neither
-       `ReadOnlyAccess` nor any `ssm:Get*`, because the pull request's own
-       code runs in that job, and either grant would let it read the
-       environment's secrets.
+       workflow's plan job on `main`, through rule 6's OIDC trust, and reads
+       what a plan compares. A pull request's run holds no AWS credential,
+       because its own code runs in that job.
     2. **The apply credential** is assumed only by the apply job on `main`,
        in that environment's GitHub environment, once the apply is
-       approved. It can change the VM's launch template and role, so reach
-       to the VM counts as reach to that environment's broker key, and the
-       apply credential is guarded as the key is.
+       approved. It can change only the VM image in the launch template, and
+       never the startup script or the VM's role, as design.md's rule 3 of
+       `### A release is checked where it runs, and nothing heals by hiding
+       a fault` requires and this doc proposes for [#32](https://github.com/l3a0/ithildin-runtime/issues/32), and a policy test
+       tries a startup script change and expects refusal.
 
     Shadow's and paper's applies are approved by the owner or the
     operator, and live's by the owner alone.
