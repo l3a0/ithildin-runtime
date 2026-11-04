@@ -255,7 +255,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   limit and its breaker, and puts the decision's id, or an override entry's, inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
-  Writes each order's recorded outcome and the match of requests to outcomes,
+  Writes each order's recorded outcome, the match of requests to outcomes and
+  the check of orders back to their causes,
   under the design doc's rules for judging a strategy, with
   [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holding the mechanism.
 - **Vetoes:** an order path without a journal entry, a send before durable
@@ -303,7 +304,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
   Holds the gate's worst-loss refusal, the retiring check's halt, the
-  outcome-match halt, the halts when those checks stop, the halt on an order or
+  outcome-match halt, the check of orders back to their causes, the halts when
+  those checks stop, the halt on an invalid stress move, the halt on an order or
   cancel that traces to nothing, and the limit on raising risk, under rules 1, 2,
   3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
@@ -722,5 +724,5 @@ an operation needs, applied to market data, are left out, with the reasons in th
 chapters on how beliefs form and change, and its remedy of changing how the trader thinks, have no
 counterpart in a platform whose strategies are code, and are left out. Its figures, such as its
 sample of 20 trades, rest on the author's experience rather than data, and are not adopted. What it
-adds here is judging a strategy over a sample set in advance and keeping the human acts around it
-out of the evidence.
+adds here is judging a strategy over a sample set in advance and reporting the effect of the human
+acts around it apart.
