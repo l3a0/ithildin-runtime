@@ -560,6 +560,7 @@ sequenceDiagram
     F-->>K: an event: the plan
     F-->>C: an event: the plan
     F-->>P: an event: the plan
+    X->>F: Startup, read only: each execution instance's checks, before it takes any send stage
     Note over V,M: Phase 1, read the data, then recover
     D->>F: snapshot, naming each bar read, and data's decision result
     F-->>X: an event: data's result
@@ -642,6 +643,14 @@ sequenceDiagram
     M->>F: the decision's report and monitoring's report result
     M->>M: ping the heartbeat service
 ```
+
+Before the first decision, each execution instance runs the charter's Startup
+step, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Those checks are read only: its digest
+against the plan's release, the configuration keys, the hard caps, the journal
+to its head, the protected stores, the restart switches, the clock and the
+halt state. It takes no send stage until they pass, and design.md's rule 5 of
+`### Every change can be undone or switched off` says what a failed check
+still serves.
 
 The phases in order.
 
@@ -930,7 +939,7 @@ The two cover different failures.
    healthy decision alarms.
 
 The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and whichever execution instance
-receives that event takes the account's lease, free after at most one order in flight or on the lease's release, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch and, finding it set, takes the account's lease and cancels every resting order before anything else, so a
+receives that event takes the account's lease, free after at most one order in flight or on the lease's release, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch as soon as its digest and journal checks pass and, finding it set, takes the account's lease and cancels every resting order, so a
 switch pulled while execution is down still cancels once the host restarts
 it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
 so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
@@ -2117,7 +2126,7 @@ not come again is kept rather than discarded.
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
-| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
+| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
@@ -2315,7 +2324,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    prefixes, and monitoring's role alone creates and reads a rewrite-planning
    page's records under `load/`, which outlive every run and release. The
    bucket's lifecycle expires heartbeats and the
-   noncurrent versions of leases, and nothing else. The lease grants are
+   noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. The lease grants are
    narrower than the rest, as this doc proposes for
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Only
    execution's role may create, rewrite and delete under
@@ -2510,7 +2519,10 @@ Eleven rules hold the deployment to the premise and the hard limits.
        or stops is terminated and replaced from the group's launch template,
        which holds the VM image and rule 3's provisioning step, in the same
        zone while it is up and in another when it is not. So a replacement
-       needs no person.
+       needs no person to start, though mid-session its execution comes up
+       halted and the session waits for the owner, as design.md's rule 4 of
+       `### A release is checked where it runs, and nothing heals by hiding a
+       fault` says.
     2. **A VM joins the run its plan names.** A VM that starts mid-session
        runs the release the run's plan names, its supervisor reads the plan
        as design.md's rule 9 says, and its path unit then starts
@@ -2541,8 +2553,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
        The owner ruled on 2026-11-01 that a change to the VM itself, such as
        an OS patch, a Docker upgrade or a new machine image in the launch
        template, rolls out through the group's instance refresh. The apply
-       that changes the launch template starts it, and on live that apply is
-       the owner's. The rest of this item is this doc's proposal for
+       that changes the launch template starts it, and on paper and live that
+       apply waits for the owner. The rest of this item is this doc's proposal for
        [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The
        refresh keeps at least 66 percent of the group healthy, so it
        replaces one of the three VMs at a time and two stay up throughout.
@@ -2706,8 +2718,8 @@ Eleven rules keep the environments apart.
    that environment's own runtime, deploy and promotion roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as `## Where it runs`
    rule 5 says. A
-   deploy role may only put its own environment's pin. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
-   may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats and block records, which shadow's policy names as its one grant across environments. On the live bucket
+   deploy role may only put its own environment's pin and create its deploy record under `release/deploys/`. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
+   may only put paper's pin and promotion record, read paper's switch, overrides, leases, results and block records, and read shadow's plans, results, halts, heartbeats, block records and deploy records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch, as the owner ruled, and create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and rule 3's refusals cover
@@ -2781,7 +2793,7 @@ Eleven rules keep the environments apart.
     1. Each environment's monitoring role and VM role read their own ping
       addresses, and every other role is refused.
     2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the two live writes that role holds, by pulling the switch and by switching a strategy off while no session runs, and clears both.
-    3. A deploy role is refused every key but its pin.
+    3. A deploy role is refused every key but its pin and its deploy record.
     4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
     5. A pin moved mid-session leaves a restarted worker on the session's
       digest.
@@ -2796,7 +2808,7 @@ Eleven rules keep the environments apart.
     change to any of them is an apply, followed by that environment's
     read-only checks. A release whose routes need a new rule waits for that
     apply, because the session-start check refuses it. This doc proposes
-    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) two
+    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) three
     credentials in each runtime account.
     1. **The plan credential** is assumed only by the infrastructure
        workflow's plan job on `main`, through rule 6's OIDC trust, and reads
@@ -2806,17 +2818,19 @@ Eleven rules keep the environments apart.
        holds no AWS credential.
     2. **The apply credential** is assumed only by the apply job on `main`,
        in that environment's GitHub environment, once the owner's merge
-       reaches `main`, and on live once the owner approves. It can change
-       the VM's launch template and role, so reach to the VM counts as reach
-       to that environment's broker key. That contradicts design.md's rule 3
-       of `### A release is checked where it runs, and nothing heals by
-       hiding a fault`, which says no role that applies the code can read a
-       broker credential, and AWS has no permission that limits a template
-       change to the VM image alone. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds what settles it.
+       reaches `main`, and on live once the owner approves. On paper and live
+       it holds no write on the launch template or the VM's role.
+    3. **The VM change credential**, on paper and live, is assumed only by a
+       job behind the owner's approval, and can change the launch template
+       and the VM's role. Reach to the VM counts as reach to that
+       environment's broker key, which is why it stays behind that approval
+       and why it is the one exception to design.md's rule 3 of `### A release
+       is checked where it runs, and nothing heals by hiding a fault`. On
+       shadow, which holds no broker key, the apply credential does this.
 
     Shadow's and paper's applies follow the owner's merge with no second
-    approval, and live's is approved by the owner alone, under the owner's
-    2026-11-04 ruling on [#32](https://github.com/l3a0/ithildin-runtime/issues/32).
+    approval, a paper VM change apart, and live's is approved by the owner
+    alone, under the owner's 2026-11-04 rulings on [#32](https://github.com/l3a0/ithildin-runtime/issues/32).
 11. **Each environment has an AWS account of its own.** The owner ruled on
     question 11 that the runtime's resources live in marketlake's account,
     confirmed on 2026-10-31 that live stays there, and on 2026-11-02

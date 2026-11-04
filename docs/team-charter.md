@@ -690,7 +690,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   restart and scaling switch and execution's restart count, and check the
   clock's offset and sync age. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
-  interface. A failure of any other check, apart from a store finding, which
+  interface. Once those two pass, read the kill switch and serve it. A failure of any other check, apart from a store finding, which
   follows that rule, halts new orders only, and the release still serves
   cancels, except a plan's own while a halt is stored, and the kill switch.
   Then reconcile, read the halt state, and only then enable strategies.
