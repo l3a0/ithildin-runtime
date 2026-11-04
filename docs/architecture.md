@@ -988,7 +988,7 @@ here, with the issue that builds its drill.
 | Monitoring killed after it claimed an alarm and before its push | The halt the alarm names | Kill monitoring right after its claim is stored, expecting the restarted instance or another to push the alarm, and a second push only when no sent record exists | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its limit, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its count, which comes up halted, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An object under live's journal or recorded captures whose retention ends within the set window, or that lacks its legal hold | The key, its retention date and its hold | Write a test object in a drill bucket with a retention date inside the window and no hold | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Load nears the 1x limit: a stage's run time passes 75% of its deadline, the day's decisions, counted across every deployment of the environment as design.md counts them, pass 75% of the written limit, which design.md puts at a decision a minute for each deployment, 293 of a full session's 390 for slice 1's one deployment until the build writes its own, the VM's memory use passes 75%, or the deployments on a VM group pass 75% of its written limit | The stage, its run times against its deadline, the day's decision count, the VM's memory use, and the deployments against the group's limit | Slow a stage with a test delay until it passes 75% of its deadline, run a test plan with the decision limit set low in configuration so the day's count passes 75% of it, feed a test memory reading above 75%, and list a test deployment count above 75% of the group's limit | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1008,7 +1008,7 @@ here, with the issue that builds its drill.
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s, and for a capturing stage the attempt key it stored the second capture at | Run a step that puts the clock time in its output, and resume data's stage with a fresh read that differs from its stored snapshot, expecting the second read stored at its attempt key and named in the decision result | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A worker exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run, and every execution instance exiting so, expecting each to restart rather than the run to fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker other than execution exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run, and every execution instance exiting so, expecting each to restart rather than the run to fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The ticker, the minute and both values, or the row the sealed day quarantined or lacks | Change or quarantine a sealed row a run's snapshot used | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor restarted mid-run | The plan it found and each worker's last heartbeat | Kill one supervisor instance between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1738,10 +1738,10 @@ stateDiagram-v2
     Halted --> Reporting: a halt written as a result, then journaled and alarmed by monitoring
     Reporting --> Done: report written, heartbeat pinged
     Done --> [*]
-    Starting --> Failed: a worker's heartbeat stops, or it passes its restart limit
-    Preparing --> Failed: a worker misses its deadline, its heartbeat stops, or it passes its restart limit
-    Deciding --> Failed: a worker misses its deadline, its heartbeat stops, or it passes its restart limit
-    Sending --> Failed: a worker misses its deadline, its heartbeat stops, or it passes its restart limit
+    Starting --> Failed: a worker's heartbeat stops, or none of its instances is healthy
+    Preparing --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
+    Deciding --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
+    Sending --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
     Failed --> Reporting: the run's halt reaches every worker as an event
 ```
 
@@ -2356,9 +2356,10 @@ Eleven rules hold the deployment to the premise and the hard limits.
    process that crashes once a minute. Execution's units, and capture's once
    this platform runs it, are the exception under design.md's rule 4 of
    `### A release is checked where it runs, and nothing heals by hiding a
-   fault`: they have no start limit, use a growing delay, come up halted
-   past the count, and restart on any exit while a session is open, a clean
-   one included, so something always serves a cancel. `RestartSec` is long enough to ride
+   fault`: they have no start limit and use a growing delay. Execution's
+   also come up halted past the count and restart on any exit while a
+   session is open, a clean one included, so something always serves a
+   cancel. Capture never halts. `RestartSec` is long enough to ride
    out a short restart of the Docker daemon, rather than spending the whole
    burst in a second. Each unit's stop handler, `ExecStopPost`, runs on the
    host and records why the container stopped, for the restart record
@@ -2562,9 +2563,9 @@ Eleven rules hold the deployment to the premise and the hard limits.
        that finds the marker refuses to start, with the reason "session
        refused: instance refresh open". The apply job that started the
        refresh waits for the refresh's end event and then deletes the
-       marker. `ithildin` gets no command for it, so a person clears a stale
-       marker by running the apply job again, whose run records who started
-       it. A VM image that passes its refresh and fails later rolls back in
+       marker. `ithildin` gets no command for it, so the next merge's apply
+       job clears a stale marker on shadow and paper, and on live a run
+       behind live's reviewer does, whose run records who started it. A VM image that passes its refresh and fails later rolls back in
        one step: a revert commit on `main` applies the previous launch template version, which starts a
        refresh outside sessions under the same session check. An app
        release never rolls out this way, because two releases in one run
@@ -2603,7 +2604,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
     4. Refresh with an image whose checks fail, expecting the hook to abandon
        the new VM, the refresh to roll back with two VMs up throughout, and a
        refresh started during a session to be refused.
-    5. Refresh to a good image, then roll back by applying the previous
+    5. Refresh to a good image, then roll back by a revert commit that applies the previous
        launch template version, and forward again, expecting each refresh to
        finish outside a session with the group healthy throughout. This one
        also runs on slice 1's group of one, because the charter's paper gate
@@ -2786,7 +2787,7 @@ Eleven rules keep the environments apart.
       digest.
 
     Each environment's infrastructure is applied by a plan of its own, a bad
-    apply rolls back by applying the previous configuration, which never removes an event rule, and that environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
+    apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule, and that environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
 
     Nothing deploys yet. When it does, the host's Unix users, unit files,
     firewall rules and memory-backed directories come from the environment's
@@ -2799,15 +2800,19 @@ Eleven rules keep the environments apart.
     credentials in each runtime account.
     1. **The plan credential** is assumed only by the infrastructure
        workflow's plan job on `main`, through rule 6's OIDC trust, and reads
-       what a plan compares. A pull request's run holds no AWS credential,
-       because its own code runs in that job.
+       what a plan compares. It holds neither `ReadOnlyAccess` nor any
+       `ssm:Get*`, because merged code runs in that job, and either grant
+       would let it read the environment's secrets. A pull request's run
+       holds no AWS credential.
     2. **The apply credential** is assumed only by the apply job on `main`,
        in that environment's GitHub environment, once the owner's merge
-       reaches `main`, and on live once the owner approves. In the launch template it can change only the VM image, and
-       never the startup script or the VM's role, as design.md's rule 3 of
-       `### A release is checked where it runs, and nothing heals by hiding
-       a fault` requires and this doc proposes for [#32](https://github.com/l3a0/ithildin-runtime/issues/32), and a policy test
-       tries a startup script change and expects refusal.
+       reaches `main`, and on live once the owner approves. It can change
+       the VM's launch template and role, so reach to the VM counts as reach
+       to that environment's broker key. That contradicts design.md's rule 3
+       of `### A release is checked where it runs, and nothing heals by
+       hiding a fault`, which says no role that applies the code can read a
+       broker credential, and AWS has no permission that limits a template
+       change to the VM image alone. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds what settles it.
 
     Shadow's and paper's applies follow the owner's merge with no second
     approval, and live's is approved by the owner alone, under the owner's

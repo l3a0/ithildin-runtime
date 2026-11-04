@@ -786,6 +786,6 @@ Breaking production on purpose, choreography inside one component's path, and st
 an operation needs, applied to market data, are left out, with the reasons in the design doc's register.
 
 *The DevOps 2.0 Toolkit* dates from 2016, and its tools are examples rather than choices made here.
-Deploying every passing commit, feature toggles that hold unfinished work, a service registry with a proxy,
+Deploying every passing commit to live, feature toggles that hold unfinished work, a service registry with a proxy,
 restarts without limit, fixed sleeps and switching back on its own after a failed check are left out,
 with the reasons in the design doc's register.
