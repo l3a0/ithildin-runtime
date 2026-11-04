@@ -354,7 +354,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Checks, under the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
   that the Startup checks run in CI as the same code that clears a release, that each check that
-  starts something waits on readiness rather than a fixed sleep, that a Startup run against the simulated broker sends nothing, that each run-time fault the group
+  starts something waits on readiness rather than a fixed sleep, that no Startup check sends anything, that each run-time fault the group
   handles is among the injected faults or, for the restart cap and a crash loop slower than its
   window, runs under the host's real supervisor as the group says, and that each deploy-time failure
   has its CI test beside its drill (DT p. 200, p. 247).
@@ -423,7 +423,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Checks the credential rules in rules 2 to 5 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
   and the policy tests [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds for them, and that every
-  interface that can control a host or a container takes only authenticated calls (DT p. 92).
+  interface that can control a host or a container takes only authenticated calls, where the book's own setup listens on any address (DT p. 92).
 
 - **Vetoes:** a credential in a tracked file, an API key with withdrawal or
   transfer permission, and deserialization of outside bytes into arbitrary
@@ -588,7 +588,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that finds a protected store missing has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
