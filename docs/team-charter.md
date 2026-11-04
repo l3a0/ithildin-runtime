@@ -240,7 +240,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the broker adapters and reconciliation. Journals each order before sending
   it, and makes resubmission idempotent. Applies the design doc's rules that
   every fact has one writer: sizing that counts every order already sent, a
-  client order id fixed by the decision, one holder of the account's lease
+  client order id fixed before the send, one holder of the account's lease
   sending at a time, and an order in doubt that blocks the next. Builds the
   lease the owner ruled for on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10), with its tag
@@ -312,10 +312,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Holds the gate's worst-loss refusal, the retiring check's halt, the
-  outcome-match halt, the check of orders back to their causes, the halts when
-  those checks stop, the halt on an invalid stress move, the halt on an order or
-  cancel that traces to nothing, and the limit on raising risk, under rules 1, 2,
+  Holds every halt and refusal, and the limit on raising risk, under rules 1, 2,
   3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
@@ -618,7 +615,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, and once with a reducing order working, which it keeps, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
@@ -654,7 +651,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   digest or the journal check halts everything and pages the owner, naming
   the broker's own interface. A failure of any other check, apart from a store finding, which follows that
   rule, halts new orders only, and the release still serves cancels and the kill switch. Then take
-  the account's lease, reconcile, read the halt state, hold every strategy off
+  the account's lease, reconcile, read the halt state, read each strategy's
+  registration where its stage or sample needs one, hold every strategy off
   after a stop of the kind rule 4 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   names, raising its halt for the order path to act on after these checks and
