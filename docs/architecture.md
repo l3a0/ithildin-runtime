@@ -291,58 +291,81 @@ quotes and bars their own windows on the VM and keeps every bars session
 there. The override per ticker is deferred as
 [l3a0/marketlake#954](https://github.com/l3a0/marketlake/issues/954), since nothing reads it.
 
-The runtime may read the day's data before
-marketlake seals it. marketlake's capture daemon already writes a segment
-each cycle and never rewrites it once its manifest entry lands, so marketlake
-uploads each segment to its bucket as soon as that entry lands, refusing to
-replace an existing key. Any decision time inside marketlake's capture
-hours reads those segments, and the decision minute
-[#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for shadow
-running, ten minutes before the close, is one such time. The data worker reads
-the segments up to the decision time, as a provisional read, because marketlake's validation
-battery runs only when it seals a day at the close plus fifteen minutes. So the data worker runs its own minimum checks before anything decides. The
-runtime turns the segments into quote rows
-itself, when it reads what it needs, with marketlake's package, a dependency
-at a pinned commit. Once a downloaded
-segment matches the SHA-256 in its manifest entry, as rule 8 of
-`## Where it runs` requires, that package's
-`lake.journal.read_segment(path)` reads it and refuses a damaged file or bytes
-after the segment's end-of-stream marker. Joining a ticker-day's segments is
-the runtime's own code. marketlake's internal joiner,
-`measure.read_surface_cycles`, breaks when a day's schema changes partway
-through, which is [l3a0/marketlake#143](https://github.com/l3a0/marketlake/issues/143), so this
-doc proposes a test of that case for
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5). A
-missing or stale quote at the decision time halts the decision, and a price
-spike is flagged in the snapshot without halting. The skeleton's strategy trades the close, so its fill lands on the close the backtest fills at, and decides this way. Times are stated as minutes before the close, so it decides at close−20, 15:40 on a full day. Whether a decision reads segments or sealed partitions follows from its own time against the day's seal time in marketlake's manifest, never from whether the day is sealed when the read happens. So a backtest that replays a close−20 decision reads the segments that existed then, as the live decision did, and test 2 can pin a stretch read before sealing. A decision after the seal time reads sealed partitions and needs none of this. The snapshot names each segment it read by key, S3 version and SHA-256, and marks the read provisional. Once marketlake seals the day,
-monitoring compares each quote the snapshot used with the sealed row of the
-same ticker and minute, by bid, ask and last as received, because a segment
-and the partition built from it never share bytes. It journals and alarms a
-value that differs, and a row the sealed day quarantined or lacks. That
-needs marketlake to keep each segment, create-only and never deleted, which
-[l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) item 3
-still only proposes. It also reports the gap between the
-price the decision used and the official close, and between each
-market-on-close fill and that close, as report lines rather than alarms,
-since the two differ by design. This is proposed for
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
-[#16](https://github.com/l3a0/ithildin-runtime/issues/16), with marketlake's
-uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943).
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) also waits on two
-marketlake fixes to the daily bars it reads. [l3a0/marketlake#380](https://github.com/l3a0/marketlake/issues/380) stalls the daily fetch for a session whose bar the vendor stamps at the wrong seasonal offset, so that session gets no bar, and Eastern time returns to standard time on 2026-11-01.
-[l3a0/marketlake#947](https://github.com/l3a0/marketlake/issues/947) leaves a session with no daily
-bar when its 16:15 quote was missed.
+A decision at close−20, 15:40 on a full day, needs today's quotes, but
+marketlake runs its validation battery only when it seals a day, at the close
+plus fifteen minutes. So the runtime may read the day's data before marketlake
+seals it, as a provisional read, and it checks that data twice: its own minimum
+checks before anything decides, and a comparison with the sealed day afterwards.
+
+```mermaid
+sequenceDiagram
+    participant M as marketlake
+    participant B as Bucket
+    participant D as Data worker
+    participant O as Monitoring
+    M->>B: upload each segment as its manifest entry lands
+    Note over D: decision time, close−20
+    D->>B: read segments up to the decision time
+    D->>D: match SHA-256, run minimum checks, build quote rows
+    D->>O: snapshot names each segment, marked provisional
+    Note over M: seal at close+15
+    M->>B: sealed day
+    O->>B: compare each quote used with its sealed row
+    O->>O: alarm on a difference, report the price gaps
+```
+
+The diagram shows one day's read before sealing. Look for the two checks either
+side of the seal, and for monitoring's comparison, which runs after the decision
+has already acted. The read has five parts.
+
+1. **What is read.** marketlake's capture daemon writes a segment each cycle and
+   never rewrites it once its manifest entry lands, and marketlake uploads each
+   segment to its bucket as soon as that entry lands, refusing to replace an
+   existing key. Any decision time inside marketlake's capture hours reads those
+   segments, and the data worker reads them up to the decision time. The runtime
+   turns the segments into quote rows itself, when it reads what it needs, with
+   marketlake's package, a dependency at a pinned commit. Once a downloaded
+   segment matches the SHA-256 in its manifest entry, as rule 8 of
+   `## Where it runs` requires, that package's
+   `lake.journal.read_segment(path)` reads it and refuses a damaged file or bytes
+   after the segment's end-of-stream marker. Joining a ticker-day's segments is
+   the runtime's own code. marketlake's internal joiner,
+   `measure.read_surface_cycles`, breaks when a day's schema changes partway
+   through, which is [l3a0/marketlake#143](https://github.com/l3a0/marketlake/issues/143), so this doc proposes a test of that case for
+   [#5](https://github.com/l3a0/ithildin-runtime/issues/5).
+2. **What is checked before deciding.** The data worker runs its own minimum
+   checks before anything decides. A missing or stale quote at the decision time
+   halts the decision, and a price spike is flagged in the snapshot without
+   halting.
+3. **Which read a decision uses.** The skeleton's strategy trades the close, so
+   its fill lands on the close the backtest fills at, and decides this way. Times
+   are stated as minutes before the close, so it decides at close−20, 15:40 on a
+   full day. Whether a decision reads segments or sealed partitions follows from
+   its own time against the day's seal time in marketlake's manifest, never from
+   whether the day is sealed when the read happens. So a backtest that replays a
+   close−20 decision reads the segments that existed then, as the live decision
+   did, and test 2 can pin a stretch read before sealing. A decision after the
+   seal time reads sealed partitions and needs none of this.
+4. **What is compared after the seal.** The snapshot names each segment it read
+   by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
+   seals the day, monitoring compares each quote the snapshot used with the sealed
+   row of the same ticker and minute, by bid, ask and last as received, because a
+   segment and the partition built from it never share bytes. It journals and
+   alarms a value that differs, and a row the sealed day quarantined or lacks. It
+   also reports the gap between the price the decision used and the official
+   close, and between each market-on-close fill and that close, as report lines
+   rather than alarms, since the two differ by design.
+5. **What this rests on.** The comparison needs marketlake to keep each segment,
+   create-only and never deleted, which [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) states as a rule. Only the
+   uploader refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself
+   refuse one. The provisional read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
 
 The 15:40 decision on a session needs the previous session's official daily
-bar for its lookback. Until now marketlake fetched a session's bar only after
-the next session's quotes sealed, so at 15:40 the newest bar in the lake was
-two sessions old, and the lookback would halt for the missing one, as data not ready under rule 8 of `## Where it runs`. marketlake removes that
-wait rather than serve a provisional
-bar. [l3a0/marketlake#952](https://github.com/l3a0/marketlake/issues/952) is closed as not planned,
-and [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) fetches each bar at its own
-session's 18:30 sweep, still checked against that session's 16:15 quote.
-Once it ships, the 15:40 decision reads the previous session's official bar
-through `load_bars`, so a 15:40 decision needs [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) to have shipped. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on it for that read, and [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run, which reads the previous session's official close the same way, waits on it too. That bar
+bar for its lookback, so marketlake fetches each bar at its own session's 18:30
+sweep, still checked against that session's 16:15 quote, rather than serve a
+provisional bar. So the 15:40 decision reads the previous session's official bar
+through `load_bars`, and [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run reads the previous session's
+official close the same way. That bar
 is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
@@ -3228,7 +3251,7 @@ in [design.md](design.md)'s `## Decisions`.
 | S3's event reaches a component through EventBridge and its SQS queue, and the component waits by long polling the queue. An absence is caught by a deadline an earlier event set, held in the setter's memory, and the host's watchdog watches local heartbeat files. Each event is a hint, the keys come from the plan, and anything that touches money re-reads the blob right before it acts | A writer messaging its readers, timed checks of the next key, or trusting an event as the change itself | S3's delivery delay on each step of a decision and on a pull, a rule and a queue per reader, dead-letter queues, refusals that keep other roles off them, and deadlines long enough for delivery's slow tail | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | CI tests in three levels: modules in one process, a contract suite per storage and queue adapter, the S3 adapter's through an emulator and a real test bucket, and the runtime's containers on the runner with the units' own users and flags, sharing a pipe folder and a memory-backed store, with test 2 and the restart drills in a second required check that runs the real unit files under the runner's systemd. What only AWS can show runs as paper drills | Testing the modules in one process only, a test host that reimplements systemd, or leaving the restart path out of the required checks | An image build and several containers per pull request, a second required check, an S3 emulator and a test bucket, and VM-only drills | This doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The accounts' layout: one organization apart from marketlake's, each broker key in its environment's account under AWS's managed `aws/ssm` key, read by the execution user alone, service control policies binding each account's root user, and each data role reading marketlake's bucket through one read-only statement in marketlake's bucket policy | None named | Four runtime accounts and a management account to set up, deploy roles in each, the broker key moved out of marketlake's account, and a read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16), and the uploader on [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) |
+| The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16) |
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
