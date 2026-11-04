@@ -158,7 +158,7 @@ for each bought module and what slice 1 uses instead.
 ### The owner (human)
 
 Product owner and the only person who can put capital at risk. Sets the order
-of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. The owner ruled on 2026-11-02 that two more
+of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. Until agents move off the owner's admin login, which the owner deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), hard limits 1 and 6 hold by instruction alone. The owner ruled on 2026-11-02 that two more
 actions are the owner's alone in live trading: releasing a loss stop or the
 kill switch once it has fired, and switching a strategy back on. In shadow
 and paper the operator may release a fired loss stop or kill switch too, as
@@ -660,10 +660,7 @@ A strategy and a platform version move through gates, and each gate is
 evidence, not elapsed time. The owner ruled on 2026-11-02 that the backtest
 and shadow gates run no registered experiment, and that a strategy's
 registered test runs on paper. Backtest and shadow check the platform: that
-it computes what research computed, and that its orders match a replay. The
-strategy's hypothesis, its span and its pass rule are committed in writing
-before paper starts, and paper's own fills after costs decide it. Every day
-on paper is data no one had seen when the hypothesis was written, so no gate
+it computes what research computed, and that its orders match a replay. The strategy's hypothesis, its span and its pass rule are committed in writing before its sample opens, and paper's own fills after costs decide it. Every day of the sample is data no one had seen when the hypothesis was written, so no gate
 spends a historical holdout that a failed strategy would burn. The price is
 time, since a daily strategy needs months on paper before its test says
 much.
@@ -714,8 +711,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   clock's offset and sync age. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
   interface, and that instance receives nothing and runs the two again at a written
-  interval. Once they pass, the order path reads the kill switch and serves it,
-  which is no Startup check. A failure of any other check, apart from a store finding, which
+  interval. Once they pass, the order path reads the kill switch and serves it, and resumes any sort the design doc's rule 1 of `### Every change can be undone or switched off` proposes, which is no Startup check. A failure of any other check, apart from a store finding, which
   follows that rule, halts new orders only, and the release still serves
   cancels, except a plan's own while a halt is stored, and the kill switch.
   Then reconcile, read the halt state, read each strategy's
