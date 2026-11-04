@@ -23,9 +23,8 @@ Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* 
 Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
 module boundaries, releases, tracing and dependency failure the roles below also adopt, and (BM L\~932)
 marks a location good to about one screen.
-Citations like (TZ L2038) are Kindle locations in Mark Douglas's book *Trading in the Zone* (Prentice
-Hall Press, 2000), and (TZ L\~2776) marks a location interpolated between the owner's highlights.
-Its rules for judging a strategy over a sample, and for the human acts around one, live in the
+The rules from Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) for judging a
+strategy over a sample, and for the human acts around one, live in the
 design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
@@ -192,16 +191,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
   Registers, before a strategy enters Paper and again before Live, the seven
-  things the design doc's
+  things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  rule 2 lists. Judges no strategy on one trade or one streak (TZ L2038,
-  L3198). Judges a passing result across every sample the project opened
-  toward promotion, under the research pins in
-  [CLAUDE.md](../CLAUDE.md#research-pins), and scores each decision a human
-  override touched as the strategy's own would have played out, which is
-  this project's method rather than the book's. The design doc's
-  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  holds the rules.
+  lists, and judges the sample and scores human overrides under that section's
+  rules.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -303,13 +296,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Has the gate refuse an order that adds to a position whose worst loss it
-  cannot compute, and alert the owner, and never refuse an order that only
-  reduces the position for want of that figure, all as the design doc
-  defines them. The gate refuses and never resizes, and a binding cap never
-  moves a strategy's exit (TZ L3220). Checks that no strategy raises its size
-  from its own recent results except through a rule the owner set beforehand
-  (TZ L919).
+  Holds the gate's worst-loss refusal and the limit on raising risk, under
+  rules 1 and 5 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -615,19 +604,19 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   digest or the journal check halts everything and pages the owner, naming
   the broker's own interface. A failure of any other check halts new orders
   only, and the release still serves cancels and the kill switch. Then take
-  the account's lease, reconcile, read the halt state, and only then enable
-  strategies. How a release takes over from the last session is
+  the account's lease, reconcile, read the halt state, hold every strategy off
+  after a stop of the kind rule 4 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  names, alerting whoever must confirm, and only then enable strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
   take of the lease follows
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
-  day. A mismatch halts trading. A strategy whose requested changes and
-  recorded outcomes do not match halts alone and pages the owner, while an
-  order or cancel that traces to no request, override or halt halts all
-  trading, under the design doc's rules for judging a strategy. Each
-  strategy's retiring check runs on its schedule, and the dead-man check
-  watches its last run.
+  day. A mismatch halts trading. The design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  adds a running match of requests to outcomes and a retiring check, each with
+  its own halt, and the dead-man check watches the last run of both.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
@@ -642,10 +631,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   started to behave badly. "It logs errors" does not answer that question
   (AoS L10177).
 - **Human override** stays the exception, for information the model cannot
-  process (L887, L902). An override is journaled like an order. Each
-  decision it touched stays in the strategy's sample, scored as the
-  strategy's own would have played out, and the override's own effect is
-  reported apart.
+  process (L887, L902). An override is journaled like an order, and the
+  decisions it touched stay in the strategy's sample under the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 
 ### 7. Report cost
 
