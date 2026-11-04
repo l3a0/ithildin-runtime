@@ -2147,7 +2147,7 @@ not come again is kept rather than discarded.
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
 | A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
-| A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<cause>.json` |
+| A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<cause>-<raised id>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A rewrite-planning page's claim and its sent record, one for each load parameter and level in the environment | `load/<parameter>-<level>/claim.json`, `load/<parameter>-<level>/sent.json` |
