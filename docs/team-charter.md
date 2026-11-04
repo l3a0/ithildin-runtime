@@ -122,7 +122,11 @@ Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, deploys, and
 switches anything to live. The owner ruled on 2026-11-02 that two more
 actions are the owner's alone: releasing a loss stop or the kill switch once
-it has fired, and switching a strategy back on in live trading. The owner's
+it has fired, and switching a strategy back on in live trading. On a live
+account the owner alone releases any halt, on the ruling of 2026-10-30 on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), and alone returns a
+tightened limit, on the ruling of 2026-11-04 on
+[PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -196,8 +200,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Registers, before a strategy's sample opens on Paper and again before Live, the seven
   things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  lists, and judges the sample and scores human overrides under that section's
-  rules.
+  lists, and reads the verdict a fixed step computes at the sample's end, under
+  that section's rules.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -255,8 +259,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   unsettled past a written time halts new orders and pages the owner, under
   the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
-  limit and its breaker, and puts the decision's id, or an override entry's, inside each client order
-  id, under the design doc's faults and monitoring rules (BM L4252,
+  limit and its breaker, and puts the decision's id, an override entry's or a contract-suite run's, inside
+  each client order id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
   Writes each order's recorded outcome, the match of requests to outcomes and
   the check of orders back to their causes,
@@ -614,7 +618,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
@@ -682,7 +686,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   process (L887, L902). An override is journaled like an order, and the
   decisions it touched stay in the strategy's sample under the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
-  It leaves the strategy switched off until a person switches it back on, under that section's rule 4.
+  One that changes a position, or a trade at the broker the owner confirms, leaves the
+  strategy switched off until a person switches it back on, under that section's rule 4.
 
 ### 7. Report cost
 
