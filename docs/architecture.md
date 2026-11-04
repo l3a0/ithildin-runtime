@@ -102,6 +102,73 @@ trades when the spread leaves its band. Read at quantitative-trading's commit
    when it rises above 0. Go short one unit above +1, and exit below 0.
    Otherwise hold. One unit is `+1` share of USO and `−h` shares of GLD.
 
+The position is only ever one of three states, and the z-score decides each
+move at the close:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Flat (0 units)" as Flat
+    state "Long (+1 unit)" as Long
+    state "Short (−1 unit)" as Short
+    [*] --> Flat
+    Flat --> Long: z below −1
+    Flat --> Short: z above +1
+    Long --> Flat: z above 0
+    Short --> Flat: z below 0
+    Long --> Short: z above +1
+    Short --> Long: z below −1
+```
+
+The diagram shows step 4. Look for the last two arrows, the reversals: a jump
+past 0 and through the far band on one close exits one side and enters the
+other. Two figures from the blog post show the same moves on the run itself.
+
+![An animated whiteboard sketch titled Sixteen days of the band, drawn to scale from the run, with one dot for each traded day against lines at +1, 0 and −1](https://raw.githubusercontent.com/l3a0/quantitative-trading/0ae195a93198e22c70522f27f856b5c512636efb/docs/figures/bollinger_sketch_one_close.gif)
+
+The sketch shows sixteen days up close. Look for each entry beyond a band and
+each exit at 0.
+
+![Three charts on one date axis from May 2006 to April 2012: the z-score against lines at −1, 0 and 1, the units held as a step line between −1, 0 and 1, and the cumulative return of the band against other runs](https://raw.githubusercontent.com/l3a0/quantitative-trading/0ae195a93198e22c70522f27f856b5c512636efb/docs/figures/bollinger_band.png)
+
+The chart shows the whole run. Look at the middle panel, which holds the three
+states of the diagram above.
+
+Steps 1 to 3 run every day whatever the state, which is why a held position
+trades on days the units do not change:
+
+```mermaid
+flowchart TD
+    close["Each day's close"] --> fit["Refit h<br/>20-day regression of USO on GLD"]
+    fit --> z["Form the spread USO − h·GLD<br/>and its 20-day z-score"]
+    z --> rule{"Does the z-score<br/>cross a threshold?"}
+    rule -- "Yes" --> move["Units change<br/>enter, exit or reverse"]
+    rule -- "No" --> same["Units stay as they were"]
+    move --> target["Target portfolio<br/>USO: +units shares<br/>GLD: −units × h shares"]
+    same --> target
+    target --> diff{"Does the target differ<br/>from what is held?"}
+    diff -- "Units changed" --> trade["Trade both legs"]
+    diff -- "Same units, held, h moved" --> resize["Resize: trade the GLD leg only"]
+    diff -- "Flat, 0 units" --> none["No trade"]
+```
+
+The diagram shows one close, from the refit to what trades. Look for the two
+paths that keep the same units. A refit moves `h` even when the position holds
+still, so the target moves too, and the engine trades the difference as it
+would for any strategy. The USO leg stays at one share per unit, so only GLD
+resizes.
+
+These numbers are made up to show the mechanics, and share counts are per unit
+of the spread:
+
+| Day | z-score | Units | `h` | Target USO | Target GLD | What trades |
+| --- | --- | --- | --- | --- | --- | --- |
+| Monday | −1.2 | +1 | 0.50 | +1 | −0.50 | Enter: buy 1 USO, short 0.50 GLD |
+| Tuesday | −0.4 | +1 | 0.53 | +1 | −0.53 | Resize: short 0.03 more GLD |
+| Wednesday | −0.2 | +1 | 0.51 | +1 | −0.51 | Resize: buy back 0.02 GLD |
+| Thursday | +0.1 | 0 | 0.52 | 0 | 0 | Exit: sell 1 USO, buy back 0.51 GLD |
+| Friday | +0.4 | 0 | 0.50 | 0 | 0 | Nothing: flat, so `h` has no effect |
+
 Four facts make it the simplest candidate there.
 
 1. **Two liquid ETFs, daily closes.** The backtest reads daily closes only,
@@ -138,6 +205,11 @@ them.
    recorded, rather than reading the engine's own return.
 3. The moving standard deviation divides by `n − 1`, as MATLAB does, which
    lives in the alpha model. Dividing by `n` moves the APR to 0.183306.
+
+   ![An animated whiteboard sketch titled One close, two divisors, drawn to scale from the run, with two dots for each of 11 traded days, one for each divisor, against a line at +1](https://raw.githubusercontent.com/l3a0/quantitative-trading/0ae195a93198e22c70522f27f856b5c512636efb/docs/figures/bollinger_sketch_two_divisors.gif)
+
+   The sketch, also from the blog post, shows why the divisor matters. Look
+   for the days one divisor's dot crosses +1 and the other's does not.
 4. The replication charges no transaction cost, so the cost model in
    [#8](https://github.com/l3a0/ithildin-runtime/issues/8) runs at zero in this strategy's configuration for test 1.
    Paper trading then charges a flat or linear cost.
