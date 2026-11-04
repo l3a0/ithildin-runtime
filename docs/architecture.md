@@ -1174,7 +1174,7 @@ Writing commands take more friction the more they can resume trading.
 5. **`ithildin switch clear --account <a>`** deletes the switch and journals
    the clear.
 6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
-   strategy's off switch and journals it, and any strategy halt, which ends its sort, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may, as the owner ruled on 2026-11-02. On shadow and paper the operator
+   strategy's off switch and journals it, journals the release of any strategy halt, which ends its sort, and refuses a strategy retired under design.md's sample rules that has no new registration. On a live account only the owner may, as the owner ruled on 2026-11-02. On shadow and paper the operator
    may too, which is this doc's reading of the 2026-11-02 rulings rather
    than a ruling of its own.
 7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's
@@ -2147,7 +2147,7 @@ not come again is kept rather than discarded.
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
 | A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel, under the owner's 2026-11-04 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `accounts/<account>/halts/<cause>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
-| A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halt.json` |
+| A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<cause>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A rewrite-planning page's claim and its sent record, one for each load parameter and level in the environment | `load/<parameter>-<level>/claim.json`, `load/<parameter>-<level>/sent.json` |
@@ -2337,7 +2337,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    needs no deploy.
 5. **The runtime's credential does only what the rules need.** It can create
    and read blobs under the runs', the journal's and the simulated accounts'
-   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's role, and list each of those prefixes, without which S3
+   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's and monitoring's roles, create a strategy halt for the role that raises it, and list each of those prefixes, without which S3
    answers a missing key with "access denied" rather than "no such blob". A
    drill reads an absent switch with that list right and expects "no such
    blob". It can also create heartbeats and restart records under their own
