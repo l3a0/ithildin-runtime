@@ -315,7 +315,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, which Narang's highlights do not
-  cover, and the halts on clock offset and sync age. Decides what each halt
+  cover, and the halts on clock offset and sync age. Holds the rule for what a halt
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
