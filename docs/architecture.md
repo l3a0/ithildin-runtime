@@ -250,6 +250,8 @@ flowchart LR
     github -->|"pinned release"| loop
 ```
 
+### Where bars come from
+
 The platform reads every bar from one place, marketlake, the sibling repository
 that captures market data before anything computes on it. Each source is
 transformed into marketlake once, stored durably there, and read by every mode
@@ -273,6 +275,8 @@ imported one came from, in `vintage_id`, so a consumer can refuse imported
 history where only captured data will do. Imported history never overwrites a
 captured partition.
 
+### How long data is kept
+
 No session ages out for the runtime. marketlake's VM can delete older partitions
 from its own disk once its backup bucket holds them, but the runtime reads a
 mirror of that bucket, which keeps every session, and never the VM's disk. So
@@ -292,6 +296,8 @@ flowchart LR
 The diagram shows the path a bar takes to the runtime. Look for the missing
 arrow: nothing connects the VM's disk to the runtime, so a deletion there cannot
 reach a lookback.
+
+### Reading the day before it is sealed
 
 A decision at close−20, 15:40 on a full day, needs today's quotes, but
 marketlake runs its validation battery only when it seals a day, at the close
@@ -364,6 +370,8 @@ has already acted. The read has five parts.
    uploader refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself
    refuse one. The provisional read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
 
+### The previous session's daily bar
+
 The 15:40 decision on a session needs the previous session's official daily
 bar for its lookback, so marketlake fetches each bar at its own session's 18:30
 sweep, still checked against that session's 16:15 quote, rather than serve a
@@ -378,7 +386,9 @@ close. That is the timing gap item 1 of
 `## How the four acceptance tests exercise it` names, which shadow running
 measures.
 
-It sends orders to one place, Alpaca's paper account. Shadow fills its own orders in the simulator, so they reach no broker.
+### Orders and the two outside switches
+
+The platform sends orders to one place, Alpaca's paper account. Shadow fills its own orders in the simulator, so they reach no broker.
 
 Two switches come from outside the loop.
 
@@ -386,6 +396,8 @@ Two switches come from outside the loop.
 2. **The kill switch** halts trading. The
    risk engineer builds it and writes when to pull it, and the operator pulls
    it by that guidance. The owner can pull it too.
+
+### The heartbeat
 
 A dead-man check raises an alarm when a ping it expects fails to arrive. Here
 monitoring pings a heartbeat service as each decision's last step, and the
