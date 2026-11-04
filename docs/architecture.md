@@ -599,7 +599,10 @@ sequenceDiagram
         X->>J: cancel journaled
         X->>F: no halt of the run, own send result empty, lease tag unchanged, and before the cancel cutoff?
         X->>B: cancel, by the broker's order id the ack journaled
-        B-->>X: cancelled, or filled first
+        B-->>X: cancelled, filled first, or no answer
+        opt no answer, before the cancel cutoff, under design.md's faults rule 6
+            X->>B: lookup by client order id, then a new cancel, journaled first
+        end
         X->>J: the old order's outcome journaled, any fill included
         X->>F: the account's lease deleted
     end
@@ -1690,7 +1693,9 @@ or `Abandoned` halts. A cancel the broker reports as pending leaves the order
 `CancelSent`, still counted at its worst case, and a refused cancel returns it
 to the state it was in, still counted, with the alarm for a cancel that
 failed. A cancel whose answer is lost stays `CancelSent`, and design.md's
-faults rule 6 says when it is sent again and when it halts new orders.
+faults rule 6 says when it is sent again and when it halts new orders. For a
+plan's cancel the send stage owns that lookup and resend, and writes its
+result only once each cancel settles or the cancel cutoff passes.
 
 `Cancelled` is reached three ways: through the kill switch, as question 7 settles, when one leg of a pair is accepted and the other fails, and when a later decision's plan no longer wants an unfilled order or replaces it, as the owner ruled on 2026-10-31 and design.md's `### Strategies, schedules and decisions` says. A replacement is a new order with a stamp of its own, sent only once the old order's cancel is confirmed. Each way the cancel is journaled first, and the sync then counts it as the platform's own.
 
@@ -1710,7 +1715,7 @@ stateDiagram-v2
     Deciding --> Halted: a worker halts
     Deciding --> Sending: target portfolio written
     Sending --> Halted: risk gate refuses, kill switch set, run halted, lease lost, cutoff passed, clocks disagree, a flagged price, an order in doubt, or a restart mid-send
-    Sending --> Reporting: every order journaled and answered
+    Sending --> Reporting: every order journaled and answered, and each plan's cancel settled or past the cancel cutoff
     Halted --> Reporting: a halt written as a result, then journaled and alarmed by monitoring
     Reporting --> Done: report written, heartbeat pinged
     Done --> [*]
@@ -3103,6 +3108,7 @@ accepted.
 | Fetch and sync before any step that changes state, and resolve conflicts before modifying. A state that moved on in a way the step can work from brings it up to date, and a conflict between two versions of the truth halts for a person | Acting on state fetched earlier, or resolving a conflict automatically | A round trip before each change, and a halt wherever the broker moved unasked | Fetching, syncing and resolving first ruled by the owner on 2026-10-29. Up to date against a halt for a person is this doc's application, in [design.md](design.md#processes-and-files) |
 | Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting, as the owner ruled on 2026-10-31 | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan cancels a resting stamped order the target no longer wants and replaces one that should change, by a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | Ruled by the owner on 2026-10-31. The method is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A stored halt stops a plan's own cancel, the one cancel a halt stops, and the send stage owns that cancel's lookup and resend until it settles or the cancel cutoff passes | A plan's cancel that goes on through a halt, or a resend left to the next decision or a later stage | An unwanted order can rest through a halt, and a send stage that waits longer, with its deadline past the cancel cutoff | The exception was ruled by the owner on 2026-11-04 on [#10](https://github.com/l3a0/ithildin-runtime/issues/10). The stage's ownership is proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | The gate's hard caps come from a blob only the owner's credential can write, every field of both sources is checked before use, and the tighter of each pair applies | Trusting the risk model's constraints file alone | Two places to set a limit. The owner ruled on 2026-10-29 that only the owner changes the caps, by hand | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The cost model writes a cost schedule that portfolio construction reads | Portfolio construction calling the cost model for each candidate trade, which would cross a process boundary per trade | One more type in `core`, and a change to the charter's module table | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
