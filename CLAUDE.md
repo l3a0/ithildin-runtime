@@ -145,7 +145,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. Each one lives in the environment of the run that needs it or in the machine's keychain, never in a file, an issue or a pull request, and the design doc's Configuration table names each one as it arrives. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. Each one lives in the environment of the run that needs it, in the machine's keychain, or for the broker key in AWS Systems Manager Parameter Store under the owner's 2026-10-29 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10), never in a file, an issue or a pull request, and the design doc's Configuration table names each one as it arrives. None exists yet.
 
 ## Committing
 
