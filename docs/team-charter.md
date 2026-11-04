@@ -289,7 +289,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
-  Once the kill switch or a loss stop fires on a live account, only the owner releases it,
+  Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
   and on paper and shadow the operator may too, under the owner's rulings on
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each
   account's loss limit is its own, and no loss limit spans accounts, on the
@@ -682,6 +682,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   process (L887, L902). An override is journaled like an order, and the
   decisions it touched stay in the strategy's sample under the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+  It leaves the strategy switched off until a person switches it back on, under that section's rule 4.
 
 ### 7. Report cost
 
