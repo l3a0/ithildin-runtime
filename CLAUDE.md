@@ -278,7 +278,7 @@ This repo will quote measured numbers, such as a backtest's Sharpe ratio or a re
 2. A regression test pinning the decisive output.
 3. A written log entry saying what was tried and what killed it.
 
-**Keep the epistemic label loud on every surface.** An exploratory result was found by looking at the data. It kills an idea or justifies a closer look, and it is never a verdict. A registered result had its hypothesis committed in writing before the number was seen, and only a registered result can promote a strategy toward paper or live trading.
+**Keep the epistemic label loud on every surface.** An exploratory result was found by looking at the data. It kills an idea or justifies a closer look, and it is never a verdict. A registered result had its hypothesis committed in writing before the number was seen, and only a registered result can promote a strategy past paper or into live trading.
 
 **What promotes a strategy is out-of-sample evidence after costs, not an explanation.** A mechanism raises the prior that an effect persists. Survival on a true holdout, after transaction costs, is what decides.
 

@@ -25,7 +25,10 @@ module boundaries, releases, tracing and dependency failure the roles below also
 marks a location good to about one screen.
 Citations like (DT p. 247) are printed pages of Viktor Farcic's *The DevOps 2.0 Toolkit* (2016), whose
 rules for checking a release where it runs, building machines from code, healing without hiding a
-fault and gathering logs off the machine the roles below also adopt. The
+fault and gathering logs off the machine the roles below also adopt.
+The rules from Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) for judging a
+strategy over a sample, and for the human acts around one, live in the
+design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -119,7 +122,11 @@ Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, deploys, and
 switches anything to live. The owner ruled on 2026-11-02 that two more
 actions are the owner's alone: releasing a loss stop or the kill switch once
-it has fired, and switching a strategy back on in live trading. The owner's
+it has fired, and switching a strategy back on in live trading. On a live
+account the owner alone releases any halt, on the ruling of 2026-10-30 on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), and alone returns a
+tightened limit, on the ruling of 2026-11-04 on
+[PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -190,6 +197,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
+  Registers, before a strategy's sample opens on Paper and again before Live, the seven
+  things rule 2 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  lists, and reads the verdict a fixed step computes at the sample's end, under
+  that section's rules.
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -228,7 +240,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the broker adapters and reconciliation. Journals each order before sending
   it, and makes resubmission idempotent. Applies the design doc's rules that
   every fact has one writer: sizing that counts every order already sent, a
-  client order id fixed by the decision, one holder of the account's lease
+  client order id fixed before the send, one holder of the account's lease
   sending at a time, and an order in doubt that blocks the next. Builds the
   lease the owner ruled for on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10), with its tag
@@ -247,9 +259,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   unsettled past a written time halts new orders and pages the owner, under
   the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
-  limit and its breaker, and puts the decision's id inside each client order
-  id, under the design doc's faults and monitoring rules (BM L4252,
+  limit and its breaker, and puts the decision's id, an override entry's or a contract-suite run's, inside
+  each client order id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
+  Writes each order's recorded outcome, the match of requests to outcomes and
+  the check of orders back to their causes,
+  under the design doc's rules for judging a strategy, with
+  [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holding the mechanism.
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
@@ -277,7 +293,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
-  Once the kill switch or a loss stop fires on a live account, only the owner releases it,
+  Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
   and on paper and shadow the operator may too, under the owner's rulings on
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each
   account's loss limit is its own, and no loss limit spans accounts, on the
@@ -296,6 +312,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
+  Holds every halt and refusal, and the limit on raising risk, under rules 1, 2,
+  3 and 5 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -322,7 +341,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
   limit 3, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Keeps the design doc's twenty-two
+  negative testing, checks recovery (AoS L5924). Replays the open sample's sessions for
+  each release under the design doc's rules for judging a strategy. Keeps the design doc's
   injected faults in the replay suite, because poor error handling is where
   many critical bugs hide (DDIA L300). Compares timings as percentiles from
   merged histograms, never as averages, under load that does not wait for
@@ -404,7 +424,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault):
   the infrastructure code, its scheduled check and its rollback, the restart cap of each component
   and the switch that stops restarts and scaling, the log pipeline off the machine, and the drills
-  the Release table's Paper row lists for them (DT p. 88, p. 302).
+  the Release table's Paper row lists for them (DT p. 88, p. 302). Confirms in the journal, on shadow
+  and paper, after a stop of the kind rule 4 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  names, once the runbook's checks pass.
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
@@ -590,10 +613,10 @@ evidence, not elapsed time.
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
-| Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
-| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+| Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
+| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, and once with a reducing order working, which it keeps, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
@@ -628,14 +651,22 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   digest or the journal check halts everything and pages the owner, naming
   the broker's own interface. A failure of any other check, apart from a store finding, which follows that
   rule, halts new orders only, and the release still serves cancels and the kill switch. Then take
-  the account's lease, reconcile, read the halt state, and only then enable
-  strategies. How a release takes over from the last session is
+  the account's lease, reconcile, read the halt state, read each strategy's
+  registration where its stage or sample needs one, hold every strategy off
+  after a stop of the kind rule 4 of the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  names, raising its halt for the order path to act on after these checks and
+  paging the owner until whoever that rule names releases it in the journal, and only then enable strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
   take of the lease follows
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
-  day. A mismatch halts trading.
+  day. A mismatch halts trading. The design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
+  adds a running match of requests to outcomes and of orders back to their
+  causes, and a retiring check, each with its own halt, and the dead-man check
+  watches the last run of each.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
@@ -650,7 +681,11 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   started to behave badly. "It logs errors" does not answer that question
   (AoS L10177).
 - **Human override** stays the exception, for information the model cannot
-  process (L887, L902). An override is journaled like an order.
+  process (L887, L902). An override is journaled like an order, and the
+  decisions it touched stay in the strategy's sample under the design doc's
+  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+  One that changes a position, or a change at the broker the owner confirms, leaves the
+  strategy switched off until a person switches it back on, under that section's rule 4.
 
 ### 7. Report cost
 
@@ -725,3 +760,10 @@ an operation needs, applied to market data, are left out, with the reasons in th
 Deploying every passing commit, feature toggles that hold unfinished work, a service registry with a proxy,
 restarts without limit, fixed sleeps and switching back on its own after a failed check are left out,
 with the reasons in the design doc's register.
+
+*Trading in the Zone* dates from 2000 and writes for traders who decide each trade themselves. Its
+chapters on how beliefs form and change, and its remedy of changing how the trader thinks, have no
+counterpart in a platform whose strategies are code, and are left out. Its figures, such as its
+sample of 20 trades, rest on the author's experience rather than data, and are not adopted. What it
+adds here is judging a strategy over a sample set in advance and reporting the effect of the human
+acts around it apart.
