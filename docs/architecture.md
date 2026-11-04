@@ -278,6 +278,21 @@ from its own disk once its backup bucket holds them, but the runtime reads a
 mirror of that bucket, which keeps every session, and never the VM's disk. So
 the 2006 to 2012 history and a lookback of any length stay readable.
 
+```mermaid
+flowchart LR
+    vm[("marketlake's VM disk<br/>older partitions can be deleted")]
+    bucket[("Backup bucket<br/>keeps every session")]
+    mirror[("Runtime's mirror<br/>the partitions a lookback names")]
+    runtime["ithildin-runtime"]
+    vm -->|"upload first, delete after"| bucket
+    bucket -->|"download"| mirror
+    mirror -->|"load_bars"| runtime
+```
+
+The diagram shows the path a bar takes to the runtime. Look for the missing
+arrow: nothing connects the VM's disk to the runtime, so a deletion there cannot
+reach a lookback.
+
 A decision at close−20, 15:40 on a full day, needs today's quotes, but
 marketlake runs its validation battery only when it seals a day, at the close
 plus fifteen minutes. So the runtime may read the day's data before marketlake
