@@ -368,7 +368,6 @@ the failure the check exists for. The heartbeat service is healthchecks.io, in t
 project marketlake already runs, and its ntfy push and email integrations are
 the alert channel.
 
-
 ## The loop and its adapters
 
 [design.md](design.md#one-runtime)'s `## One runtime` says backtest, paper and
