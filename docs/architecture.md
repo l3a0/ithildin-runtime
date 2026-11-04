@@ -2802,15 +2802,16 @@ Eleven rules keep the environments apart.
        what a plan compares. A pull request's run holds no AWS credential,
        because its own code runs in that job.
     2. **The apply credential** is assumed only by the apply job on `main`,
-       in that environment's GitHub environment, once the apply is
-       approved. It can change only the VM image in the launch template, and
+       in that environment's GitHub environment, once the owner's merge
+       reaches `main`, and on live once the owner approves. In the launch template it can change only the VM image, and
        never the startup script or the VM's role, as design.md's rule 3 of
        `### A release is checked where it runs, and nothing heals by hiding
        a fault` requires and this doc proposes for [#32](https://github.com/l3a0/ithildin-runtime/issues/32), and a policy test
        tries a startup script change and expects refusal.
 
-    Shadow's and paper's applies are approved by the owner or the
-    operator, and live's by the owner alone.
+    Shadow's and paper's applies follow the owner's merge with no second
+    approval, and live's is approved by the owner alone, under the owner's
+    2026-11-04 ruling on [#32](https://github.com/l3a0/ithildin-runtime/issues/32).
 11. **Each environment has an AWS account of its own.** The owner ruled on
     question 11 that the runtime's resources live in marketlake's account,
     confirmed on 2026-10-31 that live stays there, and on 2026-11-02
