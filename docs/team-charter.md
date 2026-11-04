@@ -292,10 +292,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
   and carrying on, or any of the four forms the design doc's rules for the
-  code forbid (CC p. 194, p. 197), any check on input that can stop a
-  cancel, apart from the conditions the design doc's faults rule 6 sets on
-  repeating one whose answer is lost, and a cut to the order path, the gate
-  or its limits, which the owner made a veto on 2026-11-03.
+  code forbid (CC p. 194, p. 197), a cut to the order path, the gate or its
+  limits, which the owner made a veto on 2026-11-03, and any check on input
+  that can stop a cancel. The one exception is the conditions the design
+  doc's faults rule 6 sets on repeating a cancel whose answer is lost.
 
 ### Test engineer
 
