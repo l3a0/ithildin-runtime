@@ -653,7 +653,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the account's lease, reconcile, read the halt state, hold every strategy off
   after a stop of the kind rule 4 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  names, paging the owner until whoever that rule names confirms in the journal, and only then enable strategies. How a release takes over from the last session is
+  names, raising its halt for the order path to act on after these checks and
+  paging the owner until whoever that rule names releases it in the journal, and only then enable strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
   take of the lease follows
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
