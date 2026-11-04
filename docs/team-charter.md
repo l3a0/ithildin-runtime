@@ -580,7 +580,7 @@ evidence, not elapsed time.
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins, and a registered out-of-sample test passes |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest and journal checks has left cancels and the kill switch served, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has left cancels and the kill switch served, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, and a backup of captured data and the journal has been restored and checked |
 | Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
@@ -609,13 +609,12 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
   gate's hard caps, verify the journal's checksums and sequence to its head,
-  that a head read after them is not behind the second copy or the newest
-  backup's journal position where its environment holds one, that an empty
-  journal carries its first-start record and that every store the design's
-  infrastructure rule protects is present, and check the clock's offset and sync age. A failure of the release's own
+  check the journal and every protected store as rule 3 of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
+  says, which also says what each finding serves, read execution's restart
+  count and switch, and check the clock's offset and sync age. A failure of the release's own
   digest or the journal check halts everything and pages the owner, naming
-  the broker's own interface. A failure of any other check, which includes a copy's position
-  that cannot be read on a journal verified to a non-empty head, halts new orders
+  the broker's own interface. A failure of any other check halts new orders
   only, and the release still serves cancels and the kill switch. Then take
   the account's lease, reconcile, read the halt state, and only then enable
   strategies. How a release takes over from the last session is
