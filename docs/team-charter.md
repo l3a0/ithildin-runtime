@@ -323,8 +323,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds every halt and refusal, and the limit on raising risk, under rules 1, 2,
   3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
-  Holds that the worst case behind a limit never comes from a strategy's own
-  record, under rule 4 of the design doc's
+  Holds that every limit on what can be lost states the worst case it assumes,
+  and that this case never comes from a strategy's own record, under rule 4 of the design doc's
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -786,7 +786,7 @@ adds here is judging a strategy over a sample set in advance and reporting the e
 acts around it apart.
 
 *Fooled by Randomness* dates from 2004 and writes for people who trade by hand and read their own
-results. Its personal philosophy, its anecdotes and its neuroscience are left out, and its figures show
+results. Its personal philosophy, its anecdotes and its neuroscience are left out, and most of its figures show
 arithmetic rather than measurements, so none is adopted as a threshold. Withholding the performance
 figure, randomizing a strategy's triggers and skewed bets as a house style are left out, with the
 reasons in the design doc's register. What it adds here is reading a result against the luck that could
