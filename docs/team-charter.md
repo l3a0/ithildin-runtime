@@ -238,10 +238,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Keeps the design doc's procedure for orders in doubt when the journal
   cannot be read. A cancel with no answer is resent only after a lookup
   shows the order still working and no cancel pending, and only where the
-  contract suite's latest scheduled run against the broker's paper account
-  shows the broker applies a repeated cancel at most once, a run counting
-  only for the account it ran against, and one unsettled past a written
-  time halts new orders and pages the owner, under the owner's rulings on
+  contract suite's latest scheduled run against that account shows the
+  broker applies a repeated cancel at most once, a run counting only for the
+  account it ran against. The kill switch alone needs no run. A cancel
+  unsettled past a written time halts new orders and pages the owner, under
+  the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
   limit and its breaker, and puts the decision's id inside each client order
   id, under the design doc's faults and monitoring rules (BM L4252,
@@ -249,7 +250,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
-  without the lookup and the paper-account test the design doc's faults rule 6 requires, an order settled as unsent
+  without the lookup and the test the design doc's faults rule 6 requires,
+  an order settled as unsent
   because a broker lookup found nothing, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
   (DDIA L4868), a vendor's type, string or exception that reaches past its
@@ -295,7 +297,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and carrying on, or any of the four forms the design doc's rules for the
   code forbid (CC p. 194, p. 197), a cut to the order path, the gate or its
   limits, which the owner made a veto on 2026-11-03, and any check on input
-  that can stop a cancel. The one exception is the conditions the design
+  that can stop a cancel. The one exception to that last item is the conditions the design
   doc's faults rule 6 sets on repeating a cancel whose answer is lost.
 
 ### Test engineer
