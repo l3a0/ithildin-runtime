@@ -296,8 +296,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to total, and the deferral is recorded here. The book's example caps a week
   at three high-risk, six medium and twenty low-risk changes (AoS L4156), and
   the caps here will be set from this platform's own record.
-  Holds the gate's worst-loss refusal and the limit on raising risk, under
-  rules 1 and 5 of the design doc's
+  Holds the gate's worst-loss refusal, the retiring check's halt and the limit
+  on raising risk, under rules 1, 2 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -610,7 +610,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the account's lease, reconcile, read the halt state, hold every strategy off
   after a stop of the kind rule 4 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  names, paging whoever that rule names until they confirm in the journal, and only then enable strategies. How a release takes over from the last session is
+  names, paging the owner until whoever that rule names confirms in the journal, and only then enable strategies. How a release takes over from the last session is
   [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s, and each later
   take of the lease follows
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
