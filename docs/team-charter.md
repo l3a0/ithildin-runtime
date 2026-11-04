@@ -690,10 +690,14 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   restart and scaling switch and execution's restart count, and check the
   clock's offset and sync age. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
-  interface. Once those two pass, read the kill switch and serve it. A failure of any other check, apart from a store finding, which
+  interface, and that instance receives nothing and runs the two again at a written
+  interval. Once they pass, the order path reads the kill switch and serves it,
+  which is no Startup check. A failure of any other check, apart from a store finding, which
   follows that rule, halts new orders only, and the release still serves
   cancels, except a plan's own while a halt is stored, and the kill switch.
-  Then reconcile, read the halt state, and only then enable strategies.
+  Then reconcile, read the halt state, and only then enable strategies. A
+  restart during a session runs the shorter list in rule 4 of the design doc's
+  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault).
   Execution takes the account's lease only around each change to the account,
   as the design doc's rule 9 says, and how a release takes over from the last
   session is [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s.

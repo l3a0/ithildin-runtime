@@ -560,7 +560,7 @@ sequenceDiagram
     F-->>K: an event: the plan
     F-->>C: an event: the plan
     F-->>P: an event: the plan
-    X->>F: Startup, read only: each execution instance's checks, before it takes any send stage
+    X->>F: Startup, read only: each execution instance's checks, before it plans or sends
     Note over V,M: Phase 1, read the data, then recover
     D->>F: snapshot, naming each bar read, and data's decision result
     F-->>X: an event: data's result
@@ -645,11 +645,11 @@ sequenceDiagram
 ```
 
 Before the first decision, each execution instance runs the charter's Startup
-step, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Those checks are read only: its digest
-against the plan's release, the configuration keys, the hard caps, the journal
-to its head, the protected stores, the restart switches, the clock and the
-halt state. It takes no send stage until they pass, and design.md's rule 5 of
-`### Every change can be undone or switched off` says what a failed check
+step, the read-only checks listed there, in that order, as this doc proposes for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). It plans and sends nothing until they pass. A halted instance whose
+digest and journal checks passed still takes a dead runner's send stage over,
+cancels a stranded leg and serves the kill switch, and design.md's rule 5 of
+`### Every change can be undone or switched off` says what else a failed check
 still serves.
 
 The phases in order.
@@ -721,7 +721,7 @@ The same route runs in every mode, and the run goes on to its next decision,
 which halts again if the cause is still there. A single crash is not a
 failure: the host restarts the worker, which resumes from storage. A
 failure is a missed deadline, a heartbeat stopped for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), or
-a worker past its restart limit, and it takes the same route. The supervisor
+none of a component's instances healthy, and it takes the same route. The supervisor
 writes the halt as the failed worker's result, stores a halt of the whole run, whose event reaches every worker, writes a halt for every decision left in the plan, and monitoring reports.
 
 ### A missing or stale bar
@@ -986,7 +986,7 @@ here, with the issue that builds its drill.
 | Kill switch unreadable | "kill switch unreadable" and the error | Deny the runtime's credential read access to the switch blob | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A write S3 refuses for a reason other than an existing key, or does not answer by the deadline | The key and S3's answer | Point a run at a bucket the credential cannot write, and block the S3 endpoint mid-run | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The account's or the plan's lease taken over after it expired unrenewed | The old holder's VM, boot, container and run, and when it last renewed | Freeze an execution container while it holds the account's lease mid-send, expecting another execution instance to take the lease over after the lease period and the send stage once the host shows the frozen container gone or restarted, and the frozen container's next send refused by the tag check. The same drill across VMs is one of rule 11's scale-out drills. Freeze execution between its tag check and its send, expecting the new holder to settle that order by lookup. Freeze a supervisor instance holding the plan's lease mid-halt, expecting another instance to take the lease over and finish the halt, and the frozen instance's next status write refused by the tag check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The Auto Scaling group replaced the VM | The VM, its zone and the group's activity | Terminate the VM outside a session, expecting the group to start a replacement that joins the next run. Counting a VM of the cluster as gone, and a zone going down, are rule 11's scale-out drills | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The Auto Scaling group replaced the VM | The VM, its zone and the group's activity | Terminate the VM outside a session, expecting the group to start a replacement that joins the next run. Terminate it after leg 1's ack during a session, expecting the halted execution on the replacement to take the stage over, cancel leg 1 and serve a pull, and record the replacement's time against the cancel cutoff. Counting a VM of the cluster as gone, and a zone going down, are rule 11's scale-out drills | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An instance refresh failed, rolled back or was refused | The refresh, the launch template versions, and the VM whose checks failed or the session that was open | Refresh with an image whose checks fail, and start one during a session | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor cannot take the plan's lease by its deadline | The lease's holder, the write it holds the lease for, and whether the host shows its container gone | Freeze a supervisor instance while it holds the plan's lease mid-halt, with the deadline shorter than the lease period | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Work put back on the queue past its limit because the account's lease stays held | The lease's holder, the order it holds the lease for, the item's receive count, and whether the host shows the holder's container gone | Freeze an execution instance while it holds the lease, expecting the waiting item back on the queue until the takeover and the alarm once its receive count passes the limit. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call and orders of one decision sent by both. Drop the lease's release event, expecting the work done when its item comes back | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -997,7 +997,7 @@ here, with the issue that builds its drill.
 | Monitoring killed after it claimed an alarm and before its push | The halt the alarm names | Kill monitoring right after its claim is stored, expecting the restarted instance or another to push the alarm, and a second push only when no sent record exists | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A handler failed with an error it did not handle | The worker, the stage, the decision and the error | A handler that raises on one decision while another handler of the same worker finishes its own | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A worker restarted | Its exit status or signal and the end of its error output, from its restart record | Kill a worker mid-decision, and expect it back within seconds and the decision finished | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Execution failed past its restart limit with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its count, which comes up halted, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution past its restart count with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its count, which comes up halted, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | An object under live's journal or recorded captures whose retention ends within the set window, or that lacks its legal hold | The key, its retention date and its hold | Write a test object in a drill bucket with a retention date inside the window and no hold | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal key shows a delete marker or a second version, or S3 reports a delete under the journal's prefix | The key and its versions | Try to delete the newest entry of a test journal with the operator's credential, expecting refusal, and delete one with a test principal allowed to, expecting the alarm | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Load nears the 1x limit: a stage's run time passes 75% of its deadline, the day's decisions, counted across every deployment of the environment as design.md counts them, pass 75% of the written limit, which design.md puts at a decision a minute for each deployment, 293 of a full session's 390 for slice 1's one deployment until the build writes its own, the VM's memory use passes 75%, or the deployments on a VM group pass 75% of its written limit | The stage, its run times against its deadline, the day's decision count, the VM's memory use, and the deployments against the group's limit | Slow a stage with a test delay until it passes 75% of its deadline, run a test plan with the decision limit set low in configuration so the day's count passes 75% of it, feed a test memory reading above 75%, and list a test deployment count above 75% of the group's limit | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1013,11 +1013,12 @@ here, with the issue that builds its drill.
 | A worker missed its deadline | The worker and the deadline | A worker that sleeps past it, and an EventBridge rule deleted so a worker never hears of its input | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | No supervisor instance's heartbeat is fresh | Each instance's last heartbeat and restart records | Stop every supervisor unit mid-run, expecting the alarm, stop one, expecting none, and fail a run, expecting it to raise one alarm and no second one for the supervisors that exit after it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A worker or the supervisor on a different release | Both releases | Restart one worker mid-run under another digest | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure. Freeze one instance of three, and crash one of three past its restart limit, expecting an alarm naming that instance while the other two finish every decision and the run does not fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker's heartbeat stopped, or its restart limit reached | The worker, its last heartbeat and its restart records | Freeze a worker with the host watchdog stopped, and expect the alarm after the heartbeat limit; freeze one with the watchdog running, and expect a restart within thirty seconds; make one crash on start until its restart limit; delay heartbeat events by sixty seconds, and expect no kill and no failure. Freeze one instance of three, and crash one of three of a component other than execution past its restart limit, expecting an alarm naming that instance while the other two finish every decision and the run does not fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A journal entry whose `prev_hash` does not match the SHA-256 of the entry before it, whose bytes are not canonical, whose format is unknown, or a gap in its numbers | The account and the sequence number | Alter an entry in a copy of the journal | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An output file that is missing, or whose SHA-256 does not match the decision result listing it | The file and the result | Change a byte in a copy of an output file | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | A deterministic step that writes different bytes for the same inputs, or any create-only write S3 refuses whose stored SHA-256 differs | The key and both SHA-256s, and for a capturing stage the attempt key it stored the second capture at | Run a step that puts the clock time in its output, and resume data's stage with a fresh read that differs from its stored snapshot, expecting the second read stored at its attempt key and named in the decision result | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| A worker other than execution exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run, and every execution instance exiting so, expecting each to restart rather than the run to fail | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A worker other than execution exits cleanly before it has a result for every decision in the plan, so its unit does not restart it | The worker, the instance and its last heartbeat | One instance of three that exits after its first decision, expecting an alarm naming it while the other two finish the run, and every instance of one component exiting so, expecting the supervisor's heartbeat check to fail the run | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Every execution instance exits cleanly during a session | The instances and their last heartbeats | Exit each one, expecting each to restart rather than the run to fail | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
 | A blob for the wrong decision, or an output file with no entries and no "trade nothing" mark | The key and the decision | Write one by hand | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | The sealed day differs from what a provisional read saw | The ticker, the minute and both values, or the row the sealed day quarantined or lacks | Change or quarantine a sealed row a run's snapshot used | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A supervisor restarted mid-run | The plan it found and each worker's last heartbeat | Kill one supervisor instance between two decisions | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -1039,7 +1040,7 @@ here, with the issue that builds its drill.
 | Live's drill job stopped running | None. Its own heartbeat check raises it | Disable the drill schedule past one interval, against live's check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A drill refused because a session is open on live | "drill refused: session open" and the open run's plan | Start a drill while a live session is open | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A live session refused because a drill is running or left something behind | "session refused: drill not clean" and what failed the check | Start a session while a drill's marker exists, and after a drill that leaves the switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A session refused because an instance refresh is open | "session refused: instance refresh open" and the refresh's marker | Start a session while a refresh's marker exists, and after the apply job has deleted it, expecting the refusal and then a normal start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| A session refused because an instance refresh is open | "session refused: instance refresh open" and the refresh's marker | Start a session while a refresh's marker exists, and after the job that started it has deleted it, expecting the refusal and then a normal start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM stopped its own units because its supervisor instances' own last heartbeat was past the limit | "own heartbeat stale past limit", from the restart record and the host's direct route | Freeze a VM past the limit, in the cluster and in slice 1's group of one, expecting its units stopped and restarted as a fresh member when it wakes | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A VM restarted its units on the release the run's plan names | "release differs from plan", from the restart record and the host's direct route | Move the pin between two VMs' boots, expecting the later VM to restart its units on the plan's release | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A service control policy detached or edited, a root password created, or a permission set assigned, anywhere in the organization | The event, the principal and the account, from the organization trail | Detach and edit a test policy on a test account, and assign a test permission set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -2112,7 +2113,9 @@ not come again is kept rather than discarded.
 
 | Store | Key |
 | --- | --- |
-| A run's plan | `runs/<deployment>/<run>/plan.json` |
+| A run's plan, which only the supervisor's role may create | `runs/<deployment>/<run>/plan.json` |
+| The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
+| A consumer's attempt record, naming the record before it is consumed | `runs/<deployment>/<run>/attempts/<component>/<record>.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
@@ -2344,7 +2347,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    while a lease may be rewritten with `If-Match` on its current tag, which
    renews it or takes it over once expired.
    It also refuses every S3 action on the bucket to any principal that is not
-   one of that environment's own runtime, deploy or promotion roles, the owner's or the operator's, matched on
+   one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on
    `aws:PrincipalArn`, refuses the operator any version delete, and refuses
    changes to the policy itself to all but the owner. An explicit
    refusal in a bucket policy overrides any role's own grant, so a role
@@ -2512,7 +2515,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
     deployment, under rule 7's units. Scaling out raises the group to three,
     one VM a zone, each running one supervisor instance and one instance of
     each component. The items below describe the cluster. The first, second,
-    fourth, sixth and seventh hold for the group of one as well, and so does
+    fourth, sixth and seventh hold for the group of one as well, and so does the third's test of whether a runner's VM has gone, and so does
     the third's self-fence, a VM stopping its own units when its supervisor
     instances find their own last heartbeat past the limit.
     1. **The group replaces a lost VM.** A VM that fails EC2's status checks
@@ -2573,12 +2576,12 @@ Eleven rules hold the deployment to the premise and the hard limits.
        same two-sided check that keeps a drill and a session apart, so a
        session never starts on a group with two VM images in it. A session
        that finds the marker refuses to start, with the reason "session
-       refused: instance refresh open". The apply job that started the
+       refused: instance refresh open". The job that started the
        refresh waits for the refresh's end event and then deletes the
        marker. `ithildin` gets no command for it, so the next merge's apply
        job clears a stale marker on shadow and paper, and on live a run
-       behind live's reviewer does, whose run records who started it. A VM image that passes its refresh and fails later rolls back in
-       one step: a revert commit on `main` applies the previous launch template version, which starts a
+       behind live's reviewer does, whose run records who started it. A VM image that passes its refresh and fails later rolls back by
+       a revert commit on `main`, approved like any VM change, which applies the previous launch template version, which starts a
        refresh outside sessions under the same session check. An app
        release never rolls out this way, because two releases in one run
        write different bytes to one key, which the create-only rule turns
@@ -2601,7 +2604,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
     at roughly 7 cents an hour on demand, a figure to confirm against AWS's
     price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Until load
     calls for the cluster, losing the VM or its zone stops the environment
-    until the group starts a replacement. Scaling out costs three VMs per
+    until the group starts a replacement, and mid-session until the owner
+    releases execution's halt. Scaling out costs three VMs per
     environment, each running 8 containers on a 2 GB machine such as
     `t4g.small`, at roughly 2 cents an hour, and subnets in three zones, and
     it brings five drills, which run before anything relies on the
@@ -2693,8 +2697,7 @@ Eleven rules keep the environments apart.
    or restart-limit halt.
 4. **A pin is a bare digest, read once a session, and a rollback holds.**
    Each pin is a blob in its own environment's bucket holding only a `sha256:` digest in its `digest` field, and the VM builds `ghcr.io/l3a0/ithildin-runtime@`
-      and the digest itself, refusing anything else. When the timer starts a
-   session, the VM checks the digest before anything runs: its attestation
+      and the digest itself, refusing anything else. Before every container start, whatever named the digest, a pin, a run's plan or a restart, the VM checks it: its attestation
    names the publishing workflow on `refs/heads/main`, verified from the
    bundle stored beside the image so the VM needs no GitHub credential,
    against a trusted root, an expected signer and a pinned verifier that ship
@@ -2715,7 +2718,7 @@ Eleven rules keep the environments apart.
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live, as the owner ruled on 2026-10-30.
 5. **Each role reaches only its own environment's resources, by ARN and
    path, never by tag.** Each bucket's policy refuses every principal but
-   that environment's own runtime, deploy and promotion roles, the owner's
+   that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as `## Where it runs`
    rule 5 says. A
    deploy role may only put its own environment's pin and create its deploy record under `release/deploys/`. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
@@ -2726,7 +2729,8 @@ Eleven rules keep the environments apart.
    every broker path. Ping addresses sit apart, under
    `/ithildin/<environment>/heartbeat/`. Each environment's worker roles
    trust only that environment's VM role, by its exact ARN. Every role but
-   the owner's refuses `iam:PassRole` on every runtime role, and
+   the owner's refuses `iam:PassRole` on every runtime role, apart from the
+   VM change credential on the VM's role alone, for EC2, and
    `sts:AssumeRole` on another environment's roles. Every VM and volume
    carries a tag naming its environment, and every
    principal but the owner's refuses to add, change or remove it. The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries rule 3's refusals. The tags and paths
@@ -2735,10 +2739,10 @@ Eleven rules keep the environments apart.
    The repository's OIDC subject template includes `context`, which
    carries `environment:<name>` for a job that runs in a GitHub
    environment, and the calling workflow's `job_workflow_ref`. Each deploy,
-   promotion and publish role's trust matches both exactly: its own GitHub
+   promotion, publish, plan, apply and VM change role's trust matches both exactly: its own GitHub
    environment, and its one workflow file on `refs/heads/main`. The test
    job runs in no deploy environment, so its token matches none of those
-   roles. The deploy and promotion
+   roles. The deploy, promotion and infrastructure
    workflows have no `pull_request_target`, `workflow_run`, `issues` or
    `issue_comment` trigger, check out only the commit that started them,
    and read no event payload. Each GitHub environment's branch rule names
@@ -2807,7 +2811,8 @@ Eleven rules keep the environments apart.
     do its SQS queues and its EventBridge rules, generated from the routes. A
     change to any of them is an apply, followed by that environment's
     read-only checks. A release whose routes need a new rule waits for that
-    apply, because the session-start check refuses it. This doc proposes
+    apply, because the session-start check refuses it. Under the owner's
+    2026-11-04 rulings on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), and with detail this doc proposes
     for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) three
     credentials in each runtime account.
     1. **The plan credential** is assumed only by the infrastructure
@@ -2821,8 +2826,9 @@ Eleven rules keep the environments apart.
        reaches `main`, and on live once the owner approves. On paper and live
        it holds no write on the launch template or the VM's role.
     3. **The VM change credential**, on paper and live, is assumed only by a
-       job behind the owner's approval, and can change the launch template
-       and the VM's role. Reach to the VM counts as reach to that
+       job in the `paper-vm` or `live-vm` GitHub environment, behind the
+       owner's approval, and can change the launch template and pass the
+       VM's role. Reach to the VM counts as reach to that
        environment's broker key, which is why it stays behind that approval
        and why it is the one exception to design.md's rule 3 of `### A release
        is checked where it runs, and nothing heals by hiding a fault`. On
@@ -3129,7 +3135,7 @@ accepted.
 | The journal is numbered blobs per account, each entry the body of its own blob, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | The entry as its own record ruled by the owner on 2026-10-29, the rest proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's lease and an account's lease, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned, deleted only with that condition, and held only while one execution instance changes the account, so several instances can run. The plan's lease, one blob per run, is held only while one supervisor instance changes the run, and carries the run's status, so a frozen holder's write after a takeover fails S3's tag check. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, an account's lease held for an execution process's whole life, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, which the owner ruled on 2026-11-02, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease, held briefly as the owner ruled the same day |
 | Test, shadow, paper and live each run in an environment of their own. The owner ruled on 2026-11-01 that shadow and paper share one environment in slice 1 and reversed it on 2026-11-02, so shadow keeps its own. CI is test, the owner's merge to `main` deploys to shadow, a healthy shadow deploys to paper, and only the owner moves live's pin | Keeping the modes apart inside one VM and one bucket by key prefix, shadow and paper sharing one environment, or deploying by hand to every environment | One VM per running environment in slice 1, three once load calls for the cluster, a bucket and roles per environment, a pin per deployment, AWS roles held by workflows on a public repository, and drills that run per environment | Ruled by the owner on 2026-10-30. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Each environment runs in an EC2 Auto Scaling group: of one VM in slice 1, and of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment, as the scale-out path, for a design load the directive of 2026-11-03 sets at 10 times slice 1's | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01, and on 2026-11-02 that slice 1 starts on one VM. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Each environment runs in an EC2 Auto Scaling group: of one VM in slice 1, and of three identical VMs, one per availability zone, each running one supervisor and one instance of every component per deployment, as the scale-out path, for a design load the directive of 2026-11-03 sets at 10 times slice 1's | One VM with a replacement started by hand, or a container orchestrator such as ECS on EC2, EKS or Nomad | One VM per environment in slice 1, whose loss stops the environment until the group replaces it, and mid-session until the owner releases execution's halt, and once scaled out three VMs per environment, subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | Ruled by the owner on 2026-11-01, and on 2026-11-02 that slice 1 starts on one VM. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A change to the VM image rolls out by the group's instance refresh outside sessions, one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. An app release changes only at a session's start, through the pin | AWS CodeDeploy, or rolling a release out VM by VM during a session | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | Ruled by the owner on 2026-11-01. The layout is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Work waiting on a held account's lease goes back on the queue with a short delay, the lease's release event wakes it, and any lease holder sends a decision's next planned order while its runner is alive | A handler blocking until the lease frees, or reading the lease on a timer | One decision's orders going out from different instances, and an SQS redelivery as the fallback for a lost release event | Ruled by the owner on 2026-11-02. The delay and the limit are proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Alpaca stays the live broker, with crypto never enabled on the platform's account and no whitelisted withdrawal address, checked read-only before the live gate and at each session's start and end after | An OAuth credential that cannot reach wallets, Alpaca's written answer by 2026-12-31 with a move on a yes, deferring to the live gate, or another broker | Two gaps the board named, narrowed by the same check: it compares the account's configuration with the settings the hard caps blob pins, and treats any unstamped order or fill as unmatched, pulling the kill switch. The value a thief moves between two checks, nights and weekends included, is accepted, bounded by the account's capital | Ruled by the owner on 2026-11-02 after a board sitting, on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -3325,7 +3331,7 @@ Each question says what was recommended and how the owner ruled.
           marketlake's state bucket, so a pull request cannot print the
           runtime's data, and a grant added by mistake later still meets
           the next two controls.
-       2. The runtime's bucket policy refuses every S3 action to any principal that is not one of that environment's own runtime, deploy or promotion roles, the owner's or the operator's, matched on `aws:PrincipalArn`, and refuses changes to the policy itself to all but the owner. An explicit refusal in a bucket policy overrides any role's own grant, as AWS's
+       2. The runtime's bucket policy refuses every S3 action to any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on `aws:PrincipalArn`, and refuses changes to the policy itself to all but the owner. An explicit refusal in a bucket policy overrides any role's own grant, as AWS's
           [policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
           says, so a role marketlake adds later is refused without anyone
           remembering it.
