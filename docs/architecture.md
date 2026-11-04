@@ -37,6 +37,26 @@ The owner's part in reviewing this doc is two sections at the end.
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
 what it shows and what to look for. Nothing here is built yet.
 
+One decision, end to end, is the picture to hold before the detail:
+
+```mermaid
+flowchart LR
+    sup["Supervisor<br/>writes the plan"] --> data["Data<br/>snapshot of prices"]
+    data --> recover["Execution, first<br/>checks fills, positions, broker"]
+    recover --> models["Alpha, risk and cost models<br/>forecast, limits, cost schedule"]
+    models --> pc["Portfolio construction<br/>target portfolio"]
+    pc --> send["Execution, then<br/>order manager, risk gate,<br/>journal, broker"]
+    send --> broker[("Simulated broker in shadow,<br/>Alpaca on paper")]
+    send --> mon["Monitoring<br/>report and heartbeat"]
+```
+
+It shows the order of the work, condensed from the diagram in
+[The loop and its adapters](#the-loop-and-its-adapters). Look for execution
+appearing twice: once to learn what is true at the broker, and once, at the
+end, to send orders. Every arrow is really a file written to S3 with an event
+telling the next worker it exists. Monitoring also compares the book with the
+broker on its own, off the path that sends orders.
+
 ## Contents
 
 - [The strategy the skeleton runs](#the-strategy-the-skeleton-runs)
