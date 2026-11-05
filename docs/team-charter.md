@@ -722,9 +722,10 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
   One that changes a position, or a change at the broker the owner confirms, leaves the
   strategy switched off until a person switches it back on, under that section's rule 4.
-- **A found error** in code that fed a quoted result or sent a paper or live order reaches the
-  owner in the same session, and on shadow and paper the operator's session switches off a strategy
-  running code the error can make change an order, a position or a recorded value, under rule 7 of the design doc's
+- **A found error** in code that fed a quoted result, sent a paper or live order, or guards one
+  reaches the owner in the same session, and on shadow and paper the operator's session switches off
+  a strategy running code the error can make change an order, a position or a recorded value, or
+  keep a guard from stopping one, under rule 7 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 
 ### 7. Report cost
