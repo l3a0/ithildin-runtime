@@ -322,14 +322,14 @@ sequenceDiagram
     D->>O: snapshot names each segment, marked provisional
     Note over M: seal at close+15
     M->>B: sealed day
+    M->>B: delete the day's segments, in its own time
     O->>B: compare each quote used with its sealed row
     O->>O: alarm on a difference, report the price gaps
-    Note over B: the day's segments are deleted
 ```
 
 The diagram shows one day's read before sealing. Look for the two checks either
 side of the seal, and for monitoring's comparison, which runs after the decision
-has already acted, and for the deletion at the end. The read has five parts.
+has already acted. The read has five parts.
 
 1. **What is read.** marketlake's capture daemon writes a segment each cycle and
    never rewrites it once its manifest entry lands, which makes an early read
@@ -363,7 +363,7 @@ has already acted, and for the deletion at the end. The read has five parts.
 3. **Which read a decision uses.** Whether the day is sealed when the read
    happens picks the read. A live decision before the seal reads segments,
    because no partition exists yet. A replay reads the sealed partitions, up to
-   the decision's time, because a day's segments are deleted after compaction.
+   the decision's time, because the partition is what stays.
 
    ```mermaid
    flowchart TD
@@ -376,14 +376,21 @@ has already acted, and for the deletion at the end. The read has five parts.
    The diagram shows the choice. Look for the replay: a backtest that replays a
    close−20 decision reads the sealed rows up to that decision's time. Those are
    the rows the live decision read, unless part 4's comparison found a
-   difference. Test 2 covers both reads, with a sealed stretch for the replay and
+   difference. On such a day a replay shows the sealed rows rather than what the
+   decision read, and the journal holds the difference. Test 2 covers both reads, with a sealed stretch for the replay and
    a fixture day left unsealed for the read of segments. A decision after the
    seal needs none of this.
 4. **What is compared after the seal.** The snapshot names each segment it read
    by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
    seals the day, monitoring compares each quote the snapshot used with the sealed
    row of the same ticker and minute, by bid, ask and last as received, because a
-   segment and the partition built from it never share bytes.
+   segment and the partition built from it never share bytes. It reads the used
+   quote from the segment while the bucket holds one, and otherwise compares
+   against the sealed partition alone. A segment that is gone is no fault. This
+   doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that the stored snapshot holds each quote's bid, ask
+   and last, as `Snapshot.quotes` does in memory. Without those values the
+   comparison on a deleted segment holds the sealed row against itself and can
+   find no difference.
 
    | Monitoring finds | It does |
    | --- | --- |
@@ -392,24 +399,17 @@ has already acted, and for the deletion at the end. The read has five parts.
    | A gap between the price the decision used and the official close | A report line, since the two differ by design |
    | A gap between a market-on-close fill and that close | A report line, since the two differ by design |
 
-5. **What this rests on.** A day's segments are deleted after compaction, since
-   the sealed partition holds the same rows and a second copy adds nothing a
-   replay needs. Each segment is create-only until then. Only the uploader
-   refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse
-   one. A snapshot keeps naming each segment it read, as the record of what the
-   decision read, though after the deletion those names point at nothing. The
-   provisional read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
-
-   marketlake's design still keeps each segment under its live prefix forever,
-   from [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943), so the deletion is unbuilt. This doc proposes that it
-   waits for three things, because the comparison reads the segments and the
-   bucket's copy may be the only one off the VM.
-
-   1. The bucket holds the day's sealed partition, with a checksum that matches
-      marketlake's manifest.
-   2. Monitoring's comparison has run on that day.
-   3. The comparison found no difference. A day with a difference keeps its
-      segments, because the partition cannot reproduce what the decision read.
+5. **What this rests on.** marketlake compacts each day and deletes its
+   segments, and nothing in the runtime knows when. A read before sealing is the
+   only read that needs a segment, because a replay reads partitions and the
+   comparison falls back on them. Each segment is create-only until marketlake
+   deletes it. Only the uploader refuses an overwrite so far, and
+   [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
+   keeps naming each segment it read, as the record of what the decision read,
+   though after the deletion those names point at nothing. The provisional read
+   is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16). marketlake's design still keeps each segment
+   under its live prefix forever, from [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943), so the
+   deletion is unbuilt.
 
 ### The previous session's daily bar
 
