@@ -1207,6 +1207,7 @@ here, with the issue that builds its drill.
 | A sort finished, raised from its `sort_done` entry | Each order cancelled, kept or in doubt, each pair's outcome, the positions left open and the person's next step | Every switch-off drill reads this text, and one switches the strategy back on mid-sort, expecting the unfinished list journaled and no more cancels | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A second switch-off finds no `sort_done` of its own | The strategy, the firing's id and its orders still resting | Switch a strategy off, on and off again with an adding order working, once with the event lost, expecting a new `sort_done` and no earlier outcome printed | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A halt of all trading fires again after its release | The cause and the firing's id | Fire a named halt, release it and fire it again, expecting a new sort and a submit refused until the second release | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
+| A stored halt with no journal entry | The blob's name | Kill a raiser between its blob and its entry, expecting a refused submit and monitoring journaling the entry | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | Monitoring cannot list a sort's causes or read the journal | The key it failed on | Deny monitoring's role the list during a session, expecting a page | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A strategy's outcome match found a dropped or duplicated outcome | The strategy, the decision's id, the open position and the owner's step | Drop one outcome and duplicate one, each expecting that strategy halted and the others trading | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A strategy's retiring result was reached, or its measure could not be computed | The strategy, the result or the missing measure, and the owner's step | Inject a result under a drill's journal entry on a strategy with no open sample, and an absent measure, as [#33](https://github.com/l3a0/ithildin-runtime/issues/33)'s fault list says | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
@@ -1312,7 +1313,7 @@ the `ithildin` tool for the person running it. On the live bucket, the switch, l
 
 ### The commands
 
-Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt raised outside a stage the key it is stored under, so the tool finds the environment it lives in.
+Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name, `<component>-<cause>-<timestamp>-<count>`, which is what `ithildin clear` reduces a person's input to before it journals, so the tool finds the environment it lives in.
 
 1. **`ithildin status`** shows, for every account, grouped by environment: whether the kill switch
    is set, which strategies are switched off, whether a loss stop has fired, the last sort's outcome for each strategy switched off, who holds each lease, every open halt with its reason and age,
@@ -2286,7 +2287,7 @@ recognises its own earlier attempt by hash. A process that restarted builds
 new bytes, so before it appends it checks the field that names the step
 against the journal instead: the client order id for `intent`, `sending` and
 `cancel`, the broker's fill id for `fill` and `outside_fill` together, the broker's order id for `outside_order`, the broker's fill or order id for `unmatched_fill` and `unmatched_order`, the broker's own record id for an outside entry with no order or fill, the off switch's or halt's id for `sort` and `sort_done`, the override blob's SHA-256 for
-`override`, and the halt's id for `clear`. A switch already pulled makes
+`override`, the halt's id for `clear`, and the component, cause and subject for a halt's own entry. A switch already pulled makes
 `switch_pull` say so rather than journal it twice.
 
 **Keys.** Every key below sits in its environment's bucket, as
@@ -2323,6 +2324,7 @@ not come again is kept rather than discarded.
 | A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<component>-<cause>-<timestamp>-<count>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
+| A live release, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/releases/<sha256>.json` |
 | A rewrite-planning page's claim and its sent record, one for each load parameter and level in the environment | `load/<parameter>-<level>/claim.json`, `load/<parameter>-<level>/sent.json` |
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
 | A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
@@ -2333,7 +2335,7 @@ and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by
 one function in `core`. `<decision>` is the decision's UTC time in the compact form `20261102T204000Z`, and `<UTC time>` is `20261102T204001.123456Z`, so each sorts in order. `<boot>` is the boot id
 of the VM that wrote the record, so a replacement VM whose restart count
 starts again never meets an earlier record's key. A halt's id is the key of
-the result that holds it, `<deployment>/<run>/<decision>/<stage>`. Twelve
+the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. Twelve
 digits of sequence number cover a million million entries, which at thirty
 entries a minute around the clock last tens of thousands of years. The
 prefixes are the ones `## Where it runs` rule 5's grants and the bucket's
@@ -2509,7 +2511,7 @@ Eleven rules hold the deployment to the premise and the hard limits.
    needs no deploy.
 5. **The runtime's credential does only what the rules need.** It can create
    and read blobs under the runs', the journal's and the simulated accounts'
-   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's and monitoring's roles, create a strategy halt for the role that raises it, and list each of those prefixes, without which S3
+   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps and the overrides, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's and monitoring's roles, create but not delete a strategy halt, or a halt under `accounts/<account>/halts/`, for the role that raises it, and list each of those prefixes, without which S3
    answers a missing key with "access denied" rather than "no such blob". A
    drill reads an absent switch with that list right and expects "no such
    blob". It can also create heartbeats and restart records under their own
