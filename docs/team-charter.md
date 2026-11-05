@@ -141,6 +141,8 @@ which feeds execution, the only module that talks to the broker. Data and
 research sit outside the loop and feed it, and monitoring watches the whole
 loop and can halt it.
 
+**Table:** The modules, each with its job, its input, its output and its owning role
+
 | Module | Job | Input | Output | Owning role |
 | --- | --- | --- | --- | --- |
 | Data | Capture, clean, timestamp and serve point-in-time data (L3605) | Vendor feeds, broker fills | Vintages, a security master, bars | Data engineer |
@@ -548,6 +550,8 @@ workflow in [repo-template](https://github.com/l3a0/repo-template) at a pinned
 commit. [CLAUDE.md](../CLAUDE.md)'s `## Keep the build board current` says
 what a session sets for the board to read.
 
+**Table:** How each agile practice runs here
+
 | Agile practice | What runs here |
 | --- | --- |
 | Backlog | One GitHub issue per deliverable, with a milestone, a label and its blocked-by links. The issue is authoritative for scope |
@@ -687,6 +691,8 @@ it computes what research computed, and that its orders match a replay. The stra
 spends a historical holdout that a failed strategy would burn. The price is
 time, since a daily strategy needs months on paper before its test says
 much.
+
+**Table:** The stages a strategy passes through, and when it leaves each
 
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |

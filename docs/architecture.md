@@ -155,6 +155,8 @@ resizes.
 These numbers are made up to show the mechanics, and share counts are per unit
 of the spread:
 
+**Table:** How the position and its legs resize, day by day, with made-up numbers
+
 | Day | z-score | Units | `h` | Target USO | Target GLD | What trades |
 | --- | --- | --- | --- | --- | --- | --- |
 | Monday | −1.2 | +1 | 0.50 | +1 | −0.50 | Enter: buy 1 USO, short 0.50 GLD |
@@ -259,6 +261,8 @@ through one query, so a backtest and a live run never read bars by different
 paths. The runtime runs on a VM of its own and reads a local mirror of the
 partitions it downloads from marketlake's bucket, as `## Where it runs` says.
 marketlake holds three kinds of bar.
+
+**Table:** The three kinds of bar marketlake holds
 
 | Kind of bar | Comes from | Read by |
 | --- | --- | --- |
@@ -391,6 +395,8 @@ has already acted. The read has five parts.
    and last, as `Snapshot.quotes` does in memory. Without those values the
    comparison on a deleted segment holds the sealed row against itself and can
    find no difference.
+
+   **Table:** What monitoring does with each thing it finds after the seal
 
    | Monitoring finds | It does |
    | --- | --- |
@@ -559,6 +565,8 @@ Execution sends only what the target portfolio asks for, so nothing it sends
 can come from a snapshot or a book that is not stored yet. When it sends, it
 checks each order against the book it replays from the journal at that
 moment, not against a blob.
+
+**Table:** What each mode plugs in at each edge
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
@@ -1134,6 +1142,8 @@ The charter's paper gate asks for every alarm to fire in a drill first. An
 alarm reads zero while it is healthy, so only a drill shows it works. This
 shape adds alarms that one process would not need, and each one gets a row
 here, with the issue that builds its drill.
+
+**Table:** Every alarm, the reason it writes, and its drill
 
 | Alarm | Reason it writes | Drill | Built on |
 | --- | --- | --- | --- |
@@ -2289,6 +2299,8 @@ is also stored at the next attempt number, by `core`'s key builder for that
 row, and named in the decision result, so a second read of a source that may
 not come again is kept rather than discarded.
 
+**Table:** The key each store writes under
+
 | Store | Key |
 | --- | --- |
 | A run's plan, which only the supervisor's role may create | `runs/<deployment>/<run>/plan.json` |
@@ -2829,6 +2841,8 @@ environment at hand. The VM means that environment's one VM in slice 1, or
 each of its three VMs once it scales out to the cluster in rule 11 of
 `## Where it runs`.
 
+**Table:** What each of the four environments runs on
+
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
 | Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
@@ -3119,6 +3133,8 @@ new arrow.
 
 ## How the four acceptance tests exercise it
 
+**Table:** What each acceptance test runs
+
 | Test, from [#4](https://github.com/l3a0/ithildin-runtime/issues/4) | Mode | What it runs | What it pins |
 | --- | --- | --- | --- |
 | 1. The backtest reproduces a replicated strategy | Backtest | marketlake reader over the imported vintages, history clock, simulated broker filling market-on-close orders at the close, zero cost | APR 0.17824928 and Sharpe 0.96467289 to 5e-9, the 162 changes of unit, and the unit on each of the 1,480 days as `chan.bollinger` computes it at `19aadbeb` |
@@ -3158,6 +3174,8 @@ alarm, and its drill belongs on
 
 Which issue writes each piece. Where a piece is a shared type, it lives in
 `core` whichever issue writes it.
+
+**Table:** Which issue writes each piece
 
 | Piece | Written on |
 | --- | --- |
@@ -3287,6 +3305,8 @@ owner accepts a row, it goes on that issue, which then decides, and each
 turned-down alternative gets a row in
 [design.md](design.md#considered-and-rejected)'s register. Settled choices sit
 in [design.md](design.md)'s `## Decisions`.
+
+**Table:** Proposals awaiting a ruling, with their price and their issue
 
 | Proposal | Turned down | Price | Goes on |
 | --- | --- | --- | --- |

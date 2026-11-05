@@ -153,7 +153,7 @@ The owner's global `~/.claude/CLAUDE.md` is the source for the general form of t
 4. **Fit the workload the product is heading for.** The design assumes running all day the market is open and trading continuously. A first slice that decides once a day is no argument for a design that only fits a few bursts a day. The build still starts at the first load.
 5. **One convention per kind of value.** Every time the platform writes is UTC, and a time received from outside is kept as it arrived with its UTC instant beside it. A time that follows the close is configured as close−N, because a half day moves the close.
 6. **Four environments.** Test, shadow, paper and live stay separate. CI runs as test, and a merge to `main` deploys to shadow and then, once shadow is healthy, to paper. Storage has a fake that runs in memory or on the file system beside any emulator, so most tests need no network.
-7. **Structure for a reader with no context.** Give each question its own subheading, break a mechanism into numbered steps, draw it in Mermaid, and show a data type as a UML class diagram. Link every source the text leans on. Render each diagram before reporting it done.
+7. **Structure for a reader with no context.** Give each question its own subheading, break a mechanism into numbered steps, draw it in Mermaid, show a data type as a UML class diagram, and title every table. Link every source the text leans on. Render each diagram before reporting it done.
 8. **Diagrams and figures are prose.** A ruling changes the body, every diagram that shows the old behaviour and `## Decisions` in one commit. Check every value stated twice against its source, and a number copied from an issue against that issue's latest comment. Re-read a long-lived design branch when `main` moves.
 
 **A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone.
@@ -164,7 +164,9 @@ The owner's global `~/.claude/CLAUDE.md` is the source for the general form of t
 
 Every `.md` file must pass markdownlint, which CI runs on every pull request. The rules that bite most: use real headings, never a bold line as a heading (MD036). No trailing whitespace (MD009). No stacked blank lines (MD012). End the file with exactly one newline (MD047). Table delimiter rows use single-space padding, so `| --- |` and never `|---|` (MD060). Escape an "approximately" tilde in prose as `\~`, since a bare tilde can render as strikethrough on some surfaces. Code fences are exempt.
 
-markdownlint has no rule for the tilde or for a table whose rows are tight throughout, so `tests/test_markdown_hygiene.py` carries both. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
+Every table has a title, on a line of its own above it, starting with `**Table:**`, because Markdown has no caption (owner directive, 2026-11-05).
+
+markdownlint has no rule for the tilde, for a table whose rows are tight throughout, or for a table with no title, so `tests/test_markdown_hygiene.py` carries all three. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
 
 When a heading changes, verify the Contents anchors still resolve.
 

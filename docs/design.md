@@ -1814,6 +1814,8 @@ The price of this subsection is four things.
 
 This section names the formal data structure behind each part and says why it fits, and it marks four upgrades. Each structure is named for what it is, so a reader can look up its known properties rather than reverse them from the prose.
 
+**Table:** The formal structure behind each part
+
 | Part | Formal structure | Why it fits |
 | --- | --- | --- |
 | The journal | A hash chain: an append-only log in which each entry carries the SHA-256 of the entry before it, numbered in sequence | One writer per account appends in order, and a chain shows any edited, missing or reordered entry on a walk from the start |
@@ -2076,6 +2078,8 @@ Rishi K. Narang's *Inside the Black Box* (3rd ed., Wiley, 2024) draws the boxes 
 2. **A vendor's own features sit behind the adapter at its edge, with an issue to retire them.** Deep integration with one provider raises the cost of leaving it (AoS L6727). When a crisis forces one in, the book's rule is to wrap it and commit to removing it (AoS L6794).
 3. **The off-the-shelf options are written down, so a buy is a choice rather than a search.** The table lists what exists for each module the charter's build-or-buy note says can be bought, as found on 2026-11-03, and what slice 1 uses instead. Slice 1 buys none of it, since every path runs at 1x on what the platform already holds. The first purchase worth weighing is data, on the day a strategy needs history marketlake does not hold, and the second a factor risk model, once the platform trades enough names that an exposure nobody chose can hide among them.
 
+**Table:** What the market offers for each module, and what slice 1 uses
+
 | Module | Commercial | Open source or free | What slice 1 uses |
 | --- | --- | --- | --- |
 | Data | Bloomberg, LSEG Refinitiv, CRSP, Norgate, Databento, Massive, which was Polygon.io until its rebrand on 2025-10-30, and Alpaca's market data | OpenFIGI for the identifiers a security master maps | marketlake's own capture, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
@@ -2220,6 +2224,8 @@ Terms with exact definitions, reused on purpose. A term listed here is not a
 candidate for a synonym. Anything not listed here follows the writing-style
 rule in [CLAUDE.md](../CLAUDE.md), which prefers deleting an in-group term to
 glossing it.
+
+**Table:** Pinned vocabulary
 
 | Term | Definition |
 | --- | --- |
@@ -2505,6 +2511,8 @@ the same change that cuts it.
 Reviews armor what exists and rarely ask whether it should exist, so this
 register is also where the answer to "why is this needed" gets written down
 once rather than re-argued.
+
+**Table:** The considered-and-rejected register
 
 | Cut | Why |
 | --- | --- |
