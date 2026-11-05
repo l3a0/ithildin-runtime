@@ -205,7 +205,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   DDIA L14943). A gap in the interface goes to the data engineer.
   Names any backtest fill a live order could not have reached, states the bet
   of each strategy that opens a sample and what would show it has broken, and
-  quotes a backtest as evidence with its late run, a higher cost and the
+  quotes a backtest as evidence with its late figure, a higher cost and the
   settings beside the chosen one, all labelled exploratory, on data its research
   already read and never on a held-out window or a registered sample's sessions, under rules 1 to 3 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
@@ -723,7 +723,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   One that changes a position, or a change at the broker the owner confirms, leaves the
   strategy switched off until a person switches it back on, under that section's rule 4.
 - **A found error** in code that fed a quoted result or sent a paper or live order reaches the
-  owner in the same session, under rule 7 of the design doc's
+  owner in the same session, and on shadow and paper the operator's session switches off a strategy
+  running code the error can make change an order, a position or a recorded value, under rule 7 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 
 ### 7. Report cost
