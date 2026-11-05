@@ -277,7 +277,9 @@ captured partition.
 
 ### How long data is kept
 
-No session ages out for the runtime. marketlake's VM can delete older partitions
+No session ages out for the runtime, and only a day's capture segments go, as
+[Reading the day before it is sealed](#reading-the-day-before-it-is-sealed)
+says. marketlake's VM can delete older partitions
 from its own disk once its backup bucket holds them, but the runtime reads a
 mirror of that bucket, which keeps every session, and never the VM's disk. So
 the 2006 to 2012 history and a lookback of any length stay readable.
@@ -322,11 +324,12 @@ sequenceDiagram
     M->>B: sealed day
     O->>B: compare each quote used with its sealed row
     O->>O: alarm on a difference, report the price gaps
+    Note over B: the day's segments are deleted
 ```
 
 The diagram shows one day's read before sealing. Look for the two checks either
 side of the seal, and for monitoring's comparison, which runs after the decision
-has already acted. The read has five parts.
+has already acted, and for the deletion at the end. The read has five parts.
 
 1. **What is read.** marketlake's capture daemon writes a segment each cycle and
    never rewrites it once its manifest entry lands, which makes an early read
@@ -357,22 +360,25 @@ has already acted. The read has five parts.
 2. **What is checked before deciding.** The data worker runs its own minimum
    checks before anything decides. A missing or stale quote at the decision time
    halts the decision, a segment whose SHA-256 does not match its manifest entry halts it too, and a price spike is flagged in the snapshot without halting.
-3. **Which read a decision uses.** A decision's own time against the day's seal
-   time in marketlake's manifest picks the read, never whether the day is sealed
-   when the read happens.
+3. **Which read a decision uses.** Whether the day is sealed when the read
+   happens picks the read. A live decision before the seal reads segments,
+   because no partition exists yet. A replay reads the sealed partitions, up to
+   the decision's time, because a day's segments are deleted after compaction.
 
    ```mermaid
    flowchart TD
-       t{"Is the decision's time before<br/>the day's seal time?"}
-       t -- "Yes" --> seg["Read segments, provisional"]
-       t -- "No" --> part["Read sealed partitions"]
-       seg --> same["A replay of that decision<br/>reads the same segments"]
+       t{"Is the day sealed<br/>when the read happens?"}
+       t -- "No" --> seg["Read segments, provisional"]
+       t -- "Yes" --> part["Read sealed partitions<br/>up to the decision time"]
+       part --> same["A replay of a decision<br/>read before sealing lands here"]
    ```
 
    The diagram shows the choice. Look for the replay: a backtest that replays a
-   close−20 decision reads the segments that existed then, as the live decision
-   did, so test 2 can pin a stretch read before sealing. A decision after the
-   seal time needs none of this.
+   close−20 decision reads the sealed rows up to that decision's time. Those are
+   the rows the live decision read, unless part 4's comparison found a
+   difference. Test 2 covers both reads, with a sealed stretch for the replay and
+   a fixture day left unsealed for the read of segments. A decision after the
+   seal needs none of this.
 4. **What is compared after the seal.** The snapshot names each segment it read
    by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
    seals the day, monitoring compares each quote the snapshot used with the sealed
@@ -386,10 +392,24 @@ has already acted. The read has five parts.
    | A gap between the price the decision used and the official close | A report line, since the two differ by design |
    | A gap between a market-on-close fill and that close | A report line, since the two differ by design |
 
-5. **What this rests on.** The comparison needs marketlake to keep each segment,
-   create-only and never deleted, which [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943) states as a rule. Only the
-   uploader refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself
-   refuse one. The provisional read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
+5. **What this rests on.** A day's segments are deleted after compaction, since
+   the sealed partition holds the same rows and a second copy adds nothing a
+   replay needs. Each segment is create-only until then. Only the uploader
+   refuses an overwrite so far, and [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse
+   one. A snapshot keeps naming each segment it read, as the record of what the
+   decision read, though after the deletion those names point at nothing. The
+   provisional read is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
+
+   marketlake's design still keeps each segment under its live prefix forever,
+   from [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943), so the deletion is unbuilt. This doc proposes that it
+   waits for three things, because the comparison reads the segments and the
+   bucket's copy may be the only one off the VM.
+
+   1. The bucket holds the day's sealed partition, with a checksum that matches
+      marketlake's manifest.
+   2. Monitoring's comparison has run on that day.
+   3. The comparison found no difference. A day with a difference keeps its
+      segments, because the partition cannot reproduce what the decision read.
 
 ### The previous session's daily bar
 
