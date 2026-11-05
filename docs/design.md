@@ -1594,8 +1594,8 @@ Five rules keep a day of decisions safe.
    session date from that day's close. A simulated account's cutoff is the
    close itself. A strategy can set an earlier
    cutoff and never a later one. The cutoff applies to market-on-close orders
-   only, so a market order sent at another time, such as the shadow run on
-   [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at 15:50,
+   only, so a market order, such as the shadow run on
+   [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at close−20,
    meets no cutoff. It applies to new orders only, and never stops a cancel.
    1. **Before every send, twice.** Execution reads the clock before it
       starts the order loop, before each order, and again after the order's
@@ -2465,6 +2465,10 @@ This section lists every decision made on the project, oldest first, one heading
 38. The owner ruled, relayed by the build session, that reconciliation's entry for a split or an assignment releases the halt in shadow as well as on paper, and that live stays with the owner. This changes entry 36 above, whose "paper only" came from a recommendation that meant "not live" and did not weigh shadow. [#33](https://github.com/l3a0/ithildin-runtime/issues/33#issuecomment-6641683043) Governs: `### Faults are expected, and the platform checks itself while it runs` and `### Orders the platform did not send` in design.md.
 39. The owner ruled that a capture segment whose SHA-256 does not match its manifest entry halts the decision. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-6643261722) Governs: `## Where it runs` and `### Reading the day before it is sealed` in architecture.md.
 40. The owner ruled that a sealed partition whose checksum does not match marketlake's manifest halts the decision, the same way as a capture segment. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-6643284831) Governs: `## Where it runs` in architecture.md.
+
+### 2026-11-05
+
+1. The owner ruled that the shadow run on SPY and QQQ decides at close−20, 15:40 on a full session and 12:40 on a half day, the same minute as the skeleton. This replaces close−10, 15:50 on a full session, so the run's measure of the decision price against the close covers the twenty minutes the skeleton carries. [#16](https://github.com/l3a0/ithildin-runtime/issues/16#issuecomment-6651172252) Governs: `Strategies, schedules and decisions` in design.md, and `### Reading the day before it is sealed` in architecture.md.
 
 ### Undated
 

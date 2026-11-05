@@ -333,8 +333,8 @@ has already acted. The read has five parts.
    safe. marketlake uploads each segment to its bucket as soon as that entry
    lands, refusing to replace an existing key. Any decision time inside
    marketlake's capture hours reads those segments, up to the decision time. The
-   skeleton's close−20 is one such time, and the decision minute [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets for
-   its shadow run on SPY and QQQ, ten minutes before the close, is another. The
+   skeleton's close−20 is one such time, and the shadow run on SPY and QQQ that
+   [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets decides at the same minute. The
    runtime turns the segments into quote rows itself, when it reads what it needs.
 
    ```mermaid
