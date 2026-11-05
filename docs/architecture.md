@@ -1208,6 +1208,7 @@ here, with the issue that builds its drill.
 | A second switch-off finds no `sort_done` of its own | The strategy, the firing's id and its orders still resting | Switch a strategy off, on and off again with an adding order working, once with the event lost, expecting a new `sort_done` and no earlier outcome printed | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A halt of all trading fires again after its release | The cause and the firing's id | Fire a named halt, release it and fire it again, expecting a new sort and a submit refused until the second release | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A stored halt with no journal entry | The blob's name | Kill a raiser between its blob and its entry, expecting a refused submit and monitoring journaling the entry | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
+| A journal `clear` on a live account with no owner's release blob | The halt's id and who wrote the entry | Append a `clear` as the operator on a bucket under the live policy, expecting the submit still refused | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | Monitoring cannot list a sort's causes or read the journal | The key it failed on | Deny monitoring's role the list during a session, expecting a page | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A strategy's outcome match found a dropped or duplicated outcome | The strategy, the decision's id, the open position and the owner's step | Drop one outcome and duplicate one, each expecting that strategy halted and the others trading | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | A strategy's retiring result was reached, or its measure could not be computed | The strategy, the result or the missing measure, and the owner's step | Inject a result under a drill's journal entry on a strategy with no open sample, and an absent measure, as [#33](https://github.com/l3a0/ithildin-runtime/issues/33)'s fault list says | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
@@ -1309,7 +1310,7 @@ is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). 
 apart from the journal. Only the owner's role may write a live account's
 overrides, and no runtime role may write any override. Journal entries are
 created, never replaced, by execution, monitoring and the supervisor, and by
-the `ithildin` tool for the person running it. On the live bucket, the switch, lease and override keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants rule 5 of `## Where it runs` gives them there.
+the `ithildin` tool for the person running it. On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants rule 5 of `## Where it runs` gives them there.
 
 ### The commands
 
@@ -1340,7 +1341,7 @@ Writing commands take more friction the more they can resume trading.
    that add to a position, journaled first, and keeps those that reduce one.
    A pair with one
    leg of each kind stays whole. Rule 1 of design.md's `### Every change can be undone or switched off` proposes the steps of this pass, the sort, including that execution cancels the adding leg first and the reducing leg only once that cancel is confirmed with nothing filled. The command prints the orders resting and says execution's journaled sort decides which stay. It then reads the journal once at a deadline set before the cancel cutoff for the `sort_done` entry and prints which orders went, which stayed and which were lost with a partner, and if the entry is not there tells the person to cancel at the broker's own console. A kept order still fills unless the kill switch, which cancels every order in the account, or the broker's console cancels it before the cancel cutoff, and a cancel at the console traces to nothing, so it halts all trading until the owner confirms it. Past the cutoff the command says no order can be stopped and lists the adding orders that will still fill.
-3. **`ithildin clear <halt>`** records that a person has looked at a halt
+3. **`ithildin clear <halt>`** records that a person has looked at a halt. On a live account it first writes the release blob, which only the owner's role can do, and the journal entry names its hash,
    and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual. This doc proposes it as the confirmation after a stop that rule 4 of design.md's `### A strategy is judged over a sample, and runs unchanged through it` asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
 4. **`ithildin override --account <a>`** records a correction the book
    cannot work out alone, such as a fill the broker shows and the journal
@@ -2324,7 +2325,7 @@ not come again is kept rather than discarded.
 | A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<component>-<cause>-<timestamp>-<count>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
-| A live release, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/releases/<sha256>.json` |
+| A live release | `accounts/<account>/releases/<sha256>.json` |
 | A rewrite-planning page's claim and its sent record, one for each load parameter and level in the environment | `load/<parameter>-<level>/claim.json`, `load/<parameter>-<level>/sent.json` |
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
 | A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
