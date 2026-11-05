@@ -409,7 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   handles is among the injected faults or, for the restart cap and a crash loop slower than its
   window, runs under the host's real supervisor as the group says, and that each deploy-time failure
   has its CI test beside its drill (DT p. 200, p. 247).
-  Holds the fill test, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under rules 1 and 4 to 7 of the design doc's
+  Holds the fill test, the test of a sample's stated bet, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under rules 1, 2 and 4 to 7 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -667,9 +667,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
-  latency (L4973 to L5006). The daily report also carries what rules 2 and 5 of the design doc's
+  latency (L4973 to L5006). The daily report also carries what rule 2 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
-  name, once each has something to show.
+  names, and what [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 5 asks.
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
