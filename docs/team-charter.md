@@ -206,8 +206,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Names any backtest fill a live order could not have reached, states the bet
   of each strategy that opens a sample and what would show it has broken, and
   quotes a backtest as evidence with its late run, a higher cost and the
-  settings beside the chosen one, on data its research already read and never
-  on a held-out window or a registered sample's sessions, under rules 1 to 3 of the design doc's
+  settings beside the chosen one, all labelled exploratory, on data its research
+  already read and never on a held-out window or a registered sample's sessions, under rules 1 to 3 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Registers, before a strategy's sample opens on Paper and again before Live, the seven
   things rule 2 of the design doc's
@@ -409,7 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   handles is among the injected faults or, for the restart cap and a crash loop slower than its
   window, runs under the host's real supervisor as the group says, and that each deploy-time failure
   has its CI test beside its drill (DT p. 200, p. 247).
-  Holds the wrong-price test, the split test and the test of each side of an order, under rules 4, 6 and 7 of the design doc's
+  Holds the fill test, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under rules 1 and 4 to 7 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -761,7 +761,8 @@ answer pointing at code or a test (L5568).
 1. How are ideas generated and tested?
 2. What data does it use, and how is the data stored and cleaned?
 3. Is the alpha theory-driven or data-driven, relative or intrinsic, and on what
-   horizon and universe? When does its bet lose, and what would show it has broken?
+   horizon and universe? For a strategy that opens a sample, when does its bet lose, and
+   what would show it has broken?
 4. What is the portfolio construction rule, what are its limits, and why?
 5. Which cost model, and why? How does a backtest fill?
 6. How are orders executed, passively or aggressively?
@@ -822,4 +823,4 @@ have produced it.
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
 little to say to one operator trading once a day, so most of them are left out. A soft limit a strong
 signal may exceed, setting a limit's worst case on a strategy's history, and carrying
-the last price forward or interpolating a gap on the order path are left out, with the reasons in the design doc's register.
+the last price forward or interpolating a gap in anything a decision reads are left out, with the reasons in the design doc's register.
