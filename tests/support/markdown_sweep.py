@@ -1,6 +1,7 @@
 """Prose sweeps for Markdown that markdownlint has no rule for.
 
-The tilde and tight-row slips reach a rendered page with every linter clean, and so does a table with no title.
+The tilde and tight-row slips reach a rendered page with every linter clean,
+and so does a table with no title.
 
 A tilde meaning "approximately" can close a strikethrough pair. Markdown reads
 a matching pair of tildes as deleted text, and renderers disagree about when a
@@ -205,5 +206,7 @@ def untitled_tables(text: str, path: Path) -> list[Finding]:
             above -= 1
         if above < 0 or not TABLE_TITLE.match(source[above]):
             header = source[index - 1]
-            findings.append(Finding(path, index, header, "table with no title, add **Table:** above it"))
+            findings.append(
+                Finding(path, index, header, "table with no title, add **Table:** above it")
+            )
     return findings
