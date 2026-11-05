@@ -143,20 +143,22 @@ A design that serves one stage and breaks another, such as a fast path no test c
 
 ## What a design here must hold
 
-The owner's global `~/.claude/CLAUDE.md` is the source for the general form of these rules, under `## Designing systems`, `## Writing design and architecture documents` and `## Asking the owner`. This section repeats them for this repository, because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
+The owner's global `~/.claude/CLAUDE.md` is the source for the general form of these rules, under `## Designing systems`, `## Writing design and architecture documents` and `## Asking the owner`. This section repeats them for this repository and adds its own cases, because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
 
-**Each of these came from a correction on [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) (owner directive, 2026-11-05).** A design or architecture change here meets all of them from its first draft.
+**Most of these came from a correction on [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) (owner directive, 2026-11-05).** A design or architecture change here meets all of them from its first draft.
 
-1. **Try what already exists first.** Before proposing a new store, key, credential, account or process, try data already held, a narrower permission on an existing role, and a managed default or an age-based rule, and say why each that does not serve fails.
-2. **marketlake's internals are marketlake's.** The runtime depends on what marketlake publishes and names no step of how marketlake produces or removes it. marketlake alone compacts and deletes, and the runtime is not aware of when. A fallback is written into the design, and where none is written, hard limit 3 stops the work.
-3. **A machine holds no state.** Each component runs as its own container, inputs and outputs live as blobs in storage, and a process resumes by reading what storage holds and retrying.
+1. **Try what already exists first.** Before proposing a new store, encryption key, credential, account or long-running service, try, in this order, data already held, a narrower permission on an existing role, and a managed default or a rule that needs no new credential, such as an age-based one. Say why each that does not serve fails.
+2. **marketlake's internals are marketlake's.** The runtime depends on what marketlake publishes, including how long it stays readable, and on no unpublished step of how marketlake produces or removes it. marketlake alone compacts and deletes, on its own schedule, and the runtime holds neither step back. The same holds for any other neighbour. A fallback reads the same published values from another published place and never stands in a default or an older value, and where none is written, hard limit 3 stops the work.
+3. **A machine holds no state.** Each component runs as its own container, inputs and outputs live as blobs in storage, and a record points at them. A process resumes by reading what storage holds and retrying what is safe to repeat. An order with no answer is looked up by its client order id, never resent blind.
 4. **Fit the workload the product is heading for.** The design assumes running all day the market is open and trading continuously. A first slice that decides once a day is no argument for a design that only fits a few bursts a day. The build still starts at the first load.
-5. **One convention per kind of value.** Every stored time is UTC, and a time that follows the close is written close−N, because a half day moves the close.
-6. **Four environments.** Test, shadow, paper and live stay separate. CI runs as test, and a merge to `main` deploys to shadow and then paper. Storage has a fake that runs in memory or on the file system beside any emulator, so most tests need no network.
+5. **One convention per kind of value.** Every time the platform writes is UTC, and a time received from outside is kept as it arrived with its UTC instant beside it. A time that follows the close is configured as close−N, because a half day moves the close.
+6. **Four environments.** Test, shadow, paper and live stay separate. CI runs as test, and a merge to `main` deploys to shadow and then, once shadow is healthy, to paper. Storage has a fake that runs in memory or on the file system beside any emulator, so most tests need no network.
 7. **Structure for a reader with no context.** Give each question its own subheading, break a mechanism into numbered steps, draw it in Mermaid, and show a data type as a UML class diagram. Link every source the text leans on. Render each diagram before reporting it done.
 8. **Diagrams and figures are prose.** A ruling changes the body, every diagram that shows the old behaviour and `## Decisions` in one commit. Check every value stated twice against its source, and a number copied from an issue against that issue's latest comment. Re-read a long-lived design branch when `main` moves.
 
-**A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone. A change that continues an open pull request's work goes on that pull request.
+**A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone.
+
+**Keep the work where the owner put it.** A change on the same issue as an open pull request goes on that pull request, not on a new one, unless the owner says otherwise.
 
 ## Markdown hygiene
 
