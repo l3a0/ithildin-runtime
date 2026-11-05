@@ -388,13 +388,10 @@ has already acted. The read has five parts.
    by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
    seals the day, monitoring compares each quote the snapshot used with the sealed
    row of the same ticker and minute, by bid, ask and last as received, because a
-   segment and the partition built from it never share bytes. It reads the used
-   quote from the segment while the bucket holds one, and otherwise compares
-   against the sealed partition alone. A segment that is gone is no fault. This
-   doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that the stored snapshot holds each quote's bid, ask
-   and last, as `Snapshot.quotes` does in memory. Without those values the
-   comparison on a deleted segment holds the sealed row against itself and can
-   find no difference.
+   segment and the partition built from it never share bytes. The stored snapshot
+   holds each quote's bid, ask and last, as `Snapshot.quotes` does in memory, so
+   monitoring reads the used quote from the snapshot. A segment that is gone
+   changes nothing, and the comparison holds for as long as the snapshot does.
 
    **Table:** What monitoring does with each thing it finds after the seal
 
@@ -408,7 +405,7 @@ has already acted. The read has five parts.
 5. **What this rests on.** marketlake compacts each day and deletes its
    segments, and nothing in the runtime knows when. A read before sealing is the
    only read that needs a segment, because a replay reads partitions and the
-   comparison falls back on them. Each segment is create-only until marketlake
+   comparison reads the snapshot. Each segment is create-only until marketlake
    deletes it. Only the uploader refuses an overwrite so far, and
    [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
    keeps naming each segment it read, as the record of what the decision read,
@@ -2119,7 +2116,7 @@ each keeps its own rule.
    recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
 2. **The run, D1, holds `SNAPSHOT`, `SIGNAL`, `DECISION_RESULT` and
    `OUTPUT_FILE`,** as blobs in S3 under the run's prefix, each written once at
-   a key fixed by the run, the stage, the decision and, for an output file, its name. A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, and marks a read before sealing provisional. A signal record holds a value the run computed,
+   a key fixed by the run, the stage, the decision and, for an output file, its name. A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds each quote's bid, ask and last, and marks a read before sealing provisional. A signal record holds a value the run computed,
    such as the hedge ratio, the z-score or the forecast, keyed by run,
    component, decision and name. Each blob's header names the blobs it came from, and a halt says
    why a decision stopped. A deterministic component's blobs are regenerable
