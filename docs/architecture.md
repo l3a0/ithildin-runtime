@@ -408,8 +408,9 @@ has already acted. The read has five parts.
    keeps naming each segment it read, as the record of what the decision read,
    though after the deletion those names point at nothing. The provisional read
    is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16). marketlake's design still keeps each segment
-   under its live prefix forever, from [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943), so the
-   deletion is unbuilt.
+   under its live prefix forever, from [l3a0/marketlake#943](https://github.com/l3a0/marketlake/issues/943), and
+   [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) holds the change, a lifecycle rule that expires each
+   segment a week after upload.
 
 ### The previous session's daily bar
 
