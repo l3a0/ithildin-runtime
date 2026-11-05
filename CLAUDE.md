@@ -141,6 +141,23 @@ A design that serves one stage and breaks another, such as a fast path no test c
 
 [docs/design.md](docs/design.md)'s `## Design for 10x, plan the rewrite before 100x, build at 1x` and `## Every design weighs the whole lifecycle` carry how this repo applies them, including where each of the ten qualities lives.
 
+## What a design here must hold
+
+The owner's global `~/.claude/CLAUDE.md` is the source for the general form of these rules, under `## Designing systems`, `## Writing design and architecture documents` and `## Asking the owner`. This section repeats them for this repository, because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
+
+**Each of these came from a correction on [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) (owner directive, 2026-11-05).** A design or architecture change here meets all of them from its first draft.
+
+1. **Try what already exists first.** Before proposing a new store, key, credential, account or process, try data already held, a narrower permission on an existing role, and a managed default or an age-based rule, and say why each that does not serve fails.
+2. **marketlake's internals are marketlake's.** The runtime depends on what marketlake publishes and names no step of how marketlake produces or removes it. marketlake alone compacts and deletes, and the runtime is not aware of when. A fallback is written into the design, and where none is written, hard limit 3 stops the work.
+3. **A machine holds no state.** Each component runs as its own container, inputs and outputs live as blobs in storage, and a process resumes by reading what storage holds and retrying.
+4. **Fit the workload the product is heading for.** The design assumes running all day the market is open and trading continuously. A first slice that decides once a day is no argument for a design that only fits a few bursts a day. The build still starts at the first load.
+5. **One convention per kind of value.** Every stored time is UTC, and a time that follows the close is written close−N, because a half day moves the close.
+6. **Four environments.** Test, shadow, paper and live stay separate. CI runs as test, and a merge to `main` deploys to shadow and then paper. Storage has a fake that runs in memory or on the file system beside any emulator, so most tests need no network.
+7. **Structure for a reader with no context.** Give each question its own subheading, break a mechanism into numbered steps, draw it in Mermaid, and show a data type as a UML class diagram. Link every source the text leans on. Render each diagram before reporting it done.
+8. **Diagrams and figures are prose.** A ruling changes the body, every diagram that shows the old behaviour and `## Decisions` in one commit. Check every value stated twice against its source, and a number copied from an issue against that issue's latest comment. Re-read a long-lived design branch when `main` moves.
+
+**A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone. A change that continues an open pull request's work goes on that pull request.
+
 ## Markdown hygiene
 
 Every `.md` file must pass markdownlint, which CI runs on every pull request. The rules that bite most: use real headings, never a bold line as a heading (MD036). No trailing whitespace (MD009). No stacked blank lines (MD012). End the file with exactly one newline (MD047). Table delimiter rows use single-space padding, so `| --- |` and never `|---|` (MD060). Escape an "approximately" tilde in prose as `\~`, since a bare tilde can render as strikethrough on some surfaces. Code fences are exempt.
