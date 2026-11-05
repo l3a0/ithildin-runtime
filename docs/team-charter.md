@@ -8,7 +8,7 @@ kept in the sibling repository at
 [research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md),
 or of a screen of the book's full text. The rules from reading the whole book, for
 backtests, a strategy's stated bet, limits and the fill record, live in the design doc's
-[A backtest takes only prices it could have had, and each model states how it fails](design.md#a-backtest-takes-only-prices-it-could-have-had-and-each-model-states-how-it-fails).
+[A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 Citations like (AoS L4156) are Kindle locations in *The Art of Scalability*
 (Abbott and Fisher, 1st ed., Addison-Wesley, 2009), whose operating and review
 practices the roles and lifecycle below adopt. Most are the locations of the
@@ -203,11 +203,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
-  Fills a backtest only at a price a live order could have had, states each
-  strategy's bet and what would show it has broken, and quotes a result with
-  its late run, a higher cost and the settings beside the chosen one, under
-  rules 1 to 3 of the design doc's
-  [A backtest takes only prices it could have had, and each model states how it fails](design.md#a-backtest-takes-only-prices-it-could-have-had-and-each-model-states-how-it-fails).
+  Names any backtest fill a live order could not have reached, states the bet
+  of each strategy that opens a sample and what would show it has broken, and
+  quotes a backtest as evidence with its late run, a higher cost and the
+  settings beside the chosen one, on data its research already read and never
+  on a held-out window, under rules 1 to 3 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Registers, before a strategy's sample opens on Paper and again before Live, the seven
   things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
@@ -223,7 +224,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
 
 - **Protects:** captured data, the first item of the premise.
 - **Does:** writes feed handlers and the security master that maps every vendor
-  identifier to one internal one over the dates it held (L3682, L3688). Tells zero from blank (L3802), flags
+  identifier to one internal one (L3688). Tells zero from blank (L3802), flags
   price spikes rather than letting a filter smooth them silently, since a
   filter can reject a real move (L3824), and discounts a spike that traded on
   little volume (L3856), tracks corporate actions independently (L3859), and stores when each
@@ -241,8 +242,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   security master [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds,
   or names the source's gap, under rule 2 of the design doc's
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
-  Holds that a corporate action reads as neither a gain nor a loss, under rule 6 of the design doc's
-  [A backtest takes only prices it could have had, and each model states how it fails](design.md#a-backtest-takes-only-prices-it-could-have-had-and-each-model-states-how-it-fails).
+  Holds that a split reads as neither a gain nor a loss, under rule 6 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -284,10 +285,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the check of orders back to their causes,
   under the design doc's rules for judging a strategy, with
   [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holding the mechanism.
-  Keeps every fill traceable to what calibrating the cost model needs, from the first
-  fill, tests each side of an order, and has the cost model state the sizes it was fitted
-  on, under rules 5 and 7 of the design doc's
-  [A backtest takes only prices it could have had, and each model states how it fails](design.md#a-backtest-takes-only-prices-it-could-have-had-and-each-model-states-how-it-fails).
+  Gives the simulated broker one fill rule by order type, keeps every fill traceable
+  to what calibrating the cost model needs, from the first order, and tests each side
+  of an order, under rules 1, 5 and 7 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
@@ -310,8 +311,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   automatic unwind and stop at a preset loss (L6916). They suit a slower
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
-  Flash Crash (L7365). Owns the kill switch, which the book names only as a person's
-  panic button that cuts risk (L994), and the halts on clock offset and sync age. Decides what each halt
+  Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
+  idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Decides what each halt
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
@@ -341,8 +342,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and that this case never comes from a strategy's own record, under rule 4 of the design doc's
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
   Holds that every limit also states the exposure it bounds and why it sits at
-  that level, and runs the test of which caps hold against a wrong price, under rule 4 of the design doc's
-  [A backtest takes only prices it could have had, and each model states how it fails](design.md#a-backtest-takes-only-prices-it-could-have-had-and-each-model-states-how-it-fails).
+  that level, and that a cap reading no price backs the data check, under rule 4 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -664,7 +665,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
-  latency (L4973 to L5006).
+  latency (L4973 to L5006). The daily report also carries what rules 2 and 5 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
+  name, once each has something to show.
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
@@ -717,6 +720,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
   One that changes a position, or a change at the broker the owner confirms, leaves the
   strategy switched off until a person switches it back on, under that section's rule 4.
+- **A found error** in code that fed a quoted result or sent a paper or live order reaches the
+  owner in the same session, under rule 7 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 
 ### 7. Report cost
 
@@ -753,9 +759,9 @@ answer pointing at code or a test (L5568).
 1. How are ideas generated and tested?
 2. What data does it use, and how is the data stored and cleaned?
 3. Is the alpha theory-driven or data-driven, relative or intrinsic, and on what
-   horizon and universe?
+   horizon and universe? When does its bet lose, and what would show it has broken?
 4. What is the portfolio construction rule, what are its limits, and why?
-5. Which cost model, and why?
+5. Which cost model, and why? How does a backtest fill?
 6. How are orders executed, passively or aggressively?
 7. What does the risk model cover, what are its limits, and when would a human
    intervene?
@@ -763,8 +769,9 @@ answer pointing at code or a test (L5568).
 
 ## What this charter leaves out
 
-*Inside the Black Box* never names survivorship bias, paper trading, order management
-or a kill switch, and never discusses reconciling positions, which a search of its full text confirmed. The rules above on those topics come from the owner's existing repositories
+*Inside the Black Box* never names survivorship bias, paper trading or a kill switch, and never
+discusses reconciling positions, which a search of its full text with line breaks joined confirmed. It
+names order management systems once, as something a firm may buy off the shelf (L3518). The rules above on those topics come from the owner's existing repositories
 and standard practice, not from that book, and should be read as such. The exceptions are
 survivorship bias, which rule 2 of the design doc's
 [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it)
@@ -811,6 +818,6 @@ have produced it.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
-little to say to one operator trading once a day, and are left out, apart from the risk gate's first limits
-above. A soft limit a strong signal may exceed, setting a limit's level on a strategy's history, and carrying
+little to say to one operator trading once a day, so most of them are left out. A soft limit a strong
+signal may exceed, setting a limit's worst case on a strategy's history, and carrying
 the last price forward on the order path are left out, with the reasons in the design doc's register.
