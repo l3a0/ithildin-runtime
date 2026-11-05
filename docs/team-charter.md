@@ -28,7 +28,10 @@ rules for checking a release where it runs, building machines from code, healing
 fault and gathering logs off the machine the roles below also adopt.
 The rules from Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) for judging a
 strategy over a sample, and for the human acts around one, live in the
-design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it). The
+design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+The rules from Nassim Nicholas Taleb's *Fooled by Randomness* (2nd ed., Random House, 2004) for what a
+result can and cannot show live in the design doc's
+[A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -201,7 +204,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   lists, and reads the verdict a fixed step computes at the sample's end, under
-  that section's rules.
+  that section's rules. Holds every quoted result to rules 1 to 3 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -225,6 +229,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   keeps a copy off the machine and alarms on its lag, runs the scheduled
   read-back of recorded data, and drills a restore that checks counts and
   checksums (DDIA L7227, L4777).
+  Where a rule selects a universe, keeps instruments that later delisted in the
+  security master [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds,
+  or names the source's gap, under rule 2 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -315,6 +323,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds every halt and refusal, and the limit on raising risk, under rules 1, 2,
   3 and 5 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+  Holds that every limit on what can be lost states the worst case it assumes,
+  and that this case never comes from a strategy's own record, under rule 4 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -675,7 +686,10 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   the size, every review runs all three. From the first incident on, a
   recurring issue each quarter carries a pass over incidents and problems that
   picks what to isolate or harden next, starting with whatever causes the
-  most incidents (AoS L3555, L7140).
+  most incidents (AoS L3555, L7140). A review of a strategy's result, of a human
+  override, or of a loss past the worst case a limit assumed, follows rules 4
+  and 5 of the design doc's
+  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 - **Monitoring is designed with the module.** A design states how the
   platform knows the module is working and how it knows the module has
   started to behave badly. "It logs errors" does not answer that question
@@ -734,7 +748,10 @@ answer pointing at code or a test (L5568).
 
 Narang's highlights are silent on survivorship bias, paper trading, order management
 and reconciliation. The rules above on those topics come from the owner's existing repositories
-and standard practice, not from that book, and should be read as such. The exceptions are the
+and standard practice, not from that book, and should be read as such. The exceptions are
+survivorship bias, which rule 2 of the design doc's
+[A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it)
+takes from *Fooled by Randomness*, and the
 lease number, the journal's durability before a send, applying each fill once, and reconciling on
 every fill from a recorded position, which are built on the fencing, durability, end-to-end id
 and read-skew arguments of *Designing Data-Intensive Applications* and adapted here to a broker
@@ -767,3 +784,10 @@ counterpart in a platform whose strategies are code, and are left out. Its figur
 sample of 20 trades, rest on the author's experience rather than data, and are not adopted. What it
 adds here is judging a strategy over a sample set in advance and reporting the effect of the human
 acts around it apart.
+
+*Fooled by Randomness* dates from 2004 and writes for people who trade by hand and read their own
+results. Its personal philosophy, its anecdotes and its neuroscience are left out, and most of its figures show
+arithmetic rather than measurements, so none is adopted as a threshold. Withholding the performance
+figure, randomizing a strategy's triggers and skewed bets as a house style are left out, with the
+reasons in the design doc's register. What it adds here is reading a result against the luck that could
+have produced it.
