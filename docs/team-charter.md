@@ -5,7 +5,10 @@ builds, tests and operates a systematic trading platform. The first product is
 the platform Rishi Narang outlines in *Inside the Black Box* (3rd ed., Wiley,
 2024). Citations like (L941) are Kindle locations in the owner's highlights,
 kept in the sibling repository at
-[research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md).
+[research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md),
+or of a screen of the book's full text. The rules from reading the whole book, for
+backtests, a strategy's stated bet, limits and the fill record, live in the design doc's
+[A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 Citations like (AoS L4156) are Kindle locations in *The Art of Scalability*
 (Abbott and Fisher, 1st ed., Addison-Wesley, 2009), whose operating and review
 practices the roles and lifecycle below adopt. Most are the locations of the
@@ -200,6 +203,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   version of each reference record current then, so a backtest sees what the
   platform could have known and runs no second copy of that join (L3884,
   DDIA L14943). A gap in the interface goes to the data engineer.
+  Names any backtest fill a live order could not have reached, states the bet
+  of each strategy that opens a sample and what would show it has broken, and
+  quotes a backtest as evidence with its late figure, a higher cost and the
+  settings beside the chosen one, all labelled exploratory, on data its research
+  already read and never on a held-out window or a registered sample's sessions, under rules 1 to 3 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Registers, before a strategy's sample opens on Paper and again before Live, the seven
   things rule 2 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
@@ -233,6 +242,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   security master [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds,
   or names the source's gap, under rule 2 of the design doc's
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
+  Holds that a split reads as neither a gain nor a loss, under rule 6 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -274,6 +285,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the check of orders back to their causes,
   under the design doc's rules for judging a strategy, with
   [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holding the mechanism.
+  Gives the simulated broker one fill rule by order type, keeps every fill traceable
+  to what calibrating the cost model needs, from the first order, and tests each side
+  of an order, under rules 1, 5 and 7 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
@@ -296,8 +311,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   automatic unwind and stop at a preset loss (L6916). They suit a slower
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
-  Flash Crash (L7365). Owns the kill switch, which Narang's highlights do not
-  cover, and the halts on clock offset and sync age. Decides what each halt
+  Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
+  idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Decides what each halt
   and the kill switch cancel and keep at the broker, per the design doc. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
@@ -326,6 +341,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds that every limit on what can be lost states the worst case it assumes,
   and that this case never comes from a strategy's own record, under rule 4 of the design doc's
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
+  Holds that every limit also states the exposure it bounds and why it sits at
+  that level, and that a cap reading no price backs the data check, under rule 4 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -391,6 +409,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   handles is among the injected faults or, for the restart cap and a crash loop slower than its
   window, runs under the host's real supervisor as the group says, and that each deploy-time failure
   has its CI test beside its drill (DT p. 200, p. 247).
+  Holds the fill test, the test of a sample's stated bet, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under rules 1, 2 and 4 to 7 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -627,7 +647,7 @@ evidence, not elapsed time.
 | Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
 | Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
 | Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, and once with a reducing order working, which it keeps, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step. A Paper sample's pass can be cited for this step only if each gap that rules 4 and 6 of the design doc's [A backtest names what it could not have traded](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) leave open was closed and stayed closed through that whole sample, or the owner accepted it again before that sample opened. The owner must also have ruled for that strategy, before that sample opened, on whether a reading outside its range stops new entries, and any stop that ruling brings must have run through that whole sample. A gap found to have fired during that sample goes back to the owner before its pass can be cited. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds how these are recorded. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
@@ -647,7 +667,9 @@ running, each placed where it is cheapest (AoS L6250, L6377).
 
 - **Monitoring** watches the four things Narang names: exposure, P&L including
   hit rate, execution quality as slippage and impact, and systems including
-  latency (L4973 to L5006).
+  latency (L4973 to L5006). The daily report also carries what rule 2 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
+  names, and what [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 5 asks.
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
@@ -700,6 +722,11 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
   One that changes a position, or a change at the broker the owner confirms, leaves the
   strategy switched off until a person switches it back on, under that section's rule 4.
+- **A found error** in code that fed a quoted result, sent a paper or live order, or guards one
+  reaches the owner in the same session, and on shadow and paper the operator's session switches off
+  a strategy running code the error can make change an order, a position or a recorded value, or
+  keep a guard from stopping one, under rule 7 of the design doc's
+  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
 
 ### 7. Report cost
 
@@ -736,9 +763,10 @@ answer pointing at code or a test (L5568).
 1. How are ideas generated and tested?
 2. What data does it use, and how is the data stored and cleaned?
 3. Is the alpha theory-driven or data-driven, relative or intrinsic, and on what
-   horizon and universe?
+   horizon and universe? For a strategy that opens a sample, when does its bet lose, and
+   what would show it has broken?
 4. What is the portfolio construction rule, what are its limits, and why?
-5. Which cost model, and why?
+5. Which cost model, and why? How does a backtest fill?
 6. How are orders executed, passively or aggressively?
 7. What does the risk model cover, what are its limits, and when would a human
    intervene?
@@ -746,8 +774,9 @@ answer pointing at code or a test (L5568).
 
 ## What this charter leaves out
 
-Narang's highlights are silent on survivorship bias, paper trading, order management
-and reconciliation. The rules above on those topics come from the owner's existing repositories
+*Inside the Black Box* never names survivorship bias, paper trading or a kill switch, and never
+discusses reconciling positions, which a search of its full text with line breaks joined confirmed. It
+names order management systems once, as something a firm may buy off the shelf (L3518). The rules above on those topics come from the owner's existing repositories
 and standard practice, not from that book, and should be read as such. The exceptions are
 survivorship bias, which rule 2 of the design doc's
 [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it)
@@ -791,3 +820,9 @@ arithmetic rather than measurements, so none is adopted as a threshold. Withhold
 figure, randomizing a strategy's triggers and skewed bets as a house style are left out, with the
 reasons in the design doc's register. What it adds here is reading a result against the luck that could
 have produced it.
+
+*Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
+high-frequency trading, on judging a manager's integrity and on the case for and against quants have
+little to say to one operator trading once a day, so most of them are left out. A soft limit a strong
+signal may exceed, setting a limit's worst case on a strategy's history, and carrying
+the last price forward or interpolating a gap in anything a decision reads are left out, with the reasons in the design doc's register.
