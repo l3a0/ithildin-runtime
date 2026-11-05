@@ -1827,7 +1827,7 @@ This section names the formal data structure behind each part and says why it fi
 | Each component's queue | An at-least-once work queue with competing consumers | Events are only hints and the state lives in the keys, so the queue needs no ordering and any free instance can take an item |
 | An order's lifecycle | A finite state machine whose transitions are journal entries | Each move is recorded before it happens, so replay reaches the same state |
 | The stages within a decision | A directed acyclic graph of stages, declared in one table in `runtime` | One declaration drives both the event routes and the order stages wait in |
-| The broker's request budget, an upgrade | A token bucket per execution instance, one for its share of orders and lookups and one for its share of the cancel reserve | It refills continuously rather than at a minute's edge, so a burst cannot spend a minute's share in a second, and a refused request knows how long to wait |
+| The broker's request budget, an upgrade | A token bucket per execution instance, one for its share of orders and other lookups and one for its share of the reserve for cancels and the kill switch's reads and lookups | It refills continuously rather than at a minute's edge, so a burst cannot spend a minute's share in a second, and a refused request knows how long to wait |
 
 The four upgrades are this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as the rules they sit in say. Five structures were weighed and turned down, as the register records: a Merkle tree for the journal, CRDTs, a consensus log, an ordered queue per account, and a Bloom filter for duplicate fills.
 

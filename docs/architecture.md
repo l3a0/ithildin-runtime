@@ -1477,8 +1477,6 @@ classDiagram
     class Book {
         +dict positions_by_strategy
         +dict open_orders_by_strategy
-        +dict outside_positions
-        +list outside_open_orders
         +Decimal platform_realised_pnl
         +int replayed_through
     }
@@ -3163,7 +3161,7 @@ Which issue writes each piece. Where a piece is a shared type, it lives in
 
 | Piece | Written on |
 | --- | --- |
-| Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) |
+| Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938), closed 2026-11-04 |
 | `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the decision result, the plan, the queue port with its SQS and named-pipe adapters and their contract suite, the S3 and memory-backed folder adapters with one contract test suite, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
