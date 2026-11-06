@@ -373,7 +373,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   cannot match, any resend of an order in doubt, a resend of a cancel
   without the lookup and the test the design doc's faults rule 6 requires,
   an order settled as unsent
-  because a broker lookup found nothing, and a client order id or lease
+  because a broker lookup found nothing or a list omitted it, and a client order id or lease
   number drawn from a counter a failover or a restore could wind back
   (DDIA L4868), a vendor's type, string or exception that reaches past its
   adapter other than the raw record kept as received (CC p. 204), and a send
