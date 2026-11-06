@@ -665,7 +665,7 @@ design.md's `### A worker works through a span of decisions` says.
 
 ## Data flow
 
-A data flow diagram shows the components, the order they talk in, and each point where a call crosses a trust boundary. A trust boundary is a line where what a caller may do changes, such as the edge of the one process that holds the broker key. Threat modeling starts from these crossings, because that is where data can be read, changed or forged, so each one needs a stated protection.
+A data flow diagram shows the components, the order they talk in, and each point where a call crosses a trust boundary. A trust boundary is a line where what a caller may do changes, such as the edge of execution, the only component that holds the broker key. Threat modeling starts from these crossings, because that is where data can be read, changed or forged, so each one needs a stated protection.
 
 The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
 
@@ -692,7 +692,7 @@ flowchart LR
             data["Data"]
             models["Alpha, risk, cost and<br/>portfolio construction"]
             mon["Monitoring"]
-            subgraph tb_exec["Trust boundary: the one process with the broker key"]
+            subgraph tb_exec["Trust boundary: execution, the only role with the broker key"]
                 exec["Execution"]
             end
         end
