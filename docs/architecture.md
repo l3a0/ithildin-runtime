@@ -758,13 +758,13 @@ The security master is the table that maps each ticker to the platform's own ins
 
 | Rule | What it prevents | Flows |
 | --- | --- | --- |
-| Only execution talks to the broker | A second sender, or a fill nobody journaled entering the book | 6, 10, 11 |
+| Only execution talks to the broker | An order sent around the gate, or a fill nobody journaled entering the book | 6, 10, 11 |
 | The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 9.3 |
 | Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
 
 #### Only execution talks to the broker
 
-A second sender is how an order escapes the gate. So orders go out through the one execution worker, and the broker's acks, fills, positions and open orders come back through it. Monitoring reconciles against the account file execution wrote rather than asking the broker itself.
+An order sent from anywhere else would escape the gate. So only execution talks to the broker. Several execution instances run, and any of them may send, but only while it holds the account's lease, so one sends at a time. The broker's acks, fills, positions and open orders come back the same way. Monitoring reconciles against the account file execution wrote rather than asking the broker itself.
 
 Every order carries the platform's stamp, a client order id naming its strategy and decision. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
 
