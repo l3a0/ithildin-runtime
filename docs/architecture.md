@@ -585,22 +585,16 @@ Modes differ in six things, and they fall into two groups.
 ```mermaid
 flowchart LR
     subgraph sees["What a strategy sees"]
-        data["Data source"]
-        clock["Clock"]
-        broker["Broker"]
+        direction TB
+        data["Data source"] ~~~ clock["Clock"] ~~~ broker["Broker"]
     end
     modules["The same modules<br/>in every mode"]
     subgraph goes["Where records and signals go"]
-        blob[("Blob store,<br/>with the journal")]
-        queue["Queue"]
-        alert["Alert channel"]
+        direction TB
+        blob[("Blob store,<br/>with the journal")] ~~~ queue["Queue"] ~~~ alert["Alert channel"]
     end
-    data --> modules
-    clock --> modules
-    modules <--> broker
-    modules --> blob
-    modules --> queue
-    modules --> alert
+    sees <--> modules
+    modules --> goes
 ```
 
 [design.md](design.md#one-runtime) names the three adapters that change what a
