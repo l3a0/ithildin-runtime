@@ -463,8 +463,13 @@ monitoring pings a heartbeat service as each decision's last step, and the
 service alarms when a ping is late against the deployment's schedule. The service sits outside the machine because a
 check on the same machine dies with it, and a machine where nothing runs is
 the failure the check exists for. The heartbeat service is healthchecks.io, in the
-project marketlake already runs, and its ntfy push and email integrations are
-the alert channel.
+project marketlake already runs.
+
+The alert channel is how an alarm reaches the owner, and it has three routes.
+
+1. **healthchecks.io's ntfy push and email integrations** carry the dead-man checks' alarms. No runtime VM holds an address for them.
+2. **The push topic** is an ntfy topic of the runtime's own, separate from marketlake's, on the same phone. Every push the runtime's VMs or AWS send straight to ntfy goes there, and no runtime VM, parameter or EventBridge route holds marketlake's topic address.
+3. **Email through an SNS topic** goes with two alarms, the promotion check and the live drill check, which say that a scheduled job stopped running. Rule 9 of `### Four environments` says how.
 
 A ping says only that a decision finished. The jobs rule 3 of design.md's `### Faults are expected, and the platform checks itself while it runs` lists, such as the daily report, run apart from a decision and get no check of their own. Monitoring reads each job's age and pages through the alert channel, as that rule says.
 
@@ -763,7 +768,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
-| 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and the push topic's, and the dead-man check pages when pings stop. No tracked file holds the topic's address, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it |
+| 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and the address of the runtime's own push topic, and the dead-man check pages when pings stop. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds the push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it |
 | 15.1, 15.2 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or deletes a lease, and CloudTrail records each write and delete |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
@@ -2631,6 +2636,7 @@ flowchart TB
     beat["Heartbeat service"]
     alerts["Alert channel"]
     cw["CloudWatch alarms<br/>session-ready, promotion and live drill checks"]
+    sns["SNS topic, one per account,<br/>with an email subscription"]
     person["Owner or operator<br/>the ithildin tool, off the VM"]
 
     registry --> docker
@@ -2647,6 +2653,8 @@ flowchart TB
     guard --> alerts
     beat --> alerts
     cw -->|"EventBridge route"| alerts
+    cw -->|"promotion and live drill checks only"| sns
+    sns -->|"email"| alerts
         person <-->|"status, clears, overrides, the switch"| bucket
 ```
 
@@ -3180,8 +3188,8 @@ Eleven rules keep the environments apart.
    the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and the refusals of rule 3 of `## Where it runs` cover
-   every broker path. Ping addresses and the push topic's address sit apart, under
-   `/ithildin/<environment>/heartbeat/`, and each environment holds only its checks' own UUID addresses, never the project's ping key. Each environment's worker roles
+   every broker path. Ping addresses and the address of the runtime's own push topic sit apart, under
+   `/ithildin/<environment>/heartbeat/`, and each environment holds only its checks' own UUID addresses, never the project's ping key or marketlake's topic address. Each environment's worker roles
    trust only that environment's VM role, by its exact ARN. Every role but
    the owner's refuses `iam:PassRole` on every runtime role, apart from the
    VM change credential, and on shadow the apply credential, on the VM's role alone, for EC2, and
@@ -3208,7 +3216,7 @@ Eleven rules keep the environments apart.
    a broker account stays under the environment's parameter path, because
    the image and the repository are public. The provisioning step that
    rule 3 of `## Where it runs` runs at boot writes the environment's name, its credentials and
-   its ping addresses and the push topic's address to the VM's memory-backed storage, so the `OnFailure`
+   its ping addresses and the address of the runtime's own push topic to the VM's memory-backed storage, so the `OnFailure`
    handler needs no SSM call while the host fails, and none of them goes
    into a unit's settings, which `systemctl show` lets any user read. Only
    `runtime`'s entry points read them, and turn them into adapter
@@ -3242,18 +3250,42 @@ Eleven rules keep the environments apart.
    path dead since the open, alarms in the morning rather than after the
    cutoff.
 
-   The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and the three deployment checks, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it. The price is two places to set up alerts, that the CloudWatch alarms go quiet with AWS, and that these pages have no email path, because only the heartbeat service's checks reach email.
+   The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and the three deployment checks, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it.
+
+   **Table:** How each check reaches the owner
+
+   | Check | Push | Email |
+   | --- | --- | --- |
+   | A deployment's dead-man check | healthchecks.io's ntfy integration | healthchecks.io's email integration |
+   | A session-ready check | The push topic, by the EventBridge route | None |
+   | The promotion check | The push topic, by the EventBridge route | An SNS topic, on every firing |
+   | The live drill check | The push topic, by the EventBridge route | An SNS topic, on every firing |
+
+   The promotion check and the live drill check each have a second alarm action, an email through an SNS topic. Four things hold for it.
+
+   1. There is one SNS topic per AWS account, and it needs no new credential.
+   2. The email goes out on every firing, not only when a push fails, so it also covers a fault on the route to ntfy.
+   3. The owner writes each email subscription by hand, so the address enters no tracked file and no OpenTofu state.
+   4. A subscription sends nothing until the owner clicks its one confirmation link, and a [drill](halts-and-drills.md#drills-with-no-alarm) confirms that it is confirmed and that an email arrives. A second drill confirms that a push arrives on the push topic, because the phone subscribes by hand and a dead subscription looks like silence.
+
+   This split has four prices.
+
+   1. Alerts are set up in two places.
+   2. The CloudWatch alarms go quiet with AWS, and so does their email.
+   3. The session-ready pages have no email path.
+   4. The phone's subscription and each email subscription are hand steps that a drill has to watch. The email itself costs nothing at this volume, since [SNS's FAQ](https://aws.amazon.com/sns/faqs/) states no charge for the first 1,000 email notifications each month.
 
    This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what each CloudWatch check guarantees, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
 
-   1. It pages for a report due and missed, stays quiet on a day none is due, and pages again on the next due day it misses. A due time moves with an early close, and a schedule it cannot read pages.
+   1. It pages for a report due and missed, stays quiet on a day none is due, and pages again on the next due day it misses. A due time moves with an early close, and a schedule it cannot read pages. On the promotion check and the live drill check, each of those pages also sends the email.
    2. Its reporter holds only the grant for its own metric.
-   3. An EventBridge rule carries the alarm's change to the push topic, and the page carries the three lines `### From an alarm to a command` requires.
-   4. A push the topic refuses stays on the rule's dead-letter queue, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the owner learns of it, including when monitoring is down or the topic refuses monitoring's own push.
+   3. An EventBridge rule carries the alarm's change to the push topic, and the page carries the three lines `### From an alarm to a command` requires. The email carries the same three lines.
+   4. A push the topic refuses stays on the rule's dead-letter queue. On the promotion check and the live drill check the email still reaches the owner. For every other page on the push route, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the owner learns of it, including when monitoring is down or the topic refuses monitoring's own push.
+   5. Each SNS topic's policy admits only the two alarms above, and the read-only checks read the topic's count of confirmed subscriptions, which shows no address. So a subscription lost to an unsubscribe link or a replaced topic shows at the next check.
 
 #### Rule 10: what the drills check
 
-**Every drill that depends on an environment's own resources runs in each environment that has them.** These are the dead-man check, the session-ready check, the host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, the CloudWatch route to the push topic, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
+**Every drill that depends on an environment's own resources runs in each environment that has them.** These are the dead-man check, the session-ready check, the host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, the CloudWatch route to the push topic, the SNS route to email where an environment has one, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
 #### Rule 10: when drills run
 
@@ -3648,7 +3680,8 @@ in [design.md](design.md)'s `## Decisions`.
 | A cash record that halts as a type off the list, an amount outside its range or a repeated id with different content enters no book's cash until a person's clear or `ithildin override` brings it in | Letting the record reach the book while the halt waits | The book's cash trails the broker's until a person acts | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | The daily report names each entry the closed list explains | None named | One more section in the report | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each job monitoring reads the age of pages once per cause at a written interval | A page at every decision, which a strategy that decides often would repeat all day | A job that stays down pages again only at the interval | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| What each CloudWatch check guarantees: a page for a report due and missed, quiet on a day none is due, a page again on the next due day it misses, a due time that moves with an early close, a page on a schedule it cannot read, a grant per reporter, the EventBridge rule and the page's three lines, and a refused push kept on the rule's dead-letter queue. [Entry 23 of the decisions](design.md#2026-11-05) settled which checks move to CloudWatch | None named | A schedule of due days to keep for each check, and pages with no email path | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| What each CloudWatch check guarantees: a page for a report due and missed, quiet on a day none is due, a page again on the next due day it misses, a due time that moves with an early close, a page on a schedule it cannot read, a grant per reporter, the EventBridge rule and the page's three lines, and a refused push kept on the rule's dead-letter queue. [Entry 23 of the decisions](design.md#2026-11-05) settled which checks move to CloudWatch | None named | A schedule of due days to keep for each check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The email on the promotion and live drill checks repeats with each page and carries the page's three lines, each SNS topic's policy admits only those two alarms, and the read-only checks read the topic's count of confirmed subscriptions. [The 2026-11-06 entries of the decisions](design.md#2026-11-06) settled the route | None named | One more read in the read-only checks, and session-ready pages stay with no email path | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The security master's rows only add, an id is never reused or removed, and a rename is a dated row | Editing a row in place | A renamed ticker needs a release | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | The comparison after the seal also takes the newest sealed row at or before the decision time | Comparing only the row of the same minute, which misses a row whose segment landed after the decision | A second row to read for each quote used | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | A person's clear of the account's lease counts as a takeover for the guard on a late order. The clear's journal entry is durable before the delete, and the next holder reads it and stores the broker's order list before it acts | None named | One more broker read and capture after a clear | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
