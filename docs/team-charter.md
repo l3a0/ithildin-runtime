@@ -138,7 +138,9 @@ it has fired, and switching a strategy back on in live trading. On a live
 account the owner alone releases any halt, on the ruling of 2026-10-30 on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and alone returns a
 tightened limit, on the ruling of 2026-11-04 on
-[PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). Before the board
+[PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). On every account the
+owner alone confirms a trade as the broker's own, which can start the close after
+a broker's trade. Before the board
 sits on the Live step, the owner writes in the board's brief the largest fall in
 the account's value that the owner accepts, under rule 4 of the design doc's
 [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear), and decides before a second strategy's first order on a shared
@@ -387,7 +389,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
-  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to that close's written wait, to a written maximum age, to what that check accepts, to the lone leg's written
+  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to who may confirm such a trade or what a confirmation names, to that close's written wait, to a written maximum age, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
