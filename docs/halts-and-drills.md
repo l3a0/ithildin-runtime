@@ -1,6 +1,6 @@
 # Halts and drills
 
-This document is the one place that holds the steps of a sort and every drill. [design.md](design.md#every-change-can-be-undone-or-switched-off) states what must hold, [architecture.md](architecture.md#every-alarm-and-its-drill) shows where it sits, and the issues that build each piece link here. So a change to a step lands here, and the three stay short.
+This document is the one place that holds the steps of a sort and every drill's steps. A rule elsewhere may say a drill must exist, and its steps sit here. [design.md](design.md#every-change-can-be-undone-or-switched-off) states what must hold, [architecture.md](architecture.md#every-alarm-and-its-drill) shows where it sits, and the issues that build each piece link here. So a change to a step lands here, and the three stay short.
 
 ## How a sort runs
 
@@ -171,3 +171,15 @@ A drill here proves a grant, a fence or a scale-out path rather than firing an a
 | Scale-out 4 | Refresh with an image whose checks fail, expecting the hook to abandon the new VM, the refresh to roll back with two VMs up throughout, and a refresh started during a session to be refused |
 | Scale-out 5 | Refresh to a good image, then roll back by a revert commit that applies the previous launch template version, and forward again, expecting each refresh to finish outside a session with the group healthy throughout. This one also runs on slice 1's group of one, because the charter's paper gate asks for a VM image rolled back and forward again |
 | The heartbeat service's read-only key | Try to pause a check with the promotion job's read-only API key, expecting refusal |
+
+### What each environment drills as it arrives
+
+Rule 3's drill grows to try each environment's roles
+against every other environment's bucket, key and VM, by each route this section lists for the key and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
+1. Each environment's monitoring role and VM role read their own ping
+addresses, every other role is refused, and no parameter holds the project's ping key.
+2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the two live writes that role holds, by pulling the switch and by switching a strategy off while no session runs, and clears both.
+3. A deploy role is refused every key but its pin, its deploy record and its read of block records, and a deploy is refused a blocked digest.
+4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
+5. A pin moved mid-session leaves a restarted worker on the session's
+digest.

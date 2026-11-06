@@ -658,7 +658,7 @@ design.md's `### A worker works through a span of decisions` says.
 
 A data flow diagram shows the components, the order they talk in, and each point where a call crosses a trust boundary. A trust boundary is a line where what a caller may do changes, such as the edge of the one process that holds the broker key. Threat modeling starts from these crossings, because that is where data can be read, changed or forged, so each one needs a stated protection.
 
-The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
+The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
 
 ```mermaid
 flowchart LR
@@ -698,29 +698,29 @@ flowchart LR
 
     registry -->|"0 image"| sup
     sup -->|"1 plan"| d1
-    d1 -->|"2 event"| queue
-    queue -->|"2 event"| data
-    lake -->|"3 bars"| data
-    d2 -->|"3 instrument ids"| data
+    d1 -->|"2.1 event"| queue
+    queue -->|"2.2 event"| data
+    lake -->|"3.1 bars"| data
+    d2 -->|"3.2 instrument ids"| data
     data -->|"4 snapshot"| d1
     secret -->|"5 broker key"| exec
     brokerx -->|"6 order states, fills, positions"| exec
-    exec -->|"7 journal entries"| d3
-    exec -->|"7 account file, book"| d1
-    d1 -->|"8 snapshot, book"| models
-    models -->|"8 forecast, constraints,<br/>costs, target"| d1
-    d1 -->|"9 target, constraints, snapshot"| exec
-    d5 -->|"9 switches, caps, lease, halts, releases"| exec
-    exec -->|"9 every step, before it happens"| d3
+    exec -->|"7.1 journal entries"| d3
+    exec -->|"7.2 account file, book"| d1
+    d1 -->|"8.1 snapshot, book"| models
+    models -->|"8.2 forecast, constraints,<br/>costs, target"| d1
+    d1 -->|"9.1 target, constraints, snapshot"| exec
+    d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
+    exec -->|"9.3 every step, before it happens"| d3
     exec -->|"10 approved orders"| brokerx
     brokerx -->|"11 acks and fills"| exec
     exec -->|"12 send outcome"| d1
-    d1 -->|"13 results, halts"| mon
-    d3 -->|"13 orders and fills"| mon
-    mon -->|"14 report"| d4
-    mon -->|"14 pings and alarms"| alert
-    person -->|"15 switch, clears, overrides,<br/>releases, hard caps"| d5
-    person -->|"15 clear and override entries"| d3
+    d1 -->|"13.1 results, halts"| mon
+    d3 -->|"13.2 orders and fills"| mon
+    mon -->|"14.1 report"| d4
+    mon -->|"14.2 pings and alarms"| alert
+    person -->|"15.1 switch, clears, overrides,<br/>releases, hard caps"| d5
+    person -->|"15.2 clear and override entries"| d3
 
     classDef boundary fill:none,stroke-dasharray:6 4
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
@@ -731,15 +731,15 @@ flowchart LR
 | Flow | Crosses | What could go wrong | What protects it |
 | --- | --- | --- | --- |
 | 0 image | GitHub into the VM | A forged or altered release runs | The VM checks the pinned digest and its attestation, and refuses otherwise |
-| 1, 4, 7, 8, 12 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
-| 2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
-| 3 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
+| 1, 4, 7.1, 7.2, 8.2, 9.3, 12 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
+| 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
+| 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 9 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
+| 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
-| 14 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses, and the dead-man check pages when pings stop |
-| 15 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys, and CloudTrail records each write |
+| 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses, and the dead-man check pages when pings stop |
+| 15.1, 15.2 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys, and CloudTrail records each write |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
@@ -3013,15 +3013,7 @@ Eleven rules keep the environments apart.
     host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. Shadow's and paper's drills run before paper's gate. Live's run
     before the owner switches, in a live session started with the kill
     switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch. Drills that end in a clear only the owner can make run once a month, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed by design.md's margin, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live. Drills that depend only on code
-    run once, in test. Rule 3's drill grows to try each environment's roles
-    against every other environment's bucket, key and VM, by each route [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists for the key and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
-    1. Each environment's monitoring role and VM role read their own ping
-      addresses, every other role is refused, and no parameter holds the project's ping key.
-    2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the two live writes that role holds, by pulling the switch and by switching a strategy off while no session runs, and clears both.
-    3. A deploy role is refused every key but its pin, its deploy record and its read of block records, and a deploy is refused a blocked digest.
-    4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
-    5. A pin moved mid-session leaves a restarted worker on the session's
-      digest.
+    run once, in test. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
     Each environment's infrastructure is applied by a plan of its own, a bad
     apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule, and that environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
