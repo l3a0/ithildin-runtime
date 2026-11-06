@@ -1188,9 +1188,9 @@ an order by its client order id, because not every broker can answer that.
 An order in doubt has no journaled ack, so the journal holds no broker id for
 it. `OrderPath` hands the adapter the order's intent, and the adapter answers with
 the broker's id, not found, or more than one. By this doc's proposal for
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was
-whole, gives any id it read when the list was not, and gives the paired row's
-details, so `OrderPath` runs the checks below in one place. How it finds the
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was whole and gives each paired row it read,
+converted at the adapter to the platform's types, so `OrderPath` runs the checks
+below in one place. How it finds the
 order is the adapter's own, so a new broker changes no line of `OrderPath`. This doc
 proposes three steps for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), so Alpaca's lookup
 goes by the broker's id too.
@@ -1216,20 +1216,19 @@ Four things must hold of that read, and [#10](https://github.com/l3a0/ithildin-r
    rerun never doubles anything` says.
 4. Each row and each lookup answer matches the order's `sending` entry in client
    order id where the broker keeps one, and in instrument, side, quantity and
-   type. More than one row for one order, or any mismatch, is journaled as an `unmatched_order`, halts,
-   and counts as an order that traces to nothing.
+   type. More than one row for one order, or any mismatch, is journaled as an
+   `unmatched_order`, one entry for each row, halts, and counts as an order that
+   traces to nothing.
 
 A broker that takes no client order id gets an adapter that pairs on the order's
 details instead. It takes a row the journal has not mapped, matching the order's
 instrument, side, quantity and type inside the same window. That match is close
 to unique, because an account holds one portfolio, one holder of the lease sends,
-and the gate refuses a second order beside one in doubt. The journal's mapping
-stands in for the stamp there, so the first clause of rule 1 under **Sorting what
-the broker reports** sorts its orders, and more than one match halts. On such a
-broker the submit carries no id, a lookup answer names none, and the fourth
-thing above rests on the other four details. An adapter states whether its
-broker keeps the id, so on a broker that does, an answer with no id is a
-mismatch and never a pass. This adapter is designed and not built, and it passes
+and the gate refuses a second order beside one in doubt. The journal's mapping stands in for the stamp there, wherever the sort, the
+account check or reconciliation reads it, and more than one match halts. On such
+a broker the submit carries no id, a lookup answer names none, and the fourth
+thing above rests on the other four details. On a broker that keeps the id, an
+answer with no id is never a pass, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the two are told apart. This adapter is designed and not built, and it passes
 the broker suite on those terms before any such broker is used, as
 architecture.md's `### How CI runs them` says.
 

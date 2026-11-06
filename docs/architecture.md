@@ -1165,7 +1165,7 @@ sequenceDiagram
 
 A client order id is an id the platform chooses and sends with the order. The broker gives the order an id of its own, and the journal maps one to the other on each ack. Every lookup goes by the broker's order id, because not every broker can find an order by a client order id.
 
-An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`, and the adapter answers with the broker's id, not found, or more than one. By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was whole, gives any id it read when the list was not, and gives the paired row's details, so `OrderPath` runs the match and the halts in one place. How it finds the order is the adapter's own, so a new broker changes no line of `OrderPath`. This doc proposes three steps for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), so Alpaca's lookup goes by the broker's id too.
+An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`, and the adapter answers with the broker's id, not found, or more than one. By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was whole and gives each paired row it read, converted at the adapter to the platform's `BrokerOrder`, so `OrderPath` runs the match and the halts in one place. How it finds the order is the adapter's own, so a new broker changes no line of `OrderPath`. This doc proposes three steps for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), so Alpaca's lookup goes by the broker's id too.
 
 1. The adapter reads the broker's order list, open and closed orders alike, from the earliest `sending` entry in doubt, less a written overlap larger than the clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets.
 2. It returns the broker's order id from the row that carries the order's client order id.
@@ -1692,15 +1692,23 @@ classDiagram
     class Ack {
         +str client_order_id
         +str broker_order_id
+        +BrokerOrder order
         +str state
         +str outcome
         +bytes raw
     }
+    class BrokerOrder {
+        +str broker_order_id
+        +str client_order_id
+        +InstrumentId instrument
+        +str side
+        +Decimal qty
+        +str type
+    }
     class FoundOrder {
         +str answer
-        +str broker_order_id
+        +list rows
         +bool whole_list
-        +dict row
         +bytes raw
     }
     class BrokerRead {
@@ -3641,7 +3649,7 @@ three levels, from fast to slow.
      handler is killed returning to the queue included, runs against the
      SQS emulator.
    - **The broker suite** holds every `Broker` adapter to the methods
-     `OrderPath` calls: a submit with a client order id where the broker keeps one, a find of an order from its intent that answers the broker's id, not found or more than one, whether its list was whole and the paired row, a list of every order since a time across all its pages, a lookup by the broker's order id that names the client order id where the broker keeps one, a cancel by the broker's order id, fills
+     `OrderPath` calls: a submit with a client order id where the broker keeps one, a find of an order from its intent that answers the broker's id, not found or more than one, whether its list was whole and each paired row as a `BrokerOrder`, a list of every order since a time across all its pages, a lookup by the broker's order id that returns a `BrokerOrder`, with the client order id where the broker keeps one, a cancel by the broker's order id, fills
      with their own ids, positions, open orders, the read [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names for cash, the broker's records through `activities`, the clock and a
      market-on-close order refused past the cutoff. It runs as rule 5 of
      design.md's `### The code holds its own rules, and every check runs in production` says: against the
@@ -3723,7 +3731,7 @@ in [design.md](design.md)'s `## Decisions`.
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Execution reserves a quarter of the broker's rate limit, 50 of [Alpaca's 200 requests a minute](https://alpaca.markets/support/usage-limit-api-calls), for cancels and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, which new orders and other lookups never draw on, and splits both the reserve and the rest evenly across its instances, each counting against a fixed share | A counter shared across instances, or no reserve | An instance cannot borrow another's idle share, and an order waits at its instance's share | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An order in doubt alarms when it is first journaled `InDoubt`, and halts the run once it stays unsettled past the smaller of 30 minutes and the time left before the cancel cutoff | Waiting out the order's time in force | A halt when a slow broker answers a lookup late | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| An order in doubt, which has no ack and so no mapped broker id, gets its broker id from the broker's order list, read from before its send, and is then looked up by that id. A list that fails or stops before its last page settles no order's state and stops new orders, a row already read still serves a cancel, a row or answer that disagrees with the `sending` entry halts, and `find_order` also says whether its list was whole and gives the paired row | Reading open orders alone, which miss an order already filled or cancelled | One paged read and one lookup for each try at settling, and an order that lands after the read waits for the next | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| An order in doubt, which has no ack and so no mapped broker id, gets its broker id from the broker's order list, read from before its send, and is then looked up by that id. A list that fails or stops before its last page settles no order's state and stops new orders, a row already read still serves a cancel, a row or answer that disagrees with the `sending` entry halts, and `find_order` also says whether its list was whole and gives each paired row | Reading open orders alone, which miss an order already filled or cancelled | One paged read and one lookup for each try at settling, and an order that lands after the read waits for the next | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A strategy's off switch is a blob any person may create, which execution reads before each of that strategy's submits, abandoning only its orders while its cancels still go out, and which sorts its orders, cancelling those that add to a position and keeping a pair whole | A deploy to switch a strategy off, or a halt of the whole account | One more control blob, check, command and drill, and a pending adding order lost when a switch-off was a mistake | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A fired loss stop creates a create-only blob that holds the account until `ithildin stop clear` | A stop that lifts once the day's loss recovers or a new session starts | A person's clear before trading resumes after any fired stop | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), which owns the loss stop |
 | Slice 1's one VM is sized so measured memory use stays at or under half its memory, an 8 GB machine at the estimate, and a VM group's written limit of deployments comes from 75% of its memory | Sizing the machine to the estimate alone | About 7 cents an hour for each environment, a figure to confirm, and a second VM group once the limit is reached | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
