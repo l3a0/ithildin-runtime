@@ -578,31 +578,88 @@ reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
 
-[design.md](design.md#one-runtime) names three adapters, the ones that change
-what a strategy sees.
+### Six things differ by mode
+
+Modes differ in six things, and they fall into two groups.
+
+```mermaid
+flowchart LR
+    subgraph sees["What a strategy sees"]
+        data["Data source"]
+        clock["Clock"]
+        broker["Broker"]
+    end
+    modules["The same modules<br/>in every mode"]
+    subgraph goes["Where records and signals go"]
+        blob[("Blob store,<br/>with the journal")]
+        queue["Queue"]
+        alert["Alert channel"]
+    end
+    data --> modules
+    clock --> modules
+    modules <--> broker
+    modules --> blob
+    modules --> queue
+    modules --> alert
+```
+
+[design.md](design.md#one-runtime) names the three adapters that change what a
+strategy sees:
 
 1. The data source.
 2. The clock.
 3. The broker.
 
-The blob store, which holds the journal too, the queue and the alert channel
-also differ by mode, but they change only where records and signals go. A
-backtest of 1,480 decisions must not append to the paper journal or page the
-owner. design.md's `## One runtime` lists those three beside the first three.
+It lists three more beside them, which change only where records and signals go:
 
-A module that asks which mode it is in has broken the shape, because its
-backtest would then test a branch the paper run never takes. The account a
-worker's lease, a blob that names the one process allowed to act for that account, and its kill switch belong to comes from its broker adapter, so a
-backtest's simulated account never shares the paper account's lease. The
-simulated broker keeps its resting orders and positions as one blob per account per call, written before the call returns, outside any run's prefix, so a shadow order still resting when one run ends is there to fill
-in the next, in a new process or on a new VM. One simulator serves backtest
-and shadow, and it fills by the order's type and time in force rather than
-by mode. It can also fill one leg of a pair in part, or not at all, on a
-seeded fault, so a replay runs the stranded-leg path paper trading will. The event that design.md says
-modules are written against is one decision result. In a backtest each worker
-works through every decision of the span in turn, and in the other modes
-through one trading day's decisions, as design.md's
-`### A worker works through a span of decisions` says.
+1. The blob store, which holds the journal too.
+2. The queue.
+3. The alert channel.
+
+Those three differ because a backtest of 1,480 decisions must not append to the
+paper journal or page the owner.
+
+### No module asks which mode it is in
+
+A module that asks has broken the shape, because its backtest would then test a
+branch the paper run never takes.
+
+The broker adapter also decides which account a worker acts for. A worker's
+lease, a blob that names the one process allowed to act for that account, and
+its kill switch both belong to that account. So a backtest's simulated account
+never shares the paper account's lease.
+
+### One simulator serves backtest and shadow
+
+1. **It fills by the order, not by the mode.** The order's type and time in
+   force decide the fill.
+2. **Its state outlives a run.** It keeps resting orders and positions as one
+   blob per account per call, written before the call returns, outside any
+   run's prefix.
+3. **It can fail on purpose.** A seeded fault fills one leg of a pair in part,
+   or not at all, so a replay runs the stranded-leg path paper trading will.
+
+```mermaid
+sequenceDiagram
+    participant R1 as Shadow run 1
+    participant S as Simulated broker
+    participant B as Account blob
+    participant R2 as Shadow run 2, new VM
+    R1->>S: submit an order that rests
+    S->>B: write orders and positions
+    S-->>R1: return
+    Note over R1: The run ends
+    R2->>S: next call
+    S->>B: read orders and positions
+    S-->>R2: the order fills
+```
+
+### What a worker works through
+
+The event that design.md says modules are written against is one decision
+result. In a backtest each worker works through every decision of the span in
+turn. In the other modes it works through one trading day's decisions, as
+design.md's `### A worker works through a span of decisions` says.
 
 ## Data flow
 
