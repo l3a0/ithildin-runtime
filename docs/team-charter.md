@@ -461,7 +461,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under rules 1, 2 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails rule 5's age and status check, the alert on a missing report figure, a lone leg, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
+  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails rule 5's age and status check, the alert on a missing report figure, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -706,7 +706,7 @@ evidence, not elapsed time.
 The issue that proposes the Live step meets five conditions.
 
 1. It carries, before the board sits, the statement rule 5 of the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) asks for.
-2. Any pass it cites holds with each holding term counted, labelled exploratory, a check that can withhold a pass and never make one, or the owner accepted that term as unknown in writing, under rule 4 there.
+2. Any pass it cites holds with each holding term counted, labelled exploratory, a check that can withhold a pass and never make one, or, where no such source exists, the owner accepted that term as unknown in writing, under rule 4 there.
 3. Where the strategy sends market-on-close orders, it names how its fills were priced, from the broker's dated text, and what they could not have reached, such as a closing auction, and shows, labelled exploratory, the gaps rule 1 there names.
 4. A pass can be cited only if the gap rule 5 there leaves on a frozen quote was closed and stayed closed through that whole sample, or the owner accepted it before that sample opened, and if that gap is found to have fired during the sample it goes back to the owner first.
 5. A sample that did not look for a decision that read a frozen quote says so, and the gap stays unknown beside its verdict rather than reading as not fired.
@@ -740,7 +740,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   with its name as the reason. Read only, compare every component's artifact
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
-  gate's hard caps and the written maximum age, verify the journal's checksums and sequence to its head,
+  gate's hard caps and the written maximum age on a quote, verify the journal's checksums and sequence to its head,
   check the journal and every protected store as rule 3 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
   says, which also says what each finding serves, read every component's restart
