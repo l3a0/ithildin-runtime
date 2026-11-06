@@ -1219,7 +1219,7 @@ old. Data applies that rule.
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
 than reading the silence as a target of zero. A flat position is a forecast
-with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which starts at 0 and which [Decision 9 of 2026-11-06](design.md#2026-11-06) sets out.
+with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets, which starts at 0 and which [Decision 9 of 2026-11-06](design.md#2026-11-06) sets out.
 
 ### A restart before the data is ready
 
@@ -1277,7 +1277,7 @@ start before data, as it does here, but it sends only what a target
 portfolio asks for, and that cannot exist until a snapshot does. The charter
 gives the operator the startup order: execution may send an order only once
 every upstream worker has written a decision result that lists outputs, not a
-halt, for the decision.
+halt, for the decision. Above a written age of 0, hard limit 3's exception covers a strategy's late forecast.
 The pipeline makes that order something the platform cannot get wrong. "Not ready" is a halt, never an empty forecast.
 
 ### The risk gate refuses an order

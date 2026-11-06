@@ -99,7 +99,7 @@ These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.m
 
 1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
 2. **Every order passes the risk gate.** There is one order path, and the pre-trade risk check sits on it. No code path, test helper or operator command submits an order around it.
-3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One exception starts switched off. A strategy's forecast missing at portfolio construction's deadline reads as no change for that strategy, for up to a written age the owner sets for risk. At the default age of 0 this limit holds as written. Past that age the strategy halts and the owner is alerted. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
+3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One exception starts switched off, behind a written age the owner sets for risk. At the default age of 0 this limit holds as written. Above 0, a strategy's forecast missing at portfolio construction's deadline reads as no change for that strategy, which holds its positions and working orders and sends no new order, and each such reading is recorded. The age counts from the decision of that strategy's last stored forecast, and past it the strategy halts and the owner is alerted. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
 6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper. Deploying to live is the owner's, by hand.
@@ -425,7 +425,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
-  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to a written maximum age, to what that check accepts, to the lone leg's written
+  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to a written maximum age, to hard limit 3's written age on a late forecast, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
@@ -456,7 +456,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   of three ways: explained, filed as a bug, or sent for more tests
   (AoS L5888). Stress tests remove each input in turn, such as the feed, the
   broker and disk, and assert that the platform halts and alerts, per hard
-  limit 3, rather than degrading silently. The book's version of this test,
+  limit 3 and apart from its written exception, rather than degrading silently. The book's version of this test,
   negative testing, checks recovery (AoS L5924). Replays the open sample's sessions for
   each release under the design doc's rules for judging a strategy. Keeps the design doc's
   injected faults in the replay suite, because poor error handling is where
@@ -790,7 +790,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) name.
 - **Startup** checks that every upstream worker has written a decision result
   that lists outputs, not a halt, for the decision before execution may send an
-  order. That is the safeguard the reboot incident lacked (L4690). A worker is
+  order. That is the safeguard the reboot incident lacked (L4690). Above a written age of 0, hard limit 3's exception covers a strategy's late forecast. A worker is
   one component run as its own process, and the workers form an event
   pipeline, as the design doc's
   [Processes and files](design.md#processes-and-files) says. The order path
