@@ -656,81 +656,103 @@ design.md's `### A worker works through a span of decisions` says.
 
 ## Data flow
 
-A data flow diagram shows where data comes from, which process changes it, and
-where it is kept, with no sense of time. The cylinders are stores, the boxes
-are processes, and the rounded boxes are things outside the platform. The
-numbers name the processes, not their order. The next section gives the order.
+A data flow diagram shows the components, the order they talk in, and each point where a call crosses a trust boundary. A trust boundary is a line where what a caller may do changes, such as the edge of the one process that holds the broker key. Threat modeling starts from these crossings, because that is where data can be read, changed or forged, so each one needs a stated protection.
+
+The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
 
 ```mermaid
 flowchart LR
-    vendor(["marketlake"])
-    brokerx(["Broker"])
-    ownerx(["Owner"])
+    subgraph tb_person["Trust boundary: a person's machine"]
+        person(["Owner or operator,<br/>with the ithildin tool"])
+    end
+    subgraph tb_github["Trust boundary: GitHub"]
+        registry(["Signed release image"])
+    end
+    subgraph tb_marketlake["Trust boundary: marketlake's AWS account"]
+        lake[("Sealed partitions,<br/>segments and ledgers")]
+    end
+    subgraph tb_broker["Trust boundary: Alpaca"]
+        brokerx(["Broker"])
+    end
+    subgraph tb_alert["Trust boundary: alert vendors"]
+        alert(["Heartbeat and push"])
+    end
+    subgraph tb_account["Trust boundary: the environment's AWS account"]
+        subgraph tb_vm["Trust boundary: the VM"]
+            sup["Supervisor"]
+            data["Data"]
+            models["Alpha, risk, cost and<br/>portfolio construction"]
+            mon["Monitoring"]
+            subgraph tb_exec["Trust boundary: the one process with the broker key"]
+                exec["Execution"]
+            end
+        end
+        queue["Queues"]
+        secret[("Secret store")]
+        d1[("D1 The run's blobs")]
+        d3[("D3 Journal")]
+        d4[("D4 Run reports")]
+        d5[("D5 Account controls")]
+    end
+    d2[("D2 Security master,<br/>inside the image")]
 
-    p1["1 Data: record the snapshot"]
-    p2["2 Execution: recover"]
-    p3["3 Monitoring: reconcile again and alarm"]
-    p4["4 Alpha: forecast the spread"]
-    p5["5 Risk: set constraints"]
-    p6["6 Cost: write the cost schedule"]
-    p7["7 Portfolio construction"]
-    p8["8 Execution: plan, gate,<br/>journal and send orders"]
-    p9["9 Monitoring: report and alarm"]
+    registry -->|"0 image"| sup
+    sup -->|"1 plan"| d1
+    d1 -->|"2 event"| queue
+    queue -->|"2 event"| data
+    lake -->|"3 bars"| data
+    d2 -->|"3 instrument ids"| data
+    data -->|"4 snapshot"| d1
+    secret -->|"5 broker key"| exec
+    brokerx -->|"6 order states, fills, positions"| exec
+    exec -->|"7 journal entries"| d3
+    exec -->|"7 account file, book"| d1
+    d1 -->|"8 snapshot, book"| models
+    models -->|"8 forecast, constraints,<br/>costs, target"| d1
+    d1 -->|"9 target, constraints, snapshot"| exec
+    d5 -->|"9 switches, caps, lease, halts, releases"| exec
+    exec -->|"9 every step, before it happens"| d3
+    exec -->|"10 approved orders"| brokerx
+    brokerx -->|"11 acks and fills"| exec
+    exec -->|"12 send outcome"| d1
+    d1 -->|"13 results, halts"| mon
+    d3 -->|"13 orders and fills"| mon
+    mon -->|"14 report"| d4
+    mon -->|"14 pings and alarms"| alert
+    person -->|"15 switch, clears, overrides,<br/>releases, hard caps"| d5
+    person -->|"15 clear and override entries"| d3
 
-    d1[("D1 The run's blobs in S3,<br/>keyed by component and decision")]
-    d2[("D2 Security master")]
-    d3[("D3 Journal")]
-    d4[("D4 Run reports")]
-    d5[("D5 Account controls<br/>kill switch, strategy off switches, fired loss stop,<br/>hard caps, leases, overrides, releases, halts")]
-
-    vendor -->|"bars"| p1
-    d2 -->|"instrument ids"| p1
-    p1 -->|"snapshot, naming each bar read"| d1
-    brokerx -->|"order states, fills, positions"| p2
-    p2 -->|"orders settled, fills"| d3
-    d3 -->|"replayed book"| p2
-    p2 -->|"reconciled book, broker positions and open orders"| d1
-    d1 -->|"book, broker positions and open orders"| p3
-    p3 -->|"reconcile report"| d1
-    d1 -->|"snapshot"| p4
-    p4 -->|"forecast, hedge ratio, z-score"| d1
-    d1 -->|"snapshot, reconciled book"| p5
-    p5 -->|"constraints"| d1
-    d1 -->|"snapshot"| p6
-    p6 -->|"cost schedule"| d1
-    d1 -->|"forecast, constraints,<br/>cost schedule, book"| p7
-    p7 -->|"target portfolio"| d1
-    d1 -->|"target portfolio,<br/>constraints, snapshot"| p8
-    d3 -->|"book, replayed before each check"| p8
-    p8 -->|"every step, before it happens"| d3
-    p8 -->|"approved orders"| brokerx
-    brokerx -->|"acks, and positions, open orders and fills at the sync"| p8
-    p8 -->|"send outcome"| d1
-    d1 -->|"decision results, halts, send outcome"| p9
-    d3 -->|"orders and fills"| p9
-    p9 -->|"report"| d4
-    p9 -->|"alarms"| ownerx
-    ownerx -->|"switch, strategy off, clears, overrides, releases, hard caps"| d5
-    ownerx -->|"clear and override entries"| d3
-    d5 -->|"switch, strategy off, loss stop, hard caps, lease tag, overrides, releases, halts"| p8
+    classDef boundary fill:none,stroke-dasharray:6 4
+    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
 ```
 
-Every arrow into or out of D1 is a blob kept after the run, whose header
-names the blobs it came from. That is what makes each decision
-readable afterwards. The security master is the table that maps each ticker to
-the platform's own instrument id, so a vendor's renamed ticker does not become
-a new instrument.
+**Table:** Each flow that crosses a trust boundary
+
+| Flow | Crosses | What could go wrong | What protects it |
+| --- | --- | --- | --- |
+| 0 image | GitHub into the VM | A forged or altered release runs | The VM checks the pinned digest and its attestation, and refuses otherwise |
+| 1, 4, 7, 8, 12 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
+| 2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
+| 3 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
+| 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
+| 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
+| 9 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
+| 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
+| 14 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses, and the dead-man check pages when pings stop |
+| 15 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys, and CloudTrail records each write |
+
+The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
 Three things the diagram rules out.
 
-1. **Only execution talks to the broker.** Processes 2 and 8 are the one
-   execution worker. Orders go out through it, and the broker's acks, fills,
+1. **Only execution talks to the broker.** Orders go out through the one
+   execution worker, and the broker's acks, fills,
    positions and open orders come back through it. Monitoring reconciles
    against the account file execution wrote rather than asking the broker itself.
    Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says. Execution journals a fill into a strategy's book only when its order is one the journal sent, within that order's quantity. Any other order or fill, a broker's liquidation included, is journaled as received and halts, because a fill nobody journaled would otherwise enter the book and agree with the broker.
 2. **The current book comes from the journal.** The book is the platform's own
-   record of what it holds and what orders are open. Process 2 replays it from the journal, and the broker's positions and open orders are used only at process 2's reconcile, at process 3's second check and at the sync that opens process 8. A disagreement at process 2 or 8 halts trading rather than quietly replacing the platform's record, and one at process 3 alarms.
-3. **Bars reach the models only after process 1 has recorded which ones were
+   record of what it holds and what orders are open. Execution's recover stage replays it from the journal, and the broker's positions and open orders are used only at that stage's reconcile, at monitoring's second check and at the sync that opens the send stage. A disagreement at process 2 or 8 halts trading rather than quietly replacing the platform's record, and one at process 3 alarms.
+3. **Bars reach the models only after the data worker has recorded which ones were
    read.** A model never reads a feed directly, so every number it acted on can
    be read back later from marketlake. Captured market data is the first of the
    three things [design.md](design.md#premise) says cannot be recovered, and
