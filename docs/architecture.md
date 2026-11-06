@@ -458,6 +458,8 @@ the failure the check exists for. The heartbeat service is healthchecks.io, in t
 project marketlake already runs, and its ntfy push and email integrations are
 the alert channel.
 
+A ping says only that a decision finished. A job that runs apart from a decision, such as the daily report, gets no check of its own. Monitoring reads the job's age and pages through the alert channel, as rule 3 of design.md's `### Faults are expected` says.
+
 ## The loop and its adapters
 
 [design.md](design.md#one-runtime)'s `## One runtime` says backtest, paper and

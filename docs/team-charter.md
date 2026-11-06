@@ -782,8 +782,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   in full every day. A mismatch halts trading. The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   adds a running match of requests to outcomes and of orders back to their
-  causes, and a retiring check, each with its own halt, and the dead-man check
-  watches the last run of each.
+  causes, and a retiring check, each with its own halt, and monitoring pages
+  when the last run of any of them passes its bound.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
