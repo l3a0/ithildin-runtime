@@ -13,6 +13,38 @@ draws how slice 1's modules fit together.
 - [Every design weighs the whole lifecycle](#every-design-weighs-the-whole-lifecycle)
 - [One runtime](#one-runtime)
 - [Processes and files](#processes-and-files)
+  - [Rule 1: every write is a blob, created once](#rule-1-every-write-is-a-blob-created-once)
+  - [Rule 1: what the bucket's policy refuses](#rule-1-what-the-buckets-policy-refuses)
+  - [Rule 1: Object Lock and the lifecycle rules](#rule-1-object-lock-and-the-lifecycle-rules)
+  - [Rule 1: the replica before live](#rule-1-the-replica-before-live)
+  - [Rule 1: clock times in headers and captures](#rule-1-clock-times-in-headers-and-captures)
+  - [Rule 1: a write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer)
+  - [Rule 2: two kinds of stage, declared in one place](#rule-2-two-kinds-of-stage-declared-in-one-place)
+  - [Rule 3: a worker resumes by reading what exists](#rule-3-a-worker-resumes-by-reading-what-exists)
+  - [Rule 4: a worker listens on its queue, then reads its inputs](#rule-4-a-worker-listens-on-its-queue-then-reads-its-inputs)
+  - [Rule 5: each blob names what made it](#rule-5-each-blob-names-what-made-it)
+  - [Rule 6: an absent, stale or empty input halts](#rule-6-an-absent-stale-or-empty-input-halts)
+  - [Rule 7: how a run starts](#rule-7-how-a-run-starts)
+  - [Rule 7: how a run stops](#rule-7-how-a-run-stops)
+  - [Rule 7: a halt is passed on](#rule-7-a-halt-is-passed-on)
+  - [Rule 7: a crash is a restart, and a failure stops the run](#rule-7-a-crash-is-a-restart-and-a-failure-stops-the-run)
+  - [Rule 7: monitoring tells the owner once](#rule-7-monitoring-tells-the-owner-once)
+  - [Rule 7: a halt is final for its decision](#rule-7-a-halt-is-final-for-its-decision)
+  - [Rule 7: a supervisor that crashes](#rule-7-a-supervisor-that-crashes)
+  - [Rule 8: the journal is the one numbered log](#rule-8-the-journal-is-the-one-numbered-log)
+  - [Rule 9: what a lease is and when it is held](#rule-9-what-a-lease-is-and-when-it-is-held)
+  - [Rule 9: who changes a run, the plan's lease](#rule-9-who-changes-a-run-the-plans-lease)
+  - [Rule 9: who may send, the account's lease](#rule-9-who-may-send-the-accounts-lease)
+  - [Rule 9: who takes over a lease](#rule-9-who-takes-over-a-lease)
+  - [Rule 9: why the gate runs inside execution](#rule-9-why-the-gate-runs-inside-execution)
+  - [Rule 9: how a rerun never doubles anything](#rule-9-how-a-rerun-never-doubles-anything)
+  - [Rule 9, fourth item: what is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call)
+  - [Rule 9, fourth item: what a cancel checks](#rule-9-fourth-item-what-a-cancel-checks)
+  - [Rule 9, fifth item: who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
+  - [Rule 9: how the gate counts open orders](#rule-9-how-the-gate-counts-open-orders)
+  - [Rule 9: what an order in doubt blocks](#rule-9-what-an-order-in-doubt-blocks)
+  - [Rule 9: what can loosen the gate](#rule-9-what-can-loosen-the-gate)
+  - [Rule 10: the kill switch is a blob](#rule-10-the-kill-switch-is-a-blob)
 - [Data structures](#data-structures)
 - [Design principles](#design-principles)
 - [How work is cut and ordered](#how-work-is-cut-and-ordered)
@@ -457,536 +489,639 @@ apply it.
 
 Ten rules make the blobs something a worker can trust.
 
-1. **Every write is a blob, created once.** A worker writes each blob with a
-   single upload carrying a condition that makes S3 refuse it if the key
-   exists, and the blob's SHA-256, which S3 checks before it accepts the blob.
-   So a reader never sees half a blob, and no blob is ever replaced, except
-   a lease, which its holder rewrites only by a condition on the tag it
-   last got. S3
-   returns the stored blob's tag and records when it stored it, and the
-   storage port hands both back. The bucket's policy refuses every
-   principal, the owner's and the operator's included, any write on the
-   runs', the journal's and the simulated accounts' prefixes that lacks the
-   condition, and any delete there. It refuses the runtime's principals the
-   same on the leases' and the switch's prefixes, which keep the delete
-   rules of rules 9 and 10, except that a lease may also be rewritten with
-   `If-Match` on its current tag, which is how it is renewed and taken over. The bucket keeps every version, so the rule
-   holds even against a bug in the runtime's own code or a person's
-   mistake. A plain delete leaves a delete marker, and a create-only write
-   can then land on the same key, so an S3 delete event under the journal's
-   prefix alarms, and replay lists versions and halts on a journal key with
-   a delete marker or a second version. S3 Object Lock applies from the start.
-   Each environment's bucket is created with Object
-   Lock enabled, and every object under the journal's, the runs', the
-   overrides' and the releases' prefixes and the halt folders is written with a retention date of its own. This doc proposes
-   for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the mode
-   by environment: compliance mode on live, which nobody can shorten or
-   delete through, the account's root user included, and governance mode
-   on shadow and paper, which the owner alone may bypass. It also proposes
-   for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) an Object
-   Lock legal hold on live's journal and recorded captures, which no
-   retention date ends, and an alarm on any object whose retention ends
-   within a set window. Heartbeats and leases carry no lock, so their lifecycle and
-   deletes still work. The bucket carries OpenTofu's `prevent_destroy`, and
-   a test pins its lifecycle rules to two kinds of key: the heartbeats'
-   prefix, and the noncurrent versions under `leases/`, which a
-   noncurrent-version expiry removes, as this doc proposes for
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so a lease's
-   rewrites do not pile up. So no rule matches a key that holds recorded
-   data, a snapshot a decision read included. Before
-   live, the live journal is also replicated to a bucket in a second AWS
-   account with Object Lock of its own,
-   because Object Lock cannot outlive the account that holds it. The
-   replica also carries every override, every release, every halt and
-   every recorded capture, because the journal names an override and a release only by
-   SHA-256, so a journal copy without them cannot replay the
-   book. A capturing stage writes each capture with the tag
-   `recorded=true`, and the replication rule matches the journal's prefix,
-   the overrides' and the releases' prefixes, the halt folders and every object under the runs' prefix that
-   carries that tag, so a derived output is never copied. The send stage's broker read and a takeover's broker order list carry the same tag. A test pins that
-   tag on every capture the store writes. The
-   retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
-   live gate. A deterministic component's header
-   carries no clock time, so two runs of the same step on the same inputs
-   write the same bytes. A capture, meaning data's snapshot, execution's
-   account file, the send stage's broker read and a takeover's broker order list, and every journal entry carry the time the source was read or
-   the entry was built, to the microsecond, beside the time S3 records, which
-   holds whole seconds only. A write S3 refuses with a conflict, or does not
-   answer, is retried until a deadline, and then halts. An S3 outage longer
-   than the deadline therefore loses that decision's captures, which the halt
-   reports.
-2. **Two kinds of stage, declared in one place.** The one table in `runtime`
-   that declares each stage's inputs also declares its kind, and the storage
-   contract in `core` alone applies what follows, so no module branches on
-   its kind. Most stages are deterministic: the same input blobs, release and
-   configuration give the same bytes. That holds for alpha, risk, cost,
-   portfolio construction, and monitoring's reconcile and report stages, the
-   report naming the last journal entry it read as an input so a rerun reads
-   the same journal. When S3 refuses one of their writes because the key
-   exists, the contract compares the stored blob's SHA-256 with the stage's
-   own. Equal means an earlier attempt already did this work. Different means
-   the stage is not deterministic, which is a bug, so it halts. Two stages
-   capture something that may not come again: data's snapshot, and
-   execution's recover stage, which reads the broker. Execution's send stage
-   reads the broker again, but as a fresh read on every attempt, which item
-   6 of the nine asks for, and it stores each read as an output file beside the hash the journal holds,
-   rather than as a capture the first one wins. For those the first
-   capture wins. A capturing stage stores what it read before it judges it, and its halt result names that stored file. A resumed capturing stage reads its stored capture and
-   derives every remaining output from it, never from a fresh read, and a
-   fresh read that differs from the stored one is stored too, under its own
-   attempt number, and named in the decision result rather than discarded.
-3. **A worker resumes by reading what exists.** A worker reads the run's
-   plan, then for each decision checks its stages' result keys. A result there
-   means the decision is done. If none is there, the worker checks the result
-   keys of its inputs for the decision. If every input has a result, it reads
-   the output files those results list, computes, writes each output file it
-   does not find already stored, under rule 2, and writes its own result last.
-   If an input has no result, it waits. A worker keeps what it has read in its
-   own memory and nowhere else, so a replacement VM has nothing to restore,
-   and a reader needs no cursor, because the keys it needs are fixed by the
-   decision. Since a stage has one result key per decision, a decision can never
-   end that stage with both outputs and a halt, or twice. A worker whose result
-   write S3 refuses because the supervisor has already written a halt there, as rule 7 says, takes the halt as final. Every instruction the supervisor gives is a blob, and writing it is what announces it, through the store's own event: the plan, a halt of the whole run, and the stop at the end of the run. A worker acts on an event only after reading the blob it names, and checks those blobs whenever it wakes, so an event that is late or repeated loses nothing.
-4. **A worker listens on its queue, then reads its inputs.** Each component
-   has one queue, and what arrives on it is the store's own event for a blob
-   the component reads, as `### How a component learns of a change` says. In
-   shadow, paper and live each queue is SQS, fed by EventBridge rules on the
-   environment's bucket. In a backtest and in CI each is a named pipe, fed
-   by the memory-backed folder adapter with the same events. One table in
-   `runtime` is the only place a worker's inputs are declared. Each worker's
-   entry point hands it its inputs from that table, and the rules and pipes that feed each queue are generated from routes one function in `runtime` builds from the same table, so no writer
-   sends anything beyond its write. An event names the blob its reader
-   should read: a decision result, the plan, the run's halt or stop, or the
-   kill switch. A starting worker drains its queue and then checks its keys
-   once, so nothing written while it was down goes unread. A woken worker
-   checks every decision it has not finished rather than only the one an
-   event names, so a repeated, late or out-of-order event costs nothing.
-5. **Each blob names what made it.** Its header names its run, its decision,
-   its kind, output or halt, its format version, every input blob by key and
-   SHA-256, the release's digest and a hash of the configuration. A reader
-   checks each input's SHA-256 against the header that named it and halts on
-   a mismatch. Nothing irreversible rests on an upstream blob alone: execution
-   journals the whole target portfolio it acts on, in a journal entry, before
-   its first send. Each release writes only formats the release before it can
-   read, so pinning back to the release before still reads what storage
-   holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
-   as it dies. The host that runs it, systemd on the VM today, records the
-   exit status or signal and the end of the worker's error output in a file
-   of the worker's own when the worker stops, and restarts it. The restarted
-   worker uploads that file as a restart record at a key fixed by the worker
-   and its restart count, with anything shaped like a credential masked, and
-   monitoring uploads it instead if the worker does not come back. The
-   worker then resumes from storage, as rule 3 says. Each worker and the
-   supervisor also write a heartbeat, a small blob at a key fixed by the
-   writer and the time, from their main loop at least every fifteen seconds,
-   so the supervisor can tell a live worker from a hung or lost one without
-   being its parent, and monitoring can tell the same of the supervisor. The
-   bucket's lifecycle expires heartbeats after a week, and removes the
-   noncurrent versions a lease's rewrites leave under `leases/`, as rule 1
-   says. Nothing else is removed.
-6. **An absent, stale or empty input halts. It never reads as "trade
-   nothing".** A blob whose header names the wrong decision halts as stale. An
-   output file with no entries halts unless it carries an explicit "trade
-   nothing" mark, and that mark means hold every position and send no order,
-   never a target of zero. A worker that cannot process a decision writes a
-   halt as its result for the decision, with the reason, and then moves to its next decision, because a halt is not a crash. Hard limit 3 came from an
-   execution server that read "no signals" as "hold nothing" (L4690). Here,
-   "has this decision's forecast been written" is a check of one result key.
-7. **A halt flows down the pipeline, and the supervisor only sends messages,** which this doc reads as the events of the blobs it writes. The host keeps every worker running and restarts one that
-   exits: on the VM, a systemd unit per worker's container, as rule 10 of
-   architecture.md's `## Where it runs` says. The supervisor starts, stops
-   and watches no process. Its instances take the plan's lease to write the run's plan, which names its release, as rule 9 says,
-   so one instance writes it, and another, or a restarted one, finds the plan already there and uses it, and whose event reaches every worker's queue. A worker that starts before
-   any plan exists waits, so no worker acts before a supervisor has written the plan. On each VM the host starts the workers only once a supervisor instance on that VM has read the run's plan and found its VM on the plan's release, through a systemd path unit that the supervisor's local release file starts, so a VM outside the run never receives from a shared queue.
-   Every worker, in every mode, finishes its decision loop once it has a
-   result for every decision in the plan. Once every decision has a result and, in shadow, paper and live, the market's close has passed and the run has read the day's fills, a supervisor instance stores the run's stop, whose event reaches each worker and every other supervisor instance, which exit cleanly, and the stop ends the run. That timing lets execution serve a pull until the last moment a cancel could land, and reconciles the closing auction's fills the same evening. After the close, execution reads the day's fills, journals them and stores a result naming each order the journal holds as open as settled or still open, and the supervisor reads that result before it stores the stop. A read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run. In shadow the market-on-close order stays open until the 18:30 sweep, so the read finds it open, which counts as read, and the fill lands at the next recover stage. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how. A timer on the host stops every unit later still,
-   in case a stop is lost, and that timer is what ends a failed run in shadow, paper and live, whose supervisors have already exited. This doc proposes, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that a run the timer ended counts as no clean shutdown, because it stored no stop, at the price of a person's confirmation before the next session trades. In a backtest or a replay the supervisor stores the stop before it exits a failed run, since no cancel needs serving there.
-   - **A halt is passed on.** A worker whose input's result for a decision is a
-     halt writes its own halt as its result, naming the one it found, and goes
-     on to its next decision.
-   - **A crash is a restart, and a failure stops the run.** One crash is not
-     a failure: the host restarts the worker within seconds and it resumes
-     from storage, which rules 3 and 9 make safe to repeat. One instance is
-     unhealthy when its heartbeat, judged by the time in its key, stops for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the delivery delay measured on paper, when it restarts more often in one run than the
-     host's limit allows, or when it exits before it has a result for every
-     decision, which execution does not count while a session is open, because its units restart on any exit. An unhealthy instance raises an alarm naming the instance and
-     is restarted or replaced, while the component's other two instances
-     carry on. A worker, meaning the component, has failed only when its
-     stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
-     input appears, so waiting on a slow upstream worker never counts against
-     it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. On a failure the supervisor writes the halt as that worker's
-     result, naming its restart records and every output file it finds
-     under the decision's prefix, so no stored capture is left unlisted. It
-     stores a halt of the whole run, writes a halt as every stage's result
-     for every decision still left in the plan, whose event reaches every worker. Each halts itself, monitoring journals the failure,
-     sends the alarm to the alert channel's push topic and reports, and the supervisor exits
-     cleanly, which its unit does not restart.
-   - **Monitoring tells the owner once.** Monitoring, the one worker that reads
-     every component's results and holds the alert channel, journals every
-     halt with its reason and raises an alarm on the halt that names no
-     earlier one. Within one run, a run of halts with the same reason alarms
-     once, and again only after a decision succeeds, so a fault that persists
-     through a day of frequent decisions alarms once that day, and once again
-     on each later day it persists. Before it alarms, it writes an output file
-     naming the halt it is handling, and after the push it writes a second
-     create-only record saying the push was sent. A claim that fails for any reason other than an existing key still pushes, naming the broker's console. An instance that finds,
-     when it starts or wakes, a claim older than a short limit with no sent
-     record pushes again, which this doc proposes for
-     [#11](https://github.com/l3a0/ithildin-runtime/issues/11). So a
-     monitoring killed between its claim and its push can repeat an alarm,
-     rarely, and never drops one, a repeat being the cheaper failure. The dead-man check gets success
-     pings only. healthchecks.io [notifies only when a check changes state](https://healthchecks.io/docs/configuring_notifications/), so
-     a failure ping to a check already down sends nothing, and a check left
-     down by one halted day would never alarm on a dead VM the next. A halt's
-     alarm therefore goes straight to the alert channel's push topic with its
-     reason, which this doc proposes for
-     [#11](https://github.com/l3a0/ithildin-runtime/issues/11), and drills
-     cover a halted day followed by a dead VM, two reasons in one run, and a
-     fault that persists into a second day, each expecting its push. Alarms
-     raised before monitoring runs, such as a lease taken over from another process, a pin
-     the VM does not trust, a drill not clean, or the plan's own event not
-     received, go out on the host's direct route, the one the `OnFailure`
-     handler uses, with the reason as the body.
-   - **A halt is final for its decision.** This finality is this doc's choice
-     rather than part of the rule that follows. The
-     owner or the operator clears a halt, with a command that journals who
-     cleared it, why, and any correction a person made, such as a journaled
-     override that explains a mismatch. Clearing never reruns the halted
-     decision. On a live account only
-     the owner clears a halt, a switch or a lease, or writes an override,
-     and the operator acts on paper and shadow accounts, plus pulling a live
-     account's switch. A halt is open until a later decision of the same
-     deployment succeeds or a person clears it. A halt for a book that
-     disagrees with the broker, or an order the platform did not send, stays open until a person clears it, apart from the outside entry this rule's holding-halt check allows. On a live account every halt holds the
-     account until the owner clears it.
-     Where that rule lives is this doc's proposal for
-     [#7](https://github.com/l3a0/ithildin-runtime/issues/7). The set of
-     causes that hold an account is a value of each account's hard caps
-     blob, which only the owner writes, and on live it names every cause. A cause the set does not name holds wherever `release_needs_blob` reads as set, so absent reads as holding and no stage reads the environment, and a cause a later release adds never clears itself there.
-     One holding-halt check reads that value rather than
-     the environment, so no stage branches on which environment it runs in.
-     Each later decision halts while the journal holds a halt of a holding
-     cause that is not released, by the release test in [Halts and drills](halts-and-drills.md#how-a-sort-runs), so no cause that clears itself resumes live trading without the owner. That check also ends the hold on a split or an assignment an outside entry explains in full, where the setting [#33](https://github.com/l3a0/ithildin-runtime/issues/33) names allows it, as rule 2 of [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says. The setting is a value rather than the environment, a shadow or paper account's allows it and a live account's refuses. Shadow and paper name
-     only an order the platform did not send, a snapshot that cannot be stored or confirmed, and a spike flag, and keep the rule above for
-     every other cause. A run of test 2's replay with every cause set to
-     hold and `release_needs_blob` set puts live's behaviour through CI. `ithildin
-     explain` and the alarm's second line say who may clear it: nobody
-     needed, the operator or the owner, or the owner alone.
+### Rule 1: every write is a blob, created once
 
-   Everything the supervisor knows, it reads from storage, so a supervisor
-   that crashes and is started again reads the plan, the results and the
-   heartbeats, and carries on, while the workers keep running without it.
-   Each supervisor instance writes a heartbeat of its own, and monitoring alarms when the newest of them is stale, meaning no supervisor is running, and a handler on the host alarms when any unit, or the Docker daemon itself, reaches its restart limit or fails, so a supervisor
-   that is gone does not leave the run unwatched in silence.
-   Workers with no input between them
-   run at the same time. Alpha and cost need only the snapshot, and risk needs
-   the snapshot and the reconciled book.
-8. **The journal is the one numbered log.** Its entries sit at keys fixed by
-   the account and a sequence number, written with leading zeros so they sort
-   in order. Each entry is one canonical blob holding its number, its format, the time it was built, its body and the hash of the entry before it, and its own hash is the SHA-256 of those bytes as stored, which the writer sends with the upload so S3 checks it, as architecture.md's `### File formats and keys` says. To append, a writer takes the last
-   sequence number it knows, builds the next entry chained to the last one,
-   and creates it at the next number's key. If S3 refuses because that key
-   exists, the writer reads that entry first. If its hash equals the entry the
-   writer built, the writer's own earlier attempt landed and its reply was
-   lost, so the append is done. If it differs, another writer got there first.
-   The writer then reads the journal past the number it knew, checks the kill
-   switch and any halt among the new entries, decides its step again against
-   what it has just read, so an order is never sent on a stale book or after a
-   pull, and starts again from the new end. Two writers can therefore never
-   take one number, and no entry is ever written twice. Each entry is
-   stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-   1. **Checkpoints.** After a full check, the reader writes a checkpoint, a create-only blob at `journal/<account>/checkpoints/<seq>.json` holding the sequence number and that entry's hash. A later startup checks from the newest checkpoint whose entry still hashes to the value it names.
-   2. **A head anchor.** The account check at each session's start and end compares the journal's newest entry with the replica's entry at the same sequence number, through a read-only grant on the replica's bucket. Equal hashes mean identical histories, and a difference alarms and halts, so a rewrite of the whole chain, which recomputed hashes would hide, still shows.
-   3. **Book snapshots.** A snapshot of the book, keyed by the sequence number it was replayed through, lets a rebuild replay only the entries after it, from the newest snapshot at or before the newest checkpoint. Snapshots are derived data with an owner and an end date, and a weekly full replay from the first entry compares its book with the newest snapshot and halts on a difference. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
-9. **Leases make one supervisor change a run, and one sender change an account, at a time.** A lease is a blob a
-   process creates with the condition that it not exist, recording its
-   holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. No lease covers the deployment or the
-   session, because every VM of the cluster runs at once and every other
-   write is create-only, and a lease covers the plan.
-   Each of the two leases is held only while it guards a change. The run's plan,
-   which the first supervisor instance writes once, already names the run and
-   its release, so it carries what those named. On each VM the host reads the
-   run's plan before the pin and runs the plan's
-   release when the plan exists, so a VM that starts mid-session runs the
-   session's release. Only when no plan exists does the host resolve and check
-   the pin. If another VM's plan landed first naming a different release, as
-   when the pin moved between two VMs' boots, the VM stops its units and starts
-   them again on the plan's release. A session is open while its plan exists,
-   its stop does not, and its close has not passed by a margin that runs past the host's timer, so a run reading the day's fills still counts as open, and a run that
-   died before writing its stop never blocks the next drill. The price is the
-   one thing a lease's expiry told, that every supervisor had gone quiet,
-   which monitoring's supervisor-heartbeat alarm reports instead.
-   1. **The plan's lease.** The
-      supervisor keeps several instances, and a lease so that only one
-      changes the plan at a time, and the lease carries
-      the run's status, which closes the gap a frozen holder would leave. So
-      the lease is one blob per run, kept for the run's life, holding the
-      run's status, running, halted or stopped, beside its holder and
-      expiry. The first supervisor instance creates it, with the status
-      running, before it writes the plan. An instance takes it by a
-      conditional write on the blob's tag that names itself as holder,
-      before it reads the run's state for a write that changes the run: the
-      plan, a halt as a worker's result, a halt of the run with a halt for
-      every decision left in the plan, and the run's stop. A halt of the run
-      and the stop are first a change of status, made by one more
-      conditional write on the tag the instance holds, and only then written
-      as the blobs whose events reach the workers. It releases the lease by
-      a conditional write that clears the holder rather than by deleting it,
-      so the status stays. Each blob a change writes is create-only on its
-      own key, which stops two writers taking one key but not two instances
-      acting on one read of the run, such as one storing the stop while
-      another halts the run. The lease stops that, and because the lock and
-      the status share one blob, a takeover rewrites it, so any write a
-      frozen holder sends afterwards names an old tag and S3 refuses it with
-      a 412, a write already in flight included. A holder that dies after
-      its change of status and before the blobs that announce it leaves the
-      status saying what happened, so the next holder writes those blobs,
-      which land once. A halt as a worker's result needs nothing more,
-      because it shares its key with the worker's result, so whichever lands
-      first counts. Another instance that needs the lease does not wait for
-      it, as the account's lease below says, and a holder's lease is taken
-      over once it expires unrenewed, as the account's is.
-   2. **The account's lease.** Every execution instance receives from
-      execution's queue, and an instance
-      holds the account's lease only while it changes the account. It takes
-      the lease before it re-reads the journal for a submit or a cancel, and
-      deletes it once the journal holds the broker's answer or the order's
-      doubt. A plan of several orders therefore takes the lease once per
-      order, so a pull's cancels wait for at most one order in flight.
+**Every write is a blob, created once.** A worker writes each blob with a
+single upload carrying a condition that makes S3 refuse it if the key
+exists, and the blob's SHA-256, which S3 checks before it accepts the blob.
+So a reader never sees half a blob, and no blob is ever replaced, except
+a lease, which its holder rewrites only by a condition on the tag it
+last got. S3
+returns the stored blob's tag and records when it stored it, and the
+storage port hands both back.
 
-      The lease's own event wakes work waiting on a held lease, so nothing
-      reads storage on a clock
-      to wait for it. Three rules carry it.
-      1. **No handler waits.** A handler that finds the lease held puts its
-         item back on the queue with a short visibility delay, two seconds
-         by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and is free at once.
-      2. **The release wakes the work.** Deleting the account's lease is a
-         write whose S3 event reaches execution's queue, as every route
-         does. Whichever instance receives it checks the work that waits on
-         the lease, in the plan's order: the kill switch's cancels, a sort, a stranded leg's cancel, and a send stage's next planned order or cancel. It takes the lease for the first and does it.
-      3. **Any lease holder sends a planned order.** The claim keeps two
-         instances from planning one decision, and once the planned list is
-         journaled, whichever instance holds the lease may send its next
-         order or cancel while the claim's runner is alive, under the same
-         checks before the broker call. Each order is guarded three times:
-         its `sending` entry is journaled first, its client order id is
-         fixed by the plan, and the lease's tag is checked right before the
-         call. Once the runner is gone, the fifth item below applies.
+### Rule 1: what the bucket's policy refuses
 
-      A lost release event delays the work only until the item it was put
-      back with comes back, which is SQS's own redelivery rather than a
-      read on a clock. An item returned more times than a written limit, read
-      from SQS's own receive count, alarms with the lease's holder. The price
-      is that one decision's orders may go out from different instances.
+The bucket's policy refuses every
+principal, the owner's and the operator's included, any write on the
+runs', the journal's and the simulated accounts' prefixes that lacks the
+condition, and any delete there. It refuses the runtime's principals the
+same on the leases' and the switch's prefixes, which keep the delete
+rules of rules 9 and 10, except that a lease may also be rewritten with
+`If-Match` on its current tag, which is how it is renewed and taken over. The bucket keeps every version, so the rule
+holds even against a bug in the runtime's own code or a person's
+mistake. A plain delete leaves a delete marker, and a create-only write
+can then land on the same key, so an S3 delete event under the journal's
+prefix alarms, and replay lists versions and halts on a journal key with
+a delete marker or a second version.
 
-   A holder record names the VM, its boot, the worker's container, its
-   restart count and the handler, rather than a process id, which means nothing outside one
-   container. A lease whose holder is the same VM on an earlier boot, or a
-   container the host shows is gone, is cleared by the next process that
-   needs it, and the clearing is journaled. Failover across machines is
-   automatic, so any process, on any VM, takes
-   over a lease that has gone unrenewed past its expiry and a margin for
-   clock skew, by the same conditional write naming the expired lease's
-   tag, which a revived holder's renewal can then never overwrite. A
-   handler frozen on the lease holder's own VM is taken over this way too,
-   without waiting for the host to show its container gone. The takeover is
-   journaled and alarms. A frozen holder that wakes finds its renewal
-   refused, and stops that action, and execution's
-   check of the lease's tag right before every broker call, rule 9's fourth
-   item, refuses its next send. A VM whose supervisor instances find their
-   own last heartbeat older than the limit after which the other VMs count
-   it as gone, as after a freeze, stops its units, which start again as a
-   fresh member, as architecture.md's rule 11 of `## Where it runs` says.
-   The price is one window. A holder that
-   froze after that check and before its request left can still send that
-   one request after a takeover. The new holder looks it up the way it
-   looks up any order in doubt, and the gate already
-   counts every open order at its worst case. One that lands after the
-   order list the new holder read when it took the lease is a late order
-   under an older lease, which halts with that order named. The lease period, thirty
-   seconds as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), is longer than a renewal's
-   worst delay and shorter than the time a decision can wait. The order manager, the
-   risk gate, the journal and the order path all run inside the execution
-   worker, because the gate checks each order against every order and
-   position in the account's journal just before the order is sent, and a
-   check passed through a blob could be stale by then. This is the one place
-   a risk engineer's piece runs in another component's process. Running a
-   worker again is safe everywhere except here, because a sent order cannot be
-   unsent. So execution sends an order only when the journal holds no
-   `sending` entry for its client order id, and asks the broker about any
-   order in doubt by that id, never by sending again. A request sent just
-   before a crash can still reach the broker after the first lookup, so a
-   lookup that finds nothing leaves the order `InDoubt`, counted by the gate
-   at its worst case, until its time in force has run out. Only then is it
-   journaled `Lost`, which means the platform stopped waiting and sending is unproved. The broker client's total request timeout is shorter
-   than the wait before the first lookup. Five more rules keep a
-   rerun from doubling anything.
-   1. Execution journals each fill under the broker's own fill id and correction
-      identifier. It compares a repeat's content with the journaled fill, skips
-      only an identical repeat, and journals a differing one and halts.
-   2. At the start of its send stage, before it plans, execution fetches the
-      broker's positions, open orders and fills again, a fresh read on every
-      attempt rather than a capture that the first one wins. It settles each
-      order in doubt by its client order id, journals any fill that arrived
-      since its recover stage, and compares the result with the book it
-      replays from the journal. An open order at the broker that matches a
-      `sending` entry the journal does not hold as `Lost`, and a fill within that order's quantity, are the platform's own and bring the book up to date, apart from a late order under an older lease.  So is an order the journal
-      holds as open that the broker no longer lists, once a lookup by its
-      client order id finds it `Expired`, `Rejected` or cancelled at the close
-      as its time in force allows, or cancelled after a journaled cancel of
-      the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the journal did not send, including an open order or a fill on an order the journal holds as `Lost` or `Abandoned`, and a late order under an older lease, is journaled as received as unmatched and halts, as `### Orders the platform did not send` says. That late order is the explicit exception to settling an order by lookup. An instance that takes over the account's expired lease stores the broker order list it read, as a capture named by a journaled takeover entry, before it acts. A late order is one whose `sending` entry precedes that takeover entry and that is absent from that stored list. A lookup that finds such an order halts before it moves to `Acknowledged`. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. Any other difference
-      halts the decision for a person, because the broker moved in a way the
-      platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
-      whole target portfolio, along with the journal entry it synced through
-      and a hash and the time of the broker state it fetched, before its first
-      send. A rerun in the same decision never plans again, so an order's
-      id never shifts between attempts, and sends nothing more, as item 5
-      says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in that list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
-   3. Its account file names the journal entry it replayed through, and the
-      send stage's sync names the entry it synced through. Before it plans,
-      execution halts if an entry that changes the book, and that neither its
-      sync nor its own order loop wrote, lies past the entry its sync names.
-      A person's override that lands after the sync halts the decision the
-      same way before its next send, and applies from the next decision's
-      sync.
-   4. **Right before every submit**, after the order's `sending` entry
-      is stored, execution checks six things.
-      1. The kill switch is absent.
-      2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with the kill
-         switch in rule 10, any answer other than "no such blob", a timeout
-         included, reads as switched off, with the reason "strategy off
-         switch unreadable", and that halts the decision as an unreadable
-         control does. So execution's role can read and list
-         `accounts/<account>/strategies/`.
-      3. No halt of the run or of the account is stored, a file in
-         `accounts/<account>/halts/` that is not released, by the release test in
-         [Halts and drills](halts-and-drills.md#how-a-sort-runs),
-         reading as a stored halt, and the plan's lease holds the run's status as running, so a halt or stop the supervisor has
-         recorded but not yet announced also stops the send.
-      4. Its own send-stage result key is still empty.
-      5. The account's lease still carries the tag that the holder's own
-         last take or renewal of it returned.
-      6. The market-on-close cutoff has not passed, for such an order.
+### Rule 1: Object Lock and the lifecycle rules
 
-      Any one failing journals the
-      order `Abandoned`, sends nothing, and halts the decision, except the
-      second when it finds the off switch, which abandons only that
-      strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
-      `accounts/<account>/strategies/<strategy>/off.json`, stops one
-      strategy without a deploy and never reads as a target of zero, as rule
-      1 of `### Every change can be undone or switched off` asks. So a run the
-      supervisor has halted, a switch pulled mid-loop, or a lease another
-      execution has taken over stops the next send, even when the message
-      saying so is lost or unread. A cancel has checks of its own, because
-      the cancels that protect the account run exactly when a switch is set
-      or a halt is stored. The kill switch's cancels, and the cancel of a
-      stranded leg by an instance taking over a send stage, check only the
-      lease's tag. The
-      cancel that keeps a pair whole and a sort's adding cancel check only the lease's tag, and a sort's cancel also ends on a proved release, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). No clock or cutoff reading stops either, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. A broker's refusal of a late cancel is journaled. A plan's own cancel, the cancel ahead of a replacement
-      included, checks four things: no halt of the run or of the account
-      is stored or held on the plan's lease, its own send result is still empty, the lease's tag, and the cancel cutoff.
-      A stored halt stops it, the one cancel a halt stops.
-      This doc's reason is that a halt stops the
-      plan, while the order stays counted at its worst case and the kill
-      switch can still cancel it. A check that fails journals the cancel as
-      stopped, which returns the order to the state it was in, still
-      counted, and ends rule 6's clock, because only a failed check proves
-      nothing was sent. A plan's cancel
-      skips the strategy's off switch, so a switched-off strategy's
-      cancels still go out, and the replacement itself is a submit, which
-      checks all six. A cancel skips the risk gate's limits on purpose: every open
-      order is already counted at its worst case, so a cancel can only lower
-      each counted limit.
-   5. **No instance sends more for a send stage whose runner died.** Before
-      its broker fetch, a send stage writes a create-only claim at
-      `runs/<deployment>/<run>/<decision>/execution/send/claim.json` naming
-      the handler running it: its VM, boot, container, restart count and
-      handler. The entry that journals its planned orders names the same
-      handler. A send stage that finds a claim or a planned entry it did not
-      write never syncs or plans for that decision, so two instances that
-      both receive its event never both plan. Another instance, or the same
-      one restarted, reads the claim rather than the planned entry to find
-      the runner, and takes that send stage over only once its runner is
-      gone. On the runner's own VM that means the host
-      shows its container gone or restarted. From another VM it means the
-      runner's VM counts as gone: no supervisor instance on it has written a
-      heartbeat within the limit, or the Auto Scaling group reports it
-      terminated, as architecture.md's rule 11 of `## Where it runs` says. Each worker instance runs under one fixed container name, its
-      component and its number, removed when it stops, so a gone container is a fact the host reports, not a guess
-      from a stopped heartbeat. A send stage whose runner is alive is left to
-      it, which also covers SQS handing a second instance a copy of the
-      runner's message. An instance that starts, and one that receives a
-      send stage's event, acts in this order:
-      1. Check the kill switch, and if it is set take the account's lease and cancel every resting order in the account, stamped or not, journaling each cancel first. Then resume or start each sort that has no `sort_done` entry, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes.
-      2. For a send stage that has a claim and no result, and whose runner
-         is gone, take the account's lease, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
-         cancel any accepted leg of a pair whose partner is not accepted,
-         before the cancel cutoff, and write a halt as that send stage's
-         result. It does this whether or not the supervisor has already
-         written a halt there.
-      3. Write its restart record, if it restarted, and carry on with the
-         next decision, which plans again from the book.
+S3 Object Lock applies from the start.
+Each environment's bucket is created with Object
+Lock enabled, and every object under the journal's, the runs', the
+overrides' and the releases' prefixes and the halt folders is written with a retention date of its own. This doc proposes
+for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the mode
+by environment: compliance mode on live, which nobody can shorten or
+delete through, the account's root user included, and governance mode
+on shadow and paper, which the owner alone may bypass. It also proposes
+for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) an Object
+Lock legal hold on live's journal and recorded captures, which no
+retention date ends, and an alarm on any object whose retention ends
+within a set window. Heartbeats and leases carry no lock, so their lifecycle and
+deletes still work. The bucket carries OpenTofu's `prevent_destroy`, and
+a test pins its lifecycle rules to two kinds of key: the heartbeats'
+prefix, and the noncurrent versions under `leases/`, which a
+noncurrent-version expiry removes, as this doc proposes for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), so a lease's
+rewrites do not pile up. So no rule matches a key that holds recorded
+data, a snapshot a decision read included.
 
-   The gate counts every open order at its worst case, separately for each
-   limit: for each limit, an order on the side that makes that limit worse
-   counts as filled, and one on the other side counts as unfilled, until the
-   broker confirms its fill, its cancel or its expiry. For `max_net` that
-   means every leg of a pair must fit alone, which is also the bound on a leg
-   left open when its partner fails. A
-   cancel is journaled before it is sent, and the order stays open in the
-   book until the broker confirms it. Without this, an order left resting
-   from one decision lets the next decision plan a trade that passes
-   `max_position` if both fill.
+### Rule 1: the replica before live
 
-   An order in doubt also blocks the next order beside it, as rule 3 of
-   `### Every fact has one writer` asks. The gate refuses any order on an
-   account and instrument that hold an `InDoubt` order, so a decision never
-   sends a second order beside one the platform cannot see. An order
-   alarms the moment it is first journaled `InDoubt`. One still unsettled
-   a written time after it was sent halts the run and alerts the owner,
-   rather than waiting out a time in force that a good-till-cancelled
-   order may not reach for weeks. By this doc's proposal for
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that time is
-   the smaller of 30 minutes and the time left before the cancel cutoff,
-   and a supervisor deadline enforces it, reading storage before it acts,
-   as any expired deadline does.
+Before
+live, the live journal is also replicated to a bucket in a second AWS
+account with Object Lock of its own,
+because Object Lock cannot outlive the account that holds it. The
+replica also carries every override, every release, every halt and
+every recorded capture, because the journal names an override and a release only by
+SHA-256, so a journal copy without them cannot replay the
+book. A capturing stage writes each capture with the tag
+`recorded=true`, and the replication rule matches the journal's prefix,
+the overrides' and the releases' prefixes, the halt folders and every object under the runs' prefix that
+carries that tag, so a derived output is never copied. The send stage's broker read and a takeover's broker order list carry the same tag. A test pins that
+tag on every capture the store writes. The
+retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
+live gate.
 
-   No other worker's output can loosen the gate, because its hard caps come
-   from a blob the bucket's policy lets only the owner's credential write,
-   and only the owner changes them, by
-   hand.
-   [architecture.md](architecture.md)'s `## Proposals awaiting a ruling` proposes how execution
-   recovers, derives its ids and combines its limits, for
-   [#7](https://github.com/l3a0/ithildin-runtime/issues/7),
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to settle.
-10. **The kill switch is a blob, and pulling it is a command.** The switch is
-    a blob at one key per broker account. Every worker checks for it when it
-    starts and whenever a message wakes it, and execution checks it before
-    every send. Any answer other than "no such blob", a timeout included,
-    reads as pulled, with a reason that says the switch could not be read, so
-    the runtime's credential can list the switch's prefix, without which S3
-    answers a missing key with "access denied". Pulling it
-    creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Whichever execution instance receives that event takes the account's lease, which is free after at most one order in flight, or wakes on the lease's release as rule 9 says, and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. Every other instance stops sending at its next check of the switch. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff, and a pull past that deadline names the broker's console at once. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock. A
-    starting execution instance checks the switch as soon as its digest and journal checks pass, and
-    takes the account's lease to cancel if it is set, as rule 9's fifth item
-    says, so a switch pulled
-    while execution is down still cancels, and it alarms if it cannot take
-    the lease by a deadline. Execution checks the switch again right before
-    every broker call, as rule 9's fourth item says. It cancels the union of the orders the journal holds open and the orders the broker lists, so an empty or failed broker answer never reads as nothing to cancel. It journals that the switch's cancels are done only after a fresh read lists none of them and a lookup has settled each journal order the broker no longer lists, and
-    monitoring alarms a second time if that entry has not appeared within a
-    deadline of the pull, naming the broker's own console as the next step.
-    No worker sends an order with the switch set. Monitoring writes the decision's report and says the
-    switch is set. The runtime's credential can create the switch but never
-    delete it. Only the owner's or the
-    operator's command clears the switch, and the clearing is journaled.
-    On a live account only the owner's
-    command clears it. On a paper or shadow account the operator's may too. This doc
-    adds that the credential that clears it never sits on the VM. When the VM
-    or S3 cannot be reached, the runbook on
-    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person
-    create the switch from anywhere, cancel at the broker's own console, and
-    journal both as a human override with `ithildin` once back at a computer.
+### Rule 1: clock times in headers and captures
+
+A deterministic component's header
+carries no clock time, so two runs of the same step on the same inputs
+write the same bytes. A capture, meaning data's snapshot, execution's
+account file, the send stage's broker read and a takeover's broker order list, and every journal entry carry the time the source was read or
+the entry was built, to the microsecond, beside the time S3 records, which
+holds whole seconds only.
+
+### Rule 1: a write S3 refuses or does not answer
+
+A write S3 refuses with a conflict, or does not
+answer, is retried until a deadline, and then halts. An S3 outage longer
+than the deadline therefore loses that decision's captures, which the halt
+reports.
+
+### Rule 2: two kinds of stage, declared in one place
+
+**Two kinds of stage, declared in one place.** The one table in `runtime`
+that declares each stage's inputs also declares its kind, and the storage
+contract in `core` alone applies what follows, so no module branches on
+its kind. Most stages are deterministic: the same input blobs, release and
+configuration give the same bytes. That holds for alpha, risk, cost,
+portfolio construction, and monitoring's reconcile and report stages, the
+report naming the last journal entry it read as an input so a rerun reads
+the same journal. When S3 refuses one of their writes because the key
+exists, the contract compares the stored blob's SHA-256 with the stage's
+own. Equal means an earlier attempt already did this work. Different means
+the stage is not deterministic, which is a bug, so it halts. Two stages
+capture something that may not come again: data's snapshot, and
+execution's recover stage, which reads the broker. Execution's send stage
+reads the broker again, but as a fresh read on every attempt, which item
+6 of the nine asks for, and it stores each read as an output file beside the hash the journal holds,
+rather than as a capture the first one wins. For those the first
+capture wins. A capturing stage stores what it read before it judges it, and its halt result names that stored file. A resumed capturing stage reads its stored capture and
+derives every remaining output from it, never from a fresh read, and a
+fresh read that differs from the stored one is stored too, under its own
+attempt number, and named in the decision result rather than discarded.
+
+### Rule 3: a worker resumes by reading what exists
+
+**A worker resumes by reading what exists.** A worker reads the run's
+plan, then for each decision checks its stages' result keys. A result there
+means the decision is done. If none is there, the worker checks the result
+keys of its inputs for the decision. If every input has a result, it reads
+the output files those results list, computes, writes each output file it
+does not find already stored, under rule 2, and writes its own result last.
+If an input has no result, it waits. A worker keeps what it has read in its
+own memory and nowhere else, so a replacement VM has nothing to restore,
+and a reader needs no cursor, because the keys it needs are fixed by the
+decision. Since a stage has one result key per decision, a decision can never
+end that stage with both outputs and a halt, or twice. A worker whose result
+write S3 refuses because the supervisor has already written a halt there, as rule 7 says, takes the halt as final. Every instruction the supervisor gives is a blob, and writing it is what announces it, through the store's own event: the plan, a halt of the whole run, and the stop at the end of the run. A worker acts on an event only after reading the blob it names, and checks those blobs whenever it wakes, so an event that is late or repeated loses nothing.
+
+### Rule 4: a worker listens on its queue, then reads its inputs
+
+**A worker listens on its queue, then reads its inputs.** Each component
+has one queue, and what arrives on it is the store's own event for a blob
+the component reads, as `### How a component learns of a change` says. In
+shadow, paper and live each queue is SQS, fed by EventBridge rules on the
+environment's bucket. In a backtest and in CI each is a named pipe, fed
+by the memory-backed folder adapter with the same events. One table in
+`runtime` is the only place a worker's inputs are declared. Each worker's
+entry point hands it its inputs from that table, and the rules and pipes that feed each queue are generated from routes one function in `runtime` builds from the same table, so no writer
+sends anything beyond its write. An event names the blob its reader
+should read: a decision result, the plan, the run's halt or stop, or the
+kill switch. A starting worker drains its queue and then checks its keys
+once, so nothing written while it was down goes unread. A woken worker
+checks every decision it has not finished rather than only the one an
+event names, so a repeated, late or out-of-order event costs nothing.
+
+### Rule 5: each blob names what made it
+
+**Each blob names what made it.** Its header names its run, its decision,
+its kind, output or halt, its format version, every input blob by key and
+SHA-256, the release's digest and a hash of the configuration. A reader
+checks each input's SHA-256 against the header that named it and halts on
+a mismatch. Nothing irreversible rests on an upstream blob alone: execution
+journals the whole target portfolio it acts on, in a journal entry, before
+its first send. Each release writes only formats the release before it can
+read, so pinning back to the release before still reads what storage
+holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
+as it dies. The host that runs it, systemd on the VM today, records the
+exit status or signal and the end of the worker's error output in a file
+of the worker's own when the worker stops, and restarts it. The restarted
+worker uploads that file as a restart record at a key fixed by the worker
+and its restart count, with anything shaped like a credential masked, and
+monitoring uploads it instead if the worker does not come back. The
+worker then resumes from storage, as rule 3 says. Each worker and the
+supervisor also write a heartbeat, a small blob at a key fixed by the
+writer and the time, from their main loop at least every fifteen seconds,
+so the supervisor can tell a live worker from a hung or lost one without
+being its parent, and monitoring can tell the same of the supervisor. The
+bucket's lifecycle expires heartbeats after a week, and removes the
+noncurrent versions a lease's rewrites leave under `leases/`, as rule 1
+says. Nothing else is removed.
+
+### Rule 6: an absent, stale or empty input halts
+
+**An absent, stale or empty input halts. It never reads as "trade
+nothing".** A blob whose header names the wrong decision halts as stale. An
+output file with no entries halts unless it carries an explicit "trade
+nothing" mark, and that mark means hold every position and send no order,
+never a target of zero. A worker that cannot process a decision writes a
+halt as its result for the decision, with the reason, and then moves to its next decision, because a halt is not a crash. Hard limit 3 came from an
+execution server that read "no signals" as "hold nothing" (L4690). Here,
+"has this decision's forecast been written" is a check of one result key.
+
+### Rule 7: how a run starts
+
+**A halt flows down the pipeline, and the supervisor only sends messages,** which this doc reads as the events of the blobs it writes. The host keeps every worker running and restarts one that
+exits: on the VM, a systemd unit per worker's container, as rule 10 of
+architecture.md's `## Where it runs` says. The supervisor starts, stops
+and watches no process. Its instances take the plan's lease to write the run's plan, which names its release, as rule 9 says,
+so one instance writes it, and another, or a restarted one, finds the plan already there and uses it, and whose event reaches every worker's queue. A worker that starts before
+any plan exists waits, so no worker acts before a supervisor has written the plan. On each VM the host starts the workers only once a supervisor instance on that VM has read the run's plan and found its VM on the plan's release, through a systemd path unit that the supervisor's local release file starts, so a VM outside the run never receives from a shared queue.
+
+### Rule 7: how a run stops
+
+Every worker, in every mode, finishes its decision loop once it has a
+result for every decision in the plan. Once every decision has a result and, in shadow, paper and live, the market's close has passed and the run has read the day's fills, a supervisor instance stores the run's stop, whose event reaches each worker and every other supervisor instance, which exit cleanly, and the stop ends the run. That timing lets execution serve a pull until the last moment a cancel could land, and reconciles the closing auction's fills the same evening. After the close, execution reads the day's fills, journals them and stores a result naming each order the journal holds as open as settled or still open, and the supervisor reads that result before it stores the stop. A read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run. In shadow the market-on-close order stays open until the 18:30 sweep, so the read finds it open, which counts as read, and the fill lands at the next recover stage. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how. A timer on the host stops every unit later still,
+in case a stop is lost, and that timer is what ends a failed run in shadow, paper and live, whose supervisors have already exited. This doc proposes, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that a run the timer ended counts as no clean shutdown, because it stored no stop, at the price of a person's confirmation before the next session trades. In a backtest or a replay the supervisor stores the stop before it exits a failed run, since no cancel needs serving there.
+
+### Rule 7: a halt is passed on
+
+**A halt is passed on.** A worker whose input's result for a decision is a
+halt writes its own halt as its result, naming the one it found, and goes
+on to its next decision.
+
+### Rule 7: a crash is a restart, and a failure stops the run
+
+**A crash is a restart, and a failure stops the run.** One crash is not
+a failure: the host restarts the worker within seconds and it resumes
+from storage, which rules 3 and 9 make safe to repeat. One instance is
+unhealthy when its heartbeat, judged by the time in its key, stops for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the delivery delay measured on paper, when it restarts more often in one run than the
+host's limit allows, or when it exits before it has a result for every
+decision, which execution does not count while a session is open, because its units restart on any exit. An unhealthy instance raises an alarm naming the instance and
+is restarted or replaced, while the component's other two instances
+carry on. A worker, meaning the component, has failed only when its
+stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
+input appears, so waiting on a slow upstream worker never counts against
+it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. On a failure the supervisor writes the halt as that worker's
+result, naming its restart records and every output file it finds
+under the decision's prefix, so no stored capture is left unlisted. It
+stores a halt of the whole run, writes a halt as every stage's result
+for every decision still left in the plan, whose event reaches every worker. Each halts itself, monitoring journals the failure,
+sends the alarm to the alert channel's push topic and reports, and the supervisor exits
+cleanly, which its unit does not restart.
+
+### Rule 7: monitoring tells the owner once
+
+**Monitoring tells the owner once.** Monitoring, the one worker that reads
+every component's results and holds the alert channel, journals every
+halt with its reason and raises an alarm on the halt that names no
+earlier one. Within one run, a run of halts with the same reason alarms
+once, and again only after a decision succeeds, so a fault that persists
+through a day of frequent decisions alarms once that day, and once again
+on each later day it persists. Before it alarms, it writes an output file
+naming the halt it is handling, and after the push it writes a second
+create-only record saying the push was sent. A claim that fails for any reason other than an existing key still pushes, naming the broker's console. An instance that finds,
+when it starts or wakes, a claim older than a short limit with no sent
+record pushes again, which this doc proposes for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11). So a
+monitoring killed between its claim and its push can repeat an alarm,
+rarely, and never drops one, a repeat being the cheaper failure. The dead-man check gets success
+pings only. healthchecks.io [notifies only when a check changes state](https://healthchecks.io/docs/configuring_notifications/), so
+a failure ping to a check already down sends nothing, and a check left
+down by one halted day would never alarm on a dead VM the next. A halt's
+alarm therefore goes straight to the alert channel's push topic with its
+reason, which this doc proposes for
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11), and drills
+cover a halted day followed by a dead VM, two reasons in one run, and a
+fault that persists into a second day, each expecting its push. Alarms
+raised before monitoring runs, such as a lease taken over from another process, a pin
+the VM does not trust, a drill not clean, or the plan's own event not
+received, go out on the host's direct route, the one the `OnFailure`
+handler uses, with the reason as the body.
+
+### Rule 7: a halt is final for its decision
+
+**A halt is final for its decision.** This finality is this doc's choice
+rather than part of the rule that follows. The
+owner or the operator clears a halt, with a command that journals who
+cleared it, why, and any correction a person made, such as a journaled
+override that explains a mismatch. Clearing never reruns the halted
+decision. On a live account only
+the owner clears a halt, a switch or a lease, or writes an override,
+and the operator acts on paper and shadow accounts, plus pulling a live
+account's switch. A halt is open until a later decision of the same
+deployment succeeds or a person clears it. A halt for a book that
+disagrees with the broker, or an order the platform did not send, stays open until a person clears it, apart from the outside entry this rule's holding-halt check allows. On a live account every halt holds the
+account until the owner clears it.
+Where that rule lives is this doc's proposal for
+[#7](https://github.com/l3a0/ithildin-runtime/issues/7). The set of
+causes that hold an account is a value of each account's hard caps
+blob, which only the owner writes, and on live it names every cause. A cause the set does not name holds wherever `release_needs_blob` reads as set, so absent reads as holding and no stage reads the environment, and a cause a later release adds never clears itself there.
+One holding-halt check reads that value rather than
+the environment, so no stage branches on which environment it runs in.
+Each later decision halts while the journal holds a halt of a holding
+cause that is not released, by the release test in [Halts and drills](halts-and-drills.md#how-a-sort-runs), so no cause that clears itself resumes live trading without the owner. That check also ends the hold on a split or an assignment an outside entry explains in full, where the setting [#33](https://github.com/l3a0/ithildin-runtime/issues/33) names allows it, as rule 2 of [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says. The setting is a value rather than the environment, a shadow or paper account's allows it and a live account's refuses. Shadow and paper name
+only an order the platform did not send, a snapshot that cannot be stored or confirmed, and a spike flag, and keep the rule above for
+every other cause. A run of test 2's replay with every cause set to
+hold and `release_needs_blob` set puts live's behaviour through CI. `ithildin
+explain` and the alarm's second line say who may clear it: nobody
+needed, the operator or the owner, or the owner alone.
+
+### Rule 7: a supervisor that crashes
+
+Everything the supervisor knows, it reads from storage, so a supervisor
+that crashes and is started again reads the plan, the results and the
+heartbeats, and carries on, while the workers keep running without it.
+Each supervisor instance writes a heartbeat of its own, and monitoring alarms when the newest of them is stale, meaning no supervisor is running, and a handler on the host alarms when any unit, or the Docker daemon itself, reaches its restart limit or fails, so a supervisor
+that is gone does not leave the run unwatched in silence.
+Workers with no input between them
+run at the same time. Alpha and cost need only the snapshot, and risk needs
+the snapshot and the reconciled book.
+
+### Rule 8: the journal is the one numbered log
+
+**The journal is the one numbered log.** Its entries sit at keys fixed by
+the account and a sequence number, written with leading zeros so they sort
+in order. Each entry is one canonical blob holding its number, its format, the time it was built, its body and the hash of the entry before it, and its own hash is the SHA-256 of those bytes as stored, which the writer sends with the upload so S3 checks it, as architecture.md's `### File formats and keys` says. To append, a writer takes the last
+sequence number it knows, builds the next entry chained to the last one,
+and creates it at the next number's key. If S3 refuses because that key
+exists, the writer reads that entry first. If its hash equals the entry the
+writer built, the writer's own earlier attempt landed and its reply was
+lost, so the append is done. If it differs, another writer got there first.
+The writer then reads the journal past the number it knew, checks the kill
+switch and any halt among the new entries, decides its step again against
+what it has just read, so an order is never sent on a stale book or after a
+pull, and starts again from the new end. Two writers can therefore never
+take one number, and no entry is ever written twice. Each entry is
+stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+
+1. **Checkpoints.** After a full check, the reader writes a checkpoint, a create-only blob at `journal/<account>/checkpoints/<seq>.json` holding the sequence number and that entry's hash. A later startup checks from the newest checkpoint whose entry still hashes to the value it names.
+2. **A head anchor.** The account check at each session's start and end compares the journal's newest entry with the replica's entry at the same sequence number, through a read-only grant on the replica's bucket. Equal hashes mean identical histories, and a difference alarms and halts, so a rewrite of the whole chain, which recomputed hashes would hide, still shows.
+3. **Book snapshots.** A snapshot of the book, keyed by the sequence number it was replayed through, lets a rebuild replay only the entries after it, from the newest snapshot at or before the newest checkpoint. Snapshots are derived data with an owner and an end date, and a weekly full replay from the first entry compares its book with the newest snapshot and halts on a difference. A hash recognises only a resend of the same bytes, so a writer that restarted checks the field naming its step, such as the client order id, before it appends, as that subsection lists.
+
+### Rule 9: what a lease is and when it is held
+
+**Leases make one supervisor change a run, and one sender change an account, at a time.** A lease is a blob a
+process creates with the condition that it not exist, recording its
+holder: the VM, its boot, the container and its restart count, the release, the run, when it was created and when it expires. Its holder renews it every ten seconds by rewriting it with S3's `If-Match` condition on the tag it last got, which S3 refuses with a 412 if anyone else has written it since, and each renewal moves the expiry a lease period ahead. It is deleted only with a condition naming the tag S3 last returned to its holder, so no stale holder deletes a successor's lease. No lease covers the deployment or the
+session, because every VM of the cluster runs at once and every other
+write is create-only, and a lease covers the plan.
+Each of the two leases is held only while it guards a change. The run's plan,
+which the first supervisor instance writes once, already names the run and
+its release, so it carries what those named. On each VM the host reads the
+run's plan before the pin and runs the plan's
+release when the plan exists, so a VM that starts mid-session runs the
+session's release. Only when no plan exists does the host resolve and check
+the pin. If another VM's plan landed first naming a different release, as
+when the pin moved between two VMs' boots, the VM stops its units and starts
+them again on the plan's release. A session is open while its plan exists,
+its stop does not, and its close has not passed by a margin that runs past the host's timer, so a run reading the day's fills still counts as open, and a run that
+died before writing its stop never blocks the next drill. The price is the
+one thing a lease's expiry told, that every supervisor had gone quiet,
+which monitoring's supervisor-heartbeat alarm reports instead.
+
+### Rule 9: who changes a run, the plan's lease
+
+**The plan's lease.** The
+supervisor keeps several instances, and a lease so that only one
+changes the plan at a time, and the lease carries
+the run's status, which closes the gap a frozen holder would leave. So
+the lease is one blob per run, kept for the run's life, holding the
+run's status, running, halted or stopped, beside its holder and
+expiry. The first supervisor instance creates it, with the status
+running, before it writes the plan. An instance takes it by a
+conditional write on the blob's tag that names itself as holder,
+before it reads the run's state for a write that changes the run: the
+plan, a halt as a worker's result, a halt of the run with a halt for
+every decision left in the plan, and the run's stop. A halt of the run
+and the stop are first a change of status, made by one more
+conditional write on the tag the instance holds, and only then written
+as the blobs whose events reach the workers. It releases the lease by
+a conditional write that clears the holder rather than by deleting it,
+so the status stays. Each blob a change writes is create-only on its
+own key, which stops two writers taking one key but not two instances
+acting on one read of the run, such as one storing the stop while
+another halts the run. The lease stops that, and because the lock and
+the status share one blob, a takeover rewrites it, so any write a
+frozen holder sends afterwards names an old tag and S3 refuses it with
+a 412, a write already in flight included. A holder that dies after
+its change of status and before the blobs that announce it leaves the
+status saying what happened, so the next holder writes those blobs,
+which land once. A halt as a worker's result needs nothing more,
+because it shares its key with the worker's result, so whichever lands
+first counts. Another instance that needs the lease does not wait for
+it, as the account's lease below says, and a holder's lease is taken
+over once it expires unrenewed, as the account's is.
+
+### Rule 9: who may send, the account's lease
+
+**The account's lease.** Every execution instance receives from
+execution's queue, and an instance
+holds the account's lease only while it changes the account. It takes
+the lease before it re-reads the journal for a submit or a cancel, and
+deletes it once the journal holds the broker's answer or the order's
+doubt. A plan of several orders therefore takes the lease once per
+order, so a pull's cancels wait for at most one order in flight.
+
+The lease's own event wakes work waiting on a held lease, so nothing
+reads storage on a clock
+to wait for it. Three rules carry it.
+
+1. **No handler waits.** A handler that finds the lease held puts its
+   item back on the queue with a short visibility delay, two seconds
+   by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and is free at once.
+2. **The release wakes the work.** Deleting the account's lease is a
+   write whose S3 event reaches execution's queue, as every route
+   does. Whichever instance receives it checks the work that waits on
+   the lease, in the plan's order: the kill switch's cancels, a sort, a stranded leg's cancel, and a send stage's next planned order or cancel. It takes the lease for the first and does it.
+3. **Any lease holder sends a planned order.** The claim keeps two
+   instances from planning one decision, and once the planned list is
+   journaled, whichever instance holds the lease may send its next
+   order or cancel while the claim's runner is alive, under the same
+   checks before the broker call. Each order is guarded three times:
+   its `sending` entry is journaled first, its client order id is
+   fixed by the plan, and the lease's tag is checked right before the
+   call. Once the runner is gone, the fifth item below applies.
+
+A lost release event delays the work only until the item it was put
+back with comes back, which is SQS's own redelivery rather than a
+read on a clock. An item returned more times than a written limit, read
+from SQS's own receive count, alarms with the lease's holder. The price
+is that one decision's orders may go out from different instances.
+
+### Rule 9: who takes over a lease
+
+A holder record names the VM, its boot, the worker's container, its
+restart count and the handler, rather than a process id, which means nothing outside one
+container. A lease whose holder is the same VM on an earlier boot, or a
+container the host shows is gone, is cleared by the next process that
+needs it, and the clearing is journaled. Failover across machines is
+automatic, so any process, on any VM, takes
+over a lease that has gone unrenewed past its expiry and a margin for
+clock skew, by the same conditional write naming the expired lease's
+tag, which a revived holder's renewal can then never overwrite. A
+handler frozen on the lease holder's own VM is taken over this way too,
+without waiting for the host to show its container gone. The takeover is
+journaled and alarms. A frozen holder that wakes finds its renewal
+refused, and stops that action, and execution's
+check of the lease's tag right before every broker call, rule 9's fourth
+item, refuses its next send. A VM whose supervisor instances find their
+own last heartbeat older than the limit after which the other VMs count
+it as gone, as after a freeze, stops its units, which start again as a
+fresh member, as architecture.md's rule 11 of `## Where it runs` says.
+The price is one window. A holder that
+froze after that check and before its request left can still send that
+one request after a takeover. The new holder looks it up the way it
+looks up any order in doubt, and the gate already
+counts every open order at its worst case. One that lands after the
+order list the new holder read when it took the lease is a late order
+under an older lease, which halts with that order named. The lease period, thirty
+seconds as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), is longer than a renewal's
+worst delay and shorter than the time a decision can wait.
+
+### Rule 9: why the gate runs inside execution
+
+The order manager, the
+risk gate, the journal and the order path all run inside the execution
+worker, because the gate checks each order against every order and
+position in the account's journal just before the order is sent, and a
+check passed through a blob could be stale by then. This is the one place
+a risk engineer's piece runs in another component's process.
+
+### Rule 9: how a rerun never doubles anything
+
+Running a
+worker again is safe everywhere except here, because a sent order cannot be
+unsent. So execution sends an order only when the journal holds no
+`sending` entry for its client order id, and asks the broker about any
+order in doubt by that id, never by sending again. A request sent just
+before a crash can still reach the broker after the first lookup, so a
+lookup that finds nothing leaves the order `InDoubt`, counted by the gate
+at its worst case, until its time in force has run out. Only then is it
+journaled `Lost`, which means the platform stopped waiting and sending is unproved. The broker client's total request timeout is shorter
+than the wait before the first lookup. Five more rules keep a
+rerun from doubling anything.
+
+1. Execution journals each fill under the broker's own fill id and correction
+   identifier. It compares a repeat's content with the journaled fill, skips
+   only an identical repeat, and journals a differing one and halts.
+2. At the start of its send stage, before it plans, execution fetches the
+   broker's positions, open orders and fills again, a fresh read on every
+   attempt rather than a capture that the first one wins. It settles each
+   order in doubt by its client order id, journals any fill that arrived
+   since its recover stage, and compares the result with the book it
+   replays from the journal. An open order at the broker that matches a
+   `sending` entry the journal does not hold as `Lost`, and a fill within that order's quantity, are the platform's own and bring the book up to date, apart from a late order under an older lease.  So is an order the journal
+   holds as open that the broker no longer lists, once a lookup by its
+   client order id finds it `Expired`, `Rejected` or cancelled at the close
+   as its time in force allows, or cancelled after a journaled cancel of
+   the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the journal did not send, including an open order or a fill on an order the journal holds as `Lost` or `Abandoned`, and a late order under an older lease, is journaled as received as unmatched and halts, as `### Orders the platform did not send` says. That late order is the explicit exception to settling an order by lookup. An instance that takes over the account's expired lease stores the broker order list it read, as a capture named by a journaled takeover entry, before it acts. A late order is one whose `sending` entry precedes that takeover entry and that is absent from that stored list. A lookup that finds such an order halts before it moves to `Acknowledged`. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. Any other difference
+   halts the decision for a person, because the broker moved in a way the
+   platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
+   whole target portfolio, along with the journal entry it synced through
+   and a hash and the time of the broker state it fetched, before its first
+   send. A rerun in the same decision never plans again, so an order's
+   id never shifts between attempts, and sends nothing more, as item 5
+   says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in that list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
+3. Its account file names the journal entry it replayed through, and the
+   send stage's sync names the entry it synced through. Before it plans,
+   execution halts if an entry that changes the book, and that neither its
+   sync nor its own order loop wrote, lies past the entry its sync names.
+   A person's override that lands after the sync halts the decision the
+   same way before its next send, and applies from the next decision's
+   sync.
+
+### Rule 9, fourth item: what is checked right before a broker call
+
+**Right before every submit**, after the order's `sending` entry
+is stored, execution checks six things.
+
+1. The kill switch is absent.
+2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with the kill
+   switch in rule 10, any answer other than "no such blob", a timeout
+   included, reads as switched off, with the reason "strategy off
+   switch unreadable", and that halts the decision as an unreadable
+   control does. So execution's role can read and list
+   `accounts/<account>/strategies/`.
+3. No halt of the run or of the account is stored, a file in
+   `accounts/<account>/halts/` that is not released, by the release test in
+   [Halts and drills](halts-and-drills.md#how-a-sort-runs),
+   reading as a stored halt, and the plan's lease holds the run's status as running, so a halt or stop the supervisor has
+   recorded but not yet announced also stops the send.
+4. Its own send-stage result key is still empty.
+5. The account's lease still carries the tag that the holder's own
+   last take or renewal of it returned.
+6. The market-on-close cutoff has not passed, for such an order.
+
+Any one failing journals the
+order `Abandoned`, sends nothing, and halts the decision, except the
+second when it finds the off switch, which abandons only that
+strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
+`accounts/<account>/strategies/<strategy>/off.json`, stops one
+strategy without a deploy and never reads as a target of zero, as rule
+1 of `### Every change can be undone or switched off` asks. So a run the
+supervisor has halted, a switch pulled mid-loop, or a lease another
+execution has taken over stops the next send, even when the message
+saying so is lost or unread.
+
+### Rule 9, fourth item: what a cancel checks
+
+A cancel has checks of its own, because
+the cancels that protect the account run exactly when a switch is set
+or a halt is stored. The kill switch's cancels, and the cancel of a
+stranded leg by an instance taking over a send stage, check only the
+lease's tag. The
+cancel that keeps a pair whole and a sort's adding cancel check only the lease's tag, and a sort's cancel also ends on a proved release, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). No clock or cutoff reading stops either, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. A broker's refusal of a late cancel is journaled. A plan's own cancel, the cancel ahead of a replacement
+included, checks four things: no halt of the run or of the account
+is stored or held on the plan's lease, its own send result is still empty, the lease's tag, and the cancel cutoff.
+A stored halt stops it, the one cancel a halt stops.
+This doc's reason is that a halt stops the
+plan, while the order stays counted at its worst case and the kill
+switch can still cancel it. A check that fails journals the cancel as
+stopped, which returns the order to the state it was in, still
+counted, and ends rule 6's clock, because only a failed check proves
+nothing was sent. A plan's cancel
+skips the strategy's off switch, so a switched-off strategy's
+cancels still go out, and the replacement itself is a submit, which
+checks all six. A cancel skips the risk gate's limits on purpose: every open
+order is already counted at its worst case, so a cancel can only lower
+each counted limit.
+
+### Rule 9, fifth item: who takes over a dead send stage
+
+**No instance sends more for a send stage whose runner died.** Before
+its broker fetch, a send stage writes a create-only claim at
+`runs/<deployment>/<run>/<decision>/execution/send/claim.json` naming
+the handler running it: its VM, boot, container, restart count and
+handler. The entry that journals its planned orders names the same
+handler. A send stage that finds a claim or a planned entry it did not
+write never syncs or plans for that decision, so two instances that
+both receive its event never both plan. Another instance, or the same
+one restarted, reads the claim rather than the planned entry to find
+the runner, and takes that send stage over only once its runner is
+gone. On the runner's own VM that means the host
+shows its container gone or restarted. From another VM it means the
+runner's VM counts as gone: no supervisor instance on it has written a
+heartbeat within the limit, or the Auto Scaling group reports it
+terminated, as architecture.md's rule 11 of `## Where it runs` says. Each worker instance runs under one fixed container name, its
+component and its number, removed when it stops, so a gone container is a fact the host reports, not a guess
+from a stopped heartbeat. A send stage whose runner is alive is left to
+it, which also covers SQS handing a second instance a copy of the
+runner's message. An instance that starts, and one that receives a
+send stage's event, acts in this order:
+
+1. Check the kill switch, and if it is set take the account's lease and cancel every resting order in the account, stamped or not, journaling each cancel first. Then resume or start each sort that has no `sort_done` entry, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes.
+2. For a send stage that has a claim and no result, and whose runner
+   is gone, take the account's lease, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
+   cancel any accepted leg of a pair whose partner is not accepted,
+   before the cancel cutoff, and write a halt as that send stage's
+   result. It does this whether or not the supervisor has already
+   written a halt there.
+3. Write its restart record, if it restarted, and carry on with the
+   next decision, which plans again from the book.
+
+### Rule 9: how the gate counts open orders
+
+The gate counts every open order at its worst case, separately for each
+limit: for each limit, an order on the side that makes that limit worse
+counts as filled, and one on the other side counts as unfilled, until the
+broker confirms its fill, its cancel or its expiry. For `max_net` that
+means every leg of a pair must fit alone, which is also the bound on a leg
+left open when its partner fails. A
+cancel is journaled before it is sent, and the order stays open in the
+book until the broker confirms it. Without this, an order left resting
+from one decision lets the next decision plan a trade that passes
+`max_position` if both fill.
+
+### Rule 9: what an order in doubt blocks
+
+An order in doubt also blocks the next order beside it, as rule 3 of
+`### Every fact has one writer` asks. The gate refuses any order on an
+account and instrument that hold an `InDoubt` order, so a decision never
+sends a second order beside one the platform cannot see. An order
+alarms the moment it is first journaled `InDoubt`. One still unsettled
+a written time after it was sent halts the run and alerts the owner,
+rather than waiting out a time in force that a good-till-cancelled
+order may not reach for weeks. By this doc's proposal for
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10), that time is
+the smaller of 30 minutes and the time left before the cancel cutoff,
+and a supervisor deadline enforces it, reading storage before it acts,
+as any expired deadline does.
+
+### Rule 9: what can loosen the gate
+
+No other worker's output can loosen the gate, because its hard caps come
+from a blob the bucket's policy lets only the owner's credential write,
+and only the owner changes them, by
+hand.
+[architecture.md](architecture.md)'s `## Proposals awaiting a ruling` proposes how execution
+recovers, derives its ids and combines its limits, for
+[#7](https://github.com/l3a0/ithildin-runtime/issues/7),
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) to settle.
+
+### Rule 10: the kill switch is a blob
+
+**The kill switch is a blob, and pulling it is a command.** The switch is
+a blob at one key per broker account. Every worker checks for it when it
+starts and whenever a message wakes it, and execution checks it before
+every send. Any answer other than "no such blob", a timeout included,
+reads as pulled, with a reason that says the switch could not be read, so
+the runtime's credential can list the switch's prefix, without which S3
+answers a missing key with "access denied". Pulling it
+creates the blob, journals the halt, raises the alarm, and cancels every resting order in the account, stamped or not, journaling each cancel first. This doc adds how. The switch can be pulled from anywhere, and creating its blob is an event that reaches execution's, the supervisor's and monitoring's queues, whoever pulled it. Whichever execution instance receives that event takes the account's lease, which is free after at most one order in flight, or wakes on the lease's release as rule 9 says, and cancels every resting order in the account, stamped or not, through the order path, and alarms if a cancel fails. Every other instance stops sending at its next check of the switch. `ithildin switch pull` then reads the journal once at a deadline before the cancel cutoff, and a pull past that deadline names the broker's console at once. The blob's event reaches execution directly, so a pull reaches resting orders even with the supervisor down. No worker reads the switch on a clock. A
+starting execution instance checks the switch as soon as its digest and journal checks pass, and
+takes the account's lease to cancel if it is set, as rule 9's fifth item
+says, so a switch pulled
+while execution is down still cancels, and it alarms if it cannot take
+the lease by a deadline. Execution checks the switch again right before
+every broker call, as rule 9's fourth item says. It cancels the union of the orders the journal holds open and the orders the broker lists, so an empty or failed broker answer never reads as nothing to cancel. It journals that the switch's cancels are done only after a fresh read lists none of them and a lookup has settled each journal order the broker no longer lists, and
+monitoring alarms a second time if that entry has not appeared within a
+deadline of the pull, naming the broker's own console as the next step.
+No worker sends an order with the switch set. Monitoring writes the decision's report and says the
+switch is set. The runtime's credential can create the switch but never
+delete it. Only the owner's or the
+operator's command clears the switch, and the clearing is journaled.
+On a live account only the owner's
+command clears it. On a paper or shadow account the operator's may too. This doc
+adds that the credential that clears it never sits on the VM. When the VM
+or S3 cannot be reached, the runbook on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) has a person
+create the switch from anywhere, cancel at the broker's own console, and
+journal both as a human override with `ithildin` once back at a computer.
 
 ### Orders the platform did not send
 

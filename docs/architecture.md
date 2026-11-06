@@ -66,6 +66,17 @@ broker on its own, off the path that sends orders.
 - [The life of a run](#the-life-of-a-run)
 - [What is stored](#what-is-stored), with [File formats and keys](#file-formats-and-keys)
 - [Where it runs](#where-it-runs), with [Four environments](#four-environments)
+  - [Rule 1: the pin names the release](#rule-1-the-pin-names-the-release)
+  - [Rule 2: nothing the platform must keep lives only on the VM](#rule-2-nothing-the-platform-must-keep-lives-only-on-the-vm)
+  - [Rule 3: the broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store)
+  - [Rule 4: the kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs)
+  - [Rule 5: the runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need)
+  - [Rule 6: a rollback is a pin to an earlier digest](#rule-6-a-rollback-is-a-pin-to-an-earlier-digest)
+  - [Rule 7: systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit)
+  - [Rule 8: the runtime has a VM of its own](#rule-8-the-runtime-has-a-vm-of-its-own)
+  - [Rule 9: a replacement VM's supervisor reads the run's plan](#rule-9-a-replacement-vms-supervisor-reads-the-runs-plan)
+  - [Rule 10: the release is one container image](#rule-10-the-release-is-one-container-image)
+  - [Rule 11: an environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms)
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
 - [How the four acceptance tests exercise it](#how-the-four-acceptance-tests-exercise-it)
 - [Proposals awaiting a ruling](#proposals-awaiting-a-ruling)
@@ -756,6 +767,24 @@ Three things the diagram rules out.
    three things [design.md](design.md#premise) says cannot be recovered, and
    marketlake is where it is kept.
 
+```mermaid
+sequenceDiagram
+    participant W as Writer
+    participant S as S3
+    participant E as EventBridge
+    participant Q as The reader's SQS queue
+    participant H as The reader's handler
+    W->>S: a create-only upload, with its SHA-256
+    S-->>E: S3's own event for the new blob
+    E->>Q: a rule generated from the input table copies the event
+    H->>Q: long polling
+    Q-->>H: the event
+    H->>S: read the blob the event names, then check the keys the plan fixes
+    H->>S: write its outputs, and its decision result last
+```
+
+The diagram shows one write reaching one reader, so look for the event carrying only a hint and the handler reading the blob itself before it acts.
+
 ## One trading day
 
 A sequence diagram shows the same pieces in time order. This is one paper
@@ -878,7 +907,7 @@ sequenceDiagram
         loop a cancel's answer lost, inside the send stage's deadline, under design.md's faults rule 6
             X->>F: the account's lease taken
             X->>B: lookup by client order id
-            X->>J: the answer journaled, and a new cancel when rule 6 allows one
+            X->>J: the answer journaled, and a new cancel when faults rule 6 allows one
             X->>F: lease tag unchanged?
             X->>B: the new cancel
             X->>J: its answer or its doubt journaled
@@ -918,27 +947,25 @@ The phases in order.
 2. **Decide.** The alpha, risk and cost models run at once, each on the blobs
    it needs. The risk model sets the constraints, meaning the limits for this
    decision. Portfolio construction builds the target portfolio within them.
-3. **Send.** Whichever execution instance receives portfolio construction's
-   result reads the target portfolio it lists, and writes a create-only
-   claim on the send stage naming its handler, so an instance that finds a
-   claim it did not write never plans for that decision. Since every
-   step fetches and syncs before changing state, it first fetches the broker's
-   positions, open orders and fills again, journals any fill that arrived
-   since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person. Only then does it journal the target whole, with the planned
-   orders and their client order ids, the journal entry it synced through, a
-   hash of the broker state it fetched and the instance running the send
-   stage, in one stored entry. A target portfolio names every
-   instrument the book holds or the forecast names, with a flat leg as an
-   explicit zero, and execution halts on one that leaves an instrument out.
-   Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone. The order path
-   takes the account's lease, checks the kill switch again, journals the intent, replays the book from the
-   journal so the risk gate sees every order already approved, asks the gate,
-   journals the approval and journals that it is sending. Right before the broker call it checks six things: the kill switch is absent, the order's strategy is not switched off, no halt of the run or of the account is stored and the plan's lease says the run is running, its own send result is still empty, the account's lease still carries its tag, and the market-on-close cutoff has not passed. Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order. After the loop
-   it looks up each leg, and cancels any accepted leg whose partner was
-   rejected or never sent, and any leg whose plan cancel was stopped after its
-   partner's was confirmed.
-   Monitoring writes the decision's report and pings the heartbeat service
-   last, so a decision that dies or hangs never pings.
+3. **Send.**
+
+   1. Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler, so an instance that finds a claim it did not write never plans for that decision.
+   2. Since every step fetches and syncs before changing state, it first fetches the broker's positions, open orders and fills again, journals any fill that arrived since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person.
+   3. Only then does it journal the target whole, with the planned orders and their client order ids, the journal entry it synced through, a hash of the broker state it fetched and the instance running the send stage, in one stored entry. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out.
+   4. Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone.
+   5. The order path takes the account's lease, checks the kill switch again, journals the intent, replays the book from the journal so the risk gate sees every order already approved, asks the gate, journals the approval and journals that it is sending.
+   6. Right before the broker call it checks six things:
+      1. the kill switch is absent,
+      2. the order's strategy is not switched off,
+      3. no halt of the run or of the account is stored and the plan's lease says the run is running,
+      4. its own send result is still empty,
+      5. the account's lease still carries its tag,
+      6. and the market-on-close cutoff has not passed.
+
+      Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending.
+   7. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order.
+   8. After the loop it looks up each leg, and cancels any accepted leg whose partner was rejected or never sent, and any leg whose plan cancel was stopped after its partner's was confirmed.
+   9. Monitoring writes the decision's report and pings the heartbeat service last, so a decision that dies or hangs never pings.
 
 The journal entries carry the weight of hard limit 4, which says every order is
 journaled before it is sent. If the execution worker dies after "sending
@@ -1058,7 +1085,7 @@ The restart runs the same first phase as any trading day.
 
 1. On starting, execution settles the order the dead worker left half-sent, by
    asking the broker about it rather than sending it again, and halts that old
-   decision, as design.md's rule 9 fifth item says.
+   decision, as the fifth item of rule 9 of design.md's `## Processes and files` says.
 2. Data finds the segments up to the decision time not yet in marketlake and
    halts, so execution's recover stage, which waits for data's result, halts
    too.
@@ -1135,7 +1162,7 @@ sequenceDiagram
     Note over X,L: No model reads a book until a person<br/>explains the difference
 ```
 
-Execution's recover stage compares the broker with the sum of the strategies' books, and monitoring compares them again for its report. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person, apart from the split or assignment that rule 2 of design.md's `### Faults are expected` lets an outside entry explain in shadow or on paper. Both compare open
+Execution's recover stage compares the broker with the sum of the strategies' books, and monitoring compares them again for its report. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person, apart from the split or assignment that rule 2 of design.md's `### Faults are expected, and the platform checks itself while it runs` lets an outside entry explain in shadow or on paper. Both compare open
 orders as well as positions, so an order the broker holds and the journal
 marks lost or abandoned halts the day it appears, not the day it fills. Reconciliation lives on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The charter has the
@@ -1195,26 +1222,13 @@ The two cover different failures.
    to exceed the longest chain of worker deadlines plus the report, or a slow,
    healthy decision alarms.
 
-The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and whichever execution instance
-receives that event takes the account's lease, free after at most one order in flight or on the lease's release, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch as soon as its digest and journal checks pass and, finding it set, takes the account's lease and cancels every resting order, so a
-switch pulled while execution is down still cancels once the host restarts
-it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error,
-so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close, so a switch
-pulled in that window stops nothing already sent unless it also cancels
-them, which is why it does. Cancelling an unfilled order sells nothing, so
-the pull is still a stop and not a flatten. The exchange stops taking
-cancels of closing-auction orders some minutes before the close, so a switch
-pulled after that cannot stop the fill, and execution's report of its
-cancels says so. The cancel cutoff is the earlier of Alpaca's and the exchange's.
-NYSE Arca, where GLD and USO list, refuses cancels of closing-auction
-orders from 15:59, as a
-[Lightspeed guide](https://lightspeed.com/support/lightspeed-trader-on-close-and-on-open-guide)
-and an [SEC filing](https://www.sec.gov/files/rules/sro/nyse/2018/34-84804.pdf)
-on its closing freeze describe. Alpaca's
-[order page](https://docs.alpaca.markets/docs/orders-at-alpaca) names no
-separate cancel cutoff, so this doc takes close−10, Alpaca's entry cutoff and
-15:50 on a full day, as the cancel cutoff until Alpaca says otherwise. That is an assumption that errs early, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms Alpaca's real one.
+#### How a pull cancels
+
+The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and whichever execution instance receives that event takes the account's lease, free after at most one order in flight or on the lease's release, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch as soon as its digest and journal checks pass and, finding it set, takes the account's lease and cancels every resting order, so a switch pulled while execution is down still cancels once the host restarts it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error, so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close, so a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does. Cancelling an unfilled order sells nothing, so the pull is still a stop and not a flatten.
+
+#### The cancel cutoff
+
+The exchange stops taking cancels of closing-auction orders some minutes before the close, so a switch pulled after that cannot stop the fill, and execution's report of its cancels says so. The cancel cutoff is the earlier of Alpaca's and the exchange's. NYSE Arca, where GLD and USO list, refuses cancels of closing-auction orders from 15:59, as a [Lightspeed guide](https://lightspeed.com/support/lightspeed-trader-on-close-and-on-open-guide) and an [SEC filing](https://www.sec.gov/files/rules/sro/nyse/2018/34-84804.pdf) on its closing freeze describe. Alpaca's [order page](https://docs.alpaca.markets/docs/orders-at-alpaca) names no separate cancel cutoff, so this doc takes close−10, Alpaca's entry cutoff and 15:50 on a full day, as the cancel cutoff until Alpaca says otherwise. That is an assumption that errs early, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms Alpaca's real one.
 
 ### Every alarm and its drill
 
@@ -1246,7 +1260,7 @@ but S3 does not stop a caller writing any name it likes. So CloudTrail
 records every write to the journal, the switch, the leases, the overrides, `accounts/<account>/releases/`, the halt folders, the hard caps and `release/`, in a bucket only the owner can change, and monitoring alarms when
 an entry's named identity differs from the one CloudTrail recorded. Every
 principal but the owner refuses `cloudtrail:StopLogging`, `DeleteTrail`,
-`UpdateTrail` and `PutEventSelectors`, and [rule 3's drill](halts-and-drills.md#drills-with-no-alarm) tries each.
+`UpdateTrail` and `PutEventSelectors`, and [the drill on CloudTrail](halts-and-drills.md#drills-with-no-alarm) tries each.
 
 Two credentials hold what the VM's credential deliberately cannot.
 
@@ -1259,25 +1273,17 @@ Two credentials hold what the VM's credential deliberately cannot.
    resumes live trading. The charter makes the operator an agent role, and
    hard limit 1 keeps agents to simulated and paper brokers.
 
-The owner's credential is a role reached through IAM Identity Center or an MFA
-sign-in behind a hardware key, with sessions of an hour at most. The operator's
-is a short-lived principal of its own. Neither holds a long-lived secret in a
-file. A hardware key guards the sign-in, not what the
-sign-in leaves behind. An IAM Identity Center session [lasts eight hours by
-default](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html), its token sits in `~/.aws/sso/cache` where any process of that
-user can read it, and while it lasts it mints credentials for every
-permission set the user holds. Agent sessions run as the owner's user on the
-owner's machine, so the owner's live-writing permission set is never signed
-in where agents run: it lives under a separate OS user or device, with a
-session short enough to need a fresh key touch, and a [drill](halts-and-drills.md#drills-with-no-alarm) proves an agent session cannot use it. The operator is
-an agent role, so its credential cannot rest on a hardware key. It is a
-principal of its own, with no owner permission set, sessions of an hour or
-less and no path to the owner's cache, and how an agent session receives it
-is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment's bucket policy names each role. The live bucket's policy enforces the owner's split, and inside every bucket overrides sit under a prefix of their own per account,
-apart from the journal. Only the owner's role may write a live account's
-overrides, and no runtime role may write any override. Journal entries are
-created, never replaced, by execution, monitoring and the supervisor, and by
-the `ithildin` tool for the person running it. On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants rule 5 of `## Where it runs` gives them there.
+#### The owner's credential
+
+The owner's credential is a role reached through IAM Identity Center or an MFA sign-in behind a hardware key, with sessions of an hour at most. A hardware key guards the sign-in, not what the sign-in leaves behind. An IAM Identity Center session [lasts eight hours by default](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html), its token sits in `~/.aws/sso/cache` where any process of that user can read it, and while it lasts it mints credentials for every permission set the user holds. Agent sessions run as the owner's user on the owner's machine, so the owner's live-writing permission set is never signed in where agents run: it lives under a separate OS user or device, with a session short enough to need a fresh key touch, and a [drill](halts-and-drills.md#drills-with-no-alarm) proves an agent session cannot use it.
+
+#### The operator's credential
+
+The operator's is a short-lived principal of its own. The operator is an agent role, so its credential cannot rest on a hardware key. It is a principal of its own, with no owner permission set, sessions of an hour or less and no path to the owner's cache, and how an agent session receives it is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+#### Both credentials and each bucket's policy
+
+Neither holds a long-lived secret in a file. Each environment's bucket policy names each role. The live bucket's policy enforces the owner's split, and inside every bucket overrides sit under a prefix of their own per account, apart from the journal. Only the owner's role may write a live account's overrides, and no runtime role may write any override. Journal entries are created, never replaced, by execution, monitoring and the supervisor, and by the `ithildin` tool for the person running it. On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants rule 5 of `## Where it runs` gives them there.
 
 ### The commands
 
@@ -1845,7 +1851,7 @@ Eight choices in the two diagrams for a reviewer to check.
    and is empty when the worker found the problem itself, and whose `found_outputs` lists each output file stored under the decision's prefix when the halt was written, a capturing stage's stored capture included. The supervisor
    writes the same record for a worker that failed, naming its restart
    records, which the host's stop handler and the restarted worker write as
-   design.md's rule 5 says. `Plan` holds the run's decisions, each with its time and the strategies
+   rule 5 of design.md's `## Processes and files` says. `Plan` holds the run's decisions, each with its time and the strategies
    deciding at it, built by one function in `core` from the schedules and the
    trading calendar, and
    `JournalEntry` is the one numbered record, chained to the entry before it.
@@ -1865,7 +1871,7 @@ Eight choices in the two diagrams for a reviewer to check.
 ## The life of an order
 
 A state diagram shows the states one thing can be in and what moves it between
-them. Each transition is a journal entry written before the next step. An execution instance taking over a send stage whose runner died writes two of them after the fact, when it finds the gap, as design.md's rule 9 says: `Abandoned` for an order a crash left without a `sending` entry, and the crash half of `InDoubt`.
+them. Each transition is a journal entry written before the next step. An execution instance taking over a send stage whose runner died writes two of them after the fact, when it finds the gap, as rule 9 of design.md's `## Processes and files` says: `Abandoned` for an order a crash left without a `sending` entry, and the crash half of `InDoubt`.
 
 ```mermaid
 stateDiagram-v2
@@ -2201,7 +2207,7 @@ each keeps its own rule.
    locks each entry with S3 Object Lock, and alarms on a delete event, so an
    edit cannot hide. Before live, the live journal, every override, every release, every halt and
    every recorded capture are replicated to a bucket in a second AWS
-   account, as design.md's rule 1 says.
+   account, as rule 1 of design.md's `## Processes and files` says.
 5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
    journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
    owner to read, not as a record.
@@ -2379,7 +2385,7 @@ not come again is kept rather than discarded.
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
 | A fired loss stop, which holds until a person clears it | `accounts/<account>/stop.json` |
-| A halt that names the account and outlives a session, such as rule 6's on an unsettled cancel | `accounts/<account>/halts/<component>-<cause>-<timestamp>-<count>.json` |
+| A halt that names the account and outlives a session, such as the one rule 6 of design.md's `### Faults are expected, and the platform checks itself while it runs` holds on an unsettled cancel | `accounts/<account>/halts/<component>-<cause>-<timestamp>-<count>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<component>-<cause>-<timestamp>-<count>.json` |
 | The hard caps | `accounts/<account>/caps.json` |
@@ -2407,7 +2413,7 @@ lifecycle name, with `release/` read by each VM's role for its own pin, as
 A deployment diagram shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live, each of which has one VM in slice 1, scaling out to a cluster of three, and a bucket and roles of its own, as `### Four environments` says. The VM keeps no state
 that matters, and the storage is S3, so everything the platform must
 keep sits in the runtime's bucket, and an Auto Scaling group replaces a lost
-VM by starting a new one on the release the run uses, as rule 11 says.
+VM by starting a new one on the release the run uses, as rule 11 of `## Where it runs` says.
 
 ```mermaid
 flowchart TB
@@ -2466,383 +2472,419 @@ flowchart TB
 
 Eleven rules hold the deployment to the premise and the hard limits.
 
-1. **The pin names the release.** Each environment's VM runs the release its pin names. The owner's merge to `main` moves shadow's pin, a healthy shadow moves paper's, and only the owner moves live's, as `### Four environments` says, so the code that traded is always known. The release also pins boto3, from a version
-   whose botocore, [1.35.67](https://raw.githubusercontent.com/boto/botocore/1.35.67/CHANGELOG.rst) or later, sends both S3's refuse-if-it-exists
-   condition and its conditional delete.
-2. **Nothing the platform must keep lives only on the VM.** Every blob a run
-   writes and every journal entry is created in the runtime's bucket before
-   anything relies on it. The VM's working directory holds only error output, heartbeat files, the local release file and the files the host's stop handler writes, and none of it
-   is kept. The journal is one of the
-   three things the premise says cannot be recovered, so losing the VM must
-   not take it. Captured bars, another of the three, live in marketlake,
-   which backs up its own lake.
-3. **The broker key lives in a secret store, and only execution can read it.**
-   The execution worker runs as a Unix user of its own, started by a systemd
-   unit with that user, never by a process that keeps root. Only root and one
-   provisioning user can reach the VM's instance metadata service, which a
-   firewall rule matched on the process's owner enforces across reboots,
-   because any process that can reach that service can fetch the VM's
-   credentials. Each VM has no inbound port, Docker listens on its Unix socket alone, and every role is refused remote commands and remote sessions. At boot the provisioning step writes each worker user a
-   credential file only that user can read, never carried in the VM's start-up
-   data. Only the execution user's credential can read the secret store's broker path.
-   Execution reads the key from the store into its own memory, never into its
-   environment, which other processes and child processes can see, and never
-   into a file. It is a broker key with no withdrawal or transfer permission,
-   which is hard limit 5. [Rule 3's drill](halts-and-drills.md#drills-with-no-alarm) on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) tries each route to the key. The store is the one marketlake
-   uses, AWS Systems Manager Parameter Store, holding the key as a
-   `SecureString` parameter encrypted under KMS, and the
-   runtime sits outside marketlake's AWS account, in an account per
-   environment. So each environment's
-   broker key sits in that environment's own account, under the account's
-   AWS managed `aws/ssm` key. No
-   marketlake role can reach it, because a role acts in another account only
-   where that account grants it, and no runtime account grants one. Inside
-   each environment's account four controls hold.
-   1. **Only the execution user reads the key.** A grant of
-      `ssm:GetParameter` on the key's parameter goes to the execution user's
-      credential alone. Every other role in the account, the other workers',
-      the operator's and the deploy roles, refuses `ssm:GetParameter`,
-      `ssm:GetParameters` and `ssm:GetParameterHistory` on the broker path,
-      `/ithildin/<environment>/broker/`, and `ssm:GetParametersByPath` on
-      every path, because a recursive read of a parent path returns every
-      parameter below it. On every path under `/ithildin/`, every principal
-      but the owner refuses `ssm:PutParameter`, `ssm:DeleteParameter`,
-      `ssm:DeleteParameters`, `ssm:LabelParameterVersion`,
-      `ssm:UnlabelParameterVersion`, `ssm:AddTagsToResource` and
-      `ssm:RemoveTagsFromResource`, because a rewritten ping address silences
-      a dead-man check and a rewritten alias points execution at another
-      broker account.
-   2. **Service control policies bind each runtime account.** The accounts
-      are members of one AWS organization, under a management account that
-      holds nothing else, so a service control policy binds every principal
-      in a runtime account, its root user included, as AWS's
-      [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
-      says. It refuses, to all but the owner's role, deleting a journal or
-      run version and changing a runtime bucket's policy, versioning, Object
-      Lock or notifications. It refuses reading the broker path to all but
-      the owner's role and that environment's execution role, each named by
-      its full ARN, path included, because execution has to read its own
-      key. It refuses every IAM write on every role with a path to the broker key
-      or to deploying or applying, and on the GitHub OIDC provider, to every principal but the
-      owner's role, because rewriting a role's trust or policy would hand
-      its reach to someone else, as item 9 of [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. It refuses leaving the organization. The
-      organization's centralized root access removes each member account's
-      root password, so the management account is the one left to guard,
-      and every principal in it is in scope, not only its root user. This
-      doc proposes for
-      [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that
-      `sts:AssumeRoot` and IAM Identity Center administration there are
-      limited to the owner's identity, behind a hardware key, and that an
-      alarm reads the organization trail for a service control policy
-      detached or edited, a root password created and a permission set
-      assigned.
-   3. **The parameter lives in us-east-1**, and the owner writes its value by
-      hand through standard input, as marketlake writes its own. No OpenTofu
-      configuration, state or variable ever holds it.
-   4. **A [drill](halts-and-drills.md#drills-with-no-alarm)** tries to read the key with every role but execution's.
+### Rule 1: the pin names the release
 
-   The price is four runtime accounts, test, shadow, paper and live, the
-   organization's management account, and a log-archive account for the
-   organization trail, which no existing account can hold, as `### Four environments` rule 11 says, each set up once, with GitHub's
-   deploy roles recreated in each and a read grant from marketlake's account
-   for each environment's data role, as rule 8 says. The broker key moves
-   out of marketlake's account. marketlake's refusals for the runtime's VM, key and queues,
-   which [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
-   held, are no longer on the runtime's path.
-4. **The kill switch and the hard caps are blobs.** The runtime's credential
-   can create the switch, which pulls it, and can never delete it. Only the
-   owner's credential clears a live
-   account's switch, and the operator's may also clear a paper or shadow
-   account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A fired loss stop's blob takes the same grants as the switch: execution's role may create it and never delete it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop. The hard caps blob can be written or deleted only by the
-   owner's credential, which an explicit refusal in the bucket's policy for
-   every other principal enforces, because raising a cap raises a capital
-   limit, which hard limit 1 keeps for the owner. Copying an older version
-   back counts as a write, so the same refusal covers it. Only the owner's credential may write `accounts/<account>/releases/`, under the same refusal. Pulling the switch
-   needs no deploy.
-5. **The runtime's credential does only what the rules need.** It can create
-   and read blobs under the runs', the journal's and the simulated accounts'
-   prefixes, read the leases, create and read but not delete the switch and a fired loss stop, read the hard caps, the overrides and `accounts/<account>/releases/`, which no runtime role writes, read and list `accounts/<account>/strategies/` and `accounts/<account>/halts/` for execution's and monitoring's roles, create but not delete a strategy halt, or a halt under `accounts/<account>/halts/`, for the role that raises it, and list each of those prefixes, without which S3
-   answers a missing key with "access denied" rather than "no such blob". A
-   [drill](halts-and-drills.md#drills-with-no-alarm) checks that. It can also create heartbeats and restart records under their own
-   prefixes, and monitoring's role alone creates and reads a rewrite-planning
-   page's records under `load/`, which outlive every run and release. The
-   bucket's lifecycle expires heartbeats and the
-   noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. The lease grants are
-   narrower than the rest, as this doc proposes for
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Only
-   execution's role may create, rewrite and delete under
-   `leases/accounts/`, a rewrite or a delete only with the tag S3 last
-   returned to its holder, and a delete leaves a delete marker so the
-   lease's history survives. The owner's and the operator's credentials
-   may also delete an account's lease off the VM, as `## What a person
-   runs` says. Only the supervisor's role may write under `leases/plans/`,
-   creating a plan's lease with `If-None-Match` and rewriting it with
-   `If-Match` on its tag, and none deletes it. Every other role may read
-   the leases at most. No credential the runtime
-   holds can delete a version, or change the bucket's policy, versioning or
-   lifecycle, or its notification configuration, and no credential but the owner's can change those four. The
-   bucket's policy, whose refusals name the runtime's principals, refuses any
-   write on those prefixes that lacks the refuse-if-it-exists condition, any
-   delete outside the leases, and any lease delete without the tag condition,
-   while a lease may be rewritten with `If-Match` on its current tag, which
-   renews it or takes it over once expired.
-   It also refuses every S3 action on the bucket to any principal that is not
-   one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on
-   `aws:PrincipalArn`, refuses the operator any version delete, and refuses
-   changes to the policy itself to all but the owner. An explicit
-   refusal in a bucket policy overrides any role's own grant, so a role
-   added later is refused without anyone remembering it. The release
-   writes every blob with one single-part upload, never a
-   multipart one, so each blob is one request checked against one SHA-256,
-   and the policy marks a
-   multipart start so a stray one fails when it completes rather than
-   halfway.
-6. **A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
-7. **systemd keeps every process running, up to a limit.** Each
-   supervisor instance and each worker instance, three of each per
-   deployment, has a unit of its own, the
-   instances of each from one template unit, all part of one
-   `ithildin.target`, with systemd's `Restart=on-failure`, a
-   `StartLimitBurst`, and a `StartLimitIntervalSec` of a whole trading day,
-   since systemd's default of ten seconds would never reach the limit for a
-   process that crashes once a minute. Execution's units, and capture's once
-   this platform runs it, are the exception under design.md's rule 4 of
+**The pin names the release.** Each environment's VM runs the release its pin names. The owner's merge to `main` moves shadow's pin, a healthy shadow moves paper's, and only the owner moves live's, as `### Four environments` says, so the code that traded is always known. The release also pins boto3, from a version
+whose botocore, [1.35.67](https://raw.githubusercontent.com/boto/botocore/1.35.67/CHANGELOG.rst) or later, sends both S3's refuse-if-it-exists
+condition and its conditional delete.
+
+### Rule 2: nothing the platform must keep lives only on the VM
+
+**Nothing the platform must keep lives only on the VM.** Every blob a run
+writes and every journal entry is created in the runtime's bucket before
+anything relies on it. The VM's working directory holds only error output, heartbeat files, the local release file and the files the host's stop handler writes, and none of it
+is kept. The journal is one of the
+three things the premise says cannot be recovered, so losing the VM must
+not take it. Captured bars, another of the three, live in marketlake,
+which backs up its own lake.
+
+### Rule 3: the broker key lives in a secret store
+
+**The broker key lives in a secret store, and only execution can read it.**
+The execution worker runs as a Unix user of its own, started by a systemd
+unit with that user, never by a process that keeps root. Only root and one
+provisioning user can reach the VM's instance metadata service, which a
+firewall rule matched on the process's owner enforces across reboots,
+because any process that can reach that service can fetch the VM's
+credentials. Each VM has no inbound port, Docker listens on its Unix socket alone, and every role is refused remote commands and remote sessions. At boot the provisioning step writes each worker user a
+credential file only that user can read, never carried in the VM's start-up
+data. Only the execution user's credential can read the secret store's broker path.
+Execution reads the key from the store into its own memory, never into its
+environment, which other processes and child processes can see, and never
+into a file. It is a broker key with no withdrawal or transfer permission,
+which is hard limit 5. [Rule 3's drill](halts-and-drills.md#drills-with-no-alarm) on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) tries each route to the key. The store is the one marketlake
+uses, AWS Systems Manager Parameter Store, holding the key as a
+`SecureString` parameter encrypted under KMS, and the
+runtime sits outside marketlake's AWS account, in an account per
+environment. So each environment's
+broker key sits in that environment's own account, under the account's
+AWS managed `aws/ssm` key. No
+marketlake role can reach it, because a role acts in another account only
+where that account grants it, and no runtime account grants one. Inside
+each environment's account four controls hold.
+
+1. **Only the execution user reads the key.** A grant of
+   `ssm:GetParameter` on the key's parameter goes to the execution user's
+   credential alone. Every other role in the account, the other workers',
+   the operator's and the deploy roles, refuses `ssm:GetParameter`,
+   `ssm:GetParameters` and `ssm:GetParameterHistory` on the broker path,
+   `/ithildin/<environment>/broker/`, and `ssm:GetParametersByPath` on
+   every path, because a recursive read of a parent path returns every
+   parameter below it. On every path under `/ithildin/`, every principal
+   but the owner refuses `ssm:PutParameter`, `ssm:DeleteParameter`,
+   `ssm:DeleteParameters`, `ssm:LabelParameterVersion`,
+   `ssm:UnlabelParameterVersion`, `ssm:AddTagsToResource` and
+   `ssm:RemoveTagsFromResource`, because a rewritten ping address silences
+   a dead-man check and a rewritten alias points execution at another
+   broker account.
+2. **Service control policies bind each runtime account.** The accounts
+   are members of one AWS organization, under a management account that
+   holds nothing else, so a service control policy binds every principal
+   in a runtime account, its root user included, as AWS's
+   [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
+   says. It refuses, to all but the owner's role, deleting a journal or
+   run version and changing a runtime bucket's policy, versioning, Object
+   Lock or notifications. It refuses reading the broker path to all but
+   the owner's role and that environment's execution role, each named by
+   its full ARN, path included, because execution has to read its own
+   key. It refuses every IAM write on every role with a path to the broker key
+   or to deploying or applying, and on the GitHub OIDC provider, to every principal but the
+   owner's role, because rewriting a role's trust or policy would hand
+   its reach to someone else, as item 9 of [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. It refuses leaving the organization. The
+   organization's centralized root access removes each member account's
+   root password, so the management account is the one left to guard,
+   and every principal in it is in scope, not only its root user. This
+   doc proposes for
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that
+   `sts:AssumeRoot` and IAM Identity Center administration there are
+   limited to the owner's identity, behind a hardware key, and that an
+   alarm reads the organization trail for a service control policy
+   detached or edited, a root password created and a permission set
+   assigned.
+3. **The parameter lives in us-east-1**, and the owner writes its value by
+   hand through standard input, as marketlake writes its own. No OpenTofu
+   configuration, state or variable ever holds it.
+4. **A [drill](halts-and-drills.md#drills-with-no-alarm)** tries to read the key with every role but execution's.
+
+The price is four runtime accounts, test, shadow, paper and live, the
+organization's management account, and a log-archive account for the
+organization trail, which no existing account can hold, as `### Four environments` rule 11 says, each set up once, with GitHub's
+deploy roles recreated in each and a read grant from marketlake's account
+for each environment's data role, as rule 8 of `## Where it runs` says. The broker key moves
+out of marketlake's account. marketlake's refusals for the runtime's VM, key and queues,
+which [l3a0/marketlake#944](https://github.com/l3a0/marketlake/issues/944)
+held, are no longer on the runtime's path.
+
+### Rule 4: the kill switch and the hard caps are blobs
+
+**The kill switch and the hard caps are blobs.** The runtime's credential
+can create the switch, which pulls it, and can never delete it. Only the
+owner's credential clears a live
+account's switch, and the operator's may also clear a paper or shadow
+account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. A fired loss stop's blob takes the same grants as the switch: execution's role may create it and never delete it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper. A strategy's off switch sits beside it: any person's credential may create it, and the same principals may delete it, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop. The hard caps blob can be written or deleted only by the
+owner's credential, which an explicit refusal in the bucket's policy for
+every other principal enforces, because raising a cap raises a capital
+limit, which hard limit 1 keeps for the owner. Copying an older version
+back counts as a write, so the same refusal covers it. Only the owner's credential may write `accounts/<account>/releases/`, under the same refusal. Pulling the switch
+needs no deploy.
+
+### Rule 5: the runtime's credential does only what the rules need
+
+**The runtime's credential does only what the rules need.**
+
+**Table:** What each role may do under each prefix of the runtime's bucket
+
+| Role | Prefix | Allowed action |
+| --- | --- | --- |
+| The runtime's credential | `runs/`, `journal/` and `sim/` | Create and read |
+| The runtime's credential | `leases/` | Read |
+| The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
+| The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
+| Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
+| The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
+| The runtime's credential | `heartbeats/` and `restarts/` | Create |
+| Monitoring's role alone | `load/`, a rewrite-planning page's records, which outlive every run and release | Create and read |
+| Execution's role alone | `leases/accounts/` | Create, rewrite and delete, a rewrite or a delete only with the tag S3 last returned to its holder. A delete leaves a delete marker so the lease's history survives |
+| The owner's and the operator's credentials | `leases/accounts/` | Delete an account's lease off the VM, as `## What a person runs` says |
+| The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
+| Every other role | `leases/` | Read at most |
+| The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
+
+A [drill](halts-and-drills.md#drills-with-no-alarm) checks that. The bucket's lifecycle expires heartbeats and the noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). No credential the runtime
+holds can delete a version, or change the bucket's policy, versioning or
+lifecycle, or its notification configuration, and no credential but the owner's can change those four. The
+bucket's policy, whose refusals name the runtime's principals, refuses any
+write on those prefixes that lacks the refuse-if-it-exists condition, any
+delete outside the leases, and any lease delete without the tag condition,
+while a lease may be rewritten with `If-Match` on its current tag, which
+renews it or takes it over once expired.
+It also refuses every S3 action on the bucket to any principal that is not
+one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on
+`aws:PrincipalArn`, refuses the operator any version delete, and refuses
+changes to the policy itself to all but the owner. An explicit
+refusal in a bucket policy overrides any role's own grant, so a role
+added later is refused without anyone remembering it. The release
+writes every blob with one single-part upload, never a
+multipart one, so each blob is one request checked against one SHA-256,
+and the policy marks a
+multipart start so a stray one fails when it completes rather than
+halfway.
+
+### Rule 6: a rollback is a pin to an earlier digest
+
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
+
+### Rule 7: systemd keeps every process running, up to a limit
+
+**systemd keeps every process running, up to a limit.** Each
+supervisor instance and each worker instance, three of each per
+deployment, has a unit of its own, the
+instances of each from one template unit, all part of one
+`ithildin.target`, with systemd's `Restart=on-failure`, a
+`StartLimitBurst`, and a `StartLimitIntervalSec` of a whole trading day,
+since systemd's default of ten seconds would never reach the limit for a
+process that crashes once a minute. Execution's units, and capture's once
+this platform runs it, are the exception under design.md's rule 4 of
+`### A release is checked where it runs, and nothing heals by hiding a
+fault`: they have no start limit and use a growing delay. Execution's
+also come up halted past the count and restart on any exit while a
+session is open, a clean one included, so something always serves a
+cancel. Capture never halts. `RestartSec` is long enough to ride
+out a short restart of the Docker daemon, rather than spending the whole
+burst in a second. Each unit's stop handler, `ExecStopPost`, runs on the
+host and records why the container stopped, for the restart record
+rule 5 of design.md's `## Processes and files` describes. A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale,
+and the worker's receive loop touches that file only while every busy handler is making progress,
+because systemd's own watchdog cannot see a process inside a container.
+An `OnFailure` handler on the host sends its alarm, with the reason, to the alert channel's push topic when any unit, or the Docker daemon itself, reaches its limit or
+fails, so a failure no container can see still reaches the owner, and each one arrives. A timer
+stops `ithildin.target` after the close, behind the supervisor's own stop,
+and a unit stopped that way stays down until the next day's timer starts
+the target. A restarted supervisor alarms that it restarted, and the
+dead-man check covers systemd stopping too.
+
+### Rule 8: the runtime has a VM of its own
+
+**The runtime has a VM of its own, apart from marketlake's.** The
+runtime runs on a VM separate from the one
+marketlake's capture daemon runs on, and downloads the parts of the lake its
+strategies need. So a run on the runtime cannot starve capture, and a
+failure on one VM leaves the other running. At each decision the data
+worker downloads what that decision's lookback names and the mirror lacks.
+For the skeleton's one daily decision that is once a day at close−20: the
+previous session's sealed partition and the day's segments up to the
+decision time. A strategy deciding once a minute fetches each new segment
+as its decision comes. The data worker downloads each
+partition a decision's lookback names from marketlake's bucket into a local
+mirror, checks it against the checksum in marketlake's manifest, and reads
+it through the same bar query. A partition not yet in the bucket is "data not ready", which halts, and one that fails the check halts the decision. Each decision compares a mirrored partition with its published checksum and treats a difference as absent. A capture segment read before sealing is checked against its manifest entry as the object carries it, the stored SHA-256 and metadata under `lake-live/`, not the bucket's `manifest.jsonl`, which only the nightly upload writes. A mismatch halts the decision, and the read credential
+covers the segments' prefix too. The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. An absent or unreadable one stops the decision, the snapshot records each ledger's SHA-256, and a test expects a quarantined lookback partition to halt. The mirror is a copy, so losing it costs only a
+download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it. Each
+environment has an AWS account of its own, so that credential is the
+data worker's role in its environment's account, allowed by its own IAM
+policy and by one read-only statement in marketlake's bucket policy that
+names it, limited to the partitions, the segments, the manifest and the files `is_reader_file` names. The
+statement grants `s3:GetObject` and `s3:GetObjectVersion`, since the
+snapshot names each segment by its S3 version, and `s3:ListBucket`
+limited by prefix to those keys, without which S3 answers a missing
+partition with "access denied" rather than "no such blob". A [drill](halts-and-drills.md#drills-with-no-alarm) checks
+that, and the data worker reads "no such blob" as "data not ready".
+marketlake's bucket is encrypted with SSE-S3, so no KMS key is shared.
+
+### Rule 9: a replacement VM's supervisor reads the run's plan
+
+**A replacement VM's supervisor reads the run's plan, then runs.**
+The supervisor instance holding the plan's lease writes the plan, the
+same in every mode, and a VM that starts later reads it and runs the release it
+names, as rule 11 of `## Where it runs` says. Once a VM has read the plan, there is nothing to
+restore, because every worker finds
+its place by checking its own keys in S3. When a person clears an
+account's lease early with `ithildin lease clear` is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+### Rule 10: the release is one container image
+
+**The release is one container image, and each component runs in a
+container of its own.** This is this doc's proposal. One Docker image holds the whole runtime: one Python
+version, every dependency installed from `uv.lock` with its hashes
+enforced, and an entry point per worker. Each component runs as its own
+container from that image, and the supervisor as one more, so a
+backtest, CI and the VM run the same bytes.
+
+The supervisor only sends messages, as rule 7 of design.md's `## Processes and files` says, so it
+needs no power over containers. A systemd unit per container, under
+rule 7 of `## Where it runs`, starts the supervisor before the session and each worker once the supervisor has read the run's plan, restarts it when it exits or
+its heartbeat stops, and stops it after the close. No container holds the
+Docker socket or the system D-Bus, because either one is root on the
+host. Eventually each component could
+run on a machine of its own, or serverless. Results, heartbeats and the events that announce them all pass through S3, EventBridge and SQS, so moving a component changes only where its container runs. The queue is a port in `core`, with SQS as its adapter in shadow, paper and live and a named pipe fed by the memory-backed folder in a backtest and in CI, both held to one contract test suite.
+
+Five things follow.
+
+1. **The pin is an image digest.** It names the
+   digest of the image built from a commit. The plan records the digest, and
+   each worker halts with "release changed" if its own differs. A rollback, rule 6 of `## Where it runs`, moves the pin to an earlier digest, which takes the next session and which the
+   VM keeps pulled.
+2. **Each container is fenced off by itself.** Each runs as its own
+   non-root user, given by its unit, with every capability dropped, a
+   read-only root file system and no way to gain privileges, and none
+   runs privileged or shares the host's network, process ids or IPC.
+   Each mounts only its own worker's credential directory, read-only
+   from memory-backed storage, which the host's provisioning step
+   refreshes inside that directory before the credentials expire, so a
+   mounted directory sees each new file. Only execution's credential
+   reads the broker key, which is fetched into memory and never mounted.
+   Each worker's error output goes to a directory of its own, readable by
+   its own user alone. Each component's SQS queue refuses every send unless `aws:SourceArn` is one of that environment's own rule ARNs, so no person's role sends to any queue. A refusal written on `aws:PrincipalArn` instead would also refuse EventBridge, which delivers as a service. Each queue also refuses every receive, delete or visibility change but by that component's own role, and every purge, attribute change, delete or permission change but by the owner. An allow-list alone would not do, because inside one account a role's own grant is enough. An event only wakes a worker to check the keys it builds from the plan, as rule 3 of design.md's `## Processes and files` says.
+3. **The instance's credentials never reach a container.** The instance
+   is launched with IMDSv2 required and a token hop limit of 1, set
+   explicitly, because AWS's own
+   [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
+   give 2 for an AMI that requires IMDSv2, and 2 lets a container
+   through. A `DOCKER-USER` firewall rule also drops traffic from
+   Docker's bridges to the metadata service's addresses. [The drill of rule 3 of `## Where it runs`](halts-and-drills.md#drills-with-no-alarm)
+   tests this from inside each container.
+4. **A restart writes its own record.** Each unit's stop handler on the
+   host records why the container stopped, its count of restarts and
+   the end of its error output, and the restarted worker, or monitoring
+   if the worker does not come back, uploads that as its restart record.
+   Stopping the Docker daemon stops every container, so a daemon restart
+   is a failure of the run, which the host's `OnFailure` handler alarms
+   on, and the daemon is never upgraded during a session.
+5. **CI runs the same containers under their real unit files.** CI's second required check starts each worker's container and the supervisor's from its systemd unit, under the runner's own systemd and with the host's watchdog. So the restart path runs in what is tested, and the drills that crash, freeze or restart a worker run there as well as on the VM. A local backtest has no restart behaviour at all, so a crash fails it, and no second host that reimplements systemd gets written.
+
+CI builds the image on every pull request and runs the tests inside it,
+in the two required checks `### How CI runs them` describes. A branch of
+this repository
+can change a workflow, so no control on a pull request can promise that
+it never publishes. The control is provenance. Two jobs run only on a
+push to `main`, never on `pull_request_target`, `workflow_run` or a
+manual dispatch. A test job rebuilds the image and runs the tests on it,
+holding `id-token: write` for the test role alone, and neither
+`packages: write` nor `attestations: write`. A publish job, which needs
+the test job, rebuilds the image, publishes it to GitHub's container
+registry tagged with its commit and attests its build provenance. It
+runs no project code beyond the image build. Signing runs where no test code can reach the token, and the VM and the deploy job require that signer. Its image build installs every dependency from
+wheels only, with `uv`'s `--no-build`, so the job that signs runs no
+dependency's build code either. That job alone holds `packages: write` and `attestations: write`. It and each deploy, promotion, plan, apply and VM change job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
+`refs/heads/main`, and the deploy runbook on
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a
+digest that fails. Every action is pinned to a full commit hash. The
+base image is pinned by digest, a bot proposes its updates, and a
+scheduled job rescans the digest the owner pinned. A `.dockerignore`
+keeps `.git`, `.venv`, `.env*` and `.claude/` out, and no secret enters
+the build through an argument or an environment variable. The owner
+makes the package public once after its first publish, so the VM pulls
+by digest with no GitHub credential. The owner's merge deploys to shadow, a healthy shadow promotes to paper, and deploying to live stays the owner's by hand, as `### Four environments` says.
+
+The price is a Docker daemon on the VM, running as root, to patch outside
+sessions, a unit per container to keep in step, an image build on every
+pull request, and a verification step before each deploy. On Fargate the
+same containers become tasks, each with its own role, and the queue
+adapter stays SQS, as it already is on the VM.
+
+### Rule 11: an environment scales out to a cluster of three VMs
+
+**An environment scales out to a cluster of three VMs, and slice 1 runs
+one.** The containers spread across a
+cluster of three identical VMs in an
+EC2 Auto Scaling group, one in each of three availability zones. The cluster
+is the scale-out path, for a design load of 10 times slice 1's, while the MVP starts
+on a single VM, as design.md's
+`## Design for 10x, plan the rewrite before 100x, build at 1x` says. So slice 1 runs each
+environment's one VM in an Auto Scaling group of one, which replaces a
+lost VM without a person, and that VM runs every instance of its
+deployment, under the units of rule 7 of `## Where it runs`. Scaling out raises the group to three,
+one VM a zone, each running one supervisor instance and one instance of
+each component. The items below describe the cluster. The first, second,
+fourth, sixth and seventh hold for the group of one as well, and so does the third's test of whether a runner's VM has gone, and so does
+the third's self-fence, a VM stopping its own units when its supervisor
+instances find their own last heartbeat past the limit.
+
+1. **The group replaces a lost VM.** A VM that fails EC2's status checks
+   or stops is terminated and replaced from the group's launch template,
+   which holds the VM image and the provisioning step of rule 3 of `## Where it runs`, in the same
+   zone while it is up and in another when it is not. So a replacement
+   needs no person to start, though mid-session its execution comes up
+   halted and the session waits for the owner, as design.md's rule 4 of
    `### A release is checked where it runs, and nothing heals by hiding a
-   fault`: they have no start limit and use a growing delay. Execution's
-   also come up halted past the count and restart on any exit while a
-   session is open, a clean one included, so something always serves a
-   cancel. Capture never halts. `RestartSec` is long enough to ride
-   out a short restart of the Docker daemon, rather than spending the whole
-   burst in a second. Each unit's stop handler, `ExecStopPost`, runs on the
-   host and records why the container stopped, for the restart record
-   design.md's rule 5 describes. A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale,
-   and the worker's receive loop touches that file only while every busy handler is making progress,
-   because systemd's own watchdog cannot see a process inside a container.
-   An `OnFailure` handler on the host sends its alarm, with the reason, to the alert channel's push topic when any unit, or the Docker daemon itself, reaches its limit or
-   fails, so a failure no container can see still reaches the owner, and each one arrives. A timer
-   stops `ithildin.target` after the close, behind the supervisor's own stop,
-   and a unit stopped that way stays down until the next day's timer starts
-   the target. A restarted supervisor alarms that it restarted, and the
-   dead-man check covers systemd stopping too.
-8. **The runtime has a VM of its own, apart from marketlake's.** The
-   runtime runs on a VM separate from the one
-   marketlake's capture daemon runs on, and downloads the parts of the lake its
-   strategies need. So a run on the runtime cannot starve capture, and a
-   failure on one VM leaves the other running. At each decision the data
-   worker downloads what that decision's lookback names and the mirror lacks.
-   For the skeleton's one daily decision that is once a day at close−20: the
-   previous session's sealed partition and the day's segments up to the
-   decision time. A strategy deciding once a minute fetches each new segment
-   as its decision comes. The data worker downloads each
-   partition a decision's lookback names from marketlake's bucket into a local
-   mirror, checks it against the checksum in marketlake's manifest, and reads
-   it through the same bar query. A partition not yet in the bucket is "data not ready", which halts, and one that fails the check halts the decision. Each decision compares a mirrored partition with its published checksum and treats a difference as absent. A capture segment read before sealing is checked against its manifest entry as the object carries it, the stored SHA-256 and metadata under `lake-live/`, not the bucket's `manifest.jsonl`, which only the nightly upload writes. A mismatch halts the decision, and the read credential
-   covers the segments' prefix too. The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. An absent or unreadable one stops the decision, the snapshot records each ledger's SHA-256, and a test expects a quarantined lookback partition to halt. The mirror is a copy, so losing it costs only a
-   download. Each environment's credential for marketlake's bucket reads and never writes, and each gets a row in design.md's `## Configuration` when
-   [#5](https://github.com/l3a0/ithildin-runtime/issues/5) first reads it. Each
-   environment has an AWS account of its own, so that credential is the
-   data worker's role in its environment's account, allowed by its own IAM
-   policy and by one read-only statement in marketlake's bucket policy that
-   names it, limited to the partitions, the segments, the manifest and the files `is_reader_file` names. The
-   statement grants `s3:GetObject` and `s3:GetObjectVersion`, since the
-   snapshot names each segment by its S3 version, and `s3:ListBucket`
-   limited by prefix to those keys, without which S3 answers a missing
-   partition with "access denied" rather than "no such blob". A [drill](halts-and-drills.md#drills-with-no-alarm) checks
-   that, and the data worker reads "no such blob" as "data not ready".
-   marketlake's bucket is encrypted with SSE-S3, so no KMS key is shared.
-9. **A replacement VM's supervisor reads the run's plan, then runs.**
-   The supervisor instance holding the plan's lease writes the plan, the
-   same in every mode, and a VM that starts later reads it and runs the release it
-   names, as rule 11 says. Once a VM has read the plan, there is nothing to
-   restore, because every worker finds
-   its place by checking its own keys in S3. When a person clears an
-   account's lease early with `ithildin lease clear` is a runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
-10. **The release is one container image, and each component runs in a
-    container of its own.** This is this doc's proposal. One Docker image holds the whole runtime: one Python
-    version, every dependency installed from `uv.lock` with its hashes
-    enforced, and an entry point per worker. Each component runs as its own
-    container from that image, and the supervisor as one more, so a
-    backtest, CI and the VM run the same bytes.
+   fault` says.
+2. **A VM joins the run its plan names.** A VM that starts mid-session
+   runs the release the run's plan names, its supervisor reads the plan
+   as rule 9 of design.md's `## Processes and files` says, and its path unit then starts
+   its workers, which find their place by checking their keys in S3. A
+   VM that started on another release stops its units and starts them
+   again on the plan's, and writes the reason "release differs from
+   plan" to the restart record and to the host's direct alarm route.
+3. **A VM counts as gone when its supervisors go quiet.** Each supervisor
+   instance's heartbeat blob names its VM. Another VM counts a VM as gone
+   once no supervisor instance on it has written a heartbeat within a
+   limit longer than a supervisor's restart, or once the group reports it
+   terminated. Only then does an instance take over a send stage that
+   VM's handler was running. A VM whose supervisor instances find their
+   own last heartbeat older than that limit, as after a freeze, stops its
+   units, which start again as a fresh member, so a woken VM never
+   carries on work another VM took over. This self-fence writes the
+   reason "own heartbeat stale past limit" to the restart record and to
+   the host's direct alarm route. Execution's check of the
+   account's lease tag before every broker call stops its send even if
+   it tried.
+4. **The VMs share no disk.** Each keeps its own watchdog, heartbeat
+   files, local release file and lake mirror, so losing one costs its
+   mirror's download and nothing else.
+5. **A zone's outage takes only its own VM.** Each VM sits in a subnet of
+   its own zone, and nothing a VM needs to reach S3, SQS or the secret
+   store lives in only one zone.
+6. **A new VM image rolls out by instance refresh, outside sessions.**
+   A change to the VM itself, such as
+   an OS patch, a Docker upgrade or a new machine image in the launch
+   template, rolls out through the group's instance refresh. The apply
+   that changes the launch template starts it, and on paper and live that
+   apply waits for the owner. The rest of this item is this doc's proposal for
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The
+   refresh keeps at least 66 percent of the group healthy, so it
+   replaces one of the three VMs at a time and two stay up throughout.
+   In slice 1's group of one the refresh sets a maximum healthy
+   percentage of 200, so the group starts the new VM beside the old one
+   and terminates the old one only once the new one completes its hook.
+   It still runs only outside sessions. A launch lifecycle hook holds each new VM out of
+   service until its provisioning step has verified the pin's provenance
+   and pulled the image, and the read-only drill checks pass, and only
+   then does the VM complete the hook. The VM's role may complete the
+   hook on its own group and nothing else in Auto Scaling. A VM whose
+   checks fail never completes it, the hook's timeout abandons the VM,
+   the refresh fails, and the refresh's automatic rollback restores the
+   earlier launch template. A refresh first creates a marker with a
+   create-only write and refuses to go on while a session is open, meaning a run whose plan exists, whose stop does not and whose close has not passed by design.md's margin, by the
+   same two-sided check that keeps a drill and a session apart, so a
+   session never starts on a group with two VM images in it. A session
+   that finds the marker refuses to start, with the reason "session
+   refused: instance refresh open". The job that started the
+   refresh waits for the refresh's end event and then deletes the
+   marker. `ithildin` gets no command for it, so the next merge's apply
+   job clears a stale marker on shadow and paper, and on live a run
+   behind live's reviewer does, whose run records who started it. A VM image that passes its refresh and fails later rolls back by
+   a revert commit on `main`, approved like any VM change, which applies the previous launch template version, which starts a
+   refresh outside sessions under the same session check. An app
+   release never rolls out this way, because two releases in one run
+   write different bytes to one key, which the create-only rule turns
+   into a halt. A release changes only at a session's start, through the
+   pin and the promotion from shadow to paper to live.
+7. **Auto Scaling's own events reach the alert channel.** An
+   EventBridge rule in each environment's account matches Auto
+   Scaling's instance refresh failed, instance refresh rollback and
+   instance launch events, and sends each to the alert channel's push
+   topic, as this doc proposes for
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These
+   alarms start in AWS rather than on a VM, so they reach the owner
+   while no VM is up.
 
-    The supervisor only sends messages, as design.md's rule 7 says, so it
-    needs no power over containers. A systemd unit per container, under
-    rule 7, starts the supervisor before the session and each worker once the supervisor has read the run's plan, restarts it when it exits or
-    its heartbeat stops, and stops it after the close. No container holds the
-    Docker socket or the system D-Bus, because either one is root on the
-    host. Eventually each component could
-    run on a machine of its own, or serverless. Results, heartbeats and the events that announce them all pass through S3, EventBridge and SQS, so moving a component changes only where its container runs. The queue is a port in `core`, with SQS as its adapter in shadow, paper and live and a named pipe fed by the memory-backed folder in a backtest and in CI, both held to one contract test suite.
-
-    Five things follow.
-    1. **The pin is an image digest.** It names the
-       digest of the image built from a commit. The plan records the digest, and
-       each worker halts with "release changed" if its own differs. A rollback, rule 6, moves the pin to an earlier digest, which takes the next session and which the
-       VM keeps pulled.
-    2. **Each container is fenced off by itself.** Each runs as its own
-       non-root user, given by its unit, with every capability dropped, a
-       read-only root file system and no way to gain privileges, and none
-       runs privileged or shares the host's network, process ids or IPC.
-       Each mounts only its own worker's credential directory, read-only
-       from memory-backed storage, which the host's provisioning step
-       refreshes inside that directory before the credentials expire, so a
-       mounted directory sees each new file. Only execution's credential
-       reads the broker key, which is fetched into memory and never mounted.
-       Each worker's error output goes to a directory of its own, readable by
-       its own user alone. Each component's SQS queue refuses every send unless `aws:SourceArn` is one of that environment's own rule ARNs, so no person's role sends to any queue. A refusal written on `aws:PrincipalArn` instead would also refuse EventBridge, which delivers as a service. Each queue also refuses every receive, delete or visibility change but by that component's own role, and every purge, attribute change, delete or permission change but by the owner. An allow-list alone would not do, because inside one account a role's own grant is enough. An event only wakes a worker to check the keys it builds from the plan, as design.md's rule 3 says.
-    3. **The instance's credentials never reach a container.** The instance
-       is launched with IMDSv2 required and a token hop limit of 1, set
-       explicitly, because AWS's own
-       [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
-       give 2 for an AMI that requires IMDSv2, and 2 lets a container
-       through. A `DOCKER-USER` firewall rule also drops traffic from
-       Docker's bridges to the metadata service's addresses. [Rule 3's drill](halts-and-drills.md#drills-with-no-alarm)
-       tests this from inside each container.
-    4. **A restart writes its own record.** Each unit's stop handler on the
-       host records why the container stopped, its count of restarts and
-       the end of its error output, and the restarted worker, or monitoring
-       if the worker does not come back, uploads that as its restart record.
-       Stopping the Docker daemon stops every container, so a daemon restart
-       is a failure of the run, which the host's `OnFailure` handler alarms
-       on, and the daemon is never upgraded during a session.
-    5. **CI runs the same containers under their real unit files.** CI's second required check starts each worker's container and the supervisor's from its systemd unit, under the runner's own systemd and with the host's watchdog. So the restart path runs in what is tested, and the drills that crash, freeze or restart a worker run there as well as on the VM. A local backtest has no restart behaviour at all, so a crash fails it, and no second host that reimplements systemd gets written.
-
-    CI builds the image on every pull request and runs the tests inside it,
-    in the two required checks `### How CI runs them` describes. A branch of
-    this repository
-    can change a workflow, so no control on a pull request can promise that
-    it never publishes. The control is provenance. Two jobs run only on a
-    push to `main`, never on `pull_request_target`, `workflow_run` or a
-    manual dispatch. A test job rebuilds the image and runs the tests on it,
-    holding `id-token: write` for the test role alone, and neither
-    `packages: write` nor `attestations: write`. A publish job, which needs
-    the test job, rebuilds the image, publishes it to GitHub's container
-    registry tagged with its commit and attests its build provenance. It
-    runs no project code beyond the image build. Signing runs where no test code can reach the token, and the VM and the deploy job require that signer. Its image build installs every dependency from
-    wheels only, with `uv`'s `--no-build`, so the job that signs runs no
-    dependency's build code either. That job alone holds `packages: write` and `attestations: write`. It and each deploy, promotion, plan, apply and VM change job hold `id-token: write`, each of those in its own GitHub environment with no `packages: write`, and every other job reads only. Before a digest becomes a pin, the deploy job, and the owner for live, runs `gh attestation verify` on it, requiring the publish workflow on
-    `refs/heads/main`, and the deploy runbook on
-    [#11](https://github.com/l3a0/ithildin-runtime/issues/11) refuses a
-    digest that fails. Every action is pinned to a full commit hash. The
-    base image is pinned by digest, a bot proposes its updates, and a
-    scheduled job rescans the digest the owner pinned. A `.dockerignore`
-    keeps `.git`, `.venv`, `.env*` and `.claude/` out, and no secret enters
-    the build through an argument or an environment variable. The owner
-    makes the package public once after its first publish, so the VM pulls
-    by digest with no GitHub credential. The owner's merge deploys to shadow, a healthy shadow promotes to paper, and deploying to live stays the owner's by hand, as `### Four environments` says.
-
-    The price is a Docker daemon on the VM, running as root, to patch outside
-    sessions, a unit per container to keep in step, an image build on every
-    pull request, and a verification step before each deploy. On Fargate the
-    same containers become tasks, each with its own role, and the queue
-    adapter stays SQS, as it already is on the VM.
-11. **An environment scales out to a cluster of three VMs, and slice 1 runs
-    one.** The containers spread across a
-    cluster of three identical VMs in an
-    EC2 Auto Scaling group, one in each of three availability zones. The cluster
-    is the scale-out path, for a design load of 10 times slice 1's, while the MVP starts
-    on a single VM, as design.md's
-    `## Design for 10x, plan the rewrite before 100x, build at 1x` says. So slice 1 runs each
-    environment's one VM in an Auto Scaling group of one, which replaces a
-    lost VM without a person, and that VM runs every instance of its
-    deployment, under rule 7's units. Scaling out raises the group to three,
-    one VM a zone, each running one supervisor instance and one instance of
-    each component. The items below describe the cluster. The first, second,
-    fourth, sixth and seventh hold for the group of one as well, and so does the third's test of whether a runner's VM has gone, and so does
-    the third's self-fence, a VM stopping its own units when its supervisor
-    instances find their own last heartbeat past the limit.
-    1. **The group replaces a lost VM.** A VM that fails EC2's status checks
-       or stops is terminated and replaced from the group's launch template,
-       which holds the VM image and rule 3's provisioning step, in the same
-       zone while it is up and in another when it is not. So a replacement
-       needs no person to start, though mid-session its execution comes up
-       halted and the session waits for the owner, as design.md's rule 4 of
-       `### A release is checked where it runs, and nothing heals by hiding a
-       fault` says.
-    2. **A VM joins the run its plan names.** A VM that starts mid-session
-       runs the release the run's plan names, its supervisor reads the plan
-       as design.md's rule 9 says, and its path unit then starts
-       its workers, which find their place by checking their keys in S3. A
-       VM that started on another release stops its units and starts them
-       again on the plan's, and writes the reason "release differs from
-       plan" to the restart record and to the host's direct alarm route.
-    3. **A VM counts as gone when its supervisors go quiet.** Each supervisor
-       instance's heartbeat blob names its VM. Another VM counts a VM as gone
-       once no supervisor instance on it has written a heartbeat within a
-       limit longer than a supervisor's restart, or once the group reports it
-       terminated. Only then does an instance take over a send stage that
-       VM's handler was running. A VM whose supervisor instances find their
-       own last heartbeat older than that limit, as after a freeze, stops its
-       units, which start again as a fresh member, so a woken VM never
-       carries on work another VM took over. This self-fence writes the
-       reason "own heartbeat stale past limit" to the restart record and to
-       the host's direct alarm route. Execution's check of the
-       account's lease tag before every broker call stops its send even if
-       it tried.
-    4. **The VMs share no disk.** Each keeps its own watchdog, heartbeat
-       files, local release file and lake mirror, so losing one costs its
-       mirror's download and nothing else.
-    5. **A zone's outage takes only its own VM.** Each VM sits in a subnet of
-       its own zone, and nothing a VM needs to reach S3, SQS or the secret
-       store lives in only one zone.
-    6. **A new VM image rolls out by instance refresh, outside sessions.**
-       A change to the VM itself, such as
-       an OS patch, a Docker upgrade or a new machine image in the launch
-       template, rolls out through the group's instance refresh. The apply
-       that changes the launch template starts it, and on paper and live that
-       apply waits for the owner. The rest of this item is this doc's proposal for
-       [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The
-       refresh keeps at least 66 percent of the group healthy, so it
-       replaces one of the three VMs at a time and two stay up throughout.
-       In slice 1's group of one the refresh sets a maximum healthy
-       percentage of 200, so the group starts the new VM beside the old one
-       and terminates the old one only once the new one completes its hook.
-       It still runs only outside sessions. A launch lifecycle hook holds each new VM out of
-       service until its provisioning step has verified the pin's provenance
-       and pulled the image, and the read-only drill checks pass, and only
-       then does the VM complete the hook. The VM's role may complete the
-       hook on its own group and nothing else in Auto Scaling. A VM whose
-       checks fail never completes it, the hook's timeout abandons the VM,
-       the refresh fails, and the refresh's automatic rollback restores the
-       earlier launch template. A refresh first creates a marker with a
-       create-only write and refuses to go on while a session is open, meaning a run whose plan exists, whose stop does not and whose close has not passed by design.md's margin, by the
-       same two-sided check that keeps a drill and a session apart, so a
-       session never starts on a group with two VM images in it. A session
-       that finds the marker refuses to start, with the reason "session
-       refused: instance refresh open". The job that started the
-       refresh waits for the refresh's end event and then deletes the
-       marker. `ithildin` gets no command for it, so the next merge's apply
-       job clears a stale marker on shadow and paper, and on live a run
-       behind live's reviewer does, whose run records who started it. A VM image that passes its refresh and fails later rolls back by
-       a revert commit on `main`, approved like any VM change, which applies the previous launch template version, which starts a
-       refresh outside sessions under the same session check. An app
-       release never rolls out this way, because two releases in one run
-       write different bytes to one key, which the create-only rule turns
-       into a halt. A release changes only at a session's start, through the
-       pin and the promotion from shadow to paper to live.
-    7. **Auto Scaling's own events reach the alert channel.** An
-       EventBridge rule in each environment's account matches Auto
-       Scaling's instance refresh failed, instance refresh rollback and
-       instance launch events, and sends each to the alert channel's push
-       topic, as this doc proposes for
-       [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These
-       alarms start in AWS rather than on a VM, so they reach the owner
-       while no VM is up.
-
-    Slice 1's one VM runs 24 containers, about 2.4 GB at an estimated
-    100 MB each. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) measures that and sizes
-    the machine so measured use stays at or under half its memory, as rule 4
-    of design.md's `### Design ahead, and write down where the build stops`
-    asks, which at the estimate means an 8 GB machine such as `t4g.large`,
-    at roughly 7 cents an hour on demand, a figure to confirm against AWS's
-    price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Both machines this paragraph names are burstable: each earns CPU credits and spends them to run above a baseline, which [AWS's baseline table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html) puts at 30% of each vCPU for `t4g.large` and 20% for `t4g.small`. So the measure of load counts CPU beside memory, shadow shows whether the named machine holds, and the machine stays as named. Until load
-    calls for the cluster, losing the VM or its zone stops the environment
-    until the group starts a replacement, and mid-session until the owner
-    releases execution's halt. Scaling out costs three VMs per
-    environment, each running 8 containers on a 2 GB machine such as
-    `t4g.small`, at roughly 2 cents an hour, and subnets in three zones, and
-    it brings [five drills](halts-and-drills.md#drills-with-no-alarm), which run before anything relies on the
-    cluster. Each VM group has a written limit of deployments, and the next
-    split past it is an account-to-group mapping in configuration, as
-    design.md's `## Design for 10x, plan the rewrite before 100x, build at 1x` says.
+Slice 1's one VM runs 24 containers, about 2.4 GB at an estimated
+100 MB each. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) measures that and sizes
+the machine so measured use stays at or under half its memory, as rule 4
+of design.md's `### Design ahead, and write down where the build stops`
+asks, which at the estimate means an 8 GB machine such as `t4g.large`,
+at roughly 7 cents an hour on demand, a figure to confirm against AWS's
+price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Both machines this paragraph names are burstable: each earns CPU credits and spends them to run above a baseline, which [AWS's baseline table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html) puts at 30% of each vCPU for `t4g.large` and 20% for `t4g.small`. So the measure of load counts CPU beside memory, shadow shows whether the named machine holds, and the machine stays as named. Until load
+calls for the cluster, losing the VM or its zone stops the environment
+until the group starts a replacement, and mid-session until the owner
+releases execution's halt. Scaling out costs three VMs per
+environment, each running 8 containers on a 2 GB machine such as
+`t4g.small`, at roughly 2 cents an hour, and subnets in three zones, and
+it brings [five drills](halts-and-drills.md#drills-with-no-alarm), which run before anything relies on the
+cluster. Each VM group has a written limit of deployments, and the next
+split past it is an account-to-group mapping in configuration, as
+design.md's `## Design for 10x, plan the rewrite before 100x, build at 1x` says.
 
 ### Four environments
 
@@ -2859,7 +2901,7 @@ one wrong prefix reach every mode: a drill could pull the live switch,
 or a shadow run could read a broker key. With an environment each, no
 runtime role of one environment can reach another environment's resources.
 The owner's and the operator's credentials still span environments by
-design, one read-only grant lets the promotion job judge shadow, and rule 11
+design, one read-only grant lets the promotion job judge shadow, and rule 11 of `### Four environments`
 says which AWS account each environment lives in. What this subsection
 adds to the environments, accounts and pipeline that design.md's `## Decisions` settles is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11): the records a promotion reads, a pin's form and checks, each role's reach, the trust rules and the drills.
 
@@ -2888,11 +2930,25 @@ and shadow's simulated account never shares a machine with paper's broker
 key. The drills that try one environment's roles against another's run
 between every pair.
 
+```mermaid
+flowchart TB
+    merge["The owner's merge to main"] --> publish["Publishing job<br/>rebuilds, tests, publishes and attests the image"]
+    publish --> deploy["Deploy job<br/>writes the deploy record and shadow's pin"]
+    deploy --> shadow["Shadow runs the digest"]
+    shadow --> promote{"Promotion job after each session<br/>shadow healthy, paper clear,<br/>digest blocked in neither bucket?"}
+    promote -- "Yes" --> paper["Paper's pin and promotion record"]
+    promote -- "No" --> refuse["No promotion"]
+    paper --> live["Live's pin, moved only by the owner's hand"]
+    rollback["ithildin pin set<br/>an earlier digest, and a block record<br/>for the digest it replaced"] -. "the block record it reads" .-> promote
+```
+
+The diagram shows a digest's path from a merge to paper, so look for the rollback's block record, which is why the next promotion cannot undo a rollback.
+
 Eleven rules keep the environments apart.
 
 1. **A merge deploys to shadow, and a healthy shadow promotes to paper.** CI
    runs the tests on every pull request, with no AWS credential. When the
-   owner merges a pull request to `main`, rule 10's publishing job rebuilds
+   owner merges a pull request to `main`, the publishing job of rule 10 of `## Where it runs` rebuilds
    the image, runs the tests again with the store and queue suites' runs against the test bucket and queues, publishes the image and attests its provenance. A deploy
    job then confirms through GitHub's API that its commit belongs to a
    merged pull request, compares its commit with `main`'s head at run time and refuses otherwise, refuses a blocked digest, verifies the attestation, writes a deploy record for the digest, which only the deploy role can write, and writes the digest as shadow's pin. A promotion job runs on a schedule after each session,
@@ -2929,7 +2985,7 @@ Eleven rules keep the environments apart.
    storage, beside the bundle it verified, and every unit start and restart that session uses them, so a restart on the same VM reaches no outside service. A
    replacement VM that starts mid-session runs the release the run's
    plan names, so a pin moved since the session started waits for the next
-   session, as rule 11 says. A VM that finds its pin missing or
+   session, as rule 11 of `## Where it runs` says. A VM that finds its pin missing or
    unreadable fails its unit with "release pin missing or unreadable",
    which the host's `OnFailure` handler sends. A rollback is
    `ithildin pin set`, which writes an earlier digest the environment has
@@ -2938,13 +2994,12 @@ Eleven rules keep the environments apart.
 5. **Each role reaches only its own environment's resources, by ARN and
    path, never by tag.** Each bucket's policy refuses every principal but
    that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's
-   and the operator's, matched on `aws:PrincipalArn`, as `## Where it runs`
-   rule 5 says. A
+   and the operator's, matched on `aws:PrincipalArn`, as rule 5 of `## Where it runs` says. A
    deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
    may only put paper's pin and promotion record, read paper's switch, overrides, leases, results, halts, strategy halts, journal, releases and block records, and read shadow's plans, results, halts, heartbeats, block records and deploy records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
-   execution role by the parameter's full ARN, and rule 3's refusals cover
+   execution role by the parameter's full ARN, and the refusals of rule 3 of `## Where it runs` cover
    every broker path. Ping addresses sit apart, under
    `/ithildin/<environment>/heartbeat/`, and each environment holds only its checks' own UUID addresses, never the project's ping key. Each environment's worker roles
    trust only that environment's VM role, by its exact ARN. Every role but
@@ -2952,7 +3007,7 @@ Eleven rules keep the environments apart.
    VM change credential, and on shadow the apply credential, on the VM's role alone, for EC2, and
    `sts:AssumeRole` on another environment's roles. Every VM and volume
    carries a tag naming its environment, and every
-   principal but the owner's refuses to add, change or remove it. The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries rule 3's refusals. The tags and paths
+   principal but the owner's refuses to add, change or remove it. The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries the refusals of rule 3 of `## Where it runs`. The tags and paths
    are this doc's proposal.
 6. **GitHub's tokens reach a role only from one workflow file on `main`.**
    The repository's OIDC subject template includes `context`, which
@@ -2972,7 +3027,7 @@ Eleven rules keep the environments apart.
    with each alias in exactly one environment. The mapping from an alias to
    a broker account stays under the environment's parameter path, because
    the image and the repository are public. The provisioning step that
-   rule 3 runs at boot writes the environment's name, its credentials and
+   rule 3 of `## Where it runs` runs at boot writes the environment's name, its credentials and
    its ping addresses and the push topic's address to the VM's memory-backed storage, so the `OnFailure`
    handler needs no SSM call while the host fails, and none of them goes
    into a unit's settings, which `systemctl show` lets any user read. Only
@@ -3006,71 +3061,86 @@ Eleven rules keep the environments apart.
    and has heard the plan's own event. So a VM that never booted, or an event
    path dead since the open, alarms in the morning rather than after the
    cutoff.
-10. **Every drill that depends on an environment's own resources runs in
-    each environment that has them.** These are the dead-man check, the
-    host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. Shadow's and paper's drills run before paper's gate. Live's run
-    before the owner switches, in a live session started with the kill
-    switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch. Drills that end in a clear only the owner can make run once a month, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed by design.md's margin, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live. Drills that depend only on code
-    run once, in test. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
-    Each environment's infrastructure is applied by a plan of its own, a bad
-    apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule, and that environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
+#### Rule 10: what the drills check
 
-    Nothing deploys yet. When it does, the host's Unix users, unit files,
-    firewall rules and memory-backed directories come from the environment's
-    infrastructure plan, through the instance's launch configuration, and so
-    do its SQS queues and its EventBridge rules, generated from the routes. A
-    change to any of them is an apply, followed by that environment's
-    read-only checks. A release whose routes need a new rule waits for that
-    apply, because the session-start check refuses it. With detail this doc proposes
-    for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), each runtime account
-    holds three credentials.
-    1. **The plan credential** is assumed only by the infrastructure
-       workflow's plan job on `main`, through rule 6's OIDC trust, and reads
-       what a plan compares. It holds neither `ReadOnlyAccess` nor any
-       `ssm:Get*`, because merged code runs in that job, and either grant
-       would let it read the environment's secrets. A pull request's run
-       holds no AWS credential.
-    2. **The apply credential** is assumed only by the apply job on `main`,
-       in that environment's GitHub environment, once the owner's merge
-       reaches `main`, and on live once the owner approves. On paper and live
-       it holds no write on the launch template or the VM's role.
-    3. **The VM change credential**, on paper and live, is assumed only by a
-       job in the `paper-vm` or `live-vm` GitHub environment, behind the
-       owner's approval, and can change the launch template and pass the
-       VM's role. Reach to the VM counts as reach to that
-       environment's broker key, which is why it stays behind that approval
-       and why it is the one exception to design.md's rule 3 of `### A release
-       is checked where it runs, and nothing heals by hiding a fault`. On
-       shadow, which holds no broker key, the apply credential does this.
+**Every drill that depends on an environment's own resources runs in each environment that has them.** These are the dead-man check, the host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
-    Shadow's and paper's applies follow the owner's merge with no second
-    approval, a paper VM change apart, and live's is approved by the owner
-    alone.
-11. **Each environment has an AWS account of its own.** Test, shadow, paper and live each run in an AWS account of
-    their own, members of one organization, so an IAM mistake in one
-    environment's account cannot reach another's, and rule 10's drill checks
-    that every such try fails at the account's edge. The owner and the
-    operator reach each account through a role of their own in it. The
-    promotion job's one read of shadow's bucket crosses from paper's account
-    through a statement in shadow's bucket policy naming the promotion role,
-    limited to the records it judges. An organization trail records every
-    account's API calls in one place, for the drills that read CloudTrail,
-    and writes them to a bucket in a log-archive account of its own, so no
-    principal of a runtime account can change the record of its own
-    calls. Three kinds of existing account fail as the home of that bucket.
-    1. **A runtime account** fails because its own principals could change a record kept there.
-    2. **The management account** fails because it holds no workload, as rule 3 of `## Where it runs` says of an account that holds nothing else.
-    3. **The journal replica's account** fails because it holds a different kind of data, the records a replay of the book needs.
+#### Rule 10: when drills run
+
+Shadow's and paper's drills run before paper's gate. Live's run before the owner switches, in a live session started with the kill switch already set, and after the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch. Drills that end in a clear only the owner can make run once a month, and the rest run more often. A drill first creates a marker with a create-only write, then refuses to go on while live has a session open, meaning a run whose plan exists, whose stop does not and whose close has not passed by design.md's margin, or its account lease is held, and a session's supervisor first writes the plan, then halts the run while a drill's marker exists or until whatever the last drill left behind checks clean, so a drill and a session that start together never both pass. Each drill records when it last ran, and the job alarms when one is overdue. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper. Drills that depend only on code run once, in test.
+
+#### Rule 10: who runs them
+
+A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live.
+
+#### Rule 10: how an environment's infrastructure is applied
+
+Each environment's infrastructure is applied by a plan of its own, a bad
+apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule, and that environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
+
+Nothing deploys yet. When it does, the host's Unix users, unit files,
+firewall rules and memory-backed directories come from the environment's
+infrastructure plan, through the instance's launch configuration, and so
+do its SQS queues and its EventBridge rules, generated from the routes. A
+change to any of them is an apply, followed by that environment's
+read-only checks. A release whose routes need a new rule waits for that
+apply, because the session-start check refuses it. With detail this doc proposes
+for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), each runtime account
+holds three credentials.
+
+1. **The plan credential** is assumed only by the infrastructure
+   workflow's plan job on `main`, through the OIDC trust of rule 6 of `### Four environments`, and reads
+   what a plan compares. It holds neither `ReadOnlyAccess` nor any
+   `ssm:Get*`, because merged code runs in that job, and either grant
+   would let it read the environment's secrets. A pull request's run
+   holds no AWS credential.
+2. **The apply credential** is assumed only by the apply job on `main`,
+   in that environment's GitHub environment, once the owner's merge
+   reaches `main`, and on live once the owner approves. On paper and live
+   it holds no write on the launch template or the VM's role.
+3. **The VM change credential**, on paper and live, is assumed only by a
+   job in the `paper-vm` or `live-vm` GitHub environment, behind the
+   owner's approval, and can change the launch template and pass the
+   VM's role. Reach to the VM counts as reach to that
+   environment's broker key, which is why it stays behind that approval
+   and why it is the one exception to design.md's rule 3 of `### A release
+   is checked where it runs, and nothing heals by hiding a fault`. On
+   shadow, which holds no broker key, the apply credential does this.
+
+Shadow's and paper's applies follow the owner's merge with no second
+approval, a paper VM change apart, and live's is approved by the owner
+alone.
+
+#### Rule 11: each environment has an AWS account of its own
+
+**Each environment has an AWS account of its own.** Test, shadow, paper and live each run in an AWS account of
+their own, members of one organization, so an IAM mistake in one
+environment's account cannot reach another's, and the drill of rule 10 of `### Four environments` checks
+that every such try fails at the account's edge. The owner and the
+operator reach each account through a role of their own in it. The
+promotion job's one read of shadow's bucket crosses from paper's account
+through a statement in shadow's bucket policy naming the promotion role,
+limited to the records it judges. An organization trail records every
+account's API calls in one place, for the drills that read CloudTrail,
+and writes them to a bucket in a log-archive account of its own, so no
+principal of a runtime account can change the record of its own
+calls. Three kinds of existing account fail as the home of that bucket.
+
+1. **A runtime account** fails because its own principals could change a record kept there.
+2. **The management account** fails because it holds no workload, as rule 3 of `## Where it runs` says of an account that holds nothing else.
+3. **The journal replica's account** fails because it holds a different kind of data, the records a replay of the book needs.
+
+#### The price of four environments
 
 The price is one VM per running environment in slice 1, one for shadow
 and one for paper, each running three instances of each component and of
 the supervisor, a third once live exists, and three VMs per environment
-once load calls for rule 11's cluster. Live's rules and drills here are designed now and
+once load calls for the cluster of rule 11 of `## Where it runs`. Live's rules and drills here are designed now and
 built at the live gate, which slice 1 does not reach, and that deferral is
 written on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Each environment also needs its own bucket, roles, heartbeat check, pin, rules and queues. The deploy, promotion, plan, apply and VM change jobs hold
 AWS roles in a public repository's workflows, guarded by the trust rules of
-rule 6. And the drills run once per environment and grow with each pair.
+rule 6 of `### Four environments`. And the drills run once per environment and grow with each pair.
 
 ## Package layout and the import rule
 
@@ -3361,7 +3431,7 @@ in [design.md](design.md)'s `## Decisions`.
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Execution's recover stage reconciles positions and open orders before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that rule 2 of design.md's `### Faults are expected` lets an outside entry explain in shadow or on paper | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that rule 2 of design.md's `### Faults are expected, and the platform checks itself while it runs` lets an outside entry explain in shadow or on paper | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's method for changing a resting stamped order: a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A target portfolio names every instrument its strategy's book holds, with a flat leg as an explicit zero | Reading a missing instrument as zero | One more check, and a halt on a leg left out | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
