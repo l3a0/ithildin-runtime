@@ -138,7 +138,8 @@ tightened limit, on the ruling of 2026-11-04 on
 [PR #31](https://github.com/l3a0/ithildin-runtime/pull/31). Before the board
 sits on the Live step, the owner writes in the board's brief the largest fall in
 the account's value that the owner accepts, under rule 4 of the design doc's
-[A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear). The owner's
+[A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear), and decides before a second strategy's first order on a shared
+account whether a cap on the total worst loss joins the hard caps, under rule 5. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -359,7 +360,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds that a proposal on a live size shows its fall, refusals and cuts for the owner to read
   against the written figure and sets no limit, that a cut waits for none of it, that a share in a size or a limit on
   what can be lost names what it multiplies, and that the daily report shows each position's worst
-  loss and the account's fall from its peak, under rules 4 and 5 of the design doc's
+  loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -786,7 +787,7 @@ answer pointing at code or a test (L5568).
    horizon and universe? For a strategy that opens a sample, when does its bet lose,
    what would show it has broken, and how does each position end?
 4. What is the portfolio construction rule, what are its limits, and why? For a
-   strategy going to Live, what fall in the account does its size answer to?
+   strategy going to Live, which dated line records the fall its size answers to?
 5. Which cost model, and why? How does a backtest fill?
 6. How are orders executed, passively or aggressively?
 7. What does the risk model cover, what are its limits, and when would a human
