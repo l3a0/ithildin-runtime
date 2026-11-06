@@ -59,6 +59,12 @@ broker on its own, off the path that sends orders.
 - [The loop and its adapters](#the-loop-and-its-adapters)
 - [Data flow](#data-flow)
 - [One trading day](#one-trading-day)
+  - [The day at a glance](#the-day-at-a-glance)
+  - [Phase 1: read the data and recover](#phase-1-read-the-data-and-recover)
+  - [Phase 2: decide](#phase-2-decide)
+  - [Phase 3: send](#phase-3-send)
+  - [After the close](#after-the-close)
+  - [If an instance dies in the middle of a send](#if-an-instance-dies-in-the-middle-of-a-send)
 - [When something is wrong](#when-something-is-wrong)
 - [What a person runs](#what-a-person-runs)
 - [Types and interfaces](#types-and-interfaces)
@@ -368,7 +374,7 @@ has already acted. The read has five parts.
    The diagram shows one segment becoming quote rows. Look for which steps are
    the runtime's. The SHA-256 match is the check rule 8 of `## Where it runs`
    requires, which reads the stored SHA-256 and metadata that carry the segment's manifest entry under `lake-live/`. The reader comes from marketlake's package, a
-   dependency at a pinned commit, and [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what it does when a segment is absent or fails its SHA-256, so the data worker can halt on it.
+   dependency at a pinned commit, and [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what it does when a segment is absent or fails its SHA-256, so the data worker can halt on it. The reader reads only the root the data worker checked, and the snapshot's list comes from the worker's own download.
 2. **What is checked before deciding.** The data worker runs its own minimum
    checks before anything decides. A missing or stale quote at the decision time
    halts the decision, a segment whose SHA-256 does not match its manifest entry halts it too, and a price spike is flagged in the snapshot, and the send stage's flag test halts the decision when the instrument is traded or held, with no order needed.
@@ -387,7 +393,7 @@ has already acted. The read has five parts.
 
    The diagram shows the choice. Look for the replay: a backtest that replays a
    close−20 decision reads the sealed rows up to that decision's time. Those are
-   the rows the live decision read, unless part 4's comparison found a
+   the rows the live decision read, unless a row's segment landed after the decision, or part 4's comparison found a
    difference. On such a day a replay shows the sealed rows rather than what the
    decision read, and the journal holds the difference. Test 2 covers both reads, with a sealed stretch for the replay and
    a fixture day left unsealed for the read of segments. A decision after the
@@ -400,7 +406,7 @@ has already acted. The read has five parts.
    holds every `Quote` field and each bar's `vintage_id`, as `Snapshot` does in memory, so
    monitoring reads the used quote from the snapshot. A segment that is gone
    changes nothing, and the comparison holds for as long as the snapshot does.
-   The data worker's role, in the next session's run, reads the sealed row and stores it, so data stays the one reader of marketlake, and monitoring's role compares, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Each provisional snapshot gets a stored comparison result within a written bound after the close. A missing result, or a sealed day that never arrives, pages and stops no decision.
+   The data worker's role, in the next session's run, reads the sealed row and stores it, so data stays the one reader of marketlake, and monitoring's role compares, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Each provisional snapshot gets a stored comparison result within a written bound after the close. A missing result, or a sealed day that never arrives, pages and stops no decision. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that the comparison also takes the newest sealed row at or before the decision time, so a row whose segment landed after the decision shows as a difference.
 
    **Table:** What monitoring does with each thing it finds after the seal
 
@@ -458,7 +464,7 @@ the failure the check exists for. The heartbeat service is healthchecks.io, in t
 project marketlake already runs, and its ntfy push and email integrations are
 the alert channel.
 
-A ping says only that a decision finished. A job that runs apart from a decision, such as the daily report, gets no check of its own. Monitoring reads the job's age and pages through the alert channel, as rule 3 of design.md's `### Faults are expected` says.
+A ping says only that a decision finished. The jobs rule 3 of design.md's `### Faults are expected` lists, such as the daily report, run apart from a decision and get no check of their own. Monitoring reads each job's age and pages through the alert channel, as that rule says.
 
 ## The loop and its adapters
 
@@ -629,7 +635,7 @@ A module that asks has broken the shape, because its backtest would then test a
 branch the paper run never takes.
 
 The broker adapter also decides which account a worker acts for. A worker's
-lease, a blob that names the one process allowed to act for that account, and
+lease, a blob that names the one instance allowed to change that account while it holds the lease, and
 its kill switch both belong to that account. So a backtest's simulated account
 never shares the paper account's lease.
 
@@ -718,11 +724,13 @@ flowchart LR
     brokerx -->|"6 order states, fills, positions"| exec
     exec -->|"7.1 journal entries"| d3
     exec -->|"7.2 account file, book"| d1
+    d3 -->|"7.3 replay"| exec
     d1 -->|"8.1 snapshot, book"| models
     models -->|"8.2 forecast, constraints,<br/>costs, target"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3
+    exec -->|"9.4 lease taken and deleted"| d5
     exec -->|"10 approved orders"| brokerx
     brokerx -->|"11 acks and fills"| exec
     exec -->|"12 send outcome"| d1
@@ -737,20 +745,24 @@ flowchart LR
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
 ```
 
+Flows outside one decision, such as pin writes and a failure's direct alarm route, are drawn in [Where it runs](#where-it-runs).
+
 **Table:** Each flow that crosses a trust boundary
 
 | Flow | Crosses | What could go wrong | What protects it |
 | --- | --- | --- | --- |
 | 0 image | GitHub into the VM | A forged or altered release runs | The VM checks the pinned digest and its attestation, and refuses otherwise |
-| 1, 4, 7.1, 7.2, 8.2, 9.3, 12 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
+| 1, 4, 7.1, 7.2, 8.2, 9.3, 12, 14.1 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
+| 9.4 lease | The VM into storage | A holder that lost the lease rewrites or deletes it | Only execution's role rewrites or deletes an account's lease, each only with the tag S3 last returned to its holder, so a stale holder's write is refused |
+| 7.3, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
 | 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
 | 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
-| 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses, and the dead-man check pages when pings stop |
-| 15.1, 15.2 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys, and CloudTrail records each write |
+| 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and the push topic's, and the dead-man check pages when pings stop. No tracked file holds the topic's address, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it |
+| 15.1, 15.2 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys, and CloudTrail records each write |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
@@ -761,38 +773,41 @@ The security master is the table that maps each ticker to the platform's own ins
 | Rule | What it prevents | Flows |
 | --- | --- | --- |
 | Only execution talks to the broker | An order sent around the gate, or a fill nobody journaled entering the book | 6, 10, 11 |
-| The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 9.3 |
+| The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 7.3, 9.3 |
 | Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
 
 #### Only execution talks to the broker
 
-An order sent from anywhere else would escape the gate. So only execution talks to the broker. Several execution instances run, and any of them may send, but only while it holds the account's lease, so one sends at a time. The broker's acks, fills, positions and open orders come back the same way. Monitoring reconciles against the account file execution wrote rather than asking the broker itself.
+An order sent from anywhere else would escape the gate. So only execution talks to the broker. Several execution instances run, and any of them may send, but only while it holds the account's lease, so one sends at a time. The broker's acks, fills, positions, open orders and cash come back the same way. Monitoring reconciles against the account file execution wrote rather than asking the broker itself.
 
 Every order carries the platform's stamp, a client order id naming its strategy and decision. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
 
 ```mermaid
 flowchart TD
-    fill["A fill or order reported by the broker"] --> sent{"Did the journal send this order,<br/>and is the fill within its quantity?"}
+    fill["A fill or order reported by the broker"] --> sent{"Did the journal send this order, is it no late order<br/>under an older lease, and is the fill within its quantity?"}
     sent -- "Yes" --> book["Journal the fill into the strategy's book"]
     sent -- "No" --> halt["Journal it as received, and halt"]
 ```
 
-A broker's liquidation takes the "No" path too. Without the halt, a fill nobody journaled would enter the book and agree with the broker.
+A broker's liquidation and a late order under an older lease take the "No" path too. Without the halt, a fill nobody journaled would enter the book and agree with the broker.
 
 #### The current book comes from the journal
 
 The book is the platform's own record of what it holds and what orders are open, so a broker's answer never replaces it quietly. Execution's recover stage replays it from the journal.
 
-The broker's positions and open orders are used in three places only:
+The broker's positions, open orders and cash are used in these places only:
 
 1. The recover stage's reconcile.
 2. Monitoring's second check.
 3. The sync that opens the send stage.
+4. A takeover's read of the broker's order list, which it stores.
+5. The kill switch's read of open orders.
+6. A sort's read of open orders.
 
 ```mermaid
 flowchart LR
     journal[("Journal")] -->|"replay"| book["The book"]
-    broker(["Broker's positions<br/>and open orders"])
+    broker(["Broker's positions,<br/>open orders and cash"])
     book --- cmp{"Do they agree?"}
     broker --- cmp
     cmp -- "No, at an execution step" --> halt["Halt trading"]
@@ -880,8 +895,8 @@ sequenceDiagram
     X->>B: orders in doubt, fills since the last decision
     B-->>X: fills since the last decision
     X->>J: each fill journaled
-    X->>B: positions and open orders
-    B-->>X: positions and open orders
+    X->>B: positions, open orders and cash
+    B-->>X: positions, open orders and cash
     X->>F: account file stored, naming the journal entry it replayed through
     X->>X: book from the journal agrees with the broker?
     X->>F: reconciled book and execution's recover result
@@ -903,7 +918,7 @@ sequenceDiagram
     Note over X,J: Phase 3, send, in whichever execution instance receives the event
     F-->>X: an event: portfolio construction's result
     X->>F: a create-only claim on the send stage, naming its handler
-    X->>B: positions, open orders and fills since recover
+    X->>B: positions, open orders, cash and fills since recover
     B-->>X: the broker's state now
     X->>J: any new fill journaled, under its fill id
     X->>X: book from the journal agrees with the broker?
@@ -956,11 +971,13 @@ sequenceDiagram
     X->>F: send outcome and execution's send result
     F-->>M: an event: execution's result
     M->>F: the decision's report and monitoring's report result
+    M->>M: the age of the jobs that run apart from a decision read, and a page on one past its bound
     M->>M: ping the heartbeat service
     Note over V,J: After the close, once every decision has a result
     X->>B: the day's fills
     B-->>X: the day's fills
     X->>J: each fill journaled
+    X->>X: what it read sorted, and the book reconciled
     X->>F: a result naming each order the journal holds as open as settled or still open
     V->>F: that result read, and only then the run's stop stored
     Note over V,J: A read that fails or misses a written time pages the owner, and no stop is stored
@@ -974,47 +991,151 @@ cancels a stranded leg and serves the kill switch, and design.md's rule 5 of
 `### Every change can be undone or switched off` says what else a failed check
 still serves.
 
-The phases in order.
+### The day at a glance
 
-1. **Read the data and recover.** Data reads the bars the decision's lookback
-   needs from marketlake, about 40 sessions of each ETF, and records which ones
-   it read before any model sees them. Execution waits for that snapshot, so
-   it reads the broker at the decision's own time. It settles any order a crash left in
-   doubt, journals the fills that arrived since the last decision, and writes
-   the strategies' books it replays from the journal beside the broker's positions and open orders. Execution compares them, position by position and order by order, and each stamped order's filled quantity against the journal's, and halts on a difference. Monitoring repeats the same check for its report, with nothing waiting on it. A run that starts on a book the broker disagrees with would trade
-   the wrong difference.
-2. **Decide.** The alpha, risk and cost models run at once, each on the blobs
-   it needs. The risk model sets the constraints, meaning the limits for this
-   decision. Portfolio construction builds the target portfolio within them.
-3. **Send.**
+Every decision runs the same three phases, and one step after the close ends the day. Phase 1 learns what is true at the broker, phase 2 decides what should be true, and phase 3 closes the gap.
 
-   1. Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler, so an instance that finds a claim it did not write never plans for that decision.
-   2. Since every step fetches and syncs before changing state, it first fetches the broker's positions, open orders and fills again, journals any fill that arrived since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date, and any order or fill the journal did not send is journaled as received and halts for a person.
-   3. Only then does it journal the target whole, with the planned orders and their client order ids, the journal entry it synced through, a hash of the broker state it fetched and the instance running the send stage, in one stored entry. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out.
-   4. Its order manager turns the target minus that strategy's own positions and open orders into orders, cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled. Each order goes through the order path alone.
-   5. The order path takes the account's lease, checks the kill switch again, journals the intent, replays the book from the journal so the risk gate sees every order already approved, asks the gate, journals the approval and journals that it is sending.
-   6. Right before the broker call it checks six things:
-      1. the kill switch is absent,
-      2. the order's strategy is not switched off,
-      3. no halt of the run or of the account is stored and the plan's lease says the run is running,
-      4. its own send result is still empty,
-      5. the account's lease still carries its tag,
-      6. and the market-on-close cutoff has not passed.
+```mermaid
+flowchart LR
+    p1["Phase 1<br/>read the data<br/>and recover"] --> p2["Phase 2<br/>decide"]
+    p2 --> p3["Phase 3<br/>send"]
+    p3 --> p4["After the close<br/>read the day's fills,<br/>store the run's stop"]
+    p3 -. "next decision of the day" .-> p1
+```
 
-      Only then does it send. Any check that fails journals the order `Abandoned` and halts the decision, except a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending.
-   7. The order path deletes the lease once the ack, or the order's doubt, is journaled, so another instance's cancels wait for at most one order.
-   8. After the loop it looks up each leg, and cancels any accepted leg whose partner was rejected or never sent, and any leg whose plan cancel was stopped after its partner's was confirmed.
-   9. Monitoring writes the decision's report and pings the heartbeat service last, so a decision that dies or hangs never pings.
+**Table:** Who acts in each phase, what it produces and what stops it
 
-The journal entries carry the weight of hard limit 4, which says every order is
-journaled before it is sent. If the execution worker dies after "sending
-journaled" and before the ack, the journal holds an order in doubt. The next
-execution worker asks the broker for it by its client order id, an id the
-platform chooses and sends with the order, rather than sending it again.
-Alpaca, the broker for paper and for live, accepts a client order id and can look an order up by it. Its [order
-reference](https://docs.alpaca.markets/reference/postorder) does not say whether it refuses a second order with the same id, so
-nothing here relies on that, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) tests it on the paper account as
-a second line of defence.
+| Phase | Who acts | What it produces | What stops it |
+| --- | --- | --- | --- |
+| 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
+| 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on |
+| 3. Send | Execution, then monitoring | Orders at the broker, the decision's report and the heartbeat's ping | A failed check, a refused order or an order in doubt |
+| After the close | Execution, then the supervisor | A result on each open order, then the run's stop | A read that fails or runs late, which pages the owner |
+
+### Phase 1: read the data and recover
+
+A run that starts on a book the broker disagrees with would trade the wrong difference. So this phase ends in a comparison, and a difference halts.
+
+1. **Data reads the bars.** It reads what the decision's lookback needs from marketlake, about 40 sessions of each ETF, and records which ones it read before any model sees them.
+2. **Execution waits for that snapshot,** so it reads the broker at the decision's own time.
+3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision.
+4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
+5. **Execution compares them,** position by position, order by order and cash against cash, and each stamped order's filled quantity against the journal's. A difference halts, unless a listed broker record explains it.
+6. **Monitoring repeats the same check** for its report, and nothing waits on it.
+
+### Phase 2: decide
+
+The alpha, risk and cost models run at once, each on the blobs it needs. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
+
+```mermaid
+flowchart TB
+    data["Data's result"] --> alpha["Alpha model<br/>forecast, hedge ratio, z-score"]
+    data --> risk["Risk model<br/>constraints"]
+    data --> cost["Cost model<br/>cost schedule"]
+    alpha --> pc["Portfolio construction<br/>target portfolio"]
+    risk --> pc
+    cost --> pc
+    recover["Execution's<br/>recover result"] --> risk
+    recover --> pc
+```
+
+### Phase 3: send
+
+This phase is the only one that touches the broker with an order, so it has the most checks. It has three parts: prepare once, send each order, and finish once.
+
+```mermaid
+flowchart TB
+    subgraph prepare["Prepare, once per decision"]
+        direction LR
+        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>stop and flag tests"] --> a4["Step 4<br/>plan, journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
+    end
+    subgraph each["Send, once per order"]
+        direction LR
+        b1["Steps 1 and 2<br/>lease, switch, cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, gate"] --> b3["Step 8<br/>the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal, free the lease"]
+    end
+    subgraph finish["Finish, once per decision"]
+        direction LR
+        c1["Step 1<br/>check every leg"] --> c2["Step 2<br/>store the outcome"] --> c3["Step 3<br/>report, then ping"]
+    end
+    prepare --> each
+    each --> finish
+```
+
+#### Prepare, once per decision
+
+1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
+2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders and fills again, journals any fill that arrived since phase 1, and checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
+3. **Run the stop and flag tests.** Both run with no order needed, so a decision that plans no order still runs them, and the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
+4. **Plan the orders and journal the target whole.** Its order manager turns the target minus that strategy's own positions and open orders into planned orders. One stored entry holds the target, the planned orders and their client order ids, the journal entry it synced through, a hash of the broker state it fetched, and the instance running the send stage. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out.
+5. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
+6. **Work through the plan.** The order manager cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
+
+#### Send, once per order
+
+Each order goes through the order path alone, and the journal gains a line before the broker hears anything.
+
+1. Take the account's lease.
+2. Check the kill switch and the cutoff again.
+3. Journal the intent.
+4. Replay the book from the journal, so the risk gate sees every order already approved.
+5. Ask the risk gate.
+6. Journal the approval.
+7. Journal that it is sending.
+8. Make the six checks in the table below.
+9. Send, with the order's client order id.
+10. Journal the ack, or the order's doubt.
+11. Delete the lease, so another instance's cancels wait for at most one order.
+
+**Table:** The six checks made right before the broker call
+
+| Check | What it reads | Passes when |
+| --- | --- | --- |
+| 1 | The kill switch | It is absent |
+| 2 | The order's strategy | It is not switched off |
+| 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running |
+| 4 | This instance's own send result | It is still empty |
+| 5 | The account's lease | It still carries this instance's tag |
+| 6 | The market-on-close cutoff | It has not passed |
+
+Any check that fails journals the order `Abandoned` and halts the decision. The one exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending.
+
+A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and delete the lease.
+
+#### Finish, once per decision
+
+1. **Check every leg.** After the loop execution looks up each leg. It cancels any accepted leg whose partner was rejected or never sent, and any leg whose plan cancel was stopped after its partner's was confirmed.
+2. **Store the send's outcome** and execution's send result.
+3. **Report, then ping.** Monitoring writes the decision's report. It reads the age of the jobs that run apart from a decision, and pages on one past its bound, as rule 3 of design.md's `### Faults are expected` says. It pings the heartbeat service last, so a decision that dies or hangs never pings.
+
+### After the close
+
+Once every decision has a result, the day ends in three steps, which this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+1. Execution reads the day's fills, sorts what it finds as design.md's `Sorting what the broker reports` says, journals the fills and reconciles.
+2. Execution stores a result naming each order the journal holds as open as settled or still open.
+3. The supervisor reads that result, and only then stores the run's stop.
+
+A read that fails or misses a written time pages the owner, and no stop is stored, as [The life of a run](#the-life-of-a-run) says.
+
+### If an instance dies in the middle of a send
+
+The journal entries carry the weight of hard limit 4, which says every order is journaled before it is sent. An order's `sending` entry is what makes a crash safe, because it tells the next instance that an order may have left.
+
+```mermaid
+sequenceDiagram
+    participant X1 as Execution instance
+    participant J as Journal
+    participant X2 as Another instance
+    participant B as Broker
+    X1->>J: sending journaled
+    Note over X1: dies before the ack
+    X2->>J: reads an order in doubt
+    X2->>B: lookup by client order id
+    B-->>X2: what it holds for that id
+    Note over X2,B: it asks, and never sends it again
+```
+
+A client order id is an id the platform chooses and sends with the order. Alpaca, the broker for paper and for live, accepts one and can look an order up by it. Its [order reference](https://docs.alpaca.markets/reference/postorder) does not say whether it refuses a second order with the same id, so nothing here relies on that, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) tests it on the paper account as a second line of defence.
 
 ## When something is wrong
 
@@ -1161,7 +1282,7 @@ sequenceDiagram
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
 go through. Nothing resizes the order to fit either, since an order cut down
-to pass the risk gate is a trade nobody chose. Clearing the halt sends nothing more for that decision. If the refused order is a pair's second leg and the first is already accepted, execution cancels the accepted leg before the cancel cutoff, as for any pair left with one leg. The next decision plans again from the book. On a shadow or paper account, holding
+to pass the risk gate is a trade nobody chose. Clearing the halt sends nothing more for that decision. If the refused order is a pair's second leg and the first is already accepted, execution cancels the accepted leg, as for any pair left with one leg. The cancel aims to land before the cancel cutoff, and one that goes late is still sent and its refusal journaled. The next decision plans again from the book. On a shadow or paper account, holding
 the account after a refusal until a person clears it waits for a strategy
 that decides minutes apart, as design.md's
 `### Strategies, schedules and decisions` says. A refusal on live holds until the owner clears it.
@@ -1202,8 +1323,8 @@ sequenceDiagram
 ```
 
 Execution's recover stage compares the broker with the sum of the strategies' books, and monitoring compares them again for its report. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person, apart from the split or assignment that rule 2 of design.md's `### Faults are expected, and the platform checks itself while it runs` lets an outside entry explain in shadow or on paper. Both compare open
-orders as well as positions, so an order the broker holds and the journal
-marks lost or abandoned halts the day it appears, not the day it fills. Reconciliation lives on
+orders and cash as well as positions, so an order the broker holds and the journal
+marks lost or abandoned halts the day it appears, not the day it fills. A broker record of a type on the closed list is journaled with no halt, as rule 2 of design.md's `### Faults are expected, and the platform checks itself while it runs` says. Reconciliation lives on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The charter has the
 trading systems engineer write it, so that role reviews it there.
 
@@ -1296,7 +1417,7 @@ is down.
 
 The tool writes the identity AWS reports for the caller into each entry,
 but S3 does not stop a caller writing any name it likes. So CloudTrail
-records every write to the journal, the switch, the leases, the overrides, `accounts/<account>/releases/`, the halt folders, the hard caps and `release/`, in a bucket only the owner can change, and monitoring alarms when
+records every write to the journal, the switch, `stop.json`, each strategy's `off.json`, the leases, the overrides, `accounts/<account>/releases/`, the halt folders, the hard caps and `release/`, in a bucket only the owner can change, and monitoring alarms when
 an entry's named identity differs from the one CloudTrail recorded. Every
 principal but the owner refuses `cloudtrail:StopLogging`, `DeleteTrail`,
 `UpdateTrail` and `PutEventSelectors`, and [the drill on CloudTrail](halts-and-drills.md#drills-with-no-alarm) tries each.
@@ -1332,7 +1453,7 @@ Reading commands change nothing. A halt's id is the key of the result that holds
    is set, which strategies are switched off, whether a loss stop has fired, the last sort's outcome for each strategy switched off, who holds each lease, every open halt with its reason and age,
    the latest decision's result for each stage, each worker's and the
    supervisor's last heartbeat and restart count, any pair leg left open
-   since the last close, and when the heartbeat service last heard a ping. It also shows each environment's pin, the digest each recent run used, each level of load reached, with its date and the issue filed for it, or "no issue filed", and the next gate's alarm rows with no passing record.
+   since the last close, and when the heartbeat service last heard a ping. It also shows each environment's pin, the digest each recent run used, each level of load reached, with its date and the issue filed for it, or "no issue filed", and the next gate's rows with no passing record.
 2. **`ithildin explain <halt>`** shows one halt: its reason, the halt it
    passed on, the blobs it was made from, and for a restart, the exit
    status and the end of the error output.
@@ -1413,7 +1534,7 @@ is not enough.
 The price is a tool to build and test, a drill for each writing command on
 a paper account before the paper gate, which the runbook on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11) adds to
-[Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), CloudTrail's data events on eight prefixes,
+[Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), CloudTrail's data events on ten prefixes,
 and two credentials outside the VM, the owner's behind a hardware key and the
 operator's a short-lived principal of its own, neither with a long-lived secret
 in a file.
@@ -1828,11 +1949,11 @@ Eight choices in the two diagrams for a reviewer to check.
    takes the last decision's time less a stated overlap, and the journal
    compares each fill with any it holds under that id and correction identifier, skips only an identical repeat, and journals a differing one and halts, so a fill the broker posts late is
    still fetched. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees
-   the SDK's types. `Journal.append` returns a `JournalAck` naming the entry's number and hash, and the private calls that submit an order or send a cancel take that acknowledgement alone, as rule 1 of design.md's `### The code holds its own rules, and every check runs in production` says. Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion, and `OrderPath` journals those bytes before it uses the value. Each call ends accepted, rejected, provably not sent, unknown or not found, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form. One reconciliation function in `core`,
+   the SDK's types. `Journal.append` returns a `JournalAck` naming the entry's number and hash, and the private calls that submit an order or send a cancel take that acknowledgement alone, as rule 1 of design.md's `### The code holds its own rules, and every check runs in production` says. Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion, and `OrderPath` journals those bytes, or, for a send-stage read, the hash of the output file that holds them, before it uses the value. Each call ends accepted, rejected, provably not sent, unknown or not found, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form. One reconciliation function in `core`,
    `core.reconcile(book, broker_account)`, lists the differences, and
    execution's recover stage, its send-stage sync and monitoring's reconcile stage all call it. Each
    decides only what to do with them: execution journals its own outcomes
-   and halts on the rest, and monitoring alarms.
+   and halts on the rest, and monitoring alarms. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how `core.reconcile` receives a takeover's stored order list, so it can flag a late order.
    Alpaca's trading API [allows 200 requests a minute](https://alpaca.markets/support/usage-limit-api-calls) for each account, a
    figure [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on the paper account
    before anything relies on it. The budget that follows is this doc's
@@ -1854,7 +1975,7 @@ Eight choices in the two diagrams for a reviewer to check.
    leaves the order in doubt, settled by lookup like any other. On a cancel
    it is a definite answer, which the contract suite proves, so it alarms, and execution retries the cancel inside the reserve.
 5. **The risk gate holds no state of its own.** `check` takes the order, the
-   book, the snapshot, the run's `Constraints` and a `GateInputs`, which holds s, m, the vintage hash, V and the stop blob's state. The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `OrderPath` reads the stop blob and hands that state to the gate. `send` replays the book from
+   book, the snapshot, the run's `Constraints` and a `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value and the stop blob's state. The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `OrderPath` reads the stop blob and hands that state to the gate. `send` replays the book from
    the journal just before each check, so the gate counts every order already
    approved or sending, including those of an earlier attempt, each at its
    worst case for each limit. Three of the seven limits need the snapshot's
@@ -1871,7 +1992,7 @@ Eight choices in the two diagrams for a reviewer to check.
    tighten a limit and never loosen it. This is a proposal for
    [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
 6. **The book comes from the journal.** `Journal.replay()` applies every entry
-   in order to build a `Book`. The broker's positions and open orders are read
+   in order to build a `Book`. The broker's positions, open orders and cash are read
    only to reconcile. `Journal` itself lives in `core`, because execution, monitoring, the supervisor and the `ithildin` tool all append to it.
 7. **The cost model writes a schedule rather than answering calls.**
    Portfolio construction priced each candidate trade by calling the cost
@@ -1920,7 +2041,7 @@ stateDiagram-v2
     Intended --> Abandoned: switch set or cutoff passed before the gate, or a restart
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: sending journaled
-    Sending --> Acknowledged: broker acks
+    Sending --> Acknowledged: broker acks, unless it is a late order, which halts
     Sending --> InDoubt: no answer, a crash, or a refusal saying the broker already holds the id
     InDoubt --> Acknowledged: lookup by id finds it, unless it is a late order under an older lease, which halts first
     InDoubt --> Lost: still not found once its time in force has run out
@@ -1964,7 +2085,7 @@ from the book the same way. A lookup that
 finds nothing keeps the order `InDoubt`, counted at its worst case, until its
 time in force has run out, because a request sent just before a crash can
 still arrive after the lookup. An open order or a fill on an order the journal holds as `Lost`
-or `Abandoned` is journaled as received as unmatched and halts. A cancel the broker reports as pending leaves the order
+or `Abandoned` is journaled as received as unmatched and halts, and so is a late order under an older lease. A cancel the broker reports as pending leaves the order
 `CancelSent`, still counted at its worst case, and a refused cancel returns it
 to the state it was in, still counted, with the alarm for a cancel that
 failed. A cancel whose answer is lost stays `CancelSent`, and design.md's
@@ -2023,7 +2144,7 @@ The owner or the operator clears it, and only the owner clears a live account's
 halt. Clearing never reruns the decision. The next decision starts fresh, and it
 halts again while the kill switch is set or the cause is still there.
 
-The run's stop waits for the market's close and for the run's read of the day's fills, so execution serves a pull until the last moment a cancel could land, and the closing auction's fills are reconciled the same evening. After the close, execution reads the day's fills, journals them and stores a result naming each order the journal holds as open as settled or still open, and the supervisor reads that result before it stores the stop. A read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run, which design.md's rule 7 of `## Processes and files` proposes not to count as a clean shutdown. In shadow the read finds the market-on-close order open, which counts as read. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how. The host's timer stops every unit after that stop.
+The run's stop waits for the market's close and for the run's read of the day's fills, so execution serves a pull until the last moment a cancel could land, and the closing auction's fills are reconciled the same evening. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that after the close execution reads the day's fills, sorts what it finds as design.md's `Sorting what the broker reports` says, journals the fills, reconciles and stores a result naming each order the journal holds as open as settled or still open, and that the supervisor reads that result before it stores the stop. This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that a read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run, which design.md's rule 7 of `## Processes and files` proposes not to count as a clean shutdown. In shadow the read finds the market-on-close order open, which counts as read. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how. The host's timer stops every unit after that stop.
 
 ## What is stored
 
@@ -2224,13 +2345,13 @@ each keeps its own rule.
    component, decision and name. Each blob's header names the blobs it came from, and a halt says
    why a decision stopped. A deterministic component's blobs are regenerable
    from marketlake, the journal and the code, but data's snapshots,
-   execution's account files and a takeover's broker order list capture what was true at the moment, so none can be, and all are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
+   execution's account files, the send stage's broker reads and a takeover's broker order list capture what was true at the moment, so none can be, and all are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
    backtest's blobs sit in a memory-backed folder and vanish when it ends,
    because a backtest can be regenerated. The blobs also make a question such
    as "how did the backtest's z-score on a decision differ from the shadow
    run's" a lookup rather than a recomputation.
 3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
-   that changes only through a pull request.
+   that changes only through a pull request. The file ships in the release image, so the digest records the mapping. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that rows only add, an id is never reused or removed, a rename is a dated row, and a ticker the file does not know halts, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. The price is that a renamed ticker needs a release.
 4. **The journal, D3, holds `JOURNAL_ENTRY`.** It is the one numbered log:
    one per broker account, outside every run, because the book is replayed
    from it across runs. Each entry is a blob at a key fixed by the account and its sequence number, holding its number, the time it was built, to the microsecond, its body and the hash of the entry before it, so the entry itself is the record. Its own hash is the SHA-256 of those bytes, as `### File formats and keys` says. `Journal` writes through `BlobStore` for the account the
@@ -2258,7 +2379,7 @@ each keeps its own rule.
    next run, or on a new VM. Each simulated account has its
    own lease and kill switch, so a backtest never shares the paper account's.
    This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-7. **The account's own blobs, outside every run,** hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`,
+7. **The account's own blobs, D5, outside every run,** hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`,
    the kill switch, each strategy's off switch, a fired loss stop and the
    hard caps blob, at keys fixed by the account or the deployment under prefixes of their own, with the rules `## Where it runs` rules 4 and 5
    give. `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD`
@@ -2322,6 +2443,8 @@ records of what the broker and the market said, so a rounded copy would
 lose a value that cannot be recaptured: at four places, a leftover
 position of `0.00004` would record as zero, and the book replayed from
 rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded. marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
+
+A received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. [#22](https://github.com/l3a0/ithildin-runtime/issues/22) holds that form, and a body that cannot be stored halts.
 
 **Two rules are stated on the exchange's clock, and resolved to UTC once.**
 They follow New York's clock because the market does.
@@ -2491,6 +2614,7 @@ flowchart TB
     broker["Broker API<br/>paper or live"]
     beat["Heartbeat service"]
     alerts["Alert channel"]
+    cw["CloudWatch alarms<br/>session-ready, promotion and live drill checks"]
     person["Owner or operator<br/>the ithildin tool, off the VM"]
 
     registry --> docker
@@ -2506,6 +2630,7 @@ flowchart TB
     mon --> alerts
     guard --> alerts
     beat --> alerts
+    cw -->|"EventBridge route"| alerts
         person <-->|"status, clears, overrides, the switch"| bucket
 ```
 
@@ -3035,11 +3160,11 @@ Eleven rules keep the environments apart.
    that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's
    and the operator's, matched on `aws:PrincipalArn`, as rule 5 of `## Where it runs` says. A
    deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`. The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. The promotion role
-   may only put paper's pin and promotion record, read paper's switch, overrides, leases, results, halts, strategy halts, journal, releases and block records, and read shadow's plans, results, halts, heartbeats, block records and deploy records, which shadow's policy names as its one grant across environments. On the live bucket
+   may only put paper's pin and promotion record, read paper's switch, hard caps, overrides, leases, results, halts, strategy halts, journal, releases and block records, and read shadow's plans, results, halts, heartbeats, block records and deploy records, which shadow's policy names as its one grant across environments. On the live bucket
    the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading. Each broker key sits under its environment's
    `/ithildin/<environment>/broker/`, granted to that environment's
    execution role by the parameter's full ARN, and the refusals of rule 3 of `## Where it runs` cover
-   every broker path. Ping addresses sit apart, under
+   every broker path. Ping addresses and the push topic's address sit apart, under
    `/ithildin/<environment>/heartbeat/`, and each environment holds only its checks' own UUID addresses, never the project's ping key. Each environment's worker roles
    trust only that environment's VM role, by its exact ARN. Every role but
    the owner's refuses `iam:PassRole` on every runtime role, apart from the
@@ -3080,8 +3205,8 @@ Eleven rules keep the environments apart.
    so a command reaches the bucket that account lives in. It refuses an
    account the table does not name. So a switch pull for a live account
    cannot land in the paper bucket, and the pull stays one command.
-9. **Every running environment has its own heartbeat check, and so does
-   the pipeline.** Each deployment gets a check on healthchecks.io named
+9. **Every running environment has its own heartbeat check, and the
+   pipeline has a CloudWatch alarm.** Each deployment gets a check on healthchecks.io named
    after its environment and deployment, whose description carries the
    first command to run, its runbook row and the broker's console, so the push on a phone says what to do. The
    promotion job reports each run to a CloudWatch alarm of its own, so a dropped
@@ -3101,11 +3226,18 @@ Eleven rules keep the environments apart.
    path dead since the open, alarms in the morning rather than after the
    cutoff.
 
-   The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps the project at 12 of healthchecks.io's free 20 checks, under the 75% limit of 15. The price is two places to set up alerts, and that the CloudWatch alarms go quiet with AWS.
+   The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and these three, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it. The price is two places to set up alerts, that the CloudWatch alarms go quiet with AWS, and that these pages have no email path, because only the heartbeat service's checks reach email.
+
+   This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what each CloudWatch check guarantees, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
+
+   1. It pages for a report due and missed, stays quiet on a day none is due, and pages again on the next due day it misses.
+   2. Its reporter holds only the grant for its own metric.
+   3. An EventBridge rule carries the alarm's change to the push topic, and the page carries the three lines `### From an alarm to a command` requires.
+   4. A push the topic refuses goes to a dead-letter queue, which the alarm on failed deliveries in [Every alarm and its drill](halts-and-drills.md#alarms-on-operations) reads.
 
 #### Rule 10: what the drills check
 
-**Every drill that depends on an environment's own resources runs in each environment that has them.** These are the dead-man check, the host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
+**Every drill that depends on an environment's own resources runs in each environment that has them.** These are the dead-man check, the session-ready check, the host's `OnFailure` handler, the Docker daemon, the pin, the bucket policy, the key paths, the metadata fence, CloudTrail, the operator's grants, the event rules, queues and their policies, the CloudWatch route to the push topic, and the route that carries Auto Scaling's refresh and launch events to the alert channel, rule 11's seventh item of `## Where it runs`. [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
 #### Rule 10: when drills run
 
@@ -3113,7 +3245,7 @@ Shadow's and paper's drills run before paper's gate. Live's run before the owner
 
 #### Rule 10: who runs them
 
-A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job pings a heartbeat check of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live.
+A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other, and reminds the owner when a drill that changes live's state is due, which the owner runs by hand. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job reports to a CloudWatch alarm of its own. The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live.
 
 #### Rule 10: how an environment's infrastructure is applied
 
@@ -3242,7 +3374,7 @@ An arrow means "may import". The diagram draws four rules.
    order path. The supervisor lives there too, in `runtime.supervisor`, and
    imports `core`, `adapters` and the receive loop's module, `runtime.loop`,
    and nothing else. `runtime.loop` itself imports only `core`, so the
-   supervisor reaches no worker module through it. It starts no worker. It writes nothing but the plan's lease, whose conditional writes carry the run's status, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. Only the entry points read the plan's mode, and a module is handed
+   supervisor reaches no worker module through it. It starts no worker. It writes nothing but the plan's lease, whose conditional writes carry the run's status, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`. Only the entry points read the plan's mode, and a module is handed
    only the decisions.
 3. Only `runtime` imports `execution.brokers`, and only the execution worker's
    entry point builds a broker, which it hands to `OrderPath` alone.
@@ -3471,7 +3603,7 @@ in [design.md](design.md)'s `## Decisions`.
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
 | Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| Execution's recover stage reconciles positions and open orders before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Execution's recover stage reconciles positions, open orders and cash before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that rule 2 of design.md's `### Faults are expected, and the platform checks itself while it runs` lets an outside entry explain in shadow or on paper | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Execution's send stage fetches the broker afresh, settles orders in doubt, journals new fills, and halts before planning on any difference that is not its own open order or fill. It then journals the whole target portfolio and its planned orders, cancels and replacements, each with its client order id, with the journal entry it synced through and a hash of the broker state, in one entry before its first send, reuses that list on a rerun in the same decision, journals each fill under the broker's fill id, and halts before planning if an entry that changes the book, and that neither its sync nor its order loop wrote, lies past the entry its sync names | Planning again on a rerun, ids from the order's place in a fresh plan, fills matched by order and quantity alone, or planning on the recover stage's read | A rerun cannot catch up on a changed target within a decision, and a broker change during the order loop waits for the next recover. The next decision's plan changes or cancels an unfilled order this one left resting | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A plan's method for changing a resting stamped order: a cancel and then a new order sent only once the cancel is settled, sized less any fill that raced it | Netting resting orders alone, the broker's own replace call, or sending the replacement before the cancel is settled | A gap between the old and the new order, and a replacement that misses the send cutoff is abandoned | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
@@ -3491,3 +3623,15 @@ in [design.md](design.md)'s `## Decisions`.
 | A fired loss stop creates a create-only blob that holds the account until `ithildin stop clear` | A stop that lifts once the day's loss recovers or a new session starts | A person's clear before trading resumes after any fired stop | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), which owns the loss stop |
 | Slice 1's one VM is sized so measured memory use stays at or under half its memory, an 8 GB machine at the estimate, and a VM group's written limit of deployments comes from 75% of its memory | Sizing the machine to the estimate alone | About 7 cents an hour for each environment, a figure to confirm, and a second VM group once the limit is reached | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The rewrite's planning starts at 8 portfolios in an environment, the owner holds at ten until the rewrite lands, decisions a day carry no level, and the expected rewrite shares the workers that hold no account | A level on decisions, which would page while each deployment sits far below its ceiling, or no level until load is measured | An alarm and a key of their own, and a rewrite named before any load shows it is the right one | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| After the close, execution reads the day's fills, sorts what it finds, journals the fills, reconciles and stores a result naming each open order as settled or still open, which the supervisor reads before it stores the run's stop. A read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run. [The 2026-11-05 entries](design.md#2026-11-05) settled that the stop waits for the close and that read | None named | One more result file a day, a written time to keep, and a page on a slow read | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| An uncomputable loss with positions held halts the decision, and the stop's test and the flag test run at the send stage with no order needed | Running both tests only when an order is planned, which would miss a day with no order | A decision that plans no order still halts | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| A run the host's timer ended counts as no clean shutdown, because it stored no stop | Counting a timer's stop as clean | A person's confirmation before the next session trades | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
+| Where V's parts live: the book's cash comes from the journal, and the broker's account activities read supplies each fee, dividend and deposit record, journaled under the broker's own record id | The broker's equity figure, which would let a reporting error raise the cap | One more broker read, and a list of record types and their ranges to keep current | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The account's `Valuation` is an output file of the day's first recover stage, at a key of its own | None named | One more output file a day | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A repeated broker record id with different content is journaled beside the first and halts, and an outside entry's record id carries the guarantee a fill's execution id carries | Skipping a repeat by its id alone | One more check on each outside entry, and a halt on a broker that rewrites a record | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A cash record that halts as a type off the list, an amount outside its range or a repeated id with different content enters no book's cash until a person's clear or `ithildin override` brings it in | Letting the record reach the book while the halt waits | The book's cash trails the broker's until a person acts | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The daily report names each entry the closed list explains | None named | One more section in the report | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Each job monitoring reads the age of pages once per cause at a written interval | A page at every decision, which a strategy that decides often would repeat all day | A job that stays down pages again only at the interval | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| What each CloudWatch check guarantees: a page for a report due and missed, quiet on a day none is due, a page again on the next due day it misses, a grant per reporter, the EventBridge rule and the page's three lines, and a refused push kept on a dead-letter queue. [The 2026-11-05 entries](design.md#2026-11-05) settled which checks move to CloudWatch | None named | A schedule of due days to keep for each check, and pages with no email path | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The security master's rows only add, an id is never reused or removed, a rename is a dated row, and a ticker the file does not know halts | Editing a row in place | A renamed ticker needs a release | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| The comparison after the seal also takes the newest sealed row at or before the decision time | Comparing only the row of the same minute, which misses a row whose segment landed after the decision | A second row to read for each quote used | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
