@@ -1186,9 +1186,12 @@ so this is also what its adapter needs. The platform never asks a broker for
 an order by its client order id, because not every broker can answer that.
 
 An order in doubt has no journaled ack, so the journal holds no broker id for
-it. `OrderPath` hands the adapter the order's intent, and the adapter answers
-with the broker's id, not found, or more than one. How it finds the order is
-the adapter's own, so a new broker changes no line of `OrderPath`. This doc
+it. `OrderPath` hands the adapter the order's intent, and the adapter answers with
+the broker's id, not found, or more than one. By this doc's proposal for
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was
+whole, gives any id it read when the list was not, and gives the paired row's
+details, so `OrderPath` runs the checks below in one place. How it finds the
+order is the adapter's own, so a new broker changes no line of `OrderPath`. This doc
 proposes three steps for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), so Alpaca's lookup
 goes by the broker's id too.
 
@@ -1212,7 +1215,8 @@ Four things must hold of that read, and [#10](https://github.com/l3a0/ithildin-r
 3. An order absent from a whole list stays `InDoubt`, as `### Rule 9: how a
    rerun never doubles anything` says.
 4. Each row and each lookup answer matches the order's `sending` entry in client
-   order id, instrument, side, quantity and type. More than one row for one order, or any mismatch, is journaled as an `unmatched_order`, halts,
+   order id where the broker keeps one, and in instrument, side, quantity and
+   type. More than one row for one order, or any mismatch, is journaled as an `unmatched_order`, halts,
    and counts as an order that traces to nothing.
 
 A broker that takes no client order id gets an adapter that pairs on the order's
@@ -1220,9 +1224,14 @@ details instead. It takes a row the journal has not mapped, matching the order's
 instrument, side, quantity and type inside the same window. That match is close
 to unique, because an account holds one portfolio, one holder of the lease sends,
 and the gate refuses a second order beside one in doubt. The journal's mapping
-stands in for the stamp there, and more than one match halts. This adapter is
-designed and not built, and it passes the broker suite before any such broker is
-used, as architecture.md's `### How CI runs them` says.
+stands in for the stamp there, so the first clause of rule 1 under **Sorting what
+the broker reports** sorts its orders, and more than one match halts. On such a
+broker the submit carries no id, a lookup answer names none, and the fourth
+thing above rests on the other four details. An adapter states whether its
+broker keeps the id, so on a broker that does, an answer with no id is a
+mismatch and never a pass. This adapter is designed and not built, and it passes
+the broker suite on those terms before any such broker is used, as
+architecture.md's `### How CI runs them` says.
 
 **Sorting what the broker reports.** Execution sorts each order and fill by
 the broker's own order id.
@@ -1280,7 +1289,8 @@ The price is five things.
 5. On a broker with no client order id, a forced close could be recorded as the
    platform's order, when the send never reached the broker and the close matches
    on all four details in the window. The position ends where the plan wanted it.
-   What is lost is the record of who traded and the close of the other leg.
+   What is lost is the record of who traded and the close of the other leg, and
+   the match has no client order id to check.
 
 ### How a component learns of a change
 
@@ -2910,7 +2920,7 @@ This section lists every decision made on the project, oldest first, one heading
 
     [#7](https://github.com/l3a0/ithildin-runtime/issues/7#issuecomment-6691474110), [PR #55](https://github.com/l3a0/ithildin-runtime/pull/55#issuecomment-6694528331), [#33](https://github.com/l3a0/ithildin-runtime/issues/33#issuecomment-6697107613) Governs: case 3 of rule 5 of `### A fill is measured from the decision, and a position depends on a market it does not control` in design.md, and `### Trading systems engineer` in team-charter.md.
 11. The owner ruled that every lookup goes by the broker's order id through the journal's mapping, and that the platform never queries a broker by client order id. The owner's words were "don't query by client id, lookup the broker id by mapping. not all brokers support lookup by client id." The client order id stays on every order as the stamp. How an order with no ack gets its broker id stays this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Turned down: Alpaca's `GET /v2/orders:by_client_order_id`. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-6697595475) Governs: `### Orders the platform did not send`, `## Processes and files` and `### Faults are expected, and the platform checks itself while it runs` in design.md, and `### If an instance dies in the middle of a send` and `### The interfaces` in architecture.md.
-12. The owner ruled that pairing an order in doubt with the broker's order sits inside the broker adapter, behind one port method that takes the order's intent and answers with the broker's id, not found or more than one, and that a broker with no client order id pairs on the order's details as the written fallback, designed and not built. The owner's word was "yes", answering "Should the pairing of an order in doubt move into the adapter?" A new broker then changes no line of `OrderPath`. The order list as Alpaca's way of pairing stays this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Turned down: requiring a client order id of every broker, and `orders(since)` on the port. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-6698441803) Governs: `### Orders the platform did not send` in design.md, and `### If an instance dies in the middle of a send`, `### The interfaces` and `### How CI runs them` in architecture.md.
+12. The owner ruled that pairing an order in doubt with the broker's order sits inside the broker adapter, behind one port method that takes the order's intent and answers with the broker's id, not found or more than one, and that a broker with no client order id pairs on the order's details as the written fallback, designed and not built. The owner's word was "yes", answering "Should the pairing of an order in doubt move into the adapter?" A new broker then changes no line of `OrderPath`. The order list as Alpaca's way of pairing stays this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). What else that answer carries, and `orders(since)` staying on the port for a takeover's stored list, are this doc's proposals for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Turned down: requiring a client order id of every broker, and `orders(since)` as how `OrderPath` pairs. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-6698441803) Governs: `### Orders the platform did not send` in design.md, and `### If an instance dies in the middle of a send`, `### The interfaces` and `### How CI runs them` in architecture.md.
 
 ### Undated
 
