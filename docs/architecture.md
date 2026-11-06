@@ -752,7 +752,7 @@ flowchart LR
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
-### What this design rules out
+### What the data flow guarantees
 
 **Table:** The three rules at a glance
 
