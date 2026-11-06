@@ -2645,6 +2645,7 @@ This section lists every decision made on the project, oldest first, one heading
 21. The owner ruled that the log-archive account stays, with its reason written down. The owner's word was "k". [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6674653654) Governs: `## Where it runs` and `### Four environments` in architecture.md.
 22. The owner ruled that CPU joins the measure of load, so shadow shows whether the named machine holds, and the machine does not change yet. The owner's word was "k". [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6674653654) Governs: `## Where it runs` in architecture.md.
 23. The owner ruled that the three per-environment dead-man checks stay on healthchecks.io, outside AWS, and that the session-ready checks, the promotion check and the live drill check move to CloudWatch, so the project stays on the free plan. The owner's words were "Yes, split them". This goes with entry 6 of 2026-10-29. [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6674742978) Governs: `### Four environments` in architecture.md.
+24. The owner ruled that the security master stays a committed file in the release image rather than a blob in S3, so the image digest records which mapping a decision used. The owner's words were "Yes, keep it". [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-6675092947) Governs: `## What is stored` and `## Data flow` in architecture.md.
 
 ### Undated
 
