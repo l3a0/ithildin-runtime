@@ -692,6 +692,7 @@ flowchart LR
             data["Data"]
             models["Alpha, risk, cost and<br/>portfolio construction"]
             mon["Monitoring"]
+            d2[("D2 Security master,<br/>in the release image")]
             subgraph tb_exec["Trust boundary: execution, the only role with the broker key"]
                 exec["Execution"]
             end
@@ -703,7 +704,6 @@ flowchart LR
         d4[("D4 Run reports")]
         d5[("D5 Account controls")]
     end
-    d2[("D2 Security master,<br/>inside the image")]
 
     registry -->|"0 image"| sup
     sup -->|"1 plan"| d1
