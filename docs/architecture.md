@@ -468,7 +468,7 @@ project marketlake already runs.
 The alert channel is how an alarm reaches the owner, and it has three routes.
 
 1. **healthchecks.io's ntfy push and email integrations** carry the dead-man checks' alarms. No runtime VM holds an address for them.
-2. **The push topic** is an ntfy topic of an environment's own. Shadow, paper and live each hold one, separate from marketlake's and from each other's, on the same phone. Every push an environment's VM or AWS account sends straight to ntfy goes to that environment's topic. An environment's VM, parameters and EventBridge route hold only that environment's address, and no runtime VM, parameter or EventBridge route holds marketlake's topic address. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that each topic's name is a long random value.
+2. **The push topic** is an ntfy topic of an environment's own. Shadow, paper and live each hold one, separate from marketlake's and from each other's, on the same phone. Every push an environment's VM or AWS account sends straight to ntfy goes to that environment's topic. An environment's VM, parameters and EventBridge route hold only that environment's address, and no runtime VM, parameter or EventBridge route holds marketlake's topic address. [An ntfy topic's name is its only password](https://docs.ntfy.sh/publish/), so that separation holds only while no address can be guessed or derived from another environment's. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that each topic's name is a long random value.
 3. **Email through an SNS topic** goes with two alarms, the promotion check and the live drill check, which say that a scheduled job stopped running. Rule 9 of `### Four environments` says how.
 
 A ping says only that a decision finished. The jobs rule 3 of design.md's `### Faults are expected, and the platform checks itself while it runs` lists, such as the daily report, run apart from a decision and get no check of their own. Monitoring reads each job's age and pages through the alert channel, as that rule says.
@@ -2158,7 +2158,7 @@ same way, while the workers keep running. A worker the host restarts checks its
 own result key for each decision, reads the blobs that exist, and writes the
 ones that are missing.
 
-A halt and a failure differ in what they stop. A halt stops one decision, and in every mode the span goes on to the next. A failure stops the whole run. Both pass through `Reporting`, so a halted or failed decision still writes its report and its journal entry, and monitoring sends the alarm with its reason to the alert channel's push topic, which delivers each one.
+A halt and a failure differ in what they stop. A halt stops one decision, and in every mode the span goes on to the next. A failure stops the whole run. Both pass through `Reporting`, so a halted or failed decision still writes its report and its journal entry, and monitoring sends the alarm with its reason to the environment's push topic, which delivers each one.
 If monitoring itself is what failed, no ping arrives, and the dead-man check
 raises the alarm. A halt is final for its decision, which is this doc's choice.
 The owner or the operator clears it, and only the owner clears a live account's
@@ -2834,7 +2834,7 @@ host and records why the container stopped, for the restart record
 rule 5 of design.md's `## Processes and files` describes. A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale,
 and the worker's receive loop touches that file only while every busy handler is making progress,
 because systemd's own watchdog cannot see a process inside a container.
-An `OnFailure` handler on the host sends its alarm, with the reason, to the alert channel's push topic when any unit, or the Docker daemon itself, reaches its limit or
+An `OnFailure` handler on the host sends its alarm, with the reason, to the environment's push topic when any unit, or the Docker daemon itself, reaches its limit or
 fails, so a failure no container can see still reaches the owner, and each one arrives. A timer
 stops `ithildin.target` after the close, behind the supervisor's own stop,
 and a unit stopped that way stays down until the next day's timer starts
@@ -3051,7 +3051,7 @@ instances find their own last heartbeat past the limit.
 7. **Auto Scaling's own events reach the alert channel.** An
    EventBridge rule in each environment's account matches Auto
    Scaling's instance refresh failed, instance refresh rollback and
-   instance launch events, and sends each to the alert channel's push
+   instance launch events, and sends each to the environment's push
    topic, as this doc proposes for
    [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These
    alarms start in AWS rather than on a VM, so they reach the owner
@@ -3244,7 +3244,7 @@ Each environment also gets a session-ready check in CloudWatch, due at the sessi
 
 #### Rule 9: how each check reaches the owner
 
-The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and the three deployment checks, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it.
+The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach their environment's push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and the three deployment checks, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it.
 
 **Table:** How each check reaches the owner
 
@@ -3252,8 +3252,8 @@ The deployment checks stay on healthchecks.io, outside AWS, because they must st
 | --- | --- | --- |
 | A deployment's dead-man check | healthchecks.io's ntfy integration | healthchecks.io's email integration |
 | A session-ready check | Its environment's push topic, by the EventBridge route | None |
-| The promotion check | Paper's push topic, by the EventBridge route | An SNS topic, on every firing |
-| The live drill check | Live's push topic, by the EventBridge route | An SNS topic, on every firing |
+| The promotion check | Its environment's push topic, by the EventBridge route | An SNS topic, on every firing |
+| The live drill check | Its environment's push topic, by the EventBridge route | An SNS topic, on every firing |
 
 ```mermaid
 flowchart LR
@@ -3290,7 +3290,7 @@ The promotion check and the live drill check each have a second alarm action, an
 1. There is one SNS topic per AWS account, and it needs no new credential.
 2. The email goes out on every firing, not only when a push fails, so it also covers a fault on the route to ntfy.
 3. The owner writes each email subscription by hand, so the address enters no tracked file and no OpenTofu state.
-4. A subscription [sends nothing until it is confirmed](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html). The owner confirms it with `aws sns confirm-subscription --authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click, so [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) and a stray click or a mail scanner cannot end the route through the link in an alert. A [drill](halts-and-drills.md#drills-with-no-alarm) confirms that it was confirmed that way and that an email arrives.
+4. A subscription [sends nothing until it is confirmed](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html). The owner confirms it with `aws sns confirm-subscription --authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click, so [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) and a stray click or a mail scanner cannot end the route through the link in an alert. The command takes the token from the emailed link without opening it, and a subscription confirmed by the link is removed and subscribed again. A [drill](halts-and-drills.md#drills-with-no-alarm) confirms that it was confirmed that way and that an email arrives.
 
 Keeping checks on two services and adding email by hand has five prices.
 
@@ -3298,7 +3298,7 @@ Keeping checks on two services and adding email by hand has five prices.
 2. The CloudWatch alarms go quiet with AWS, and so does their email.
 3. The session-ready pages have no email path.
 4. The phone's three subscriptions and each email subscription's confirmation are hand steps that a drill has to watch. The email itself costs nothing at this volume, since [SNS's FAQ](https://aws.amazon.com/sns/faqs/) states no charge for the first 1,000 email notifications each month.
-5. A subscription lost after a drill, to a signed removal or a replaced topic, sends nothing until that drill's next run finds it.
+5. A subscription lost after a drill, to a signed removal, a replaced topic or a change on the phone, sends nothing until that drill's next run finds it, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds that drill's turn on shadow and paper.
 
 #### Rule 9: what each CloudWatch check guarantees
 
@@ -3306,7 +3306,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 1. It pages for a report due and missed, stays quiet on a day none is due, and pages again on the next due day it misses. A due time moves with an early close where the report's own time does, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) says which. A schedule it cannot read, or one that is empty or has run out, pages. On the promotion check and the live drill check, each of those pages also sends the email. CloudWatch [runs an alarm's actions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) and [sends its state-change event](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/cloudwatch-and-eventbridge.html) only when the alarm changes state, so an alarm still in alarm on a second missed day sends neither, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how a repeat reaches both routes.
 2. Its reporter holds only the grant for its own metric.
-3. An EventBridge rule carries the alarm's change to the push topic, and the page carries the three lines `### From an alarm to a command` requires. The email carries the same three lines.
+3. An EventBridge rule carries the alarm's change to that environment's push topic, and the page carries the three lines `### From an alarm to a command` requires. The email carries the same three lines.
 4. A push the topic refuses stays on the rule's dead-letter queue. On the promotion check and the live drill check the email still reaches the owner, while the subscription lives. For every other page on the push route, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the owner learns of it, including when monitoring is down or the topic refuses monitoring's own push.
 5. Each SNS topic's policy admits only its own account's alarm of the two.
 
@@ -3708,7 +3708,7 @@ in [design.md](design.md)'s `## Decisions`.
 | The daily report names each entry the closed list explains | None named | One more section in the report | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each job monitoring reads the age of pages once per cause at a written interval | A page at every decision, which a strategy that decides often would repeat all day | A job that stays down pages again only at the interval | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | What each CloudWatch check guarantees: a page for a report due and missed, quiet on a day none is due, a page again on the next due day it misses, a due time that moves with an early close where the report's own time does, a page on a schedule it cannot read or one empty or run out, a grant per reporter, the EventBridge rule and the page's three lines, and a refused push kept on the rule's dead-letter queue. [Entry 23 of the decisions](design.md#2026-11-05) settled which checks move to CloudWatch | None named | A schedule of due days to keep for each check | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The email on the promotion and live drill checks repeats with each page and carries the page's three lines, paper's account holds the promotion check and live's the live drill check, each SNS topic's policy admits only its own account's alarm, the drill fires with the route to the push topic broken and tries a refused publish, a live session holds while a drill leaves that route broken, the owner confirms each arrival and that confirmation holds for 31 days, counted to the gate's read or the sample's opening, on digests whose send it did not watch, this reads the ruling as one topic in each account that holds one of the two alarms, and each push topic's name is a long random value. [The 2026-11-06 entries of the decisions](design.md#2026-11-06) settled the route | None named | A subscription lost after a drill goes unseen until that drill's next run, up to 31 days later, session-ready pages stay with no email path, and the owner checks a phone and an inbox each month | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| The email on the promotion and live drill checks repeats with each page and carries the page's three lines, paper's account holds the promotion check and live's the live drill check, each SNS topic's policy admits only its own account's alarm, the drill fires with the route to the push topic broken and tries a refused publish, a live session holds while a drill leaves that route broken, the owner confirms each arrival and how a subscription was confirmed, that confirmation holds for 31 days, counted to the gate's read or the sample's opening, on digests whose send it did not watch, this reads the ruling as one topic in each account that holds one of the two alarms, and each push topic's name is a long random value. [The 2026-11-06 entries of the decisions](design.md#2026-11-06) settled the route | None named | A subscription lost after a drill goes unseen until that drill's next run, up to 31 days later, session-ready pages stay with no email path, and the owner checks a phone and an inbox each month | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The security master's rows only add, an id is never reused or removed, and a rename is a dated row | Editing a row in place | A renamed ticker needs a release | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | The comparison after the seal also takes the newest sealed row at or before the decision time | Comparing only the row of the same minute, which misses a row whose segment landed after the decision | A second row to read for each quote used | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Whatever ends the halt on a failed takeover, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed | None named | A halt a person clears can leave new orders refused until an instance finishes the takeover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
