@@ -37,7 +37,10 @@ result can and cannot show live in the design doc's
 [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
 The rules from Van K. Tharp's *Trade Your Way to Financial Freedom* (2nd ed., McGraw-Hill, 2007) for
 measuring a result against the risk it took and for choosing size live in the design doc's
-[A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear). The
+[A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+The rules from Larry Harris's *Trading and Exchanges* (Oxford University Press, 2003) for what a fill cost and
+for what a market can do to a position live in the design doc's
+[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -112,7 +115,7 @@ Each box below is a module with a typed interface, and each has one owning role.
 | Data | Capture, clean, timestamp and serve point-in-time data (L3605) | Vendor feeds, broker fills | Vintages, a security master, bars | Data engineer |
 | Alpha model | Forecast return or direction per instrument (L1033, L2029) | Point-in-time data | Forecast, with horizon and confidence | Quant researcher |
 | Risk model | Limit or remove exposures nobody chose (L928, L2089) | Positions, data | Constraints and penalties | Risk engineer |
-| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | Order size, liquidity, own fills | Cost estimate | Trading systems engineer |
+| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | Order size, liquidity, own real fills | Cost estimate | Trading systems engineer |
 | Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above | Target positions | Trading systems engineer |
 | Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current | Orders, then fills | Trading systems engineer |
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
@@ -139,7 +142,12 @@ tightened limit, on the ruling of 2026-11-04 on
 sits on the Live step, the owner writes in the board's brief the largest fall in
 the account's value that the owner accepts, under rule 4 of the design doc's
 [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear), and decides before a second strategy's first order on a shared
-account whether a cap on the total worst loss joins the hard caps, under rule 5. The owner's
+account whether a cap on the total worst loss joins the hard caps, under rule 5. Before a Paper
+sample opens, the owner closes or accepts the gap on a frozen quote, under rule 5 of the design doc's
+[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control),
+and at the Live step decides whether to accept any unknown holding term and the gaps to the
+close that a strategy sending market-on-close orders shows, under rules 4 and 1 there, how much of the
+exposure in rule 5's statement to accept, and any gap on a frozen quote found to have fired during that sample. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -225,6 +233,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Reads a strategy's record in R multiples, states how each position ends, and quotes an
   entry's backtest beside random entries, labelled exploratory, under rules 2, 3 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  Names who a strategy trades against and what forces its spread back, has a strategy's specification name the kind, coverage and delay of each price it was fitted on and decides on, and any mix among them, labels simulated fills, names which holding terms a sample's registration counts,
+  and shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data
+  its research already read and never on a held-out window or a registered sample's sessions, under rules 1 to 4 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -254,6 +266,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
   Holds that a split reads as neither a gain nor a loss, under rule 6 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
+  Records each market price and volume with its kind, the venues it covers and any delay from its source, and
+  each volume with how it was counted, with a field no source states recorded as unstated and a decision
+  or the gate stopped from reading a price of unstated kind, and stores what a decision or the gate read or a halt refused, and each published text
+  its opening names, under the opening and rules 2 and 5 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
   holding recorded data as the design doc defines it, a recorded format with
@@ -302,6 +319,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds that a position's initial risk rebuilds from the journal alone, and its R multiple from
   the journal, the fills and the named cost, under rule 1 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  Measures each fill from the quote its decision read, shows what stayed unfilled, keeps commission and any fee booked on a fill apart
+  from the midpoint gap, lets no simulated fill calibrate the cost model, refuses a send whose entry names no stored
+  snapshot where the gate read a price, shows each instrument's share of volume, raises the alert on a lone leg, and sends
+  no order of the platform's own for one outside a decision, while a person can act through the gate once no
+  halt holds it and no order in doubt blocks its instrument, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
+  limit order is sent, has its simulated fill name what it assumes, under rules 1, 5, 6 and 7 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
@@ -362,6 +386,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   what can be lost names what it multiplies, and that the daily report shows each position's worst
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
+  gap to the owner before a Paper sample opens. A change to the written maximum age, to what that check accepts, to the lone leg's written
+  time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
+  a broker or a venue can do to a position, from their published text with its date, and reads its dated
+  terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -431,6 +461,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under rules 1, 2 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -441,6 +473,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Protects:** the system stops safely and says so.
 - **Does:** owns deployment, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the paper environment day to day.
+  Runs the drills the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
+  names, proves Paper's alert route, and owns the alarm on the check of fills going silent.
   Keeps a change log, where a change is any action that modifies the system or
   its data outside its normal use, such as a deploy, a config edit or a
   credential rotation (AoS L3991, L3995). Whoever makes a change writes its
@@ -665,9 +699,17 @@ evidence, not elapsed time.
 | Stage | Runs against | Leaves the stage when |
 | --- | --- | --- |
 | Backtest | Committed vintages | It reproduces the replication pins. It runs no registered experiment, on the owner's ruling of 2026-11-02 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
-| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
-| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, and once with a reducing order working, which it keeps, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since |
-| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step, and the owner writes the figure rule 4 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) names in the board's brief before the sitting, and sees the run that rule names for a first live size. The sitting also takes up whether a stop at that figure joins the hard caps. A stop the sitting adds, with its alert, fires in a drill on the paper account before the owner switches the account on. A Paper sample's pass can be cited for this step only if each gap that rules 4 and 6 of the design doc's [A backtest names what it could not have traded](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) leave open was closed and stayed closed through that whole sample, or the owner accepted it again before that sample opened. The owner must also have ruled for that strategy, before that sample opened, on whether a reading outside its range stops new entries, and any stop that ruling brings must have run through that whole sample. A gap found to have fired during that sample goes back to the owner before its pass can be cited. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds how these are recorded. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+| Shadow | Live data, simulated broker | Its orders match what a replay of the same day emits, leaving out marked records and a drill-halted session's records after the halt, as the design doc says. It needs no registered sample, and a paper run with none open is exploratory, on the owner's ruling of 2026-11-04 on [#4](https://github.com/l3a0/ithildin-runtime/issues/4) |
+| Paper | A broker's paper account | Positions reconcile with the broker every day for an agreed span, every alarm has fired in a drill, every strategy's off switch has been flipped in a drill with the others still trading, once with an adding order working, which it cancels, and once with a reducing order working, which it keeps, the last release has been rolled back and forward again, an infrastructure change has been rolled back and forward again, each component's restart switch, and its scaling switch once a scaling step runs, has been flipped with a crash after it handled as rule 4 of the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says for that component, and execution killed with its switch off has come up halted, a release that fails a Startup check other than its own digest, journal and store checks has sent no order and left cancels and the kill switch served, one that makes a store finding has halted new orders and paged naming the store, and the broker's interface when no instance can serve, one that fails its own digest or journal check has served nothing and paged the owner naming the broker's interface, a deploy has halted on an unreadable deployment state, a drift has been reported, a component has reached its restart cap, a crash loop slower than the cap's window has paged the owner, the owner has given the confirmation after a stop in one drill, a backup of captured data and the journal has been restored and checked, and the strategy's registered sample has run to its end on one version of its decision path and reached its passing result, and that is the version leaving Paper, with no retiring result reached since, and the drills the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) names fired before that sample opened, with Paper's alert route proved under that section's second binding |
+| Live | Real capital, small | **Owner only.** The board sits on the step through `/l3a0:ask-board` first, run from this repository's folder, and states what a bad first live sample can cost, per unit of the capital cap, under the design doc's rules for judging a strategy. The sample's registration comes before the step, and the owner writes the figure rule 4 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) names in the board's brief before the sitting, and sees the run that rule names for a first live size. The sitting also takes up whether a stop at that figure joins the hard caps. A stop the sitting adds, with its alert, fires in a drill on the paper account before the owner switches the account on. A Paper sample's pass can be cited for this step only if each gap that rules 4 and 6 of the design doc's [A backtest names what it could not have traded](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) leave open was closed and stayed closed through that whole sample, or the owner accepted it again before that sample opened. The owner must also have ruled for that strategy, before that sample opened, on whether a reading outside its range stops new entries, and any stop that ruling brings must have run through that whole sample. A gap found to have fired during that sample goes back to the owner before its pass can be cited. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds how these are recorded. The issue that proposes the step meets the five conditions under this table before the board sits. The owner then sets the capital cap and switches it on, and records the ruling on the issue as a dated line that carries no figure from the board's brief or minutes |
+
+The issue that proposes the Live step meets five conditions.
+
+1. It carries, before the board sits, the statement rule 5 of the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) asks for.
+2. Any pass it cites holds with each holding term counted, labelled exploratory, a check that can withhold a pass and never make one, or, where no such source exists, the owner accepted that term as unknown in writing, under rule 4 there.
+3. Where the strategy sends market-on-close orders, it names how its fills were priced, from the broker's dated text, and what they could not have reached, such as a closing auction, and shows, labelled exploratory, the gaps rule 1 there names.
+4. A pass can be cited only if the gap rule 5 there leaves on a frozen quote was closed and stayed closed through that whole sample, or the owner accepted it for that sample before it opened, and if that gap is found to have fired during the sample it goes back to the owner first.
+5. A sample that did not look for a decision that read a frozen quote says so, and the gap stays unknown beside its verdict rather than reading as not fired.
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).
@@ -690,14 +732,15 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   latency (L4973 to L5006). The daily report also carries what rule 2 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
   names, what [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 5 asks, the
-  sessions held under rule 3 and the lines rule 5 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) name.
+  sessions held under rule 3 and the lines rule 5 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) name, and the cost, commission, unfilled and share-of-volume lines, the two gaps to the close, simulated fills labelled, any lone leg, and a figure that cannot be computed shown as missing with an alert to the owner, as the opening and rules 1, 2, 5 and 6 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) name.
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
   The order path then starts in a fixed order, and a step that fails halts
   with its name as the reason. Read only, compare every component's artifact
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
-  gate's hard caps, verify the journal's checksums and sequence to its head,
+  gate's hard caps and the written maximum age on a quote, verify the journal's checksums and sequence to its head,
   check the journal and every protected store as rule 3 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
   says, which also says what each finding serves, read every component's restart
@@ -720,7 +763,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   adds a running match of requests to outcomes and of orders back to their
   causes, and a retiring check, each with its own halt, and the dead-man check
-  watches the last run of each.
+  watches the last run of each. Monitoring's own alarm reads the last completed run, halted or not, of the check
+  of fills behind the alert on a lone leg.
 - **Incidents** follow a runbook: halt, page the owner, preserve the journal,
   write a review naming the cause and the rule that prevents it. A review
   above the size the owner sets runs in three passes, timeline first, then
@@ -785,10 +829,12 @@ answer pointing at code or a test (L5568).
 2. What data does it use, and how is the data stored and cleaned?
 3. Is the alpha theory-driven or data-driven, relative or intrinsic, and on what
    horizon and universe? For a strategy that opens a sample, when does its bet lose,
-   what would show it has broken, and how does each position end?
+   what would show it has broken, how does each position end, who is on the other side, what kind, coverage and delay of
+   price was it fitted on and does it decide on, and, where it holds a spread, what forces that spread back?
 4. What is the portfolio construction rule, what are its limits, and why? For a
    strategy going to Live, which dated line records the fall its size answers to?
-5. Which cost model, and why? How does a backtest fill?
+5. Which cost model, and why? How does a backtest fill? For a strategy that opens a sample,
+   which holding terms do its measures count?
 6. How are orders executed, passively or aggressively?
 7. What does the risk model cover, what are its limits, and when would a human
    intervene?
@@ -850,6 +896,14 @@ out. Its figures are worked examples, one-off simulations or the author's experi
 adopted as a threshold. Its counts of trades, a price stop added to a spread, its percentages of risk and
 its undisclosed score are left out, with the reasons in the design doc's register. What it adds here is
 measuring a result against the risk it took and choosing size against what the owner can bear.
+
+*Trading and Exchanges* dates from 2003 and describes the US markets of its day, with chapters on floor
+trading, specialists, dealers and block trading that have no counterpart in one small account, so they
+are left out. Its chapters on regulation and insider trading are dated, and law goes to the board. Its exchange rules, fees and
+settlement cycle are dated, and its figures are worked examples or data of that time, so none is adopted
+as a threshold or as a fact about today's market. Splitting, randomizing or hiding an order is left out,
+with the reason in the design doc's register. What it adds here is
+measuring a fill from the decision and stating what a market can do to a position.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
