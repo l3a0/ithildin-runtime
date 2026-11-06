@@ -740,7 +740,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   with its name as the reason. Read only, compare every component's artifact
   digest with the session's pin and capture's with marketlake's record, check
   the tracked configuration's keys against the committed list, read the risk
-  gate's hard caps and each strategy's written maximum age on a quote, verify the journal's checksums and sequence to its head,
+  gate's hard caps, each strategy's written maximum age on a quote and the close's written wait, verify the journal's checksums and sequence to its head,
   check the journal and every protected store as rule 3 of the design doc's
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
   says, which also says what each finding serves, read every component's restart
