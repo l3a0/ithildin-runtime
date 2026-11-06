@@ -146,8 +146,8 @@ account whether a cap on the total worst loss joins the hard caps, under rule 5.
 sample opens, the owner closes or accepts the gap on a frozen quote, under rule 5 of the design doc's
 [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control),
 and at the Live step decides whether to accept any unknown holding term and the gaps to the
-close that a strategy sending market-on-close orders shows, under rules 4 and 1 there, and
-how much of the exposure in rule 5's statement to accept. The owner's
+close that a strategy sending market-on-close orders shows, under rules 4 and 1 there, how much of the
+exposure in rule 5's statement to accept, and any gap on a frozen quote found to have fired during that sample. The owner's
 time is the scarce resource, so work reaches the owner already reviewed.
 
 ### Delivery lead (the coordinating session)
@@ -270,7 +270,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Records each market price and volume with its kind, the venues it covers and any delay from its source, and
   each volume with how it was counted, with a field no source states recorded as unstated and a decision
   or the gate stopped from reading a price of unstated kind, and stores what a decision or the gate read or a halt refused, and each published text
-  the section's opening names, under rules 2 and 5 of the design doc's
+  its opening names, under the opening and rules 2 and 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
@@ -323,7 +323,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Measures each fill from the quote its decision read, shows what stayed unfilled, keeps commission and any fee booked on a fill apart
   from the midpoint gap, lets no simulated fill calibrate the cost model, shows each instrument's share of volume, raises the alert on a lone leg, and sends
   no order of the platform's own for one outside a decision, while a person can act through the gate once no
-  halt holds it, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
+  halt holds it and no order in doubt blocks its instrument, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
   limit order is sent, has its simulated fill name what it assumes, under rules 1, 5, 6 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** an order path without a journal entry, a send before durable
@@ -386,7 +386,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   what can be lost names what it multiplies, and that the daily report shows each position's worst
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Owns the halts on a price of unstated kind and on a quote that fails rule 5's age and status check, and takes that check's
+  Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
   gap to the owner before a Paper sample opens. A change to the written maximum age, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
@@ -461,7 +461,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under rules 1, 2 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails rule 5's age and status check, the alert on a missing report figure, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
+  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -708,7 +708,7 @@ The issue that proposes the Live step meets five conditions.
 1. It carries, before the board sits, the statement rule 5 of the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) asks for.
 2. Any pass it cites holds with each holding term counted, labelled exploratory, a check that can withhold a pass and never make one, or, where no such source exists, the owner accepted that term as unknown in writing, under rule 4 there.
 3. Where the strategy sends market-on-close orders, it names how its fills were priced, from the broker's dated text, and what they could not have reached, such as a closing auction, and shows, labelled exploratory, the gaps rule 1 there names.
-4. A pass can be cited only if the gap rule 5 there leaves on a frozen quote was closed and stayed closed through that whole sample, or the owner accepted it before that sample opened, and if that gap is found to have fired during the sample it goes back to the owner first.
+4. A pass can be cited only if the gap rule 5 there leaves on a frozen quote was closed and stayed closed through that whole sample, or the owner accepted it for that sample before it opened, and if that gap is found to have fired during the sample it goes back to the owner first.
 5. A sample that did not look for a decision that read a frozen quote says so, and the gap stays unknown beside its verdict rather than reading as not fired.
 
 A platform version also passes four checks between design and steady
