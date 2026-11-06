@@ -1718,7 +1718,7 @@ Five rules keep a day of decisions safe.
       sees what the old order filled and counts it at its worst case until
       then. A cancel refused because the order already filled, or a
       replacement whose quantity comes to zero, journals the replacement
-      `Abandoned`, and so does a cancel a check stopped. A replacement whose cancel is not confirmed after one lookup by client
+      `Abandoned`, and so does a cancel a check stopped. A replacement whose cancel is not confirmed after one lookup by the broker's
       order id is journaled `Abandoned` too, and the next decision plans from
       the book. A plan replaces an order only while the replacement can
       still go out before the send cutoff, and otherwise leaves the old
