@@ -121,7 +121,7 @@ so it writes down three things, the first two proposed for
    Alpaca's staff
    [said](https://forum.alpaca.markets/t/feature-request-more-paper-trading-accounts/18125)
    on 2026-08-14 that one login holds one live account per account type,
-   and Alpaca's own page gives three paper accounts. So without sub-accounts
+   and [Alpaca's own page](https://alpaca.markets/learn/start-paper-trading) gives three paper accounts. So without sub-accounts
    one login stops at three live accounts, and only by mixing in IRAs. The
    same thread has staff saying on 2025-11-07 that paper passes three
    through a second login, and it does not settle a second live login.
@@ -129,7 +129,7 @@ so it writes down three things, the first two proposed for
    with a target of the end of October. A user reported them working live
    on 2026-10-28 and hoped for more than two, so ten needs a limit Alpaca
    has not stated. Whether Alpaca allows that many accounts waits, on
-   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), until a second portfolio comes up. Alpaca also applies its wash trade rule across accounts,
+   [#11](https://github.com/l3a0/ithildin-runtime/issues/11), until a second portfolio comes up. Alpaca also [applies its wash trade rule across accounts](https://forum.alpaca.markets/t/feature-request-more-paper-trading-accounts/18125),
    so one portfolio cannot buy what another is selling at the same time. A
    second portfolio may therefore need a check across accounts, which is a
    new rule rather than configuration. So the path to 10x by portfolios is
@@ -190,8 +190,8 @@ finished. Each quality has a home in these two docs.
    of its own, and only the execution user reads the broker key, as
    architecture.md's rule 3 of `## Where it runs` says. Moving money out requires a human's sign-off, so no
    money-out call may complete on the broker key alone. Alpaca's trading
-   key can add a whitelisted withdrawal address, which turns approved on
-   its own after 24 hours with only an email notice. A key cannot withdraw by the published API: [Alpaca's changelog](https://docs.alpaca.markets/us/changelog/2026-07-10-crypto-withdrawal-fe07e7d) removed `POST /v2/wallets/transfers` on 2026-10-09 in favour of the web application, and the current reference lists only reads on that path. That is the published record and no call has tested it. Alpaca stays the live broker, with
+   key can add a whitelisted withdrawal address, which [turns approved on
+   its own after 24 hours](https://docs.alpaca.markets/reference/createwhitelistedaddress) with only an email notice. A key cannot withdraw by the published API: [Alpaca's changelog](https://docs.alpaca.markets/us/changelog/2026-07-10-crypto-withdrawal-fe07e7d) removed `POST /v2/wallets/transfers` on 2026-10-09 in favour of the web application, and the current reference lists only reads on that path. That is the published record and no call has tested it. Alpaca stays the live broker, with
    crypto never enabled on the platform's account and no whitelisted
    withdrawal address, proven by a read-only check before the live gate
    and on a schedule after. Execution runs the check at each session's
@@ -635,7 +635,7 @@ Ten rules make the blobs something a worker can trust.
      [#11](https://github.com/l3a0/ithildin-runtime/issues/11). So a
      monitoring killed between its claim and its push can repeat an alarm,
      rarely, and never drops one, a repeat being the cheaper failure. The dead-man check gets success
-     pings only. healthchecks.io notifies only when a check changes state, so
+     pings only. healthchecks.io [notifies only when a check changes state](https://healthchecks.io/docs/configuring_notifications/), so
      a failure ping to a check already down sends nothing, and a check left
      down by one halted day would never alarm on a dead VM the next. A halt's
      alarm therefore goes straight to the alert channel's push topic with its
@@ -1007,7 +1007,7 @@ hold.
    strategy trades, anything substantially identical to it, or an option on
    it. The wash sale rule of
    [IRC section 1091](https://www.law.cornell.edu/uscode/text/26/1091)
-   follows the taxpayer rather than the account, and Rev. Rul. 2008-5
+   follows the taxpayer rather than the account, and [Rev. Rul. 2008-5](https://www.irs.gov/pub/irs-drop/rr-08-05.pdf)
    extends it to the taxpayer's IRA.
 2. The platform's account chooses which tax lot each sale closes, called
    specific lot identification, rather than closing the oldest lot first.
@@ -1641,7 +1641,7 @@ Five rules keep a day of decisions safe.
          that move fits the share of the loss limit the owner sets. The loss limit is the account's portfolio
          value, so the cap follows the account rather than a fixed figure.
          `max_net` is s × V ÷ m, where s is the share, V the portfolio value
-         and m the stress move as a fraction. The share s is 1%,
+         and m the stress move as a fraction. An account with several strategies sets `max_net` from the largest m of its strategies. The price is that a calm strategy gets a tighter cap than it needs. The share s is 1%,
          so one stranded leg's loss under the stress move is 1% of
          the portfolio, and a hundred such losses in a row would exhaust it. The hard caps blob stores s and m, with the hash
          of the vintage m came from, and the gate computes the cap at each
@@ -2267,7 +2267,7 @@ glossing it.
 | **request** | One change a strategy's decision asks of its target. A decision's id names its requests |
 | **worst loss** | For one strategy's position, or one contract-suite run's, the sum over its legs of each leg's size times the stress move the hard caps hold, every leg moving against the position, with size counting every working and in-doubt order at its worst case, or a larger loss an exit rule fixes at a price level |
 | **hard caps** | The risk gate's limits that only the owner writes, by hand, among them the stress move and the share of the account that sizes the net cap |
-| **stress move** | The largest two-session move, in either direction, across a strategy's legs, measured over a recorded vintage with a fixed start date and the longest history available, and written into the hard caps by the owner |
+| **stress move** | The largest two-session move, in either direction, across a strategy's legs, measured over a recorded vintage with a fixed start date and the longest history available, and written into the hard caps by the owner. An account with several strategies sets `max_net` from the largest stress move of its strategies, at the price of a tighter cap than a calm strategy needs |
 | **walking skeleton** | A build in which every module exists in its simplest form and the whole loop runs end to end |
 | **exploratory** | A result found by looking at the data. It kills an idea or justifies a closer look, and is never a verdict |
 | **registered** | A result whose hypothesis was committed in writing before the number was seen. A strategy's registered sample is the plan for judging it, committed the same way before the sample's first decision. A strategy's first registered sample runs on Paper. A paper run with no sample open is exploratory, and only a registered result promotes a strategy past Paper |
