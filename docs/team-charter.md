@@ -305,7 +305,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   unsettled past a written time halts new orders and pages the owner, under
   the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
-  limit and its breaker, and puts the decision's id, an override entry's or a contract-suite run's, inside
+  limit and its breaker, and puts the decision's id, an override entry's, a contract-suite run's or an outside entry's, inside
   each client order id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
   Writes each order's recorded outcome, the match of requests to outcomes and
@@ -322,7 +322,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Measures each fill from the quote its decision read, shows what stayed unfilled, keeps commission and any fee booked on a fill apart
   from the midpoint gap, lets no simulated fill calibrate the cost model, refuses a send whose entry names no stored
   snapshot where the gate read a price, shows each instrument's share of volume, raises the alert on a lone leg, and sends
-  no order of the platform's own for one outside a decision, while a person can act through the gate once no
+  no order of the platform's own for one outside a decision, apart from the close after a broker's trade, while a person can act through the gate once no
   halt holds it and no order in doubt blocks its instrument, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
   limit order is sent, has its simulated fill name what it assumes, under rules 1, 5, 6 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
@@ -461,7 +461,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under rules 1, 2 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
+  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, the close after a broker's trade, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -762,6 +762,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   day. Execution reconciles, because reconciling changes the book. Monitoring
   compares too, and never changes the book. A mismatch halts trading, and cancels the orders rule 2 of the design doc's
   [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) names.
+  An outside entry for a trade the broker made starts the close of the entire position, under case 3 of rule 5 of the design doc's
+  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
   The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   adds a running match of requests to outcomes and of orders back to their
