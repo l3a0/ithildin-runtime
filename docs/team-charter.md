@@ -305,7 +305,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   unsettled past a written time halts new orders and pages the owner, under
   the owner's rulings on
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Gives each dependency on the order path its timeout, its
-  limit and its breaker, and puts the decision's id, an override entry's, a contract-suite run's or an outside entry's, inside
+  limit and its breaker, and puts the decision's id, an override entry's, a contract-suite run's or a close entry's, inside
   each client order id, under the design doc's faults and monitoring rules (BM L4252,
   BM L3354).
   Writes each order's recorded outcome, the match of requests to outcomes and
@@ -387,7 +387,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
-  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to a written maximum age, to what that check accepts, to the lone leg's written
+  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to a written maximum age, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
