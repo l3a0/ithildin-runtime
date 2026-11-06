@@ -387,7 +387,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Owns the halts on a price of unstated kind and on a quote that fails its age and status check, and takes that check's
-  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to a written maximum age, to what that check accepts, to the lone leg's written
+  gap to the owner before a Paper sample opens. Each strategy writes its own maximum age in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to that close's written wait, to a written maximum age, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
@@ -762,7 +762,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   day. Execution reconciles, because reconciling changes the book. Monitoring
   compares too, and never changes the book. A mismatch halts trading, and cancels the orders rule 2 of the design doc's
   [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) names.
-  An outside entry for a trade the broker made starts the close of the entire position, under case 3 of rule 5 of the design doc's
+  An outside entry for a trade the broker made can start the close of the entire position, under case 3 of rule 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
   The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
