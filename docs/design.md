@@ -1045,7 +1045,7 @@ send stage's event, acts in this order:
 
 1. Check the kill switch, and if it is set take the account's lease and cancel every resting order in the account, stamped or not, journaling each cancel first. Then resume or start each sort that has no `sort_done` entry, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes.
 2. For a send stage that has a claim and no result, and whose runner
-   is gone, take the account's lease, store the broker order list it read as a capture named by a journaled takeover entry when that lease had expired or, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a person had cleared it, settle each order in doubt by its client order id, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
+   is gone, take the account's lease, store the broker order list it read as a capture named by a journaled takeover entry when that lease had expired or, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a person had cleared it, settle each order in doubt by lookup, journal every planned order and replacement without a `sending` entry as `Abandoned`, settle every planned cancel left `CancelSent` by a lookup,
    cancel any accepted leg of a pair whose partner is not accepted,
    and write a halt as that send stage's
    result. It does this whether or not the supervisor has already
