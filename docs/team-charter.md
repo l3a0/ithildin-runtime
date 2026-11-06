@@ -791,7 +791,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   decisions it touched stay in the strategy's sample under the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
   One that changes a position, or a change at the broker the owner confirms, leaves the
-  strategy switched off until a person switches it back on, under that section's rule 4.
+  strategy switched off until a person switches it back on, under that section's rule 4. One the owner
+  confirms as the broker's own trade can also start the close after a broker's trade.
 - **A found error** in code that fed a quoted result, sent a paper or live order, or guards one
   reaches the owner in the same session, and on shadow and paper the operator's session switches off
   a strategy running code the error can make change an order, a position or a recorded value, or
