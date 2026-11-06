@@ -812,7 +812,7 @@ The broker's positions, open orders and cash are used in these places only:
 5. The kill switch's read of open orders.
 6. A sort's read of open orders.
 7. The reconcile after the close. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that it compares positions, open orders and cash, and those issues hold the read.
-8. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a read of the broker's order list that gives an order in doubt its broker id. It supplies an id, checks each row against the order's `sending` entry, and never replaces the book.
+8. A read of the broker's order list that gives an order in doubt its broker id. It supplies an id, checks each row against the order's `sending` entry, and never replaces the book.
 9. The read of a leg's position and open orders just before each send of a close after a broker's trade, under case 3 of rule 5 of design.md's `### A fill is measured from the decision, and a position depends on a market it does not control`.
 
 ```mermaid
@@ -1160,12 +1160,11 @@ sequenceDiagram
     B-->>X2: what it holds for that id
     X2->>J: the answer journaled, which maps the order
     Note over X2,B: it asks, and never sends it again
-    Note over X2,B: the list is this doc's proposal, for the execution issue
 ```
 
 A client order id is an id the platform chooses and sends with the order. The broker gives the order an id of its own, and the journal maps one to the other on each ack. Every lookup goes by the broker's order id, because not every broker can find an order by a client order id.
 
-An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`, and the adapter answers with the broker's id, not found, or more than one. By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was whole and gives each paired row it read, converted at the adapter to the platform's `BrokerOrder`, so `OrderPath` runs the match and the halts in one place. How it finds the order is the adapter's own, so a new broker changes no line of `OrderPath`. This doc proposes three steps for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), so Alpaca's lookup goes by the broker's id too.
+An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`, and the adapter answers with the broker's id, not found, or more than one. By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), it also says whether its list was whole and gives each paired row it read, converted at the adapter to the platform's `BrokerOrder`, so `OrderPath` runs the match and the halts in one place. How it finds the order is the adapter's own, so a new broker changes no line of `OrderPath`. Three steps make Alpaca's lookup go by the broker's id too, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
 
 1. The adapter reads the broker's order list, open and closed orders alike, from the earliest `sending` entry in doubt, less a written overlap larger than the clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets.
 2. It returns the broker's order id from the row that carries the order's client order id.
@@ -1265,7 +1264,6 @@ sequenceDiagram
         X->>J: in doubt journaled
         X->>B: the orders listed from before its send
         B-->>X: this client order id, under the broker's order id
-        Note over X,B: the list is this doc's proposal, for the execution issue
         X->>B: lookup by the broker's order id
         B-->>X: acknowledged
         X->>J: ack journaled, and any unsent planned order journaled Abandoned
@@ -2113,7 +2111,7 @@ stateDiagram-v2
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: cancel journaled, for the kill switch, a failed pair leg, a later plan, or a sort
     PartlyFilled --> CancelSent: cancel of the rest journaled, for the same reasons
-    InDoubt --> InDoubt: a cancel on a row a list returned, journaled, by the list proposal, still blocked and counted until a lookup settles it
+    InDoubt --> InDoubt: a cancel on a row a list returned, journaled, still blocked and counted until a lookup settles it
     CancelSent --> CancelSent: a new cancel journaled, under faults rule 6
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
     CancelSent --> Filled: it filled before the cancel landed
@@ -2136,11 +2134,11 @@ saying no.
 `InDoubt` is the state a crash between sending and the ack lands in. It lets
 the journal say "the platform does not know whether the broker has this order",
 rather than leaving the next decision to guess. The only way out is to ask the
-broker, by the broker's order id, which the broker's order list supplies for an order with no ack, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). Sending the order again is never a way out. An order
+broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out. An order
 that ends `Abandoned` never reached the broker, so the next decision's
 order manager plans from the book as if it had never existed. `Lost` means the
 platform stopped waiting and sending is unproved, and the order manager plans
-from the book the same way. A lookup that finds nothing, or by that proposal a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, because a request sent just before a crash can still arrive after that read. An open order or a fill on an order the journal holds as `Lost`
+from the book the same way. A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, because a request sent just before a crash can still arrive after that read. An open order or a fill on an order the journal holds as `Lost`
 or `Abandoned` is journaled as received as unmatched and halts, and so is a late order under an older lease. A cancel the broker reports as pending leaves the order
 `CancelSent`, still counted at its worst case, and a refused cancel returns it
 to the state it was in, still counted, with the alarm for a cancel that
@@ -2401,7 +2399,7 @@ each keeps its own rule.
    component, decision and name. Each blob's header names the blobs it came from, and a halt says
    why a decision stopped. A deterministic component's blobs are regenerable
    from marketlake, the journal and the code, but data's snapshots,
-   execution's account files, the send stage's broker reads, a takeover's broker order list and, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the order list that maps an order in doubt capture what was true at the moment, so none can be, and all are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
+   execution's account files, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt capture what was true at the moment, so none can be, and all are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
    backtest's blobs sit in a memory-backed folder and vanish when it ends,
    because a backtest can be regenerated. The blobs also make a question such
    as "how did the backtest's z-score on a decision differ from the shadow
@@ -2593,7 +2591,7 @@ not come again is kept rather than discarded.
 | A send stage's broker read, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A takeover's broker order list, a capture named by the journaled takeover entry, whose form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json` |
-| The order list that maps an order in doubt, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the key |
+| The order list that maps an order in doubt | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the key |
 | A send stage's claim, naming the handler running it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
 | A journal checkpoint | `journal/<account>/checkpoints/<seq>.json` |
@@ -3731,7 +3729,7 @@ in [design.md](design.md)'s `## Decisions`.
 | Each run records the signals it computed | Recomputing them whenever two runs are compared | One more output file per decision, which holds nothing that cannot be regenerated | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Execution reserves a quarter of the broker's rate limit, 50 of [Alpaca's 200 requests a minute](https://alpaca.markets/support/usage-limit-api-calls), for cancels and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, which new orders and other lookups never draw on, and splits both the reserve and the rest evenly across its instances, each counting against a fixed share | A counter shared across instances, or no reserve | An instance cannot borrow another's idle share, and an order waits at its instance's share | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | An order in doubt alarms when it is first journaled `InDoubt`, and halts the run once it stays unsettled past the smaller of 30 minutes and the time left before the cancel cutoff | Waiting out the order's time in force | A halt when a slow broker answers a lookup late | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| An order in doubt, which has no ack and so no mapped broker id, gets its broker id from the broker's order list, read from before its send, and is then looked up by that id. A list that fails or stops before its last page settles no order's state and stops new orders, a row already read still serves a cancel, a row or answer that disagrees with the `sending` entry halts, and `find_order` also says whether its list was whole and gives each paired row | Reading open orders alone, which miss an order already filled or cancelled | One paged read and one lookup for each try at settling, and an order that lands after the read waits for the next | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| `find_order` also says whether its list was whole and gives each paired row as a `BrokerOrder`, so `OrderPath` runs the match and the halts in one place, and `orders(since)` stays on the port for a takeover's stored list, open and closed orders across every page | Three answers alone, which cannot carry a failed page or a row that disagrees | One more named type on the port | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A strategy's off switch is a blob any person may create, which execution reads before each of that strategy's submits, abandoning only its orders while its cancels still go out, and which sorts its orders, cancelling those that add to a position and keeping a pair whole | A deploy to switch a strategy off, or a halt of the whole account | One more control blob, check, command and drill, and a pending adding order lost when a switch-off was a mistake | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A fired loss stop creates a create-only blob that holds the account until `ithildin stop clear` | A stop that lifts once the day's loss recovers or a new session starts | A person's clear before trading resumes after any fired stop | [#7](https://github.com/l3a0/ithildin-runtime/issues/7), which owns the loss stop |
 | Slice 1's one VM is sized so measured memory use stays at or under half its memory, an 8 GB machine at the estimate, and a VM group's written limit of deployments comes from 75% of its memory | Sizing the machine to the estimate alone | About 7 cents an hour for each environment, a figure to confirm, and a second VM group once the limit is reached | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
