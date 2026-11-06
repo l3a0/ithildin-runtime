@@ -759,7 +759,8 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 - **Reconciliation** compares the journal with the broker on every fill and at
   a set interval, from a recorded journal position, and in full every
-  day. A mismatch halts trading, and cancels the orders rule 2 of the design doc's
+  day. Execution reconciles, because reconciling changes the book, and monitoring
+  only compares and reports. A mismatch halts trading, and cancels the orders rule 2 of the design doc's
   [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) names.
   The design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
