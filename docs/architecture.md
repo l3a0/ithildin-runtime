@@ -3273,15 +3273,15 @@ The deployment checks stay on healthchecks.io, outside AWS, because they must st
 
 ```mermaid
 flowchart LR
-    subgraph checks["The checks"]
-        direction TB
-        deadman["A deployment's dead-man check"] ~~~ ready["A session-ready check"] ~~~ promo["The promotion check"] ~~~ drill["The live drill check"]
-    end
+    deadman["A deployment's dead-man check"]
+    ready["A session-ready check"]
+    promo["The promotion check"]
+    drill["The live drill check"]
     hc["healthchecks.io's integrations"]
     rule["EventBridge rule"]
-    dlq[("Dead-letter queue")]
-    push["The push topic, on ntfy"]
     sns["SNS topic"]
+    push["The push topic, on ntfy"]
+    dlq[("Dead-letter queue")]
     owner(["The owner's phone and inbox"])
 
     deadman --> hc
@@ -3290,9 +3290,9 @@ flowchart LR
     drill --> rule
     promo --> sns
     drill --> sns
+    hc --> owner
     rule --> push
     rule -.->|"a refused push"| dlq
-    hc --> owner
     push --> owner
     sns -->|"email"| owner
 ```
