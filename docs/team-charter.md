@@ -229,7 +229,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   entry's backtest beside random entries, labelled exploratory, under rules 2, 3 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Names who a strategy trades against and what forces its spread back, says when a strategy fitted on
-  closes decides on a midpoint, labels a sample's simulated costs, and shows what holding a position costs
+  closes decides on a midpoint, labels a sample's simulated fills, and shows what holding a position costs
   beside a backtest quoted as evidence, under rules 1 to 4 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
@@ -262,8 +262,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Holds that a split reads as neither a gain nor a loss, under rule 6 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Records each price and volume with its kind, the venues it covers and any delay from its source, and
-  each volume with how it was counted, with a kind no source states recorded as unstated, and holds that a
-  quote frozen by a halt reads as stale, under rules 2 and 5 of the design doc's
+  each volume with how it was counted, with a field no source states recorded as unstated and a decision
+  stopped from reading a price of unstated kind, and holds that a quote frozen by a halt reads as stale,
+  under rules 2 and 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path
@@ -314,9 +315,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the journal, the fills and the named cost, under rule 1 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Measures each fill from the quote its decision read, shows what stayed unfilled, keeps commission apart
-  from the midpoint gap, shows each instrument's share of volume, settles an order on the broker's refusal
-  without resending it, sends no order of the platform's own for a lone leg outside a decision, and holds
-  that a simulated resting order takes no fill a real one might miss, under rules 1, 5, 6 and 7 of the design doc's
+  from the midpoint gap, shows each instrument's share of volume, settles a short the broker refused for
+  lack of borrow without resending it, and sends no order of the platform's own for a lone leg outside a
+  decision, while a person's order or a later unwind stays open. Once a limit order is planned, has its
+  simulated fill name what it assumes, under rules 1, 5, 6 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
@@ -379,7 +381,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   loss, the account's fall from its peak and a total once positions share an account, under rules 4 and 5 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Writes, before the board sits on the Live step, the statement of what a broker or a venue can do to a
-  position, from their published text with its date, under rule 5 of the design doc's
+  position, from their published text with its date, and reads its dated terms again when the capital cap
+  is raised, under rule 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -450,7 +453,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under rules 1, 2 and 6 of the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Holds the tests of a fill's cost at each recorded outcome, a refused short leg, a frozen quote, a lone leg and a resting order's fill, under rules 1, 5 and 7 of the design doc's
+  Holds the tests of a fill's cost at each recorded outcome, a price of no stated kind, a refused short leg, a frozen quote, a lone leg and, once a limit order is planned, a resting order's fill, under rules 1, 2, 5 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -711,7 +714,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   latency (L4973 to L5006). The daily report also carries what rule 2 of the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
   names, what [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 5 asks, the
-  sessions held under rule 3 and the lines rule 5 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) name, and the cost, unfilled, gap and share-of-volume lines, with costs labelled where a fill was simulated, and the alert on a lone leg, that rules 1, 2, 5 and 6 of the design doc's
+  sessions held under rule 3 and the lines rule 5 of the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) name, and the cost, commission, unfilled, gap and share-of-volume lines, with fills labelled where they were simulated, and any lone leg, that rules 1, 2, 5 and 6 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) name.
 - **Startup** checks that every upstream module is live and current before
   execution may act, which is the safeguard the reboot incident lacked (L4690).
@@ -807,8 +810,8 @@ answer pointing at code or a test (L5568).
 2. What data does it use, and how is the data stored and cleaned?
 3. Is the alpha theory-driven or data-driven, relative or intrinsic, and on what
    horizon and universe? For a strategy that opens a sample, when does its bet lose,
-   what would show it has broken, how does each position end, who is on the other side, and what
-   forces its spread back?
+   what would show it has broken, how does each position end, who is on the other side, does it mix
+   kinds of price, and, where it holds a spread, what forces that spread back?
 4. What is the portfolio construction rule, what are its limits, and why? For a
    strategy going to Live, which dated line records the fall its size answers to?
 5. Which cost model, and why? How does a backtest fill?
