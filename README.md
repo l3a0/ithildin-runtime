@@ -18,6 +18,8 @@ its tests show it works.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
 - [docs/architecture.md](docs/architecture.md) draws how slice 1's modules
   fit together, as diagrams.
+- [docs/halts-and-drills.md](docs/halts-and-drills.md) holds the steps of a sort
+  and every alarm's drill.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.
