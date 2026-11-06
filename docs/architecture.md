@@ -752,20 +752,57 @@ flowchart LR
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
-Three things the diagram rules out.
+### What this design rules out
 
-1. **Only execution talks to the broker.** Orders go out through the one
-   execution worker, and the broker's acks, fills,
-   positions and open orders come back through it. Monitoring reconciles
-   against the account file execution wrote rather than asking the broker itself.
-   Every order carries the platform's stamp, a client order id naming its strategy and decision, and the journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says. Execution journals a fill into a strategy's book only when its order is one the journal sent, within that order's quantity. Any other order or fill, a broker's liquidation included, is journaled as received and halts, because a fill nobody journaled would otherwise enter the book and agree with the broker.
-2. **The current book comes from the journal.** The book is the platform's own
-   record of what it holds and what orders are open. Execution's recover stage replays it from the journal, and the broker's positions and open orders are used only at that stage's reconcile, at monitoring's second check and at the sync that opens the send stage. A disagreement at either execution step halts trading rather than quietly replacing the platform's record, and one at monitoring's check alarms.
-3. **Bars reach the models only after the data worker has recorded which ones were
-   read.** A model never reads a feed directly, so every number it acted on can
-   be read back later from marketlake. Captured market data is the first of the
-   three things [design.md](design.md#premise) says cannot be recovered, and
-   marketlake is where it is kept.
+**Table:** The three rules at a glance
+
+| Rule | What it prevents | Flows |
+| --- | --- | --- |
+| Only execution talks to the broker | A second sender, or a fill nobody journaled entering the book | 6, 10, 11 |
+| The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 9.3 |
+| Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
+
+#### Only execution talks to the broker
+
+A second sender is how an order escapes the gate. So orders go out through the one execution worker, and the broker's acks, fills, positions and open orders come back through it. Monitoring reconciles against the account file execution wrote rather than asking the broker itself.
+
+Every order carries the platform's stamp, a client order id naming its strategy and decision. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
+
+```mermaid
+flowchart TD
+    fill["A fill or order reported by the broker"] --> sent{"Did the journal send this order,<br/>and is the fill within its quantity?"}
+    sent -- "Yes" --> book["Journal the fill into the strategy's book"]
+    sent -- "No" --> halt["Journal it as received, and halt"]
+```
+
+A broker's liquidation takes the "No" path too. Without the halt, a fill nobody journaled would enter the book and agree with the broker.
+
+#### The current book comes from the journal
+
+The book is the platform's own record of what it holds and what orders are open, so a broker's answer never replaces it quietly. Execution's recover stage replays it from the journal.
+
+The broker's positions and open orders are used in three places only:
+
+1. The recover stage's reconcile.
+2. Monitoring's second check.
+3. The sync that opens the send stage.
+
+```mermaid
+flowchart LR
+    journal[("Journal")] -->|"replay"| book["The book"]
+    broker(["Broker's positions<br/>and open orders"])
+    book --- cmp{"Do they agree?"}
+    broker --- cmp
+    cmp -- "No, at an execution step" --> halt["Halt trading"]
+    cmp -- "No, at monitoring's check" --> alarm["Alarm"]
+    cmp -- "Yes" --> go["Carry on"]
+```
+
+A disagreement at an execution step halts trading rather than quietly replacing the platform's record, and one at monitoring's check alarms.
+
+#### Bars reach the models only after they are recorded
+
+A number nobody can read back cannot be checked later. So a model never reads a feed directly, and the data worker records which bars it read first. Every number a model acted on can then be read back, from the snapshot for what the decision read, and from marketlake for the bars. Captured market data is the first of the three things [design.md](design.md#premise) says cannot be recovered, and marketlake is where it is kept.
 
 ```mermaid
 sequenceDiagram
@@ -3045,7 +3082,7 @@ Eleven rules keep the environments apart.
    the pipeline.** Each deployment gets a check on healthchecks.io named
    after its environment and deployment, whose description carries the
    first command to run, its runbook row and the broker's console, so the push on a phone says what to do. The
-   promotion job pings a check of its own after each run, so a dropped
+   promotion job reports each run to a CloudWatch alarm of its own, so a dropped
    schedule alarms. Test needs no check, because a failed CI run is its
    alarm. Slice 1 runs one deployment in each of shadow, paper and live, so
    that is one check each, and each portfolio added on the way to 10x adds a check,
@@ -3056,11 +3093,13 @@ Eleven rules keep the environments apart.
    delete a check, stored only in the promotion job's GitHub environment and
    named in design.md's `## Configuration` when the job is built. A [drill](halts-and-drills.md#drills-with-no-alarm)
    confirms that. Each environment also
-   gets a session-ready check, scheduled at the session timer plus a margin,
-   which the supervisor pings once it has written or read the plan
+   gets a session-ready check in CloudWatch, due at the session timer plus a margin,
+   which the supervisor reports to once it has written or read the plan
    and has heard the plan's own event. So a VM that never booted, or an event
    path dead since the open, alarms in the morning rather than after the
    cutoff.
+
+   The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach the push topic by the EventBridge route. That keeps the project at 12 of healthchecks.io's free 20 checks, under the 75% limit of 15. The price is two places to set up alerts, and that the CloudWatch alarms go quiet with AWS.
 
 #### Rule 10: what the drills check
 
