@@ -99,7 +99,7 @@ These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.m
 
 1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
 2. **Every order passes the risk gate.** There is one order path, and the pre-trade risk check sits on it. No code path, test helper or operator command submits an order around it.
-3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
+3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One exception starts switched off. A strategy's forecast missing at portfolio construction's deadline reads as no change for that strategy, for up to a written age the owner sets for risk. At the default age of 0 this limit holds as written. Past that age the strategy halts and the owner is alerted. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
 6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper. Deploying to live is the owner's, by hand.
@@ -433,7 +433,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
-  and carrying on, or any of the four forms the design doc's rules for the
+  and carrying on, apart from the written exception in hard limit 3, or any of the four forms the design doc's rules for the
   code forbid (CC p. 194, p. 197), a cut to the order path, the gate or its
   limits, and any check on input
   that can stop a cancel. That last item has two exceptions: the conditions the design

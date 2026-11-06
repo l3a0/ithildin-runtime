@@ -1219,7 +1219,7 @@ old. Data applies that rule.
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
 than reading the silence as a target of zero. A flat position is a forecast
-with direction 0, never a missing forecast.
+with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which starts at 0 and which [Decision 9 of 2026-11-06](design.md#2026-11-06) sets out.
 
 ### A restart before the data is ready
 
