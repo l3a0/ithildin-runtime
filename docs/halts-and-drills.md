@@ -174,12 +174,13 @@ A drill here proves a grant, a fence or a scale-out path rather than firing an a
 
 ### What each environment drills as it arrives
 
-Rule 3's drill grows to try each environment's roles
+The drill in rule 3 of architecture.md's `## Where it runs` grows to try each environment's roles
 against every other environment's bucket, key and VM, by each route this section lists for the key and by assuming or passing another environment's role, sends to every other environment's queues with every other environment's rules and roles, and expects "access denied" every time. It also checks five more things.
+
 1. Each environment's monitoring role and VM role read their own ping
-addresses, every other role is refused, and no parameter holds the project's ping key.
+   addresses, every other role is refused, and no parameter holds the project's ping key.
 2. The operator's credential is refused every broker key, every live write it is not granted, and `ssm:SendCommand` on every runtime VM. On live the owner runs this check under the operator's role, tests the two live writes that role holds, by pulling the switch and by switching a strategy off while no session runs, and clears both.
 3. A deploy role is refused every key but its pin, its deploy record and its read of block records, and a deploy is refused a blocked digest.
 4. A promotion is refused while paper's switch is set, and a rollback holds against the next promotion, drilled once rolling paper back and once rolling shadow back after its digest met the healthy counts.
 5. A pin moved mid-session leaves a restarted worker on the session's
-digest.
+   digest.
