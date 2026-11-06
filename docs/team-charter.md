@@ -353,7 +353,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
   idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Holds the rule for what a halt
-  and the kill switch cancel and keep at the broker, per the design doc. A sort's cancel and a pair-keeping cancel read a cutoff that cannot be computed, or that reads a clock which failed its check, as not passed, so the cancel goes out. The
+  and the kill switch cancel and keep at the broker, per the design doc. No clock or cutoff reading stops a sort's adding cancel or a pair-keeping cancel, so a clock that failed its check holds neither back. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
   Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
@@ -742,7 +742,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   clock's offset and sync age. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
   interface, and that instance receives nothing and runs the two again at a written
-  interval. Once they pass, the order path reads the kill switch and serves it, and resumes any sort the design doc's rule 1 of `### Every change can be undone or switched off` proposes, which is no Startup check. A failure of any other check, apart from a store finding, which
+  interval. Once they pass, the order path reads the kill switch and serves it, and resumes any sort [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes, which is no Startup check. A failure of any other check, apart from a store finding, which
   follows that rule, halts new orders only, and the release still serves
   cancels, except a plan's own while a halt is stored, and the kill switch.
   Then reconcile, read the halt state, read each strategy's
