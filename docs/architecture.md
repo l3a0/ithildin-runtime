@@ -1169,7 +1169,7 @@ An order in doubt has no ack, so the journal holds no broker id for it. This doc
 
 1. Read the broker's order list, open and closed orders alike, from the earliest `sending` entry in doubt, less a written overlap larger than the clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets.
 2. Take the broker's order id from the row that carries the order's client order id.
-3. Look the order up by that id and journal the answer. Its ack maps the order like any other, apart from a late order under an older lease, which halts first.
+3. Look the order up by that id and journal the answer. Its ack maps the order like any other, apart from a late order under an older lease or an answer that disagrees with the `sending` entry, which halts first.
 
 An order absent from a whole list stays `InDoubt`, because a request sent just before a crash can still arrive. A list that fails or stops early settles no order's state and halts new orders, a row already read still serves every cancel but a plan's own, and a row or an answer that disagrees with the `sending` entry halts, as design.md's `### Orders the platform did not send` says. Alpaca, the broker for paper and for live, names both ids in its [list of orders](https://docs.alpaca.markets/reference/getallorders-1), which returns at most 500 orders a call, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms how the adapter pages through it.
 
@@ -2085,7 +2085,7 @@ stateDiagram-v2
     Approved --> Sending: sending journaled
     Sending --> Acknowledged: broker acks, unless it is a late order, which halts
     Sending --> InDoubt: no answer, a crash, or a refusal saying the broker already holds the id
-    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is a late order under an older lease, which halts first
+    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is a late order under an older lease or disagrees with its sending entry, which halts first
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
@@ -2097,8 +2097,7 @@ stateDiagram-v2
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: cancel journaled, for the kill switch, a failed pair leg, a later plan, or a sort
     PartlyFilled --> CancelSent: cancel of the rest journaled, for the same reasons
-    InDoubt --> CancelSent: a cancel on a row a list returned, journaled, by the list proposal
-    CancelSent --> InDoubt: that cancel refused or stopped, still blocked and counted
+    InDoubt --> InDoubt: a cancel on a row a list returned, journaled, by the list proposal, still blocked and counted until a lookup settles it
     CancelSent --> CancelSent: a new cancel journaled, under faults rule 6
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
     CancelSent --> Filled: it filled before the cancel landed
