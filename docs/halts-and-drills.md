@@ -205,10 +205,10 @@ The diagram shows a lease's take, renewal and takeover, so look for the 412 that
 3. Freeze execution between its tag check and its send, expecting the new holder to look that order up, and one that lands after the order list it read at takeover to halt with that order named.
 4. Kill the new holder after its takeover, expecting the stored order list and the takeover entry to survive, and the next holder's lookup of a late order to halt before `Acknowledged`.
 5. Freeze a supervisor instance holding the plan's lease mid-halt, expecting another instance to take the lease over and finish the halt, and the frozen instance's next status write refused by the tag check.
-6. Fail the new holder's broker list read, and then its capture's write, expecting new orders halted, every cancel but a plan's own sent, the plan's cancel stopped, and the alarm raised with its reason read back.
+6. Fail the new holder's broker list read, and then its capture's write, expecting new orders halted, every cancel but a plan's own sent, the plan's cancel stopped, and the alarm raised with its reason read back. Then release the halt with the list still unstored, expecting new orders still refused, and on live expect no self-release.
 7. Deliver a late order's ack after the takeover, expecting a halt with that order named and no `Acknowledged` entry.
 8. Let a late order first appear in the day's read after the close, expecting a halt with that order named and none of its fills in a book.
-9. Under the proposal in guard 4 of rule 4 of [Every fact has one writer](design.md#every-fact-has-one-writer), stop the holder's VM after its tag check, run `ithildin lease clear`, and expect the next holder to store the broker's order list and journal a takeover entry before it acts.
+9. Under the proposal in guard 4 of rule 4 of [Every fact has one writer](design.md#every-fact-has-one-writer), stop the holder's VM after its tag check, run `ithildin lease clear`, and expect the next holder to store the broker's order list and journal a takeover entry before it acts. Kill the tool between its journal entry and its delete, and expect the lease still held.
 
 ### Alarms on deployment and release
 
@@ -286,7 +286,8 @@ The diagram shows a lease's take, renewal and takeover, so look for the 412 that
 | A drill refused because a session is open on live | "drill refused: session open" and the open run's plan | Start a drill while a live session is open | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | live |
 | A live session refused because a drill is running or left something behind | "session refused: drill not clean" and what failed the check | Start a session while a drill's marker exists, and after a drill that leaves the switch set | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | live |
 | The plan's own event did not reach the supervisor in time | "event delivery: plan event not received" | Turn off the bucket's EventBridge delivery, and deny the supervisor's queue's policy to its rule | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
-| A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | Deny a queue's policy to its rule, and break the CloudWatch route's push target with the topic healthy, expecting the event on the queue and monitoring's page | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
+| A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | Deny a queue's policy to its rule, and break the CloudWatch route's push target with the topic healthy, expecting the event on the queue and monitoring's page, in each of shadow and paper | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
+| A dead-letter queue holds an event, or EventBridge reports failed deliveries | The rule, the queue and the count | The same steps on live | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | live |
 | A decision's event delay passes its share of the time before the cutoff | Each step's delay | Delay events in the folder adapter past the share | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | Dead-man | None. The heartbeat service raises it, and its check's description names the broker's console | A day of two decisions whose second ping is skipped, test 4, a halted day followed by a dead VM, and an empty plan with monitoring stopped, each run against shadow's and paper's checks, an empty plan with monitoring running, expecting no alarm, and an early close, expecting no alarm when its decision and ping-only entry both ping and the alarm when the ping-only entry is skipped | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | Dead-man | None. The heartbeat service raises it, and its check's description names the broker's console | A day of two decisions whose second ping is skipped, test 4, a halted day followed by a dead VM, and an empty plan with monitoring stopped, each run against live's check, an empty plan with monitoring running, expecting no alarm, and an early close, expecting no alarm when its decision and ping-only entry both ping and the alarm when the ping-only entry is skipped | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | live |
@@ -310,7 +311,7 @@ Each deadline that the supervisor enforces is set on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), beside the
 heartbeat's grace period, which has to exceed them. Each drill writes a
 create-only record in its environment's bucket naming the row, the
-environment, the digest, the time, whether the row's expected outcome was asserted and, for a row with an alarm, whether the push arrived. A record passes when each of those holds. The paper gate's list holds every row of the tables above and of [Drills with no alarm](#drills-with-no-alarm) whose Gate is `paper` with no passing record on the digest under test, and the live gate's the same for `live`. A row whose Gate names the cluster joins neither list, and passes before anything relies on the cluster. `ithildin
+environment, the digest, the time, whether the row's expected outcome was asserted and, for a row with an alarm, whether the push arrived. A record passes when each of those holds. The paper gate's list holds every row of the tables above and of [Drills with no alarm](#drills-with-no-alarm) whose Gate is `paper` with no passing record on the digest under test, and the live gate's the same for `live`. A row passes only on a passing record from each environment its steps name, and rows that share a name are told apart by their Gate. A row whose Gate names the cluster joins neither list, and passes before anything relies on the cluster. `ithildin
 status` lists the next gate's rows.
 
 ## Drills with no alarm
@@ -328,8 +329,10 @@ A drill here proves a grant, a fence or a scale-out path rather than firing an a
 | Rule 3's drill on the broker key | The same steps as the row above, on live | live |
 | Reading the broker key | Try to read the key without decryption with every role in the account but execution's, directly, by a recursive read from `/` and through its history, from a role that can assume no other, with marketlake's roles from marketlake's account, and with a role at another path that reuses the execution role's name, expecting "access denied" every time, in each of shadow and paper | paper |
 | Reading the broker key | The same steps as the row above, on live | live |
-| An absent switch | Read an absent switch with the list right on the switch's prefix, expecting "no such blob" | paper |
-| An absent partition | Read an absent partition with the data worker's grant on marketlake's bucket, expecting "no such blob" | paper |
+| An absent switch | Read an absent switch with the list right on the switch's prefix in each of shadow and paper, expecting "no such blob" | paper |
+| An absent switch | Read an absent switch with the list right on the switch's prefix on live, expecting "no such blob" | live |
+| An absent partition | Read an absent partition with the data worker's grant on marketlake's bucket in each of shadow and paper, expecting "no such blob" | paper |
+| An absent partition | Read an absent partition with live's data worker's grant on marketlake's bucket, expecting "no such blob" | live |
 | Rule 3's drill on the metadata fence | From inside each container, send a token request and a tokenless request to the metadata service, each expected to fail, and try a read of another container's mounts, in each of shadow and paper | paper |
 | Rule 3's drill on the metadata fence | The same steps as the row above, on live | live |
 | Scale-out 1 | Terminate a VM mid-decision, expecting the other two to finish the decision and the group to replace the VM | Before anything relies on the cluster |
