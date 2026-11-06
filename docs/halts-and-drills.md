@@ -288,6 +288,8 @@ The diagram shows a lease's take, renewal and takeover, so look for the 412 that
 | A strategy's retiring result was reached, or its measure could not be computed | The strategy, the result or the missing measure, and the owner's step | Inject a result under a drill's journal entry on a strategy with no open sample, and an absent measure, as [#33](https://github.com/l3a0/ithildin-runtime/issues/33)'s fault list says | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
 | A retiring check, an outcome match, or the check of orders back to their causes has stopped | Which check, its last run and what the stale halt stopped | Stop each check, expecting the strategy's halt, or for orders back to their causes a halt of all trading, and the dead-man check's page | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
 | An invalid stress move, or a lost registration | The strategy, the value or the registration, and that nothing was cancelled | Feed a bad stress move, and lose a registration once the journal shows its sample opened | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
+| An adding order the gate passed has no finite positive worst loss journaled | The strategy, the order, and that nothing was cancelled | Journal a passed adding order with no worst loss, expecting new orders halted, every working order kept and the owner's step | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
+| The daily report's last run is past its bound | None. The heartbeat service raises it | Stop the report, halted and not halted, expecting the dead-man check's page each time | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 
 ### How a drill counts toward a gate
 
