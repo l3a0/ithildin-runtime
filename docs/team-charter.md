@@ -353,7 +353,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
   idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Holds the rule for what a halt
-  and the kill switch cancel and keep at the broker, per the design doc. The
+  and the kill switch cancel and keep at the broker, per the design doc. A sort's cancel and a pair-keeping cancel read a cutoff that cannot be computed, or that reads a clock which failed its check, as not passed, so the cancel goes out. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
   Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
@@ -844,7 +844,7 @@ and standard practice, not from that book, and should be read as such. The excep
 survivorship bias, which rule 2 of the design doc's
 [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it)
 takes from *Fooled by Randomness*, and the
-lease number, the journal's durability before a send, applying each fill once, and reconciling on
+guards on the send to the broker, the journal's durability before a send, applying each fill once, and reconciling on
 every fill from a recorded position, which are built on the fencing, durability, end-to-end id
 and read-skew arguments of *Designing Data-Intensive Applications* and adapted here to a broker
 that fences nothing.

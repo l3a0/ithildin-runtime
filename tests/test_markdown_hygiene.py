@@ -495,6 +495,7 @@ def test_a_table_with_no_title_is_flagged() -> None:
     text = "Some prose.\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n"
     findings = untitled_tables(text, Path("x.md"))
     assert [finding.line_number for finding in findings] == [3]
+    assert findings[0].rule == "table with no title, add **Table:** above it"
 
 
 def test_a_table_under_a_title_is_left_alone() -> None:
@@ -525,8 +526,25 @@ def test_every_table_in_the_repo_has_a_title() -> None:
         ("**Table:**\n\n| A |\n| --- |\n", [3]),
         ("See **Table:** One\n\n| A |\n| --- |\n", [3]),
         ("Prose.\n\n| A | B |\n| :--- | ---: |\n", [3]),
+        ("**Note:** One\n\n| A |\n| --- |\n", [3]),
+        ("| A |\n| --- |\n", [1]),
+        ("**table:** One\n\n| A |\n| --- |\n", [3]),
+        ("Prose.\n\n   | A |\n   | --- |\n", [3]),
+        ("Prose.\n\n| A |\n| - |\n", [3]),
     ],
-    ids=["two-under-one", "prose-between", "touching", "empty", "prefixed", "aligned"],
+    ids=[
+        "two-under-one",
+        "prose-between",
+        "touching",
+        "empty",
+        "prefixed",
+        "aligned",
+        "other-label",
+        "top-of-file",
+        "lower-case",
+        "indented",
+        "one-dash",
+    ],
 )
 def test_a_title_covers_only_the_table_right_below_it(text: str, lines: list[int]) -> None:
     assert [f.line_number for f in untitled_tables(text, Path("x.md"))] == lines
