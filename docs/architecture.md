@@ -1645,10 +1645,10 @@ The operator approves no apply to any environment.
 
 Reading commands change nothing.
 
-A halt's id takes one of two forms.
+A halt's id takes one of two forms, because there are two kinds of halt and each id is where its halt is stored. So the tool goes straight to a halt without searching for it.
 
-1. For a halt in a result, it is the key of that result, `<deployment>/<run>/<decision>/<stage>`.
-2. For a halt held in a folder, it is the halt's name, `<component>-<cause>-<timestamp>-<count>`.
+1. A halt in a result belongs to one decision, as a stage's result saying why that decision cannot go on. Its id is the key of that result, `<deployment>/<run>/<decision>/<stage>`.
+2. A halt held in a folder is a blob of its own for the account or one strategy, which outlives a decision and lasts until a journaled release names it. Its id is the halt's name, `<component>-<cause>-<timestamp>-<count>`, one name for each firing. It belongs to no single decision, so it has no result key to use.
 
 `ithildin halt clear` reduces a person's input to that id before it journals, so the tool finds the environment it lives in.
 
