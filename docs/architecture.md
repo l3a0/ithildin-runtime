@@ -1327,21 +1327,63 @@ the account after a refusal until a person clears it waits for a strategy
 that decides minutes apart, as design.md's
 `### Strategies, schedules and decisions` says. A refusal on live holds until the owner clears it.
 
-The daily loss stop works through the same gate. Once the day's loss on the account passes the stop, the risk gate refuses every new order, apart from the close the next paragraph names. This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage, on every decision that reaches it and before any order is planned, runs the stop's test and the flag test with no order needed, and creates `stop.json` from that result. An uncomputable loss with positions held halts, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how. The move from close−20 to the close is a stated limit of the stop, because no decision tests it. The day's loss is the mark-to-market change from the account's valuation at the prior session's official closes, which the day's first decision stores, and a decision halts when that valuation is missing, which this doc proposes for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+#### The daily loss stop
 
-A fired stop latches, which this doc also proposes for
-[#7](https://github.com/l3a0/ithildin-runtime/issues/7). The first time the
-send stage's test finds the day's loss past the stop, execution creates a blob at
-`accounts/<account>/stop.json` with a create-only write, as the kill switch
-is created, and journals it. `OrderPath` reads that blob before every new
-order, as it reads the switch, and hands its state to the gate, which refuses every new order while it exists,
-across sessions, so a price that recovers never resumes trading on its own.
-Any answer other than "no such blob" reads as fired. A stop read as fired passes only an order under a valid close entry, the close after a broker's trade under case 3 of rule 5 of design.md's `### A fill is measured from the decision, and a position depends on a market it does not control`. A stop whose state cannot be read holds that close too, so the state `OrderPath` hands the gate keeps the two apart, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how. `ithildin stop clear
---account <a>` deletes the blob and journals the clear. On a live account
-only the owner may, and on shadow and paper the operator may too, as the
-charter's owner and risk engineer sections say. [#7](https://github.com/l3a0/ithildin-runtime/issues/7)
-lists the limit as "an automatic unwind and stop", and an unwind is itself a
-trade. Slice 1 stops only.
+A day's loss past a set limit has to end new trading for the account, and a price that recovers must not start it again. So the stop works through the same risk gate, and once it fires it holds until a person clears it.
+
+#### How the day's loss is measured
+
+The day's loss is the mark-to-market change from the account's valuation at the prior session's official closes. The day's first decision stores that valuation.
+
+Two gaps in that measure halt rather than read as no loss.
+
+1. A decision halts when the valuation is missing, which this doc proposes for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+2. An uncomputable loss with positions held halts, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how.
+
+#### When the stop is tested
+
+This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test and the flag test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
+
+The move from close−20 to the close is a stated limit of the stop, because no decision tests it.
+
+#### What happens when the stop fires
+
+A fired stop latches, which means it stays fired whatever the price does next. This doc also proposes that for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), in four steps.
+
+1. The first time the send stage's test finds the day's loss past the stop, execution creates a blob at `accounts/<account>/stop.json` with a create-only write, as the kill switch is created, and journals it.
+2. `OrderPath` reads that blob before every new order, as it reads the switch, and hands its state to the gate.
+3. The gate refuses every new order while the blob exists, across sessions, so a price that recovers never resumes trading on its own.
+4. `ithildin stop clear --account <a>` deletes the blob and journals the clear. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say.
+
+```mermaid
+flowchart TD
+    fire["1. Execution finds the day's loss past the stop,<br/>creates stop.json and journals it"]
+    read["2. OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
+    refuse["3. The gate refuses every new order"]
+    clear["4. A person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
+    fire --> read
+    read --> refuse
+    refuse -->|"the price recovers, or a new session opens:<br/>the blob stays, so the gate keeps refusing"| read
+    refuse -->|"only a person ends it"| clear
+```
+
+#### Which orders a stop refuses
+
+A fired stop holds one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under case 3 of rule 5 of design.md's `### A fill is measured from the decision, and a position depends on a market it does not control`. That order passes a fired stop only under a valid close entry.
+
+A failed read must not open that exception, so an unreadable stop holds the close too. Any answer other than "no such blob" reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how.
+
+**Table:** What the gate does with each answer from reading `stop.json`
+
+| Answer from the read | The stop's state | A decision's new order | An order under a valid close entry |
+| --- | --- | --- | --- |
+| "No such blob" | Not fired | Passes this check | Passes this check |
+| The blob | Fired | Refused | Passes this check |
+| Any other answer | Unreadable | Refused | Held |
+
+#### Why slice 1 only stops
+
+[#7](https://github.com/l3a0/ithildin-runtime/issues/7) lists the limit as "an automatic unwind and stop". An unwind is itself a trade, so slice 1 stops only.
 
 ### The book and the broker disagree
 
