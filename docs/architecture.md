@@ -739,7 +739,7 @@ flowchart LR
     exec -->|"9.3 every step, before it happens"| d3
     exec -->|"9.4 lease taken, taken over and deleted"| d5
     exec -->|"10 approved orders"| brokerx
-    brokerx -->|"11 acks and fills"| exec
+    brokerx -->|"11 answers and fills"| exec
     exec -->|"12 send outcome"| d1
     d1 -->|"13.1 results, halts"| mon
     d3 -->|"13.2 orders and fills"| mon
