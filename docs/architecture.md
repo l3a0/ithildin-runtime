@@ -1672,7 +1672,7 @@ A halt's id takes one of two forms, because there are two kinds of halt and each
    - each level of load reached, with its date and the issue filed for it, or "no issue filed"
    - the next gate's rows with no passing record
 
-2. **`ithildin explain <halt>`** shows one halt: its reason, the halt it passed on, the blobs it was made from, and for a restart, the exit status and the end of the error output.
+2. **`ithildin halt explain <haltid>`** shows one halt: its reason, the halt it passed on, the blobs it was made from, and for a restart, the exit status and the end of the error output.
 
 #### The commands that write
 
@@ -1767,7 +1767,7 @@ This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10)
 
 These run from the narrowest reach to the widest in the usual case: one halt, one strategy, the fired loss stop on the account's gate, then the kill switch on the whole account. A halt of all trading is account-wide, so clearing that one reaches as far as the last two.
 
-###### `ithildin halt clear <halt>`
+###### `ithildin halt clear <haltid>`
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
 
@@ -1781,7 +1781,7 @@ This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issue
 
 This deletes the strategy's off switch and journals it. It refuses two kinds of strategy.
 
-1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin halt clear <id>` releases each firing, which ends its sort.
+1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin halt clear <haltid>` releases each firing, which ends its sort.
 2. A strategy retired under design.md's sample rules that has no new registration.
 
 On a live account only the owner may. On shadow and paper the operator may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather than a rule of its own.
@@ -1848,7 +1848,7 @@ When there is nothing to do, a command says what it found and who acted on it, r
 Each line of an alarm has one job.
 
 1. Its first line names the environment, the account, the decision and the reason, so a push on a phone says what happened without opening anything.
-2. Its second line is the command to run first, almost always `ithildin explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line.
+2. Its second line is the command to run first, almost always `ithildin halt explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line.
 3. Its third line names the alarm's row in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), where the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) says, row by row, what to check and which writing command, if any, follows.
 
 Monitoring's report after each decision ends with the same summary `ithildin status` prints.
