@@ -165,15 +165,16 @@ sequenceDiagram
     participant B as Another process
     participant J as Journal
     participant K as Broker
-    A->>S: creates the lease, on the condition that it not exist
-    S-->>A: returns the lease's tag
+    A->>S: reads the lease and finds its holder clear
+    A->>S: rewrites it with If-Match on the tag it read,<br/>naming itself as holder
+    S-->>A: returns the lease's new tag
     loop every ten seconds while the lease guards a change
         A->>S: rewrites it with If-Match on the last tag,<br/>moving the expiry a lease period ahead
         S-->>A: returns a new tag
     end
     Note over A: The holder freezes, and its renewals stop
     B->>S: fetches the lease, unrenewed past its expiry<br/>and the margin for clock skew
-    B->>S: writes conditionally, naming the expired lease's tag
+    B->>S: rewrites it with If-Match on the tag it read,<br/>the same write as taking a free lease
     S-->>B: returns a new tag
     opt the account's lease
         B->>K: reads the broker's order list
@@ -186,7 +187,7 @@ sequenceDiagram
     A->>A: stops that action
 ```
 
-The diagram shows a lease's take, renewal and takeover, so look for the 412 that a frozen holder meets when it wakes.
+The diagram shows a lease's take, renewal and takeover, so look for the 412 that a frozen holder meets when it wakes. A release is one more rewrite with `If-Match` on the holder's last tag, which clears the holder and leaves the lease in place.
 
 **Table:** Lease and takeover alarms, the reason each writes, and its drill
 
@@ -196,7 +197,8 @@ The diagram shows a lease's take, renewal and takeover, so look for the 412 that
 | A takeover's broker list read, capture write or journal write failed | The failed step, the order or capture it left unread, whether the halt releases itself or, with the store down, only that no cancel can go and the broker's interface | The failed-read, failed-capture and failed-journal step under [Drill for a lease taken over](#drill-for-a-lease-taken-over) | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |
 | The Auto Scaling group replaced the VM | The VM, its zone and the group's activity | Terminate the VM outside a session, expecting the group to start a replacement that joins the next run. Terminate it after leg 1's ack during a session, expecting the halted execution on the replacement to take the stage over, cancel leg 1 and serve a pull, and record the replacement's time against the cancel cutoff. Counting a VM of the cluster as gone, and a zone going down, are [scale-out drills](#drills-with-no-alarm) of [An environment scales out to a cluster of three VMs](architecture.md#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A supervisor cannot take the plan's lease by its deadline | The lease's holder, the write it holds the lease for, and whether the host shows its container gone | Freeze a supervisor instance while it holds the plan's lease mid-halt, with the deadline shorter than the lease period | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
-| Work put back on the queue past its limit because the account's lease stays held | The lease's holder, the order it holds the lease for, the item's receive count, and whether the host shows the holder's container gone | Freeze an execution instance while it holds the lease, expecting the waiting item back on the queue until the takeover and the alarm once its receive count passes the limit. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call and orders of one decision sent by both. Drop the lease's release event, expecting the work done when its item comes back | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
+| Work put back on the queue past its limit because the account's lease stays held | The lease's holder, the order it holds the lease for, the item's receive count, and whether the host shows the holder's container gone | Freeze an execution instance while it holds the lease, expecting the waiting item back on the queue until the takeover and the alarm once its receive count passes the limit. Run two instances against one paper account, with a plan and a pull at once, expecting the journal to show one holder at each broker call and orders of one decision sent by both. Drop the event of a lease's release, expecting the work done when its item comes back. Deliver a take's and a renewal's event to an idle instance, expecting it to read the lease, find it held and go no further | [#10](https://github.com/l3a0/ithildin-runtime/issues/10), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
+| An account's lease absent while its journal holds an entry | The account, the lease's key, the journal's head, and the broker's interface as the owner's step, since no cancel can go without the lease | Point an instance at a test account whose journal holds entries and whose lease was never created, expecting new orders halted and the page. Release the halt, expecting the next take to create the lease, store the broker's order list and journal a takeover entry. Start two instances on an account whose journal holds no entry, expecting one create to land, the other to meet a 412 and no alarm. Fail the read of the journal, expecting a halt and no lease created | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |
 | Execution past its restart count with a send stage unfinished | Each accepted leg, the cancel cutoff and the broker's console | Execution crash-looping after leg 1's ack, expecting the push before the cancel cutoff. One execution instance of three past its count, which comes up halted, expecting another instance to take the send stage over and cancel leg 1 before the cancel cutoff, with the run going on | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A VM stopped its own units because its supervisor instances' own last heartbeat was past the limit | "own heartbeat stale past limit", from the restart record and the host's direct route | Freeze a VM past the limit, in the cluster and in slice 1's group of one, expecting its units stopped and restarted as a fresh member when it wakes | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 
@@ -210,7 +212,7 @@ The diagram shows a lease's take, renewal and takeover, so look for the 412 that
 6. Fail the new holder's broker list read, then its capture's write, then only its takeover entry's journal write, expecting new orders halted, every cancel but a plan's own sent, the plan's cancel stopped, and the alarm raised with its reason read back. With the store down through a takeover, expect no cancel sent and the page of the row `A write S3 refuses`, naming the broker's interface. Then release the halt, and separately restart the holder, with the takeover unfinished, each expecting new orders still refused until a list is stored and a takeover entry journaled, and with the setting a live account holds, expect no self-release. Let the store and the entry land, expecting the next new order to go.
 7. Deliver a late order's ack after the takeover, expecting a halt with that order named and no `Acknowledged` entry.
 8. Let a late order first appear in the day's read after the close, expecting a halt with that order named and none of its fills in a book.
-9. Under the proposal in [Every fact has one writer](design.md#every-fact-has-one-writer) that a late order under an older lease halts, stop the holder's VM after its tag check, run `ithildin lease clear`, and expect the next holder to store the broker's order list and journal a takeover entry before it acts. Kill the tool between its journal entry and its delete, and expect the entry journaled and the lease still held. Refuse the tool's journal write, and time it out, each expecting the lease still held. Let a new holder take the lease between the entry and the delete, and expect that lease to survive and the command to report it. Run the tool against a holder still running, expecting refusal.
+9. Under the proposal in [Every fact has one writer](design.md#every-fact-has-one-writer) that a late order under an older lease halts, stop the holder's VM after its tag check, run `ithildin lease clear`, and expect the next holder to store the broker's order list and journal a takeover entry before it acts. Kill the tool between its journal entry and its rewrite, and expect the entry journaled and the lease still held. Refuse the tool's journal write, and time it out, each expecting the lease still held. Let a new holder take the lease between the entry and the rewrite, and expect that lease to survive and the command to report it. Run the tool against a holder still running, expecting refusal.
 
 ### Alarms on deployment and release
 

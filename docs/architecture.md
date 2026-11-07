@@ -737,7 +737,7 @@ flowchart LR
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3
-    exec -->|"9.4 lease taken, taken over and deleted"| d5
+    exec -->|"9.4 lease taken, taken over and released"| d5
     exec -->|"10 approved orders"| brokerx
     brokerx -->|"11 answers and fills"| exec
     exec -->|"12 send outcome"| d1
@@ -747,7 +747,7 @@ flowchart LR
     mon -->|"14.2 pings and alarms"| alert
     person -->|"15.1 switch, clears, overrides,<br/>releases, hard caps, owner's records"| d5
     person -->|"15.2 clear and override entries"| d3
-    person -->|"15.3 lease delete, after its clear entry"| d5
+    person -->|"15.3 lease cleared, after its clear entry"| d5
 
     classDef boundary fill:none,stroke-dasharray:6 4
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
@@ -761,7 +761,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | --- | --- | --- | --- |
 | 0 image | GitHub into the VM | A forged or altered release runs | The VM checks the pinned digest and its attestation, and refuses otherwise |
 | 1, 4, 7.1, 7.2, 8.2, 9.3, 12, 14.1 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
-| 9.4 lease | The VM into storage | A holder that lost the lease rewrites or deletes it | Among the runtime's roles, only execution's rewrites or deletes an account's lease, each only with the tag S3 last returned to its holder, or for a takeover's write the expired lease's tag, so a stale holder's write is refused |
+| 9.4 lease | The VM into storage | A holder that lost the lease rewrites it | Among the runtime's roles, only execution's rewrites an account's lease, each time with `If-Match` on the tag it read or last got, so a stale holder's write is refused, and the bucket refuses every delete there |
 | 7.3, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
 | 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
 | 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
@@ -770,7 +770,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
-| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or deletes a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
+| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
@@ -973,7 +973,7 @@ sequenceDiagram
             X->>B: looks up once by the broker's order id
         end
         X->>J: journals the old order's outcome or its doubt,<br/>any fill included
-        X->>F: deletes the account's lease
+        X->>F: releases the account's lease
     end
     loop each order the order manager plans,<br/>a replacement only if its old order settled
         X->>F: takes the account's lease
@@ -987,7 +987,7 @@ sequenceDiagram
         X->>B: sends the order, with its client order id
         B-->>X: answers
         X->>J: journals the broker's answer
-        X->>F: deletes the account's lease
+        X->>F: releases the account's lease
     end
     X->>B: is every leg accepted?
     alt a leg rejected or unsent while another is accepted,<br/>or a leg's plan cancel stopped<br/>after its partner's was confirmed
@@ -995,7 +995,7 @@ sequenceDiagram
         X->>J: journals each cancel
         X->>F: is the lease tag unchanged?
         X->>B: cancels the accepted legs
-        X->>F: deletes the account's lease
+        X->>F: releases the account's lease
         loop a cancel's answer lost, inside the send stage's<br/>deadline, under design.md's rule<br/>for a cancel whose answer is lost
             X->>F: takes the account's lease
             X->>B: looks up by the broker's order id
@@ -1003,7 +1003,7 @@ sequenceDiagram
             X->>F: is the lease tag unchanged?
             X->>B: sends the new cancel
             X->>J: journals its answer or its doubt
-            X->>F: deletes the account's lease
+            X->>F: releases the account's lease
         end
     end
     X->>F: stores the send outcome<br/>and execution's send result
@@ -1067,7 +1067,7 @@ flowchart TB
     end
     subgraph each["Send, once per order"]
         direction LR
-        b1["Steps 1 and 2<br/>take the lease, check the switch and cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, ask the risk gate"] --> b3["Step 8<br/>make the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal the answer, delete the lease"]
+        b1["Steps 1 and 2<br/>take the lease, check the switch and cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, ask the risk gate"] --> b3["Step 8<br/>make the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal the answer, release the lease"]
     end
     subgraph finish["Finish, once per decision"]
         direction LR
@@ -1108,7 +1108,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 8. Make the six checks in the table below.
 9. Send, with the order's client order id.
 10. Journal the broker's answer: the ack, the rejection, or the order's doubt.
-11. Delete the lease, so another instance's cancels wait for at most one order.
+11. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
 **Table:** The six checks made right before the broker call
 
@@ -1123,7 +1123,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 
 Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. An order under a valid close entry reads these checks as [What is checked right before a broker call](design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
-A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and delete the lease.
+A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
 
 #### Finish, once per decision
 
@@ -1268,7 +1268,7 @@ sequenceDiagram
         B-->>X: answers that the order is acknowledged
         X->>J: journals the broker's answer, and journals<br/>any unsent planned order Abandoned
         X->>F: stores a halt as that decision's send result,<br/>if none is stored
-        X->>F: deletes the account's lease
+        X->>F: releases the account's lease
     and
         D->>D: are the segments up to the decision time<br/>in marketlake?
         D->>F: stores a halt as data's result, reason "data not ready"
@@ -1472,7 +1472,7 @@ sequenceDiagram
     X->>B: cancels
     X->>J: journals any failed cancel
     X->>J: journals that the switch's cancels are done
-    X->>F: deletes the account's lease
+    X->>F: releases the account's lease
     M->>A: raises the alarm if any cancel failed
     M->>J: are the cancels done within the deadline of the pull?
     M->>A: raises a second alarm if not,<br/>naming the broker's own console
@@ -1606,9 +1606,9 @@ Writing commands take more friction the more they can resume trading.
    blob and journals the clear, so the gate takes new orders again. On a
    live account only the owner may, and on shadow and paper the operator
    may too.
-8. **`ithildin lease clear --account <a>`** deletes a lease another VM holds
+8. **`ithildin lease clear --account <a>`** rewrites a lease another VM holds to clear its holder, with `If-Match` on the tag it read,
    before it expires, for when a person knows the holder is
-   gone sooner than the expiry would show. It asks EC2 whether the holder's instance is stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that the clear's journal entry is durable before the delete, so a write with no acknowledgement leaves the lease untouched, and that a lease changed since that entry stays and the command reports it. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how, including what a rerun checks.
+   gone sooner than the expiry would show. It asks EC2 whether the holder's instance is stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that the clear's journal entry is durable before the rewrite, so a write with no acknowledgement leaves the lease untouched, and that a lease changed since that entry stays and the command reports it. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how, including what a rerun checks.
 9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live.
 10. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
@@ -1874,7 +1874,7 @@ classDiagram
         +str handler
         +str release
         +str run
-        +datetime created
+        +datetime taken
         +datetime expires
         +str status
     }
@@ -1975,7 +1975,6 @@ classDiagram
         +head(key) StoredBlob
         +list(prefix, after) list
         +replace_if_match(key, data, sha256, etag) str
-        +delete_if_match(key, etag)
     }
     class Alerts {
         <<Protocol>>
@@ -2141,16 +2140,16 @@ Eight choices in the two diagrams for a reviewer to check.
    deciding at it, built by one function in `core` from the schedules and the
    trading calendar, and
    `JournalEntry` is the one numbered record, chained to the entry before it.
-   `Lease` names its holder down to the handler, and when it expires, and
+   `Lease` names its holder down to the handler, and when it expires, leaves those `null` while the lease is free, and
    carries `status` only on a plan's lease, where it holds the run's status,
    so an account's lease leaves it `null`.
    `BlobStore` is the storage port, S3 in shadow, paper and live and a
    memory-backed folder in a backtest, and one contract test suite runs
    against both. `create` returns the stored blob's tag and `head` its stored
    time. `replace_if_match` rewrites a blob only while it still carries the
-   tag it names, and returns the new tag, which is how a lease is renewed and
-   taken over and the one rewrite the port allows. So a lease can be
-   rewritten or deleted only by the tag S3 last returned to its holder. `Journal`
+   tag it names, and returns the new tag, which is how a lease is taken,
+   renewed, released and taken over and the one rewrite the port allows. So a lease can be
+   rewritten only by the tag its writer read or last got, and the port has no delete. `Journal`
    writes through `BlobStore` too, for the account the broker adapter names,
    so the journal has no storage port of its own.
 
@@ -2421,7 +2420,7 @@ erDiagram
         string key
         string holder
         string etag
-        datetime created
+        datetime taken
     }
     OVERRIDE {
         string key
@@ -2767,8 +2766,8 @@ Eleven rules hold the deployment to the premise and the hard limits.
 ### Rule 1: the pin names the release
 
 **The pin names the release.** Each environment's VM runs the release its pin names. The owner's merge to `main` moves shadow's pin, a healthy shadow moves paper's, and only the owner moves live's, as `### Four environments` says, so the code that traded is always known. The release also pins boto3, from a version
-whose botocore, [1.35.67](https://raw.githubusercontent.com/boto/botocore/1.35.67/CHANGELOG.rst) or later, sends both S3's refuse-if-it-exists
-condition and its conditional delete.
+whose botocore, [1.35.69](https://raw.githubusercontent.com/boto/botocore/1.35.69/CHANGELOG.rst) or later, sends both S3's refuse-if-it-exists
+condition and `If-Match` on a write.
 
 ### Rule 2: nothing the platform must keep lives only on the VM
 
@@ -2886,10 +2885,10 @@ needs no deploy.
 | The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
 | The runtime's credential | `heartbeats/` and `restarts/` | Create |
 | Monitoring's role alone | `load/`, a rewrite-planning page's records, which outlive every run and release | Create and read |
-| Execution's role alone among the runtime's roles | `leases/accounts/` | Create, rewrite and delete, a rewrite or a delete only with the tag S3 last returned to its holder, or for a takeover's write the expired lease's tag. A delete leaves a delete marker so the lease's history survives |
+| Execution's role alone among the runtime's roles | `leases/accounts/` | Rewrite, only with `If-Match` on the tag it read or last got, and create with `If-None-Match`, only for a first use as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). No principal deletes a lease |
 | The owner's role alone, on every account | The owner's records, under a prefix [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names | Create. No role deletes one |
 | Execution's and monitoring's roles | The owner's records | Read |
-| The owner's and the operator's credentials | `leases/accounts/` | Delete an account's lease off the VM, as `## What a person runs` says |
+| The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as `## What a person runs` says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
@@ -2898,10 +2897,10 @@ A [drill](halts-and-drills.md#drills-with-no-alarm) checks that. The bucket's li
 holds can delete a version, or change the bucket's policy, versioning or
 lifecycle, or its notification configuration, and no credential but the owner's can change those four. The
 bucket's policy, whose refusals name the runtime's principals, refuses any
-write on those prefixes that lacks the refuse-if-it-exists condition, any
-delete outside the leases, and any lease delete without the tag condition,
+write on those prefixes that lacks the refuse-if-it-exists condition and any
+delete,
 while a lease may be rewritten with `If-Match` on its current tag, which
-renews it or takes it over once expired.
+takes, renews or releases it, or takes it over once expired. It refuses every principal any delete under `leases/`.
 It also refuses every S3 action on the bucket to any principal that is not
 one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on
 `aws:PrincipalArn`, refuses the operator any version delete, and refuses
@@ -3766,11 +3765,11 @@ in [design.md](design.md)'s `## Decisions`.
 | Each queue is SQS in shadow, paper and live, fed by EventBridge rules generated from the table in `runtime`, and a named pipe fed by the memory-backed folder in a backtest and in CI, with one contract suite for both | A named pipe on the VM fed by writers' messages, a socket, a queue server of the runtime's own, or a queue that pushes, such as SNS to an HTTPS endpoint, Amazon MQ or Kinesis enhanced fan-out | A rule and a queue per reader in each environment, and long polling's requests, about 1.2 million a month for shadow and paper and about 1.9 million once live runs, a little past SQS's free million | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | Every write is created once with S3's refuse-if-it-exists condition and its SHA-256. A deterministic component treats a refused write with the same hash as done and a different hash as a bug that halts, and a capturing one, data or execution, treats the stored blob as the one that counts | Blobs that may be replaced, or one rule for both kinds of component | Each component has to know its kind, and the bucket's policy has to refuse writes without the condition | [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as [design.md](design.md#processes-and-files) proposes |
 | The journal is numbered blobs per account, stored before the step it records, with S3's refusal of an existing number keeping two writers apart | A journal in SQLite on the VM | One S3 round trip before each order step | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| Leases, as blobs in S3 that record their holder, each renewed with a condition naming the tag S3 last returned and deleted only with that condition. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and delete the account's lease for each order and the plan's lease for each change to the run, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
+| Leases, as blobs in S3 that record their holder and stay between holders, each rewritten only with a condition naming the tag its writer read or last got, and never deleted. The run's plan, written once, names the run and its release. The kill switch and the hard caps are blobs beside them | A lock file, a switch file and a config file on the VM, a deployment's lease renewed for the whole session, or a session record | A renewal every ten seconds, a takeover only once a lease has expired unrenewed, the one request a frozen holder may already have on its way, an S3 round trip to take and release the account's lease for each order and the plan's lease for each change to the run, a read of the lease for each event an instance receives from it, and no expiry to say every supervisor has gone quiet | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) for the switch and the plan's lease, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) for the account's lease |
 | Inside each environment, what `### Four environments` adds: the records a promotion reads, a pin's form and checks, each role's reach by ARN and path, the trust rules and the drills. [The 2026-10-30 entries](design.md#2026-10-30) and [the 2026-11-02 entries](design.md#2026-11-02) settled the environments and their machines | None named | AWS roles held by workflows on a public repository, and drills that run per environment | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | What [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) adds to each environment's EC2 Auto Scaling group: the test across VMs of whether a runner is gone, a VM's stop of its own units, the subnets and the route for the group's events. [The 2026-11-01 entries](design.md#2026-11-01) and [the 2026-11-02 entries](design.md#2026-11-02) settled the group and its one VM | None named | Subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | How a VM image's instance refresh runs: one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback | AWS CodeDeploy | A refresh marker, a hook the VM's role may complete, an alarm on a failed refresh, and a drill | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| The delay on work put back on the queue while an account's lease is held, and the limit on how many times it goes back | None named | An SQS redelivery as the fallback for a lost release event | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The delay on work put back on the queue while an account's lease is held, and the limit on how many times it goes back | None named | An SQS redelivery as the fallback for a lost event | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. [The 2026-10-29 entries](design.md#2026-10-29), [the 2026-11-01 entries](design.md#2026-11-01) and [the 2026-11-04 entries](design.md#2026-11-04) settled trading the close, the close−20 decision and the early close. Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so close−12 on such a day stays unconfirmed until the broker contract suite or Alpaca confirms it. A missing input on a day halts that decision rather than switching to another time. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says. Alpaca's paper account accepts market-on-close orders, but its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time", and [Alpaca staff on its forum](https://forum.alpaca.markets/t/opening-and-closing-market-prices-in-paper-trading/11664) say paper does not tell a market-on-close order from a market order. So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole | None named | Execution reads the clock for the cutoff, a pair whose second leg can be rejected after the first is accepted, which execution then cancels while the exchange still takes cancels, and a kill switch that cannot stop a closing-auction fill after the exchange's cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, the owner's behind a hardware key and the operator's a short-lived principal of its own, neither with a long-lived secret in a file | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -3817,7 +3816,8 @@ in [design.md](design.md)'s `## Decisions`.
 | The security master's rows only add, an id is never reused or removed, and a rename is a dated row | Editing a row in place | A renamed ticker needs a release | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | The comparison after the seal also takes the newest sealed row at or before the decision time | Comparing only the row of the same minute, which misses a row whose segment landed after the decision | A second row to read for each quote used | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
 | Whatever ends the halt on a failed takeover, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed | None named | A halt a person clears can leave new orders refused until an instance finishes the takeover | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A person's clear of the account's lease counts as a takeover for the guard on a late order. The clear's journal entry is durable before the delete, a lease changed since that entry stays and the command reports it, and the next holder reads the entry and stores the broker's order list before it acts | None named | One more broker read and capture after a clear, and a clear that stops when the lease moved under it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| A person's clear of the account's lease counts as a takeover for the guard on a late order. The clear's journal entry is durable before the rewrite, a lease changed since that entry stays and the command reports it, and the next holder reads the entry and stores the broker's order list before it acts | None named | One more broker read and capture after a clear, and a clear that stops when the lease moved under it | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| An account's lease found absent halts new orders and pages the owner, unless the account's journal holds no entry, which is a first use whose first take creates the lease with a create-only write. After the owner releases such a halt, the next take creates the lease the same way and counts as a takeover | Reading an absent lease as free, which lets a lost lease pass for one nobody holds, and creating each account's lease ahead of its first use, which adds a provisioning step and still needs this rule for a lease that goes missing | A read of the journal on the path that finds no lease, and no cancel on that account until the owner releases the halt, so the page names the broker's interface | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A comparison of cash follows a read of the broker's records, each journaled as an outside entry ahead of the comparison | None named | One more broker read at each comparison | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A record the broker posts late is still fetched | None named | Records already journaled are read again | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | A last-run record that is absent, unreadable or past its read's timeout counts as past its bound | None named | A page when only the read failed | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
