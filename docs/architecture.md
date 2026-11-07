@@ -1342,7 +1342,7 @@ Two gaps in that measure halt rather than read as no loss.
 
 #### When the stop is tested
 
-This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test and the flag test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
+This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test and the price spike flag's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
 
 The move from close−20 to the close is a stated limit of the stop, because no decision tests it.
 
