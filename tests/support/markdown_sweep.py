@@ -1,6 +1,7 @@
-"""Two prose sweeps for Markdown that markdownlint has no rule for.
+"""Prose sweeps for Markdown that markdownlint has no rule for.
 
-Both slips reach a rendered page with every linter clean.
+The tilde and tight-row slips reach a rendered page with every linter clean,
+and so does a table with no title.
 
 A tilde meaning "approximately" can close a strikethrough pair. Markdown reads
 a matching pair of tildes as deleted text, and renderers disagree about when a
@@ -14,7 +15,7 @@ rows around it, which is what markdownlint's MD060 flags. The tight form is
 the one muscle memory produces, and MD060 only fires when the rest of the
 table is padded, so it slips through a table that is tight throughout.
 
-Both checks read prose only. Text inside a fenced block or a backtick span is
+These checks read prose only. Text inside a fenced block or a backtick span is
 exempt, because a pattern written for prose keeps appearing inside the code
 fence that documents it. Blanking keeps line numbers intact, so a finding
 points at the line a reader will open.
@@ -34,6 +35,10 @@ CLOSE_CAPABLE_TILDE = re.compile(r"(?<![\s~\\<])~")
 
 # A delimiter row whose dashes touch the pipes on both sides.
 TIGHT_DELIMITER_ROW = re.compile(r"\|-{1,}\|")
+
+# A table's delimiter row, in any padding, and the title line that names a table.
+DELIMITER_ROW = re.compile(r"^\s*\|(\s*:?-+:?\s*\|)+\s*$")
+TABLE_TITLE = re.compile(r"^\s*\*\*Table:\*\* \S")
 
 # An opening or closing fence: up to three spaces of indent, then a run of at
 # least three backticks or tildes, then an optional info string.
@@ -181,3 +186,29 @@ def markdown_files(root: Path) -> list[Path]:
 
 def sweep_file(path: Path) -> list[Finding]:
     return sweep_text(path.read_text(encoding="utf-8"), path)
+
+
+def untitled_tables(text: str, path: Path) -> list[Finding]:
+    """Flag every table whose nearest line above is not a title.
+
+    A rendered table with no title leaves a reader to work out what it holds
+    from its column heads. Markdown has no caption, so the title is a line of
+    its own above the table, starting with a bold `Table:`. The check reads
+    pipe tables with outer pipes, the only form these documents use. A table
+    with no outer pipes, or one in a blockquote, goes unread.
+    """
+    findings: list[Finding] = []
+    prose = blank_code(text).split("\n")
+    source = text.split("\n")
+    for index, line in enumerate(prose):
+        if index == 0 or not DELIMITER_ROW.match(line):
+            continue
+        above = index - 2
+        while above >= 0 and not source[above].strip():
+            above -= 1
+        if above < 0 or not TABLE_TITLE.match(source[above]):
+            header = source[index - 1]
+            findings.append(
+                Finding(path, index, header, "table with no title, add **Table:** above it")
+            )
+    return findings
