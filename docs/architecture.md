@@ -1543,44 +1543,71 @@ leads to one, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### One command line tool, run off the VM
 
-A person acts through one command line tool, `ithildin`, run from the
-owner's or the operator's own machine with their own AWS credential, never
-on the runtime's VM. Its writes go through the same journal and storage
-contract in `core` that the workers use, so a person's entry is checked,
-chained and refused on a stale number exactly as a worker's is, and the
-tool fetches the journal's end before it writes, since every step fetches and syncs before changing state, as design.md's `## Processes and files` says. It reads
-and writes S3 only, so it needs nothing from the VM and works while the VM
-is down.
+#### Where the tool runs
 
-The tool writes the identity AWS reports for the caller into each entry,
-but S3 does not stop a caller writing any name it likes. So CloudTrail
-records every write to the journal, the switch, `stop.json`, each strategy's `off.json`, the leases, the overrides, `accounts/<account>/releases/`, the halt folders, the hard caps, the owner's records and `release/`, in a bucket only the owner can change, and monitoring alarms when
-an entry's named identity differs from the one CloudTrail recorded. Every
-principal but the owner refuses `cloudtrail:StopLogging`, `DeleteTrail`,
-`UpdateTrail` and `PutEventSelectors`, and [the drill on CloudTrail](halts-and-drills.md#drills-with-no-alarm) tries each.
+A person acts through one command line tool, `ithildin`. It runs from the owner's or the operator's own machine with their own AWS credential, never on the runtime's VM. It reads and writes S3 only, so it needs nothing from the VM and works while the VM is down.
+
+#### How a person's write is checked
+
+Its writes go through the same journal and storage contract in `core` that the workers use. So a person's entry is checked, chained and refused on a stale number exactly as a worker's is. The tool fetches the journal's end before it writes, since every step fetches and syncs before changing state, as design.md's `## Processes and files` says.
+
+#### How a false name in an entry is caught
+
+The tool writes the identity AWS reports for the caller into each entry, but S3 does not stop a caller writing any name it likes. Two things cover that.
+
+1. CloudTrail records every write to these places, in a bucket only the owner can change:
+
+   - the journal
+   - the switch
+   - `stop.json`
+   - each strategy's `off.json`
+   - the leases
+   - the overrides
+   - `accounts/<account>/releases/`
+   - the halt folders
+   - the hard caps
+   - the owner's records
+   - `release/`
+
+2. Monitoring alarms when an entry's named identity differs from the one CloudTrail recorded.
+
+Every principal but the owner refuses `cloudtrail:StopLogging`, `DeleteTrail`, `UpdateTrail` and `PutEventSelectors`, and [the drill on CloudTrail](halts-and-drills.md#drills-with-no-alarm) tries each.
+
+#### Which credentials the tool uses
 
 Two credentials hold what the VM's credential deliberately cannot.
 
 1. **The owner's**, which may do everything below on any account.
-2. **The operator's**, which acts on paper and shadow accounts only, plus
-   pulling a live account's switch and switching a live strategy off, since
-   each can only stop trading. It
-   cannot clear a live account's halt, switch or lease, or write a live
-   account's override. Only the owner
-   resumes live trading. The charter makes the operator an agent role, and
-   hard limit 1 keeps agents to simulated and paper brokers.
+2. **The operator's**, which acts on paper and shadow accounts only, plus pulling a live account's switch and switching a live strategy off, since each can only stop trading. It cannot clear a live account's halt, switch or lease, or write a live account's override.
+
+Only the owner resumes live trading. The charter makes the operator an agent role, and hard limit 1 keeps agents to simulated and paper brokers.
 
 #### The owner's credential
 
-The owner's credential is a role reached through IAM Identity Center or an MFA sign-in behind a hardware key, with sessions of an hour at most. A hardware key guards the sign-in, not what the sign-in leaves behind. An IAM Identity Center session [lasts eight hours by default](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html), its token sits in `~/.aws/sso/cache` where any process of that user can read it, and while it lasts it mints credentials for every permission set the user holds. Agent sessions run as the owner's user on the owner's machine, so the owner's live-writing permission set is never signed in where agents run: it lives under a separate OS user or device, with a session short enough to need a fresh key touch, and a [drill](halts-and-drills.md#drills-with-no-alarm) proves an agent session cannot use it.
+The owner's credential is a role reached through IAM Identity Center or an MFA sign-in behind a hardware key, with sessions of an hour at most.
+
+A hardware key guards the sign-in, not what the sign-in leaves behind. Three facts about an IAM Identity Center session show what it leaves.
+
+1. It [lasts eight hours by default](https://docs.aws.amazon.com/singlesignon/latest/userguide/user-interactive-sessions.html).
+2. Its token sits in `~/.aws/sso/cache`, where any process of that user can read it.
+3. While it lasts, it mints credentials for every permission set the user holds.
+
+Agent sessions run as the owner's user on the owner's machine, so the owner's live-writing permission set is never signed in where agents run. It lives under a separate OS user or device, with a session short enough to need a fresh key touch, and a [drill](halts-and-drills.md#drills-with-no-alarm) proves an agent session cannot use it.
 
 #### The operator's credential
 
-The operator's is a short-lived principal of its own. The operator is an agent role, so its credential cannot rest on a hardware key. It is a principal of its own, with no owner permission set, sessions of an hour or less and no path to the owner's cache, and how an agent session receives it is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+The operator's is a short-lived principal of its own. The operator is an agent role, so its credential cannot rest on a hardware key. It has no owner permission set, sessions of an hour or less and no path to the owner's cache. How an agent session receives it is a runbook item on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 #### Both credentials and each bucket's policy
 
-Neither holds a long-lived secret in a file. Each environment's bucket policy names each role. The live bucket's policy enforces the owner's split, and inside every bucket overrides sit under a prefix of their own per account, apart from the journal. Only the owner's role may write a live account's overrides, and no runtime role may write any override. Journal entries are created, never replaced, by execution, monitoring and the supervisor, and by the `ithildin` tool for the person running it. On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) gives them there.
+Neither holds a long-lived secret in a file. Each environment's bucket policy names each role, and these rules hold.
+
+- The live bucket's policy enforces the owner's split.
+- Inside every bucket, overrides sit under a prefix of their own per account, apart from the journal.
+- Only the owner's role may write a live account's overrides, and no runtime role may write any override.
+- Journal entries are created, never replaced, by execution, monitoring and the supervisor, and by the `ithildin` tool for the person running it.
+- On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside.
+- The runtime's own roles keep the grants [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) gives them there.
 
 #### Which duty each credential holds
 
@@ -1614,96 +1641,140 @@ The operator approves no apply to any environment.
 
 ### The commands
 
-Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name, `<component>-<cause>-<timestamp>-<count>`, which is what `ithildin clear` reduces a person's input to before it journals, so the tool finds the environment it lives in.
+#### The commands that read
 
-1. **`ithildin status`** shows, for every account, grouped by environment: whether the kill switch
-   is set, which strategies are switched off, whether a loss stop has fired, the last sort's outcome for each strategy switched off, who holds each lease, every open halt with its reason and age,
-   the latest decision's result for each stage, each worker's and the
-   supervisor's last heartbeat and restart count, any pair leg left open
-   since the last close, and when the heartbeat service last heard a ping. It also shows each environment's pin, the digest each recent run used, each level of load reached, with its date and the issue filed for it, or "no issue filed", and the next gate's rows with no passing record.
-2. **`ithildin explain <halt>`** shows one halt: its reason, the halt it
-   passed on, the blobs it was made from, and for a restart, the exit
-   status and the end of the error output.
+Reading commands change nothing.
+
+A halt's id takes one of two forms.
+
+1. For a halt in a result, it is the key of that result, `<deployment>/<run>/<decision>/<stage>`.
+2. For a halt held in a folder, it is the halt's name, `<component>-<cause>-<timestamp>-<count>`.
+
+`ithildin clear` reduces a person's input to that id before it journals, so the tool finds the environment it lives in.
+
+1. **`ithildin status`** shows, for every account, grouped by environment:
+
+   - whether the kill switch is set
+   - which strategies are switched off
+   - whether a loss stop has fired
+   - the last sort's outcome for each strategy switched off
+   - who holds each lease
+   - every open halt with its reason and age
+   - the latest decision's result for each stage
+   - each worker's and the supervisor's last heartbeat and restart count
+   - any pair leg left open since the last close
+   - when the heartbeat service last heard a ping
+
+   It also shows:
+
+   - each environment's pin
+   - the digest each recent run used
+   - each level of load reached, with its date and the issue filed for it, or "no issue filed"
+   - the next gate's rows with no passing record
+
+2. **`ithildin explain <halt>`** shows one halt: its reason, the halt it passed on, the blobs it was made from, and for a restart, the exit status and the end of the error output.
+
+#### The commands that write
 
 Writing commands take more friction the more they can resume trading.
 
-1. **`ithildin switch pull --account <a>`** is one command with a default
-   reason, because stopping should never be slow. It creates the kill switch blob, journals the pull and raises the alarm, and the blob's own event wakes execution. Execution reads the switch itself and cancels every resting order in the account, stamped or not, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says. The tool then reads the journal once at a deadline set before the cancel cutoff for execution's entry saying the cancels are done, and if it is not there, tells the
-   person to cancel at the broker's own console. A pull past that deadline names the console at once.
-2. **`ithildin strategy off --account <a> --strategy <s>`** creates the
-   strategy's off switch with a default reason and journals it, because
-   stopping should never be slow. Execution reads it right before each of
-   that strategy's orders, abandons them, and keeps sending the account's
-   other strategies' orders. It never reads as a target of zero, so nothing
-   is flattened. The strategy's cancels still go out. As with the kill switch,
-   this doc proposes that the blob's event wakes execution, which takes the
-   account's lease and cancels the strategy's working and in-doubt orders
-   that add to a position, journaled first, and keeps those that reduce one.
-   A pair with one
-   leg of each kind stays whole. [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes the steps of this pass, the sort, including that execution cancels the adding leg first and the reducing leg only once that cancel is confirmed with nothing filled. The command prints the orders resting and says execution's journaled sort decides which stay. It then reads the journal once at a deadline set before the cancel cutoff for the `sort_done` entry and prints which orders went, which stayed and which were lost with a partner, and if the entry is not there tells the person to cancel at the broker's own console. A kept order still fills unless the kill switch, which cancels every order in the account, or the broker's console cancels it before the cancel cutoff, and a cancel at the console traces to nothing, so it halts all trading until the owner confirms it. Past the cutoff the command says no order can be stopped and lists the adding orders that will still fill.
-3. **`ithildin clear <halt>`** records that a person has looked at a halt
-   and why it may be left behind. On an account that sets `release_needs_blob` it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash. It never reruns the halted decision, and the next decision runs as usual. This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33). This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
-4. **`ithildin override --account <a>`** records a correction the book
-   cannot work out alone, such as a fill the broker shows and the journal
-   lacks after an outage, or an order the platform did not send. It names the strategy's book it changes, or the unmatched entry it brings in, and each position or open order it changes,
-   with the broker's evidence and, for a fill, the broker's fill id, and the
-   book values it was built against. It writes the override's body under
-   the overrides prefix and a journal entry naming that blob by its SHA-256.
-   Execution's next sync applies it only when the blob exists there and its
-   hash matches, and refuses it if the replayed book has moved from the
-   values it names. It never sends an order. A change to a strategy's position leaves that strategy off and sorted, as [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) says, and the command prints so. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
-5. **`ithildin switch clear --account <a>`** deletes the switch and journals
-   the clear.
-6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the
-   strategy's off switch and journals it, and refuses a strategy with an unreleased firing of a strategy halt, naming each id, or a strategy retired under design.md's sample rules that has no new registration. `ithildin clear <id>` releases each firing, which ends its sort. On a live account only the owner may. On shadow and paper the operator
-   may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather
-   than a rule of its own.
-7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's
-   blob and journals the clear, so the gate takes new orders again. On a
-   live account only the owner may, and on shadow and paper the operator
-   may too.
-8. **`ithildin lease clear --account <a>`** rewrites a lease another VM holds to clear its holder, with `If-Match` on the tag it read,
-   before it expires, for when a person knows the holder is
-   gone sooner than the expiry would show. It asks EC2 whether the holder's instance is stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that the clear's journal entry is durable before the rewrite, so a write with no acknowledgement leaves the lease untouched, and that a lease changed since that entry stays and the command reports it. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how, including what a rerun checks.
-9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back. It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name. It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why. The owner or the operator runs it on shadow and paper, and only the owner on live.
+1. **`ithildin switch pull --account <a>`** is one command with a default reason, because stopping should never be slow.
+
+   - It creates the kill switch blob, journals the pull and raises the alarm, and the blob's own event wakes execution.
+   - Execution reads the switch itself and cancels every resting order in the account, stamped or not, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says.
+   - The tool then reads the journal once at a deadline set before the cancel cutoff for execution's entry saying the cancels are done. If it is not there, the tool tells the person to cancel at the broker's own console.
+   - A pull past that deadline names the console at once.
+
+2. **`ithildin strategy off --account <a> --strategy <s>`** creates the strategy's off switch with a default reason and journals it, because stopping should never be slow.
+
+   - **The strategy's orders.** Execution reads the off switch right before each of that strategy's orders, abandons them, and keeps sending the account's other strategies' orders. It never reads as a target of zero, so nothing is flattened. The strategy's cancels still go out.
+   - **The sort.** As with the kill switch, this doc proposes that the blob's event wakes execution, which takes the account's lease and cancels the strategy's working and in-doubt orders that add to a position, journaled first, and keeps those that reduce one. A pair with one leg of each kind stays whole. [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes the steps of this pass, the sort, including that execution cancels the adding leg first and the reducing leg only once that cancel is confirmed with nothing filled.
+   - **What the command prints.** It prints the orders resting and says execution's journaled sort decides which stay. It then reads the journal once at a deadline set before the cancel cutoff for the `sort_done` entry, and prints which orders went, which stayed and which were lost with a partner. If the entry is not there, it tells the person to cancel at the broker's own console.
+   - **What can still fill.** A kept order still fills unless the kill switch, which cancels every order in the account, or the broker's console cancels it before the cancel cutoff. A cancel at the console traces to nothing, so it halts all trading until the owner confirms it.
+   - **Past the cutoff.** The command says no order can be stopped and lists the adding orders that will still fill.
+
+3. **`ithildin clear <halt>`** records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
+
+   - On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
+   - This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
+   - This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+
+4. **`ithildin override --account <a>`** records a correction the book cannot work out alone, such as a fill the broker shows and the journal lacks after an outage, or an order the platform did not send. It never sends an order.
+
+   - **What it names.** It names the strategy's book it changes, or the unmatched entry it brings in, and each position or open order it changes, with the broker's evidence and, for a fill, the broker's fill id, and the book values it was built against.
+   - **What it writes.** It writes the override's body under the overrides prefix and a journal entry naming that blob by its SHA-256.
+   - **When it applies.** Execution's next sync applies it only when the blob exists there and its hash matches, and refuses it if the replayed book has moved from the values it names.
+   - **What follows.** A change to a strategy's position leaves that strategy off and sorted, as [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) says, and the command prints so.
+   - **A held cash record.** This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+
+5. **`ithildin switch clear --account <a>`** deletes the switch and journals the clear.
+
+6. **`ithildin strategy on --account <a> --strategy <s>`** deletes the strategy's off switch and journals it.
+
+   - It refuses a strategy with an unreleased firing of a strategy halt, naming each id, or a strategy retired under design.md's sample rules that has no new registration. `ithildin clear <id>` releases each firing, which ends its sort.
+   - On a live account only the owner may. On shadow and paper the operator may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather than a rule of its own.
+
+7. **`ithildin stop clear --account <a>`** deletes a fired loss stop's blob and journals the clear, so the gate takes new orders again. On a live account only the owner may, and on shadow and paper the operator may too.
+
+8. **`ithildin lease clear --account <a>`** rewrites a lease another VM holds to clear its holder, with `If-Match` on the tag it read, before it expires, for when a person knows the holder is gone sooner than the expiry would show.
+
+   - It asks EC2 whether the holder's instance is stopped or gone, and refuses while it still runs. Only when EC2 cannot answer may the person say with `--holder-gone` that they have confirmed it another way.
+   - This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that the clear's journal entry is durable before the rewrite, so a write with no acknowledgement leaves the lease untouched, and that a lease changed since that entry stays and the command reports it. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how, including what a rerun checks.
+
+9. **`ithildin pin set --environment <e> --digest <d>`** rolls an environment back.
+
+   - It refuses a digest that environment has not run, or whose attestation `gh attestation verify` rejects, and makes the person type the environment's name.
+   - It writes the pin and a block record for the digest it replaced, beside a record of who changed it and why.
+   - The owner or the operator runs it on shadow and paper, and only the owner on live.
+
 10. **`ithildin pin unblock --environment <e> --digest <d>`** removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
-The last eight each take a required `--reason`, print what they will do and
-to which account, show a live account's name in capitals, and for a live
-account make the person type the account's name to confirm. When there is
-nothing to do, a command says what it found and who acted on it, rather
-than quietly succeeding, so a mistyped id is visible.
+#### What the last eight writing commands ask of a person
+
+The last eight each do these things.
+
+- They take a required `--reason`.
+- They print what they will do and to which account.
+- They show a live account's name in capitals.
+- For a live account, they make the person type the account's name to confirm.
+
+When there is nothing to do, a command says what it found and who acted on it, rather than quietly succeeding, so a mistyped id is visible.
 
 ### From an alarm to a command
 
-Every alarm names the environment, the account, the decision and the reason in its first line, so a push on a phone says what happened without opening
-anything. Its second line is the command to run first, almost always `ithildin explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line, and its third names the alarm's row in
-[Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), where the runbook on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11) says, row by row,
-what to check and which writing command, if any, follows. Monitoring's
-report after each decision ends with the same summary `ithildin status`
-prints.
+#### What an alarm says
 
-Most alarms on shadow and paper need no writing command at all. A missing
-bar, a gate refusal or a pair leg left open clears itself at the next
-decision, which plans again from the book, and the person's job is to read
-the reason and decide whether something larger is wrong. On live, every
-halt holds the account until the owner clears it. The writing commands are for the cases the platform cannot
-resolve alone: a book that disagrees with the broker, an order the platform
-did not send, a kill switch, and any halt on live.
+Each line of an alarm has one job.
 
-Away from a computer, the fallback is the runbook's: cancel at the broker's
-own app, and journal it with `ithildin override` once back. A page or a
-phone app that runs these commands waits for evidence that the command line
-is not enough.
+1. Its first line names the environment, the account, the decision and the reason, so a push on a phone says what happened without opening anything.
+2. Its second line is the command to run first, almost always `ithildin explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line.
+3. Its third line names the alarm's row in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), where the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) says, row by row, what to check and which writing command, if any, follows.
 
-The price is a tool to build and test, a drill for each writing command on
-a paper account before the paper gate, which the runbook on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11) adds to
-[Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), CloudTrail's data events on eleven prefixes,
-and two credentials outside the VM, the owner's behind a hardware key and the
-operator's a short-lived principal of its own, neither with a long-lived secret
-in a file.
+Monitoring's report after each decision ends with the same summary `ithildin status` prints.
+
+#### When a writing command is needed
+
+Most alarms on shadow and paper need no writing command at all. A missing bar, a gate refusal or a pair leg left open clears itself at the next decision, which plans again from the book, and the person's job is to read the reason and decide whether something larger is wrong. On live, every halt holds the account until the owner clears it.
+
+The writing commands are for the cases the platform cannot resolve alone:
+
+- a book that disagrees with the broker
+- an order the platform did not send
+- a kill switch
+- any halt on live
+
+#### What to do away from a computer
+
+Away from a computer, the fallback is the runbook's: cancel at the broker's own app, and journal it with `ithildin override` once back. A page or a phone app that runs these commands waits for evidence that the command line is not enough.
+
+#### What all of this costs
+
+The price has four parts.
+
+1. A tool to build and test.
+2. A drill for each writing command on a paper account before the paper gate, which the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) adds to [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill).
+3. CloudTrail's data events on eleven prefixes.
+4. Two credentials outside the VM, the owner's behind a hardware key and the operator's a short-lived principal of its own, neither with a long-lived secret in a file.
 
 ## Types and interfaces
 
