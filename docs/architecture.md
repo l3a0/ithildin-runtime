@@ -1405,11 +1405,39 @@ sequenceDiagram
     Note over X,L: A broker's own trade can close the whole<br/>position while this halt stands
 ```
 
-Execution's recover stage compares the broker with the sum of the strategies' books, and monitoring compares them again for its report. A mismatch means either a fill the platform never journaled or a position the broker changed on its own, and both need a person, apart from the split or assignment that [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) lets an outside entry explain in shadow or on paper. The order that closes a position after a broker's own trade can go out before a person acts, under [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control), and the halt holds until every leg has ended, and on a live account until the owner clears it. Both compare open
-orders and cash as well as positions, so an order the broker holds and the journal
-marks lost or abandoned halts the day it appears, not the day it fills. A broker record of a type on the closed list whose amount is in range is journaled with no halt, unless it leaves a difference unexplained or repeats a record id with different content, the repeat being what this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), as the case list in design.md's `### Strategies, schedules and decisions` says. Reconciliation lives on
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11). The charter has the
-trading systems engineer write it, so that role reviews it there.
+A trade placed on a book the broker disagrees with trades the wrong difference. So the platform compares the two, and a difference it cannot explain halts trading until a person has.
+
+#### Who compares the book with the broker
+
+Two workers compare the broker with the sum of the strategies' books.
+
+1. Execution's recover stage compares them before a decision trades.
+2. Monitoring compares them again for its report.
+
+Both compare positions, open orders and cash. So an order the broker holds and the journal marks lost or abandoned halts the day it appears, not the day it fills.
+
+#### What each difference leads to
+
+A mismatch in a position means one of two things: a fill the platform never journaled, or a position the broker changed on its own. Both need a person. The table below lists the exceptions.
+
+**Table:** What the platform does with each thing the comparison finds
+
+| What the comparison finds | What the platform does | What a person does |
+| --- | --- | --- |
+| A fill the platform never journaled | Halts | Explains the difference |
+| A position the broker changed on its own | Halts | Explains the difference |
+| A split or an assignment, in shadow or on paper | Lets an outside entry explain it, under the rule that any other difference from the broker halts ([Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs)) | Nothing |
+| A broker's own trade that closes one leg of a position | Halts. The order that closes the rest of the position can go out before a person acts, under the close after a broker's trade ([A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)) | On a live account, clears the halt once every leg has ended. In shadow and on paper the outside entry releases it then |
+| An order the broker holds and the journal marks lost or abandoned | Halts the day it appears | Explains the difference |
+| A broker record of a type on the closed list, with its amount in range | Journals it with no halt | Nothing |
+| A broker record that leaves a difference unexplained | Halts | Explains the difference |
+| By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a record that repeats a record id with different content | Halts | Explains the difference |
+
+The closed list of record types is in design.md's `### Strategies, schedules and decisions`.
+
+#### Who owns reconciliation
+
+Reconciliation lives on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). The charter has the trading systems engineer write it, so that role reviews it there.
 
 ### The kill switch and the dead-man check
 
@@ -3430,8 +3458,7 @@ holds three credentials.
    owner's approval, and can change the launch template and pass the
    VM's role. Reach to the VM counts as reach to that
    environment's broker key, which is why it stays behind that approval
-   and why it is the one exception to the rule in [A release is checked where it
-   runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) that an apply to paper follows the owner's merge. On
+   and why it is the one exception to the refusals that bind every principal ([A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)). On
    shadow, which holds no broker key, the apply credential does this.
 
 Shadow's and paper's applies follow the owner's merge with no second
