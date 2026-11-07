@@ -1357,10 +1357,10 @@ A fired stop latches, which means it stays fired whatever the price does next. T
 
 ```mermaid
 flowchart TD
-    fire["1. Execution finds the day's loss past the stop,<br/>creates stop.json and journals it"]
-    read["2. OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
-    refuse["3. The gate refuses every new order"]
-    clear["4. A person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
+    fire["Step 1: execution finds the day's loss past the stop,<br/>creates stop.json and journals it"]
+    read["Step 2: OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
+    refuse["Step 3: the gate refuses every new order"]
+    clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
     fire --> read
     read --> refuse
     refuse -->|"the price recovers, or a new session opens:<br/>the blob stays, so the gate keeps refusing"| read
