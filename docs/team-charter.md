@@ -138,7 +138,7 @@ flowchart LR
     exec -->|"orders"| broker
     broker -->|"fills"| exec
     exec -->|"fills"| data
-    live -. "reports everything" .-> mon
+    live -. "monitoring watches everything" .-> mon
     mon -. "raises alerts, can halt it" .-> live
 ```
 

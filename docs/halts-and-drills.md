@@ -61,7 +61,7 @@ sequenceDiagram
     participant F as Blob store
     participant J as Journal
     participant R as Each reader of the halt
-    P->>T: clears the halt's id, with a reason
+    P->>T: clears the halt by its id, with a reason
     T->>F: writes a release blob under the account's releases prefix,<br/>whose body names the id
     T->>J: journals a clear entry naming the id<br/>and the blob's hash
     R->>J: does a clear name this id?

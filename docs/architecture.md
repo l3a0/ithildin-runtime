@@ -342,7 +342,7 @@ sequenceDiagram
     Note over D: decision time, close−20
     D->>B: reads segments up to the decision time
     D->>D: matches the SHA-256, reads quote rows through<br/>marketlake's reader, runs the minimum checks
-    D->>O: hands over a snapshot naming each segment,<br/>marked provisional
+    D->>O: stores a snapshot naming each segment,<br/>marked provisional
     Note over M: seals at close+15
     M->>B: uploads the sealed day
     Note over B: each segment stays readable for seven days after upload,<br/>and its old versions about 90 days more
@@ -1154,7 +1154,7 @@ sequenceDiagram
     X1->>J: journals the sending entry
     Note over X1: dies before the broker answers
     X2->>J: reads an order in doubt, with no broker id mapped
-    X2->>B: lists the orders from before its send
+    X2->>B: lists the broker's orders, starting from before that order's send
     B-->>X2: returns each order's broker id and client order id
     X2->>B: looks up by the broker's order id
     B-->>X2: returns what it holds for that id
@@ -1251,8 +1251,8 @@ sequenceDiagram
     participant L as Alert channel
 
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
-    V->>F: writes the run's plan once
     V->>V: is the kill switch blob absent?
+    V->>F: writes the run's plan once
     F-->>X: sends an event for the plan
     F-->>D: sends an event for the plan
     F-->>M: sends an event for the plan
@@ -1262,7 +1262,7 @@ sequenceDiagram
         J-->>X: returns yesterday's last decision, run on this VM's<br/>earlier boot, with one order sending and no answer
         X->>F: takes the account's lease, clearing the one this<br/>VM's earlier boot left, and journals that
         X->>J: journals the order as in doubt
-        X->>B: lists the orders from before its send
+        X->>B: lists the broker's orders, starting from before that order's send
         B-->>X: returns this client order id,<br/>under the broker's order id
         X->>B: looks up by the broker's order id
         B-->>X: answers that the order is acknowledged
@@ -1333,7 +1333,7 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 #### How the day's loss is measured
 
-The day's loss is the mark-to-market change from the account's valuation at the prior session's official closes. The day's first decision stores that valuation.
+The day's loss is the fall in the account's value at current prices, measured from its valuation at the prior session's official closes. The day's first decision stores that valuation.
 
 Two gaps in that measure halt rather than read as no loss.
 
@@ -1344,7 +1344,7 @@ Two gaps in that measure halt rather than read as no loss.
 
 This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test and the price spike flag's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
 
-The move from close−20 to the close is a stated limit of the stop, because no decision tests it.
+The stop has a stated limit: no decision tests the price move from close−20 to the close.
 
 #### What happens when the stop fires
 
@@ -1369,7 +1369,7 @@ flowchart TD
 
 #### Which orders a stop refuses
 
-A fired stop holds one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under case 3 of rule 5 of design.md's `### A fill is measured from the decision, and a position depends on a market it does not control`. That order passes a fired stop only under a valid close entry.
+A fired stop has one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under case 3 of rule 5 of design.md's `### A fill is measured from the decision, and a position depends on a market it does not control`. That order passes a fired stop only under a valid close entry.
 
 A failed read must not open that exception, so an unreadable stop holds the close too. Any answer other than "no such blob" reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how.
 
@@ -1379,7 +1379,7 @@ A failed read must not open that exception, so an unreadable stop holds the clos
 | --- | --- | --- | --- |
 | "No such blob" | Not fired | Passes this check | Passes this check |
 | The blob | Fired | Refused | Passes this check |
-| Any other answer | Unreadable | Refused | Held |
+| Any other answer | Unreadable | Refused | Not sent |
 
 #### Why slice 1 only stops
 
@@ -2146,7 +2146,7 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails. The switch,<br/>a run or account halt, its own result key, the lease tag<br/>or the cutoff halts. A switched-off strategy abandons<br/>without halting. A close reads them<br/>as design.md's rule 9 says
+    Sending --> Abandoned: a check before the broker call fails. A failed check on<br/>the switch, a run or account halt, its own result key,<br/>the lease tag or the cutoff also halts. A switched-off strategy<br/>abandons without halting. A close reads them<br/>as design.md's rule 9 says
     Acknowledged --> Expired: a day or market-on-close order<br/>stays unfilled at the close
     PartlyFilled --> Expired: the rest stay unfilled at the close
     Sending --> Rejected: the broker refuses the submit, other than<br/>a refusal saying it already holds the id
@@ -2157,7 +2157,7 @@ stateDiagram-v2
     CancelSent --> CancelSent: execution journals a new cancel, under faults rule 6
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
     CancelSent --> Filled: it filled before the cancel landed
-    CancelSent --> Expired: it stays unfilled at the close, and the broker<br/>refused the cancel after the freeze
+    CancelSent --> Expired: it stays unfilled at the close, because the exchange<br/>had stopped taking cancels
     CancelSent --> Acknowledged: execution journals that the broker refused the cancel,<br/>or that a check before the broker call stopped it
     CancelSent --> PartlyFilled: the same, for an order already part filled
     Refused --> [*]
@@ -2717,7 +2717,7 @@ flowchart TB
 
     registry --> docker
     mlvm --> lake
-    lake -->|"downloads, then checks the checksum"| mirror
+    lake -->|"the data worker downloads, then checks the checksum"| mirror
         ctrs <-->|"create-only writes, reads"| bucket
     bucket -->|"an event per write"| events
     events --> queues
