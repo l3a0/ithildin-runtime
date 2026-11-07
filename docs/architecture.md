@@ -1517,10 +1517,6 @@ A starting execution instance checks the switch as soon as its digest and journa
 
 A switch that cannot be read halts with the reason "kill switch unreadable" and the error, so the journal never mistakes a permission problem for a deliberate pull.
 
-##### What happens when the journal cannot be read
-
-Where the journal's entries cannot be read and S3 still lists keys and takes writes, a pull still cancels, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says. Execution chains each cancel entry to the journal's end, which it finds from the list of keys and the last entry's stored SHA-256.
-
 ##### Why a pull also cancels market-on-close orders
 
 Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
