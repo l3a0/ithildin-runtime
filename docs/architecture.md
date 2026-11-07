@@ -1582,6 +1582,36 @@ The operator's is a short-lived principal of its own. The operator is an agent r
 
 Neither holds a long-lived secret in a file. Each environment's bucket policy names each role. The live bucket's policy enforces the owner's split, and inside every bucket overrides sit under a prefix of their own per account, apart from the journal. Only the owner's role may write a live account's overrides, and no runtime role may write any override. Journal entries are created, never replaced, by execution, monitoring and the supervisor, and by the `ithildin` tool for the person running it. On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside. The runtime's own roles keep the grants [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) gives them there.
 
+#### Which duty each credential holds
+
+A larger team would split these duties among several people. Here one person and one agent hold them, so every duty sits with the owner's credential, the operator's, or either one. A cell that names both means either may act alone.
+
+Two credentials keep duties apart only if a different principal holds each. So a duty gets a credential of its own when a different principal takes it on, such as a second person on call or a read-only auditor.
+
+[The commands](#the-commands) says what each clear, override and pin command does. The hard caps are the risk gate's fixed limits.
+
+**Table:** Which credential holds each duty on each kind of account
+
+| Duty | Shadow and paper | Live |
+| --- | --- | --- |
+| Release a build | The owner's merge deploys it | The owner, by hand |
+| Change the infrastructure | Follows the owner's merge. A change to the paper VM's image, startup script or role waits for the owner's approval | The owner, behind live's reviewer |
+| Roll back by the release's pin | The owner or the operator | The owner |
+| Remove a block record with `ithildin pin unblock` | The owner | The owner |
+| Pull the kill switch | The owner or the operator | The owner or the operator |
+| Switch a strategy off | Any person's credential | Any person's credential |
+| Switch a strategy back on | The owner, and whether the operator may too is undecided | The owner |
+| Clear a halt, a fired loss stop or the kill switch | The owner or the operator | The owner |
+| Clear an account's lease | The owner or the operator | The owner |
+| Write an override | The owner or the operator | The owner |
+| Change the hard caps | The owner | The owner |
+| Return a tightened limit to its value at the sample's opening | Not decided | The owner |
+| Use the switch that stops restarts and scaling | The operator | The owner |
+| Confirm a trade as the broker's own | The owner | The owner |
+| Read the log and state stores | The owner or the operator | The owner or the operator |
+
+The operator approves no apply to any environment.
+
 ### The commands
 
 Reading commands change nothing. A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name, `<component>-<cause>-<timestamp>-<count>`, which is what `ithildin clear` reduces a person's input to before it journals, so the tool finds the environment it lives in.
