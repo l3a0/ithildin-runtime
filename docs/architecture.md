@@ -2258,127 +2258,234 @@ classDiagram
     Monitoring ..> core
 ```
 
-Eight choices in the two diagrams for a reviewer to check.
+### Eight choices for a reviewer to check
 
-1. **A forecast is about a basket, not an instrument.** The Bollinger strategy
-   forecasts a spread, which is two legs in a fixed ratio for the day. A
-   `Basket` holds `{USO: 1, GLD: −h}`, so one forecast carries the whole
-   position and portfolio construction never has to know it is a pair. The
-   charter and [#6](https://github.com/l3a0/ithildin-runtime/issues/6) say a
-   forecast is per instrument, so this is a proposal for
-   [#6](https://github.com/l3a0/ithildin-runtime/issues/6) rather than a
-   decision here.
-2. **A bar carries where it came from.** `origin` says whether marketlake
-   captured it or imported it, `vintage_id` names the vintage it was read
-   from, and `first_seen` is when the platform first held it. `basis` says
-   which price the series carries, such as `raw` for as traded or
-   `adjusted` for split and dividend adjusted, as quantitative-trading's
-   vintage records do. `vintage_id` and `first_seen` come from the data
-   engineer's duty, in the charter, to store when each value became available
-   (L3884). `end` and `interval` say when the bar closed and how long it is,
-   so one daily bar and minute bars of the same instrument can sit side by
-   side, keyed in a snapshot by instrument and interval. Every `DataSource`
-   adapter applies one rule: `snapshot(decision_at)` returns only bars whose
-   `end` and knowable time are both at or before the decision time. A minute bar's `end` is marketlake's `bar_ts` plus its interval, and a daily bar's is its session's close from the calendar. An imported vintage has no receive time, so its knowable time is the vendor's publication date where the vintage records one, and otherwise the bar's `end`, which a backtest states as an assumption of its result. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. A `Quote` keeps the vendor's
-   stamp as received, the capture time, whether the quote was real time, and
-   its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16)
-   asks for, and a snapshot's `flags` hold a spike flag with both prices per
-   instrument, so the send stage's flag test has a field to
-   read.
-3. **`Snapshot.require_fresh()` is how a module refuses a gap.** A snapshot is
-   the set of bars one decision read, each pointing at the partition that holds
-   it. A
-   module calls `require_fresh()` before reading, and it raises `Halt` when any
-   bar it needs is missing or stale. So the default when something is absent
-   is to stop.
-4. **Only `OrderPath` holds a `Broker`.** Every call to the broker goes through
-   it, one method per kind of call: settling orders in doubt, journaling fills,
-   reading positions and open orders, sending and cancelling. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) states which read supplies cash. Nothing else in
-   the package is given a broker, and only the execution worker's entry point
-   builds one, which the import rule enforces. Test 3's fake broker checks the
-   send path itself, as the section on the import rule says. Every lookup
-   and every cancel uses the broker's order id the journal mapped from the ack.
-   An order in doubt has no ack, so `find_order` supplies its broker id first, by the adapter's own means, as design.md's `### Orders the platform did not send` says. `fills(since)`
-   takes the last decision's time less a stated overlap, and the journal
-   compares each fill with any it holds under that id and correction identifier, skips only an identical repeat, and journals a differing one and halts, so a fill the broker posts late is
-   still fetched. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees
-   the SDK's types. `Journal.append` returns a `JournalAck` naming the entry's number and hash, and the private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says. Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion, and `OrderPath` journals those bytes, or, for a send-stage read, the hash of the output file that holds them, before it uses the value. Each call ends accepted, rejected, provably not sent, unknown or not found, a `find_order` can also end more than one, `orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form. One reconciliation function in `core`,
-   `core.reconcile(book, broker_account)`, lists the differences, and
-   execution's recover stage, its send-stage sync, its reconcile after the close and monitoring's reconcile stage all call it. Each
-   decides only what to do with them: execution journals its own outcomes
-   and halts on the rest, and monitoring alarms. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how `core.reconcile` receives a takeover's stored order list, so it can flag a late order.
-   Alpaca's trading API [allows 200 requests a minute](https://alpaca.markets/support/usage-limit-api-calls) for each account, a
-   figure [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on the paper account
-   before anything relies on it. The budget that follows is this doc's
-   proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-   Execution reserves a quarter of the limit, 50 a minute, for cancels
-   and for every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, which new orders and
-   other lookups never draw on. The rest is split evenly across the
-   deployment's execution instances, 50 a minute each for three, and the
-   reserve is split the same way, 16 a minute each, rounded down. Each
-   instance holds two token buckets, one for its share of orders and
-   lookups and one for its share of the reserve, refilled continuously and
-   holding at most 10 tokens each, so a burst cannot spend a minute's share
-   in a second and the sum stays under the limit with no shared counter. A
-   request takes a token or waits the time the bucket names. An instance
-   alarms when its requests pass 75% of its share.
-   An order that would pass its instance's share waits for the budget
-   before the order path takes the account's lease, so a wait never holds
-   the lease. A broker 429, its answer for too many requests, on a submit
-   leaves the order in doubt, settled by lookup like any other. On a cancel
-   it is a definite answer, which the contract suite proves, so it alarms, and execution retries the cancel inside the reserve.
-5. **The risk gate holds no state of its own.** `check` takes the order, the
-   book, the snapshot, the run's `Constraints` and a `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value, the stop blob's state and, for a close, its close entry. The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control), and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape. `send` replays the book from
-   the journal just before each check, so the gate counts every order already
-   approved or sending, including those of an earlier attempt, each at its
-   worst case for each limit. Three of the seven limits need the snapshot's
-   prices to value the book.
-   1. Maximum portfolio size, the `max_gross` field.
-   2. Net exposure.
-   3. The loss stop.
-   The `Constraints` come from the risk model's constraints file, so the order
-   path first checks that every field of that file and every hard cap in the
-   hard caps blob only the owner can write is present, finite and of the sign the field expects, and
-   halts otherwise. `moc_cutoff` is minutes before the close, which the one calendar function in `core` turns into a UTC instant from the decision's own session's close, and the gate compares only that instant. Then it takes the tighter of
-   each pair: the smaller maximum, the smaller loss for the loss stop, and
-   the earlier cutoff. The gate also refuses a market-on-close order past the cutoff, at the time execution hands it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions) says. A constraints file can
-   tighten a limit and never loosen it. This is a proposal for
-   [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
-6. **The book comes from the journal.** `Journal.replay()` applies every entry
-   in order to build a `Book`. The broker's positions, open orders and cash are read
-   only in the places [The current book comes from the journal](#the-current-book-comes-from-the-journal) lists. `Journal` itself lives in `core`, because execution, monitoring, the supervisor and the `ithildin` tool all append to it.
-7. **The cost model writes a schedule rather than answering calls.**
-   Portfolio construction priced each candidate trade by calling the cost
-   model. With each module in its own process, the cost model instead writes a
-   `CostSchedule` per decision, a fixed and a per-share cost for each
-   instrument, and portfolio construction evaluates it. Slice 1's flat or
-   linear model fits that shape. This is a proposal for
-   [#8](https://github.com/l3a0/ithildin-runtime/issues/8).
-8. **Every type that crosses between workers has a file form.** That
-   includes `BrokerAccount` and `SendOutcome`. Each travels as an output file
-   that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and
-   that its component's `DecisionResult` lists. A test writes each one and reads
-   it back unchanged, and a deterministic component's format is canonical, so the same inputs give the same bytes, as `### File formats and keys` defines. Prices and quantities cross between workers as decimals, never floats, for the same reason. `Halt` stays an exception inside a
-   worker, and at the worker's edge it becomes a `DecisionResult` that holds a
-   `HaltRecord`, whose `cause` names the halt it met when it is passing one on,
-   and is empty when the worker found the problem itself, and whose `found_outputs` lists each output file stored under the decision's prefix when the halt was written, a capturing stage's stored capture included. The supervisor
-   writes the same record for a worker that failed, naming its restart
-   records, which the host's stop handler and the restarted worker write as
-   [Each blob names what made it](design.md#rule-5-each-blob-names-what-made-it) says. `Plan` holds the run's decisions, each with its time and the strategies
-   deciding at it, built by one function in `core` from the schedules and the
-   trading calendar, and
-   `JournalEntry` is the one numbered record, chained to the entry before it.
-   `Lease` names its holder down to the handler, and when it expires, leaves those `null` while the lease is free, and
-   carries `status` only on a plan's lease, where it holds the run's status,
-   so an account's lease leaves it `null`.
-   `BlobStore` is the storage port, S3 in shadow, paper and live and a
-   memory-backed folder in a backtest, and one contract test suite runs
-   against both. `create` returns the stored blob's tag and `head` its stored
-   time. `replace_if_match` rewrites a blob only while it still carries the
-   tag it names, and returns the new tag, which is how a lease is taken,
-   renewed, released and taken over and the one rewrite the port allows. So a lease can be rewritten only on a tag: a take or a clear names the one it read, and a renewal or a release names the one its holder's own last write returned, and no worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal`
-   writes through `BlobStore` too, for the account the broker adapter names,
-   so the journal has no storage port of its own.
+The two diagrams above make eight choices for a reviewer to check. Several are proposals for the issue that owns the piece, and each says so where it is one.
+
+1. [A forecast is about a basket, not an instrument](#a-forecast-is-about-a-basket-not-an-instrument).
+2. [A bar carries where it came from](#a-bar-carries-where-it-came-from).
+3. [`Snapshot.require_fresh()` is how a module refuses a gap](#snapshotrequire_fresh-is-how-a-module-refuses-a-gap).
+4. [Only `OrderPath` holds a `Broker`](#only-orderpath-holds-a-broker).
+5. [The risk gate holds no state of its own](#the-risk-gate-holds-no-state-of-its-own).
+6. [The book comes from the journal](#the-book-comes-from-the-journal).
+7. [The cost model writes a schedule rather than answering calls](#the-cost-model-writes-a-schedule-rather-than-answering-calls).
+8. [Every type that crosses between workers has a file form](#every-type-that-crosses-between-workers-has-a-file-form).
+
+#### A forecast is about a basket, not an instrument
+
+The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio for the day. A `Basket` holds `{USO: 1, GLD: −h}`, so one forecast carries the whole position and portfolio construction never has to know it is a pair. The charter and [#6](https://github.com/l3a0/ithildin-runtime/issues/6) say a forecast is per instrument, so this is a proposal for [#6](https://github.com/l3a0/ithildin-runtime/issues/6) rather than a decision here.
+
+#### A bar carries where it came from
+
+##### What each field of a bar says
+
+**Table:** The fields that say where a bar came from and when it closed
+
+| Field | What it says |
+| --- | --- |
+| `origin` | Whether marketlake captured the bar or imported it |
+| `vintage_id` | The vintage the bar was read from |
+| `first_seen` | When the platform first held the bar |
+| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for split and dividend adjusted, as quantitative-trading's vintage records do |
+| `end` | When the bar closed |
+| `interval` | How long the bar is |
+
+`vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](team-charter.md), to store when each value became available (L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
+
+##### Which bars a snapshot returns
+
+Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns only bars whose `end` and knowable time are both at or before the decision time. Three things set those two times.
+
+1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
+2. A daily bar's `end` is its session's close from the calendar.
+3. An imported vintage has no receive time, so its knowable time is the vendor's publication date where the vintage records one, and otherwise the bar's `end`, which a backtest states as an assumption of its result.
+
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how.
+
+##### What a quote and a snapshot's flags carry
+
+A `Quote` keeps four things, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
+
+1. The vendor's stamp as received.
+2. The capture time.
+3. Whether the quote was real time.
+4. Its volume.
+
+A snapshot's `flags` hold a spike flag with both prices per instrument, so the send stage's flag test has a field to read.
+
+#### `Snapshot.require_fresh()` is how a module refuses a gap
+
+A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh()` before reading, and it raises `Halt` when any bar it needs is missing or stale. So the default when something is absent is to stop.
+
+#### Only `OrderPath` holds a `Broker`
+
+Every call to the broker goes through `OrderPath`.
+
+##### Which calls reach the broker
+
+`OrderPath` has one method per kind of call.
+
+- Settling orders in doubt.
+- Journaling fills.
+- Reading positions and open orders.
+- Sending and cancelling.
+
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10) states which read supplies cash. Nothing else in the package is given a broker, and only the execution worker's entry point builds one, which the import rule enforces. The fake broker in test 3, the test that the risk gate refuses an order over each limit and that nothing bypasses it, checks the send path itself, as [Package layout and the import rule](#package-layout-and-the-import-rule) says. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+
+##### How a call names an order
+
+Every lookup and every cancel uses the broker's order id the journal mapped from the ack. An order in doubt has no ack, so `find_order` supplies its broker id first, by the adapter's own means, as design.md's [Orders the platform did not send](design.md#orders-the-platform-did-not-send) says.
+
+##### How a late fill is still fetched
+
+`fills(since)` takes the last decision's time less a stated overlap. The journal compares each fill with any it holds under that id and correction identifier.
+
+- It skips only an identical repeat.
+- It journals a differing one and halts.
+
+So a fill the broker posts late is still fetched.
+
+##### What each call returns, and what is journaled first
+
+`Journal.append` returns a `JournalAck` naming the entry's number and hash. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
+
+Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead.
+
+Each call ends in one of these outcomes.
+
+1. Accepted.
+2. Rejected.
+3. Provably not sent.
+4. Unknown.
+5. Not found.
+6. More than one, an outcome only a `find_order` can end.
+
+`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form.
+
+##### One function lists the differences from the broker
+
+One reconciliation function in `core`, `core.reconcile(book, broker_account)`, lists the differences. Four stages call it.
+
+1. Execution's recover stage.
+2. Execution's send-stage sync.
+3. Execution's reconcile after the close.
+4. Monitoring's reconcile stage.
+
+Each decides only what to do with the differences. Execution journals its own outcomes and halts on the rest, and monitoring alarms. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how `core.reconcile` receives a takeover's stored order list, so it can flag a late order.
+
+##### How the broker's rate limit is shared
+
+Alpaca's trading API [allows 200 requests a minute](https://alpaca.markets/support/usage-limit-api-calls) for each account, a figure [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on the paper account before anything relies on it. The budget that follows is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+
+**Table:** How execution splits the account's 200 requests a minute
+
+| Share | Of the account's limit | Each instance's share, for three instances | What draws on it |
+| --- | --- | --- | --- |
+| The reserve | A quarter, 50 a minute | 16 a minute, rounded down | Cancels, and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included |
+| Orders and lookups | The rest | 50 a minute | New orders and other lookups, which never draw on the reserve |
+
+Both shares are split evenly across the deployment's execution instances. Each instance holds two token buckets, one for its share of orders and lookups and one for its share of the reserve. Each bucket refills continuously and holds at most 10 tokens, so a burst cannot spend a minute's share in a second, and the sum stays under the limit with no shared counter.
+
+- A request takes a token or waits the time the bucket names.
+- An instance alarms when its requests pass 75% of its share.
+- An order that would pass its instance's share waits for the budget before the order path takes the account's lease, so a wait never holds the lease.
+
+**Table:** What a broker 429, its answer for too many requests, does on each call
+
+| The call | What the 429 means | What follows |
+| --- | --- | --- |
+| A submit | The order is left in doubt | A lookup settles it like any other order in doubt |
+| A cancel | A definite answer, which the contract suite proves | An alarm, and execution retries the cancel inside the reserve |
+
+#### The risk gate holds no state of its own
+
+##### What the gate is handed
+
+`check` takes five things.
+
+1. The order.
+2. The book.
+3. The snapshot.
+4. The run's `Constraints`.
+5. A `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value, the stop blob's state and, for a close, its close entry.
+
+`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape.
+
+##### How the gate values the book
+
+The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `send` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit.
+
+Three of the seven limits need the snapshot's prices to value the book.
+
+1. Maximum portfolio size, the `max_gross` field.
+2. Net exposure.
+3. The loss stop.
+
+##### How the gate reads the cutoff
+
+`moc_cutoff` is minutes before the close. The one calendar function in `core` turns it into a UTC instant from the decision's own session's close, and the gate compares only that instant. The gate also refuses a market-on-close order past the cutoff, at the time execution hands it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions) says.
+
+##### Where the limits come from
+
+The `Constraints` come from the risk model's constraints file, so the order path first checks every field of that file, and every hard cap in the hard caps blob only the owner can write. Each must be present, finite and of the sign the field expects, and the order path halts otherwise. Then it takes the tighter of each pair.
+
+**Table:** Which value of each pair the gate applies
+
+| The pair | The one that applies |
+| --- | --- |
+| A maximum | The smaller maximum |
+| The loss stop | The smaller loss |
+| The cutoff | The earlier cutoff |
+
+A constraints file can tighten a limit and never loosen it. This is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+
+#### The book comes from the journal
+
+`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](#the-current-book-comes-from-the-journal) lists. `Journal` itself lives in `core`, because execution, monitoring, the supervisor and the `ithildin` tool all append to it.
+
+#### The cost model writes a schedule rather than answering calls
+
+Portfolio construction priced each candidate trade by calling the cost model. With each module in its own process, the cost model instead writes a `CostSchedule` per decision, a fixed and a per-share cost for each instrument, and portfolio construction evaluates it. Slice 1's flat or linear model fits that shape. This is a proposal for [#8](https://github.com/l3a0/ithildin-runtime/issues/8).
+
+#### Every type that crosses between workers has a file form
+
+##### How a type travels
+
+Every type that crosses between workers has a file form, `BrokerAccount` and `SendOutcome` included. Each travels as an output file that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and that its component's `DecisionResult` lists. A test writes each one and reads it back unchanged. A deterministic component's format is canonical, so the same inputs give the same bytes, as [File formats and keys](#file-formats-and-keys) defines. Prices and quantities cross between workers as decimals, never floats, for the same reason.
+
+##### How a halt crosses a worker's edge
+
+`Halt` stays an exception inside a worker. At the worker's edge it becomes a `DecisionResult` that holds a `HaltRecord`.
+
+**Table:** What a `HaltRecord` holds about where the halt came from
+
+| Field | What it holds |
+| --- | --- |
+| `cause` | The halt the worker met, when it is passing one on. Empty when the worker found the problem itself |
+| `found_outputs` | Each output file stored under the decision's prefix when the halt was written, a capturing stage's stored capture included |
+
+The supervisor writes the same record for a worker that failed, naming its restart records. The host's stop handler and the restarted worker write those records, as [Each blob names what made it](design.md#rule-5-each-blob-names-what-made-it) says.
+
+##### What a plan, a journal entry and a lease hold
+
+- `Plan` holds the run's decisions, each with its time and the strategies deciding at it. One function in `core` builds it from the schedules and the trading calendar.
+- `JournalEntry` is the one numbered record, chained to the entry before it.
+- `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`.
+
+##### How the storage port rewrites a blob
+
+`BlobStore` is the storage port, S3 in shadow, paper and live and a memory-backed folder in a backtest, and one contract test suite runs against both. `create` returns the stored blob's tag and `head` its stored time. `replace_if_match` rewrites a blob only while it still carries the tag it names, and returns the new tag. That is how a lease is taken, renewed, released and taken over, and it is the one rewrite the port allows. So a lease can be rewritten only on a tag.
+
+**Table:** Which tag each rewrite of a lease names
+
+| The rewrite | The tag it names |
+| --- | --- |
+| A take | The one it read |
+| A clear | The one it read |
+| A renewal | The one its holder's own last write returned |
+| A release | The one its holder's own last write returned |
+
+No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the journal has no storage port of its own.
 
 ## The life of an order
 
