@@ -1495,7 +1495,33 @@ The two cover different failures.
 
 #### How a pull cancels
 
-The kill switch is a command, not a running process. It creates a blob at one key per broker account, which every worker reads, and whose S3 event reaches the queues of execution, the supervisor and monitoring, and whichever execution instance receives that event takes the account's lease, free after at most one order in flight or on the lease's release, and cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step. A starting execution instance checks the switch as soon as its digest and journal checks pass and, finding it set, takes the account's lease and cancels every resting order, so a switch pulled while execution is down still cancels once the host restarts it. Monitoring's report says the switch is set. A switch that cannot be read halts with the reason "kill switch unreadable" and the error, so the journal never mistakes a permission problem for a deliberate pull. The split of the kill switch work is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close, so a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does. Cancelling an unfilled order sells nothing, so the pull is still a stop and not a flatten.
+Pulling the kill switch cancels every resting order in the account, stamped or not.
+
+##### What the kill switch is
+
+The kill switch is a command, not a running process. It creates a blob at one key per broker account, and every worker reads that blob. The split of the kill switch work is on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+##### What happens after a pull
+
+1. The blob's S3 event reaches the queues of execution, the supervisor and monitoring.
+2. Whichever execution instance receives that event takes the account's lease. The lease is free after at most one order in flight, or on the lease's release.
+3. That instance cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step.
+
+Monitoring's report says the switch is set.
+
+##### What happens when execution is down at the pull
+
+A starting execution instance checks the switch as soon as its digest and journal checks pass. If it finds the switch set, it takes the account's lease and cancels every resting order. So a switch pulled while execution is down still cancels once the host restarts it.
+
+##### What happens when the switch cannot be read
+
+A switch that cannot be read halts with the reason "kill switch unreadable" and the error, so the journal never mistakes a permission problem for a deliberate pull.
+
+##### Why a pull also cancels market-on-close orders
+
+Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
+
+Cancelling an unfilled order sells nothing, so the pull is still a stop and not a flatten.
 
 #### The cancel cutoff
 
