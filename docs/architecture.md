@@ -36,13 +36,13 @@ One decision, end to end, is the picture to hold before the detail:
 
 ```mermaid
 flowchart LR
-    sup["Supervisor<br/>writes the plan"] --> data["Data<br/>snapshot of prices"]
-    data --> recover["Execution, first<br/>checks fills, positions, broker"]
-    recover --> models["Alpha, risk and cost models<br/>forecast, limits, cost schedule"]
-    models --> pc["Portfolio construction<br/>target portfolio"]
-    pc --> send["Execution, then<br/>order manager, risk gate,<br/>journal, broker"]
+    sup["Supervisor<br/>writes the plan"] --> data["Data<br/>stores a snapshot of prices"]
+    data --> recover["Execution, first<br/>checks fills and positions<br/>against the broker"]
+    recover --> models["Alpha, risk and cost models<br/>write the forecast, limits<br/>and cost schedule"]
+    models --> pc["Portfolio construction<br/>writes the target portfolio"]
+    pc --> send["Execution, then<br/>runs each order through the order manager,<br/>risk gate and journal to the broker"]
     send --> broker[("Simulated broker in shadow,<br/>Alpaca on paper")]
-    send --> mon["Monitoring<br/>report and heartbeat"]
+    send --> mon["Monitoring<br/>writes the report, pings the heartbeat"]
 ```
 
 It shows the order of the work, condensed from the diagram in
@@ -152,16 +152,16 @@ trades on days the units do not change:
 
 ```mermaid
 flowchart TD
-    close["Each day's close"] --> fit["Refit h<br/>20-day regression of USO on GLD"]
+    close["Each day's close"] --> fit["Refit h<br/>by a 20-day regression of USO on GLD"]
     fit --> z["Form the spread USO − h·GLD<br/>and its 20-day z-score"]
     z --> rule{"Does the z-score<br/>cross a threshold?"}
-    rule -- "Yes" --> move["Units change<br/>enter, exit or reverse"]
+    rule -- "Yes" --> move["Units change<br/>to enter, exit or reverse"]
     rule -- "No" --> same["Units stay as they were"]
     move --> target["Target portfolio<br/>USO: +units shares<br/>GLD: −units × h shares"]
     same --> target
     target --> diff{"Does the target differ<br/>from what is held?"}
     diff -- "Units changed" --> trade["Trade both legs"]
-    diff -- "Same units, held, h moved" --> resize["Resize: trade the GLD leg only"]
+    diff -- "Units unchanged and held, and h moved" --> resize["Resize: trade the GLD leg only"]
     diff -- "Flat, 0 units" --> none["No trade"]
 ```
 
@@ -249,24 +249,24 @@ flowchart LR
         loop["The live loop<br/>data, alpha, risk, cost,<br/>portfolio, execution, monitoring"]
     end
     qt[("quantitative-trading<br/>committed vintages")]
-    vendor[("Vendor download<br/>recent sessions, once")]
+    vendor[("Vendor download<br/>fetches recent sessions once")]
     lake[("marketlake<br/>captured and imported bars")]
     broker["Broker<br/>paper or live account"]
     alerts["Alert channel"]
     heartbeat["Heartbeat service<br/>outside the machine"]
     github["GitHub<br/>code, issues, board"]
 
-    qt -->|"imported once"| lake
-    vendor -->|"imported once"| lake
+    qt -->|"marketlake imports them once"| lake
+    vendor -->|"marketlake imports it once"| lake
     lake -->|"bars, through one query"| loop
     loop -->|"orders"| broker
-    broker -->|"acks, fills, positions"| loop
+    broker -->|"answers, fills, positions"| loop
     loop -->|"reports, alarms"| alerts
-    loop -->|"ping after each decision"| heartbeat
-    heartbeat -->|"alarm when a ping is late"| alerts
+    loop -->|"pings after each decision"| heartbeat
+    heartbeat -->|"alarms when a ping is late"| alerts
     alerts --> owner
-    owner -->|"live environment and its pin, hard caps, and through ithildin: the switch, clears, overrides"| loop
-    operator -->|"through ithildin: any account's kill switch, and clears and overrides on paper and shadow"| loop
+    owner -->|"controls the live environment, its pin and the hard caps,<br/>and through ithildin uses the kill switch,<br/>clears halts and writes overrides"| loop
+    operator -->|"through ithildin pulls any account's kill switch,<br/>and on paper and shadow clears halts<br/>and writes overrides"| loop
     owner -->|"merges, which deploys to shadow, then paper"| github
     github -->|"pinned release"| loop
 ```
@@ -309,12 +309,12 @@ the 2006 to 2012 history and a lookback of any length stay readable.
 
 ```mermaid
 flowchart LR
-    vm[("marketlake's VM disk<br/>older partitions can be deleted")]
+    vm[("marketlake's VM disk<br/>marketlake can delete older partitions")]
     bucket[("Backup bucket<br/>keeps every session")]
-    mirror[("Runtime's mirror<br/>the partitions a lookback names")]
+    mirror[("Runtime's mirror<br/>holds the partitions a lookback names")]
     runtime["ithildin-runtime"]
-    vm -->|"upload first, delete after"| bucket
-    bucket -->|"download"| mirror
+    vm -->|"uploads first, deletes after"| bucket
+    bucket -->|"the runtime downloads"| mirror
     mirror -->|"load_bars"| runtime
 ```
 
@@ -338,18 +338,18 @@ sequenceDiagram
     participant B as Bucket
     participant D as Data worker
     participant O as Monitoring
-    M->>B: upload each segment as its manifest entry lands
+    M->>B: uploads each segment as its manifest entry lands
     Note over D: decision time, close−20
-    D->>B: read segments up to the decision time
-    D->>D: match SHA-256, read quote rows through marketlake's reader, run minimum checks
-    D->>O: snapshot names each segment, marked provisional
-    Note over M: seal at close+15
-    M->>B: sealed day
+    D->>B: reads segments up to the decision time
+    D->>D: matches the SHA-256, reads quote rows through<br/>marketlake's reader, runs the minimum checks
+    D->>O: hands over a snapshot naming each segment,<br/>marked provisional
+    Note over M: seals at close+15
+    M->>B: uploads the sealed day
     Note over B: each segment stays readable for seven days after upload,<br/>and its old versions about 90 days more
     D->>B: next session's run reads the sealed rows
-    D->>O: sealed rows stored
-    O->>O: compare each quote used with its sealed row, and store the result
-    O->>O: alarm on a difference, report the price gaps
+    D->>O: stores the sealed rows
+    O->>O: compares each quote used with its sealed row<br/>and stores the result
+    O->>O: alarms on a difference, reports the price gaps
 ```
 
 The diagram shows one day's read before sealing. Look for the two checks either
@@ -388,7 +388,7 @@ has already acted. The read has five parts.
    ```mermaid
    flowchart TD
        t{"Is the day sealed<br/>when the read happens?"}
-       t -- "No" --> seg["Read segments, provisional"]
+       t -- "No" --> seg["Read segments, marked provisional"]
        t -- "Yes" --> part["Read sealed partitions<br/>up to the decision time"]
        part --> same["A replay of a decision<br/>read before sealing lands here"]
    ```
@@ -494,20 +494,20 @@ never learns which mode it is in.
 ```mermaid
 flowchart TB
     sup["Supervisor<br/>writes the plan, sets deadlines,<br/>keeps no state of its own"]
-    plan[("plan<br/>the run's decisions")]
+    plan[("plan<br/>lists the run's decisions")]
     sup --> plan
 
     subgraph workers["Workers, one process per module, identical in every mode"]
         direction TB
         data["Data"]
-        exec_recover["Execution, first<br/>orders in doubt, fills,<br/>positions, open orders, cash,<br/>broker's records, reconcile"]
-        mon_recon["Monitoring<br/>reconcile again, off the path"]
+        exec_recover["Execution, first<br/>settles orders in doubt, reads fills,<br/>positions, open orders, cash and<br/>the broker's records, then reconciles"]
+        mon_recon["Monitoring<br/>reconciles again,<br/>and no decision waits on it"]
         alpha["Alpha model<br/>Bollinger band"]
         risk["Risk model"]
         cost["Cost model"]
         pc["Portfolio construction<br/>equal risk weight"]
-        exec_send["Execution, then<br/>order manager, risk gate,<br/>journal, order path"]
-        mon_report["Monitoring, last<br/>report, heartbeat"]
+        exec_send["Execution, then<br/>runs the order manager, risk gate,<br/>journal and order path"]
+        mon_report["Monitoring, last<br/>writes the report, pings the heartbeat"]
     end
 
     snap[("snapshot")]
@@ -538,10 +538,10 @@ flowchart TB
     snap --> exec_send
     exec_send --> outcome --> mon_report
 
-    subgraph adapters["Adapters, built by each worker's entry point"]
+    subgraph adapters["Adapters, which each worker's entry point builds"]
         lakesrc["marketlake reader<br/>over the local mirror"]
         clock["History clock or wall clock"]
-        timer["Timer<br/>wall time, faked in tests"]
+        timer["Timer<br/>reads wall time, and tests fake it"]
         broker["Simulated or paper broker"]
         store["Blob store<br/>S3, or a memory-backed folder"]
         alertsink["Alerts and heartbeat"]
@@ -662,13 +662,13 @@ sequenceDiagram
     participant S as Simulated broker
     participant B as Account blob
     participant R2 as Shadow run 2, new VM
-    R1->>S: submit an order that rests
-    S->>B: write orders and positions
-    S-->>R1: return
+    R1->>S: submits an order that rests
+    S->>B: writes orders and positions
+    S-->>R1: returns
     Note over R1: The run ends
-    R2->>S: next call
-    S->>B: read orders and positions
-    S-->>R2: the order fills
+    R2->>S: makes its next call
+    S->>B: reads orders and positions
+    S-->>R2: reports that the order fills
 ```
 
 ### What a worker works through
@@ -792,7 +792,7 @@ Every order carries the platform's stamp, a client order id naming its strategy 
 
 ```mermaid
 flowchart TD
-    fill["A fill or order reported by the broker"] --> sent{"Did the journal send this order, is it no late order<br/>under an older lease, and is the fill within its quantity?"}
+    fill["The broker reports a fill or order"] --> sent{"Does the journal show this order as sent,<br/>is it not a late order under an older lease,<br/>and is the fill within its quantity?"}
     sent -- "Yes" --> book["Journal the fill into the strategy's book"]
     sent -- "No" --> halt["Journal it as received, and halt"]
 ```
@@ -839,13 +839,13 @@ sequenceDiagram
     participant E as EventBridge
     participant Q as The reader's SQS queue
     participant H as The reader's handler
-    W->>S: a create-only upload, with its SHA-256
-    S-->>E: S3's own event for the new blob
-    E->>Q: a rule generated from the input table copies the event
-    H->>Q: long polling
-    Q-->>H: the event
-    H->>S: read the blob the event names, then check the keys the plan fixes
-    H->>S: write its outputs, and its decision result last
+    W->>S: uploads the blob, create-only, with its SHA-256
+    S-->>E: sends S3's own event for the new blob
+    E->>Q: a rule generated from the input table<br/>copies the event
+    H->>Q: waits by long polling
+    Q-->>H: delivers the event
+    H->>S: reads the blob the event names,<br/>then checks the keys the plan fixes
+    H->>S: writes its outputs, and its decision result last
 ```
 
 The diagram shows one write reaching one reader, so look for the event carrying only a hint and the handler reading the blob itself before it acts.
@@ -911,115 +911,115 @@ sequenceDiagram
     participant C as Cost model
     participant P as Portfolio construction
 
-        S->>S: start the supervisor instances' units
-    V->>V: kill switch blob absent?
-    V->>F: the run's plan, written once under the plan's lease, naming its release
-    V->>S: the local release file written, so its path unit starts each worker's unit
-    F-->>D: an event: the plan
-    F-->>X: an event: the plan
-    F-->>M: an event: the plan
-    F-->>A: an event: the plan
-    F-->>K: an event: the plan
-    F-->>C: an event: the plan
-    F-->>P: an event: the plan
-    X->>F: Startup, read only: each execution instance's checks, before it plans or sends
+        S->>S: starts the supervisor instances' units
+    V->>V: is the kill switch blob absent?
+    V->>F: writes the run's plan once under the plan's lease,<br/>naming its release
+    V->>S: writes the local release file,<br/>so its path unit starts each worker's unit
+    F-->>D: sends an event for the plan
+    F-->>X: sends an event for the plan
+    F-->>M: sends an event for the plan
+    F-->>A: sends an event for the plan
+    F-->>K: sends an event for the plan
+    F-->>C: sends an event for the plan
+    F-->>P: sends an event for the plan
+    X->>F: each instance runs its Startup checks, read only,<br/>before it plans or sends
     Note over V,M: Phase 1, read the data, then recover
-    D->>F: snapshot, naming each bar read, and data's decision result
-    F-->>X: an event: data's result
-    X->>B: orders in doubt, fills since the last decision
-    B-->>X: fills since the last decision
-    X->>J: each fill journaled
-    X->>B: positions, open orders, cash and the broker's records
-    B-->>X: positions, open orders, cash and the broker's records
-    X->>J: each record journaled as an outside entry
-    X->>F: account file stored, naming the journal entry it replayed through
-    X->>X: book from the journal agrees with the broker?
-    X->>F: reconciled book and execution's recover result
-    F-->>M: an event: execution's recover result
-    M->>F: monitoring's reconcile result, which no decision waits on
+    D->>F: stores the snapshot, naming each bar read,<br/>and data's decision result
+    F-->>X: sends an event for data's result
+    X->>B: asks about orders in doubt,<br/>reads fills since the last decision
+    B-->>X: returns fills since the last decision
+    X->>J: journals each fill
+    X->>B: reads positions, open orders, cash<br/>and the broker's records
+    B-->>X: returns positions, open orders, cash<br/>and the broker's records
+    X->>J: journals each record as an outside entry
+    X->>F: stores the account file, naming<br/>the journal entry it replayed through
+    X->>X: does the book from the journal<br/>agree with the broker?
+    X->>F: stores the reconciled book<br/>and execution's recover result
+    F-->>M: sends an event for execution's recover result
+    M->>F: stores monitoring's reconcile result,<br/>which no decision waits on
     Note over V,P: Phase 2, decide
     par
-        F-->>A: an event: data's result
-        A->>F: forecast, hedge ratio, z-score, and alpha's result
+        F-->>A: sends an event for data's result
+        A->>F: stores the forecast, hedge ratio, z-score<br/>and alpha's result
     and
-        F-->>C: an event: data's result
-        C->>F: cost schedule and cost's result
+        F-->>C: sends an event for data's result
+        C->>F: stores the cost schedule and cost's result
     and
-        F-->>K: events: data's and execution's recover results
-        K->>F: constraints and risk's result
+        F-->>K: sends events for data's and<br/>execution's recover results
+        K->>F: stores the constraints and risk's result
     end
-    F-->>P: events: alpha's, risk's, cost's and execution's recover results
-    P->>F: target portfolio and portfolio construction's result
-    Note over X,J: Phase 3, send, in whichever execution instance receives the event
-    F-->>X: an event: portfolio construction's result
-    X->>F: a create-only claim on the send stage, naming its handler
-    X->>B: positions, open orders, cash, the broker's records and fills since recover
-    B-->>X: the broker's state now
-    X->>F: the broker read stored
-    X->>J: its hash journaled
-    X->>J: any new fill journaled, under its fill id, and each new record as an outside entry
-    X->>X: book from the journal agrees with the broker?
-    X->>X: stop test and flag test, with no order needed, creating stop.json from the result
-    X->>X: order manager plans
-    X->>J: the whole target portfolio and its planned orders, cancels and replacements journaled
-    X->>X: clock agrees with the broker's, and before the cutoff?
+    F-->>P: sends events for alpha's, risk's, cost's<br/>and execution's recover results
+    P->>F: stores the target portfolio and<br/>portfolio construction's result
+    Note over X,J: Phase 3, send, in whichever execution instance<br/>receives the event
+    F-->>X: sends an event for portfolio construction's result
+    X->>F: writes a create-only claim on the send stage,<br/>naming its handler
+    X->>B: reads positions, open orders, cash,<br/>the broker's records and fills since recover
+    B-->>X: returns its state now
+    X->>F: stores that read of the broker
+    X->>J: journals its hash
+    X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
+    X->>X: does the book from the journal<br/>agree with the broker?
+    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed,<br/>and creates stop.json from the result
+    X->>X: the order manager plans the orders
+    X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
+    X->>X: does the clock agree with the broker's,<br/>and is it before the cutoff?
     opt a resting order the plan cancels or replaces
-        X->>F: the account's lease taken
-        X->>J: cancel journaled
-        X->>F: no run or account halt stored or on the plan's lease, own send result empty, lease tag unchanged, and before the cancel cutoff?
-        X->>B: cancel, by the broker's order id the ack journaled
-        B-->>X: cancelled, filled first, accepted, or no answer
+        X->>F: takes the account's lease
+        X->>J: journals the cancel
+        X->>F: is no run or account halt stored or on the plan's lease,<br/>is its own send result empty, is the lease tag unchanged,<br/>and is it before the cancel cutoff?
+        X->>B: cancels by the broker's order id<br/>that the journaled answer holds
+        B-->>X: answers cancelled, filled first or accepted,<br/>or gives no answer
         opt accepted, or no answer
-            X->>B: one lookup, by the broker's order id
+            X->>B: looks up once by the broker's order id
         end
-        X->>J: the old order's outcome or its doubt journaled, any fill included
-        X->>F: the account's lease deleted
+        X->>J: journals the old order's outcome or its doubt,<br/>any fill included
+        X->>F: deletes the account's lease
     end
-    loop each order the order manager plans, a replacement only if its old order settled
-        X->>F: the account's lease taken
-        X->>X: kill switch blob absent, and before the cutoff?
-        X->>J: intent journaled
-        X->>J: replay the book
-        X->>X: risk gate check
-        X->>J: approval journaled
-        X->>J: sending journaled
-        X->>F: switch absent, strategy not off, no run or account halt stored or on the plan's lease, own send result empty, lease tag unchanged, and before the cutoff?
-        X->>B: send, with its client order id
-        B-->>X: ack
-        X->>J: ack journaled
-        X->>F: the account's lease deleted
+    loop each order the order manager plans,<br/>a replacement only if its old order settled
+        X->>F: takes the account's lease
+        X->>X: is the kill switch blob absent,<br/>and is it before the cutoff?
+        X->>J: journals the intent
+        X->>J: replays the book
+        X->>X: runs the risk gate check
+        X->>J: journals the approval
+        X->>J: journals the sending entry
+        X->>F: is the switch absent, the strategy not off,<br/>no run or account halt stored or on the plan's lease,<br/>its own send result empty, the lease tag unchanged,<br/>and is it before the cutoff?
+        X->>B: sends the order, with its client order id
+        B-->>X: answers
+        X->>J: journals the broker's answer
+        X->>F: deletes the account's lease
     end
     X->>B: is every leg accepted?
-    alt a leg rejected or unsent while another is accepted, or a leg's plan cancel stopped after its partner's was confirmed
-        X->>F: the account's lease taken
-        X->>J: each cancel journaled
-        X->>F: lease tag unchanged?
-        X->>B: cancel the accepted legs
-        X->>F: the account's lease deleted
-        loop a cancel's answer lost, inside the send stage's deadline, under design.md's faults rule 6
-            X->>F: the account's lease taken
-            X->>B: lookup by the broker's order id
-            X->>J: the answer journaled, and a new cancel when faults rule 6 allows one
-            X->>F: lease tag unchanged?
-            X->>B: the new cancel
-            X->>J: its answer or its doubt journaled
-            X->>F: the account's lease deleted
+    alt a leg rejected or unsent while another is accepted,<br/>or a leg's plan cancel stopped<br/>after its partner's was confirmed
+        X->>F: takes the account's lease
+        X->>J: journals each cancel
+        X->>F: is the lease tag unchanged?
+        X->>B: cancels the accepted legs
+        X->>F: deletes the account's lease
+        loop a cancel's answer lost, inside the send stage's<br/>deadline, under design.md's faults rule 6
+            X->>F: takes the account's lease
+            X->>B: looks up by the broker's order id
+            X->>J: journals the answer, and a new cancel<br/>when faults rule 6 allows one
+            X->>F: is the lease tag unchanged?
+            X->>B: sends the new cancel
+            X->>J: journals its answer or its doubt
+            X->>F: deletes the account's lease
         end
     end
-    X->>F: send outcome and execution's send result
-    F-->>M: an event: execution's result
-    M->>F: the decision's report and monitoring's report result
-    M->>M: the age of the jobs that run apart from a decision read, and a page on one past its bound
-    M->>M: ping the heartbeat service
+    X->>F: stores the send outcome<br/>and execution's send result
+    F-->>M: sends an event for execution's result
+    M->>F: stores the decision's report<br/>and monitoring's report result
+    M->>M: reads the age of the jobs that run apart from a decision,<br/>and pages on one past its bound
+    M->>M: pings the heartbeat service
     Note over V,J: After the close, once every decision has a result
-    X->>B: the day's fills, positions, open orders, cash and the broker's records
-    B-->>X: the day's fills, positions, open orders, cash and the broker's records
-    X->>X: what it read sorted
-    X->>J: each fill journaled, and each record as an outside entry
-    X->>X: the book reconciled
-    X->>F: a result naming each order the journal holds as open as settled or still open
-    V->>F: that result read, and only then the run's stop stored
-    Note over V,J: A read that fails or misses a written time pages the owner, and no stop is stored. A difference halts and pages whether or not the result and the stop follow
+    X->>B: reads the day's fills, positions, open orders,<br/>cash and the broker's records
+    B-->>X: returns the day's fills, positions, open orders,<br/>cash and the broker's records
+    X->>X: sorts what it read
+    X->>J: journals each fill,<br/>and each record as an outside entry
+    X->>X: reconciles the book
+    X->>F: stores a result saying, for each order the journal<br/>holds as open, whether it is settled or still open
+    V->>F: reads that result, and only then stores the run's stop
+    Note over V,J: A read that fails or misses a written time<br/>pages the owner, and the supervisor stores no stop.<br/>A difference halts and pages whether or not<br/>the result and the stop follow
 ```
 
 ### Before the first decision
@@ -1045,10 +1045,10 @@ The alpha, risk and cost models run at once, each on the blobs it needs. The ris
 
 ```mermaid
 flowchart TB
-    data["Data's result"] --> alpha["Alpha model<br/>forecast, hedge ratio, z-score"]
-    data --> risk["Risk model<br/>constraints"]
-    data --> cost["Cost model<br/>cost schedule"]
-    alpha --> pc["Portfolio construction<br/>target portfolio"]
+    data["Data's result"] --> alpha["Alpha model<br/>writes the forecast, hedge ratio, z-score"]
+    data --> risk["Risk model<br/>writes the constraints"]
+    data --> cost["Cost model<br/>writes the cost schedule"]
+    alpha --> pc["Portfolio construction<br/>writes the target portfolio"]
     risk --> pc
     cost --> pc
     recover["Execution's<br/>recover result"] --> risk
@@ -1063,11 +1063,11 @@ This phase is the only one that touches the broker with an order, so it has the 
 flowchart TB
     subgraph prepare["Prepare, once per decision"]
         direction LR
-        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>stop and flag tests"] --> a4["Step 4<br/>plan, journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
+        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>run the stop and flag tests"] --> a4["Step 4<br/>plan and journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
     end
     subgraph each["Send, once per order"]
         direction LR
-        b1["Steps 1 and 2<br/>lease, switch, cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, gate"] --> b3["Step 8<br/>the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal, free the lease"]
+        b1["Steps 1 and 2<br/>take the lease, check the switch and cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, ask the risk gate"] --> b3["Step 8<br/>make the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal the answer, delete the lease"]
     end
     subgraph finish["Finish, once per decision"]
         direction LR
@@ -1151,15 +1151,15 @@ sequenceDiagram
     participant J as Journal
     participant X2 as Another instance
     participant B as Broker
-    X1->>J: sending journaled
-    Note over X1: dies before the ack
+    X1->>J: journals the sending entry
+    Note over X1: dies before the broker answers
     X2->>J: reads an order in doubt, with no broker id mapped
-    X2->>B: the orders listed from before its send
-    B-->>X2: each order's broker id and client order id
-    X2->>B: lookup by the broker's order id
-    B-->>X2: what it holds for that id
-    X2->>J: the answer journaled, which maps the order
-    Note over X2,B: it asks, and never sends it again
+    X2->>B: lists the orders from before its send
+    B-->>X2: returns each order's broker id and client order id
+    X2->>B: looks up by the broker's order id
+    B-->>X2: returns what it holds for that id
+    X2->>J: journals the answer, which maps the order
+    Note over X2,B: Another instance asks, and never sends the order again
 ```
 
 A client order id is an id the platform chooses and sends with the order. The broker gives the order an id of its own, and the journal maps one to the other on each ack. Every lookup goes by the broker's order id, because not every broker can find an order by a client order id.
@@ -1214,15 +1214,15 @@ sequenceDiagram
     participant J as Journal
     participant L as Alert channel
 
-    D->>F: snapshot stored as read
-    D->>D: GLD fresh, USO missing
-    D->>F: a halt as data's result, reason "USO missing for the decision", naming the stored snapshot
-    F-->>X: an event: data's result is a halt
-    X->>F: halts as execution's recover and send results, naming data's
-    F-->>M: an event: data's result is a halt
-    M->>J: halt journaled
-    M->>L: alarm
-    Note over D,M: No model reads a snapshot. No order is sent.<br/>Positions stay as they are.
+    D->>F: stores the snapshot as read
+    D->>D: finds GLD fresh and USO missing
+    D->>F: stores a halt as data's result, reason<br/>"USO missing for the decision",<br/>naming the stored snapshot
+    F-->>X: sends an event: data's result is a halt
+    X->>F: stores halts as execution's recover and send results,<br/>naming data's
+    F-->>M: sends an event: data's result is a halt
+    M->>J: journals the halt
+    M->>L: raises the alarm
+    Note over D,M: No model reads a snapshot. Execution sends no order.<br/>Positions stay as they are.
 ```
 
 A stale bar takes the same path. Stale means the newest bar is older than the
@@ -1250,34 +1250,34 @@ sequenceDiagram
     participant M as Monitoring
     participant L as Alert channel
 
-    Note over V: The machine rebooted. Yesterday's execution worker died<br/>after "sending journaled" and before the ack.
-    V->>F: the run's plan, written once
-    V->>V: kill switch blob absent?
-    F-->>X: an event: the plan
-    F-->>D: an event: the plan
-    F-->>M: an event: the plan
+    Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
+    V->>F: writes the run's plan once
+    V->>V: is the kill switch blob absent?
+    F-->>X: sends an event for the plan
+    F-->>D: sends an event for the plan
+    F-->>M: sends an event for the plan
     par
-        X->>F: kill switch blob absent?
-        X->>J: which send stage has planned orders and no result, and a runner that is gone?
-        J-->>X: yesterday's last decision, run on this VM's earlier boot, one order sending with no ack
-        X->>F: the account's lease, clearing the one this VM's earlier boot left, journaled
-        X->>J: in doubt journaled
-        X->>B: the orders listed from before its send
-        B-->>X: this client order id, under the broker's order id
-        X->>B: lookup by the broker's order id
-        B-->>X: acknowledged
-        X->>J: ack journaled, and any unsent planned order journaled Abandoned
-        X->>F: a halt as that decision's send result, if none is stored
-        X->>F: the account's lease deleted
+        X->>F: is the kill switch blob absent?
+        X->>J: which send stage has planned orders and no result,<br/>and a runner that is gone?
+        J-->>X: returns yesterday's last decision, run on this VM's<br/>earlier boot, with one order sending and no answer
+        X->>F: takes the account's lease, clearing the one this<br/>VM's earlier boot left, and journals that
+        X->>J: journals the order as in doubt
+        X->>B: lists the orders from before its send
+        B-->>X: returns this client order id,<br/>under the broker's order id
+        X->>B: looks up by the broker's order id
+        B-->>X: answers that the order is acknowledged
+        X->>J: journals the broker's answer, and journals<br/>any unsent planned order Abandoned
+        X->>F: stores a halt as that decision's send result,<br/>if none is stored
+        X->>F: deletes the account's lease
     and
-        D->>D: are the segments up to the decision time in marketlake?
-        D->>F: a halt as data's result, reason "data not ready"
+        D->>D: are the segments up to the decision time<br/>in marketlake?
+        D->>F: stores a halt as data's result, reason "data not ready"
     end
-    F-->>X: an event: data's result is a halt
-    X->>F: halts as execution's recover and send results, naming data's, without sending
-    F-->>M: an event: data's result is a halt
-    M->>J: halt journaled
-    M->>L: alarm
+    F-->>X: sends an event: data's result is a halt
+    X->>F: stores halts as execution's recover and send results,<br/>naming data's, without sending
+    F-->>M: sends an event: data's result is a halt
+    M->>J: journals the halt
+    M->>L: raises the alarm
     Note over V,L: Execution never sends before the data is ready
 ```
 
@@ -1309,13 +1309,13 @@ sequenceDiagram
     participant M as Monitoring
     participant L as Alert channel
 
-    X->>J: intent journaled, buy 900 USO
-    X->>X: risk gate check
-    X->>J: refusal journaled with the limit and the value
-    X->>F: a halt as execution's send result, reason "over the maximum position"
-    F-->>M: an event: execution's result is a halt
-    M->>J: halt journaled
-    M->>L: alarm
+    X->>J: journals the intent, buy 900 USO
+    X->>X: runs the risk gate check
+    X->>J: journals the refusal with the limit and the value
+    X->>F: stores a halt as execution's send result,<br/>reason "over the maximum position"
+    F-->>M: sends an event: execution's result is a halt
+    M->>J: journals the halt
+    M->>L: raises the alarm
     Note over B: The broker never sees the order
 ```
 
@@ -1395,12 +1395,12 @@ sequenceDiagram
     participant J as Journal
     participant L as Alert channel
 
-    X->>F: account file stored as read
-    X->>X: reconcile, book holds 100 USO, broker holds 90 USO
-    X->>F: a halt as execution's recover result, with both positions, naming the stored account file
-    F-->>M: an event: execution's halt
-    M->>J: halt journaled
-    M->>L: alarm
+    X->>F: stores the account file as read
+    X->>X: reconciles: the book holds 100 USO,<br/>the broker holds 90 USO
+    X->>F: stores a halt as execution's recover result, with both<br/>positions, naming the stored account file
+    F-->>M: sends an event: execution's halt
+    M->>J: journals the halt
+    M->>L: raises the alarm
     Note over X,L: No model reads a book until a person<br/>explains the difference
     Note over X,L: A broker's own trade can close the whole<br/>position while this halt stands
 ```
@@ -1426,33 +1426,33 @@ sequenceDiagram
     participant H as Heartbeat service
     participant A as Alert channel
 
-    P->>K: pull the kill switch
-    K->>F: create the kill switch blob
-    K->>J: halt journaled, reason "kill switch"
-    K->>A: alarm
+    P->>K: pulls the kill switch
+    K->>F: creates the kill switch blob
+    K->>J: journals the halt, reason "kill switch"
+    K->>A: raises the alarm
     par
-        F-->>X: the blob's event
+        F-->>X: sends the blob's event
     and
-        F-->>V: the blob's event
+        F-->>V: sends the blob's event
     and
-        F-->>M: the blob's event
+        F-->>M: sends the blob's event
     end
-    X->>X: stop sending
-    X->>F: the account's lease taken
-    X->>J: orders in doubt settled
-    X->>J: each cancel journaled
-    X->>B: cancel
-    X->>J: any failed cancel journaled
-    X->>J: the switch's cancels done
-    X->>F: the account's lease deleted
-    M->>A: alarm if any cancel failed
-    M->>J: cancels done within the deadline of the pull?
-    M->>A: second alarm if not, naming the broker's own console
+    X->>X: stops sending
+    X->>F: takes the account's lease
+    X->>J: settles orders in doubt
+    X->>J: journals each cancel
+    X->>B: cancels
+    X->>J: journals any failed cancel
+    X->>J: journals that the switch's cancels are done
+    X->>F: deletes the account's lease
+    M->>A: raises the alarm if any cancel failed
+    M->>J: are the cancels done within the deadline of the pull?
+    M->>A: raises a second alarm if not,<br/>naming the broker's own console
     Note over F,X: Every worker checks the switch when it starts and whenever an event wakes it,<br/>and execution right before every broker call
 
     Note over H,A: A decision that never finishes
-    H->>H: no ping by the deadline
-    H->>A: dead-man alarm
+    H->>H: gets no ping by the deadline
+    H->>A: raises the dead-man alarm
 ```
 
 The two cover different failures.
@@ -2136,33 +2136,33 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: switch set or cutoff passed before the gate, or a restart
+    Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>or a restart
     Approved --> Abandoned: a restart before the sending entry
-    Approved --> Sending: sending journaled
-    Sending --> Acknowledged: broker acks, unless it is a late order, which halts
-    Sending --> InDoubt: no answer, a crash, or a refusal saying the broker already holds the id
-    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is a late order under an older lease or disagrees with its sending entry, which halts first
+    Approved --> Sending: execution journals the sending entry
+    Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
+    Sending --> InDoubt: no answer, a crash, or a refusal saying<br/>the broker already holds the id
+    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails, the switch, run or account halt, own result key, lease tag or cutoff, which halt, or strategy off, which abandons without halting, and a close reads them as design.md's rule 9 says
-    Acknowledged --> Expired: day or market-on-close order not filled by the close
-    PartlyFilled --> Expired: rest not filled by the close
-    Sending --> Rejected: broker refuses the submit, other than a refusal saying it already holds the id
+    Sending --> Abandoned: a check before the broker call fails. The switch,<br/>a run or account halt, its own result key, the lease tag<br/>or the cutoff halts. A switched-off strategy abandons<br/>without halting. A close reads them<br/>as design.md's rule 9 says
+    Acknowledged --> Expired: a day or market-on-close order<br/>stays unfilled at the close
+    PartlyFilled --> Expired: the rest stay unfilled at the close
+    Sending --> Rejected: the broker refuses the submit, other than<br/>a refusal saying it already holds the id
     Acknowledged --> Rejected: broker rejects
-                Acknowledged --> CancelSent: cancel journaled, for the kill switch, a failed pair leg, a later plan, or a sort
-    PartlyFilled --> CancelSent: cancel of the rest journaled, for the same reasons
-    InDoubt --> InDoubt: a cancel on a row a list returned, journaled, still blocked and counted until a lookup settles it
-    CancelSent --> CancelSent: a new cancel journaled, under faults rule 6
+                Acknowledged --> CancelSent: execution journals the cancel, for the kill switch,<br/>a failed pair leg, a later plan or a sort
+    PartlyFilled --> CancelSent: execution journals a cancel of the rest,<br/>for the same reasons
+    InDoubt --> InDoubt: execution journals a cancel on a row a list returned,<br/>and the order stays blocked and counted<br/>until a lookup settles it
+    CancelSent --> CancelSent: execution journals a new cancel, under faults rule 6
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
     CancelSent --> Filled: it filled before the cancel landed
-    CancelSent --> Expired: not filled by the close, the cancel refused after the freeze
-    CancelSent --> Acknowledged: the broker refuses the cancel, or a check before the broker call stopped it, journaled
+    CancelSent --> Expired: it stays unfilled at the close, and the broker<br/>refused the cancel after the freeze
+    CancelSent --> Acknowledged: execution journals that the broker refused the cancel,<br/>or that a check before the broker call stopped it
     CancelSent --> PartlyFilled: the same, for an order already part filled
     Refused --> [*]
     Abandoned --> [*]
-    Lost --> Lost: an open order or fill on its id, journaled as unmatched, which halts
+    Lost --> Lost: execution journals an open order or fill on its id<br/>as unmatched, which halts
     Lost --> [*]
     Filled --> [*]
     Expired --> [*]
@@ -2208,21 +2208,21 @@ span. A halt ends only its own decision's chain.
 ```mermaid
 stateDiagram-v2
     [*] --> Starting
-    Starting --> Halted: kill switch set, or a worker on another release halts with "release changed"
-    Starting --> Preparing: workers waiting on the decision's inputs
-    Preparing --> Halted: data missing, stale or not ready, an unknown stamped fill, an unstamped order, a fill with no stamp, an order the broker placed itself, or book and broker disagree
-    Preparing --> Deciding: snapshot written, book reconciled
+    Starting --> Halted: the kill switch is set, or a worker on another release<br/>halts with "release changed"
+    Starting --> Preparing: workers wait on the decision's inputs
+    Preparing --> Halted: data missing, stale or not ready, an unknown stamped fill,<br/>an unstamped order, a fill with no stamp, an order<br/>the broker placed itself, or book and broker disagree
+    Preparing --> Deciding: data writes the snapshot, execution reconciles the book
     Deciding --> Halted: a worker halts
-    Deciding --> Sending: target portfolio written
-    Sending --> Halted: risk gate refuses, kill switch set, run or account halted, lease lost, cutoff passed, clocks disagree, a flagged price, an uncomputable loss with positions held, an order in doubt, or a restart mid-send
-    Sending --> Reporting: every order journaled and answered
-    Halted --> Reporting: a halt written as a result, then journaled and alarmed by monitoring
-    Reporting --> Done: report written, heartbeat pinged
+    Deciding --> Sending: portfolio construction writes the target portfolio
+    Sending --> Halted: the risk gate refuses, the kill switch is set,<br/>the run or account halts, the lease is lost,<br/>the cutoff passes, clocks disagree, a price is flagged,<br/>a loss cannot be computed with positions held,<br/>an order is in doubt, or a restart comes mid-send
+    Sending --> Reporting: the journal holds every order and its answer
+    Halted --> Reporting: a halt lands as a result, then monitoring<br/>journals it and raises the alarm
+    Reporting --> Done: monitoring writes the report and pings the heartbeat
     Done --> [*]
-    Starting --> Failed: a worker's heartbeat stops, or none of its instances is healthy
-    Preparing --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
-    Deciding --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
-    Sending --> Failed: a worker misses its deadline, its heartbeat stops, or none of its instances is healthy
+    Starting --> Failed: a worker's heartbeat stops,<br/>or none of its instances is healthy
+    Preparing --> Failed: a worker misses its deadline, its heartbeat stops,<br/>or none of its instances is healthy
+    Deciding --> Failed: a worker misses its deadline, its heartbeat stops,<br/>or none of its instances is healthy
+    Sending --> Failed: a worker misses its deadline, its heartbeat stops,<br/>or none of its instances is healthy
     Failed --> Reporting: the run's halt reaches every worker as an event
 ```
 
@@ -2676,12 +2676,12 @@ VM by starting a new one on the release the run uses, as rule 11 of `## Where it
 
 ```mermaid
 flowchart TB
-    subgraph host["One environment's VM in slice 1, or each of three across availability zones once it scales out,<br/>separate from marketlake's, holding no state,<br/>replaced by an Auto Scaling group when lost"]
+    subgraph host["One environment's VM in slice 1, or each of three across availability zones once it scales out,<br/>separate from marketlake's, holding no state,<br/>an Auto Scaling group replaces it when lost"]
         timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it has read the run's plan,<br/>the timer stops all after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
         subgraph ctrs["Three containers per component and three supervisors per deployment, on the one VM or spread across three,<br/>each its own unit and its own user"]
-            sup["Supervisor<br/>plan, deadlines"]
+            sup["Supervisor<br/>writes the plan, sets deadlines"]
             data["Data"]
             alpha["Alpha model"]
             risk["Risk model"]
@@ -2701,7 +2701,7 @@ flowchart TB
         creds -. "each container mounts only its own" .-> ctrs
         mirror --> data
     end
-    registry["GitHub's container registry<br/>image by digest, provenance verified"]
+    registry["GitHub's container registry<br/>holds the image by digest,<br/>and the VM verifies its provenance"]
     mlvm["marketlake's VM<br/>capture daemon"]
     lake[("marketlake's bucket")]
         events["EventBridge<br/>a rule per reader and prefix,<br/>generated from the input table"]
@@ -2717,7 +2717,7 @@ flowchart TB
 
     registry --> docker
     mlvm --> lake
-    lake -->|"download, checksum checked"| mirror
+    lake -->|"downloads, then checks the checksum"| mirror
         ctrs <-->|"create-only writes, reads"| bucket
     bucket -->|"an event per write"| events
     events --> queues
@@ -2731,7 +2731,7 @@ flowchart TB
     cw -->|"EventBridge route"| alerts
     cw -->|"promotion and live drill checks only"| sns
     sns -->|"email"| alerts
-        person <-->|"status, clears, overrides, the switch"| bucket
+        person <-->|"reads status, clears halts, writes overrides,<br/>uses the kill switch"| bucket
 ```
 
 Eleven rules hold the deployment to the premise and the hard limits.
@@ -3201,11 +3201,11 @@ flowchart TB
     merge["The owner's merge to main"] --> publish["Publishing job<br/>rebuilds, tests, publishes and attests the image"]
     publish --> deploy["Deploy job<br/>writes the deploy record and shadow's pin"]
     deploy --> shadow["Shadow runs the digest"]
-    shadow --> promote{"Promotion job after each session<br/>shadow healthy, paper clear,<br/>digest blocked in neither bucket?"}
-    promote -- "Yes" --> paper["Paper's pin and promotion record"]
+    shadow --> promote{"Promotion job after each session<br/>is shadow healthy, paper clear,<br/>and the digest blocked in neither bucket?"}
+    promote -- "Yes" --> paper["Write paper's pin and promotion record"]
     promote -- "No" --> refuse["No promotion"]
-    paper --> live["Live's pin, moved only by the owner's hand"]
-    rollback["ithildin pin set<br/>an earlier digest, and a block record<br/>for the digest it replaced"] -. "the block record it reads" .-> promote
+    paper --> live["Only the owner moves live's pin, by hand"]
+    rollback["ithildin pin set<br/>writes an earlier digest, and a block record<br/>for the digest it replaced"] -. "the block record it reads" .-> promote
 ```
 
 The diagram shows a digest's path from a merge to paper, so look for the rollback's block record, which is why the next promotion cannot undo a rollback.

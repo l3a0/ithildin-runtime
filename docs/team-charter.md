@@ -138,8 +138,8 @@ flowchart LR
     exec -->|"orders"| broker
     broker -->|"fills"| exec
     exec -->|"fills"| data
-    live -. "everything" .-> mon
-    mon -. "alerts, a halt" .-> live
+    live -. "reports everything" .-> mon
+    mon -. "raises alerts, can halt it" .-> live
 ```
 
 The three models on the left of the loop each feed portfolio construction,

@@ -61,15 +61,15 @@ sequenceDiagram
     participant F as Blob store
     participant J as Journal
     participant R as Each reader of the halt
-    P->>T: clear the halt's id, with a reason
-    T->>F: a release blob under the account's releases prefix, whose body names the id
-    T->>J: a clear entry naming the id and the blob's hash
+    P->>T: clears the halt's id, with a reason
+    T->>F: writes a release blob under the account's releases prefix,<br/>whose body names the id
+    T->>J: journals a clear entry naming the id<br/>and the blob's hash
     R->>J: does a clear name this id?
     R->>F: does a blob at that hash name the same id?
     alt both hold
-        R->>R: the firing is released
+        R->>R: treats the firing as released
     else any other answer
-        R->>R: the firing stays held
+        R->>R: treats the firing as held
     end
 ```
 
@@ -165,24 +165,24 @@ sequenceDiagram
     participant B as Another process
     participant J as Journal
     participant K as Broker
-    A->>S: create the lease, on the condition that it not exist
-    S-->>A: the lease's tag
+    A->>S: creates the lease, on the condition that it not exist
+    S-->>A: returns the lease's tag
     loop every ten seconds while the lease guards a change
-        A->>S: rewrite with If-Match on the last tag, moving the expiry a lease period ahead
-        S-->>A: a new tag
+        A->>S: rewrites it with If-Match on the last tag,<br/>moving the expiry a lease period ahead
+        S-->>A: returns a new tag
     end
     Note over A: The holder freezes, and its renewals stop
-    B->>S: fetch the lease, unrenewed past its expiry and the margin for clock skew
-    B->>S: a conditional write naming the expired lease's tag
-    S-->>B: a new tag
+    B->>S: fetches the lease, unrenewed past its expiry<br/>and the margin for clock skew
+    B->>S: writes conditionally, naming the expired lease's tag
+    S-->>B: returns a new tag
     opt the account's lease
-        B->>K: read the broker's order list
-        K-->>B: the order list
-        B->>S: the list stored as a capture
+        B->>K: reads the broker's order list
+        K-->>B: returns the order list
+        B->>S: stores the list as a capture
     end
-    B->>J: the takeover journaled, naming any capture, and the alarm raised
+    B->>J: journals the takeover, naming any capture,<br/>and raises the alarm
     A->>S: wakes and renews with the old tag
-    S-->>A: refused with a 412
+    S-->>A: refuses with a 412
     A->>A: stops that action
 ```
 
