@@ -72,7 +72,7 @@ The price is a pass over the files before work starts, paid on issues whose file
 
 The owner's global `~/.claude/CLAUDE.md` is the source for these rules. This section repeats them because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
 
-Clarity comes first. Write plain sentences a reader understands on one read. Prefer short, complete sentences, but never at the cost of clarity. Do not chop an idea into cryptic one-idea fragments. When a short sentence turns hard to parse, write the clear sentence instead, even if it runs a little longer. Explain as you go, like teaching, so the reader follows without backtracking. Avoid em dashes and semicolons. This applies to every prose surface: this file, the design doc, commit messages, pull request bodies, and chat replies.
+Clarity comes first. Write plain sentences a reader understands on one read. Prefer short, complete sentences, but never at the cost of clarity. Do not chop an idea into cryptic one-idea fragments. When a short sentence turns hard to parse, write the clear sentence instead, even if it runs a little longer. Explain as you go, like teaching, so the reader follows without backtracking. Avoid em dashes and semicolons. This applies to every prose surface: this file, the design doc, commit messages, pull request bodies, chat replies, and the words in an architecture or design diagram.
 
 **Impersonal voice.** Write without the first person. No "I," "my," or "mine." The subject is the process, the mechanism, or the finding, not the author. "Running the script reproduced the result" beats "I ran the script to reproduce it." Keep it active, not passive: "The check reads the config," never "the config is read." Direct advice stays as an imperative. Drop the explicit "you" and "your" where it reads cleaner.
 
@@ -85,6 +85,13 @@ Clarity comes first. Write plain sentences a reader understands on one read. Pre
 **Lead with why it matters, show the reasoning, and name the price.** Establish why something matters before explaining what it is. State the claim, then walk through why. When a choice carries a cost, name it outright, as in "the price for X is Y." When weighing two options, hand over the metric that decides between them instead of gesturing at "tradeoffs."
 
 **Cut what carries nothing.** Throat-clearing, significance-announcing pivots, self-effort asides, hedging, redundancy, decorative modifiers that survive the subtraction test, unsubstantiated superlatives, reversal scaffolding, reassurance tags, and a closing moral that restates the heading. The global file carries the worked examples for each.
+
+**A diagram's words follow the rules a blog post follows (owner directive, 2026-11-06).** A reader takes a diagram as the short version of the text beside it, so a label written as shorthand fails the reader the way a cryptic sentence does. So these rules govern every label, note, edge and legend in an architecture or design diagram.
+
+1. A label says what happens, in a plain phrase with a verb and its actor clear. Write "dies before the broker answers" rather than "dies before the ack".
+2. A term a reader has not met is dropped, or the text beside the diagram explains it. An abbreviation gets the same treatment.
+3. A label holds one idea. Several ideas become several arrows or a note, and a long label wraps.
+4. Code identifiers, state names, entry names and the design doc's pinned vocabulary stay exact, and a restyle changes no fact, actor, arrow or order.
 
 **Link every issue and pull request number (owner directive, 2026-09-26).** In a chat reply, a message to another session, or a Markdown file in this repository, each number is a Markdown link: `[#NN](https://github.com/l3a0/ithildin-runtime/issues/NN)` for an issue and `[PR #NN](https://github.com/l3a0/ithildin-runtime/pull/NN)` for a pull request. A number written out in prose, like "issue 52", takes the same link around the words. Link every mention, not only the first, including numbers inside lists, tables and summaries. A bare `#NN` in chat is text the owner has to copy into a browser, and GitHub renders a bare `#NN` in a repository file as plain text too. A report that links its first number and leaves the rest bare fails the same way. A number that belongs to another repository links there.
 
