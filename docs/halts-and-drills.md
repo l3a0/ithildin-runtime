@@ -57,7 +57,7 @@ The diagram shows one sort in the order of the seven rules, so look for the redu
 ```mermaid
 sequenceDiagram
     participant P as Owner
-    participant T as ithildin clear, off the VM
+    participant T as ithildin halt clear, off the VM
     participant F as Blob store
     participant J as Journal
     participant R as Each reader of the halt
@@ -138,7 +138,7 @@ Test 1 to test 4 are the acceptance tests in [architecture.md](architecture.md#h
 | Monitoring cannot list a sort's causes or read the journal | The key it failed on | Deny monitoring's role the list during a session, expecting a page | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A list row or a lookup answer disagrees with an order's `sending` entry, or two rows pair with one order | The order, both records and the field that differs | A broker double that returns a mismatched row and then two rows, each expecting the halt and no change to the book | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |
 | An order or cancel traces to nothing | The order or cancel, and that all trading is halted until the owner confirms | Inject an untraced order, and an order placed at the broker's console, expecting the halt and the sort it starts, and again with the journal unreadable, expecting the halt and no cancel | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
-| The hold after a stop with no clean-shutdown record | Each open position, and that a person confirms with `ithildin clear` | Stop every instance with no clean-shutdown record, expecting the hold, its sort and the page | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
+| The hold after a stop with no clean-shutdown record | Each open position, and that a person confirms with `ithildin halt clear` | Stop every instance with no clean-shutdown record, expecting the hold, its sort and the page | [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | paper |
 | The kill switch was pulled and execution has not journaled its cancels done within the deadline | The account and the orders still resting | Pull the switch with execution crash-looping on start | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A marked input or order refused as misrouting on paper or live | The marked record, what refused it and the owner's step | Feed paper's gate a decision built on a marked input, and hand paper's broker adapter a marked order, each expecting the refusal, a journaled "provably not sent", a halt that waits for the owner, and the push | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A breaker opened on the feed, the broker or the store | The dependency, its failures, the halt it stored and the owner's step, or with the store down only that no cancel can go and the broker's interface | Fail each dependency past its written number, expecting new orders halted, a cancel passing through while the store takes its entry, a read as the recovery probe and the page. With the store itself down, expect no cancel sent and the page of the row `A write S3 refuses`, naming the broker's interface | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |

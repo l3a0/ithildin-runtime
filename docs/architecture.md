@@ -1650,7 +1650,7 @@ A halt's id takes one of two forms.
 1. For a halt in a result, it is the key of that result, `<deployment>/<run>/<decision>/<stage>`.
 2. For a halt held in a folder, it is the halt's name, `<component>-<cause>-<timestamp>-<count>`.
 
-`ithildin clear` reduces a person's input to that id before it journals, so the tool finds the environment it lives in.
+`ithildin halt clear` reduces a person's input to that id before it journals, so the tool finds the environment it lives in.
 
 1. **`ithildin status`** shows, for every account, grouped by environment:
 
@@ -1676,24 +1676,28 @@ A halt's id takes one of two forms.
 
 #### The commands that write
 
-Writing commands take more friction the more they can resume trading.
+Writing commands take more friction the more they can resume trading, so they are grouped by what they do to trading.
 
-**Table:** The ten writing commands
+**Table:** The ten writing commands, grouped by what they do to trading
 
-| # | Command | What it does |
-| --- | --- | --- |
-| 1 | `ithildin switch pull` | Creates the kill switch blob |
-| 2 | `ithildin strategy off` | Creates a strategy's off switch |
-| 3 | `ithildin clear` | Records that a person has looked at a halt |
-| 4 | `ithildin override` | Records a correction the book cannot work out alone |
-| 5 | `ithildin switch clear` | Deletes the switch |
-| 6 | `ithildin strategy on` | Deletes a strategy's off switch |
-| 7 | `ithildin stop clear` | Deletes a fired loss stop's blob |
-| 8 | `ithildin lease clear` | Rewrites a lease another VM holds to clear its holder |
-| 9 | `ithildin pin set` | Rolls an environment back |
-| 10 | `ithildin pin unblock` | Removes a block record |
+| # | Group | Command | What it does |
+| --- | --- | --- | --- |
+| 1 | Stop trading | `ithildin switch pull` | Creates the kill switch blob |
+| 2 | Stop trading | `ithildin strategy off` | Creates a strategy's off switch |
+| 3 | Correct the record | `ithildin override` | Records a correction the book cannot work out alone |
+| 4 | Resume trading | `ithildin halt clear` | Records that a person has looked at a halt |
+| 5 | Resume trading | `ithildin strategy on` | Deletes a strategy's off switch |
+| 6 | Resume trading | `ithildin stop clear` | Deletes a fired loss stop's blob |
+| 7 | Resume trading | `ithildin switch clear` | Deletes the switch |
+| 8 | Recover from a dead host | `ithildin lease clear` | Rewrites a lease another VM holds to clear its holder |
+| 9 | Change the release | `ithildin pin set` | Rolls an environment back |
+| 10 | Change the release | `ithildin pin unblock` | Removes a block record |
 
-##### 1. `ithildin switch pull --account <a>`
+##### Stop trading
+
+These two take a default reason and ask for no confirmation, because stopping should never be slow.
+
+###### `ithildin switch pull --account <a>`
 
 This is one command with a default reason, because stopping should never be slow.
 
@@ -1705,7 +1709,7 @@ This is one command with a default reason, because stopping should never be slow
 
 A pull past that deadline names the console at once.
 
-##### 2. `ithildin strategy off --account <a> --strategy <s>`
+###### `ithildin strategy off --account <a> --strategy <s>`
 
 This creates the strategy's off switch with a default reason and journals it, because stopping should never be slow.
 
@@ -1731,17 +1735,11 @@ A kept order still fills unless the kill switch, which cancels every order in th
 
 Past the cutoff, the command says no order can be stopped and lists the adding orders that will still fill.
 
-##### 3. `ithildin clear <halt>`
+##### Correct the record
 
-This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
+This changes the book and never sends an order.
 
-On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
-
-This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
-
-This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
-
-##### 4. `ithildin override --account <a>`
+###### `ithildin override --account <a>`
 
 This records a correction the book cannot work out alone, such as a fill the broker shows and the journal lacks after an outage, or an order the platform did not send. It never sends an order.
 
@@ -1765,24 +1763,42 @@ A change to a strategy's position leaves that strategy off and sorted, as [A str
 
 This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
 
-##### 5. `ithildin switch clear --account <a>`
+##### Resume trading
 
-This deletes the switch and journals the clear.
+These run from the narrowest reach to the widest in the usual case: one halt, one strategy, the fired loss stop on the account's gate, then the kill switch on the whole account. A halt of all trading is account-wide, so clearing that one reaches as far as the last two.
 
-##### 6. `ithildin strategy on --account <a> --strategy <s>`
+###### `ithildin halt clear <halt>`
+
+This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
+
+On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
+
+This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
+
+This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+
+###### `ithildin strategy on --account <a> --strategy <s>`
 
 This deletes the strategy's off switch and journals it. It refuses two kinds of strategy.
 
-1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin clear <id>` releases each firing, which ends its sort.
+1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin halt clear <id>` releases each firing, which ends its sort.
 2. A strategy retired under design.md's sample rules that has no new registration.
 
 On a live account only the owner may. On shadow and paper the operator may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather than a rule of its own.
 
-##### 7. `ithildin stop clear --account <a>`
+###### `ithildin stop clear --account <a>`
 
 This deletes a fired loss stop's blob and journals the clear, so the gate takes new orders again. On a live account only the owner may, and on shadow and paper the operator may too.
 
-##### 8. `ithildin lease clear --account <a>`
+###### `ithildin switch clear --account <a>`
+
+This deletes the switch and journals the clear.
+
+##### Recover from a dead host
+
+This clears the holder of a lease whose host is gone, so another instance can take the account over.
+
+###### `ithildin lease clear --account <a>`
 
 This rewrites a lease another VM holds to clear its holder, with `If-Match` on the tag it read, before it expires, for when a person knows the holder is gone sooner than the expiry would show. It asks EC2 whether the holder's instance is stopped or gone.
 
@@ -1796,7 +1812,11 @@ This rewrites a lease another VM holds to clear its holder, with `If-Match` on t
 
 This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that the clear's journal entry is durable before the rewrite, so a write with no acknowledgement leaves the lease untouched, and that a lease changed since that entry stays and the command reports it. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how, including what a rerun checks.
 
-##### 9. `ithildin pin set --environment <e> --digest <d>`
+##### Change the release
+
+These roll an environment back and free a blocked build.
+
+###### `ithildin pin set --environment <e> --digest <d>`
 
 This rolls an environment back.
 
@@ -1806,13 +1826,13 @@ This rolls an environment back.
 
 The owner or the operator runs it on shadow and paper, and only the owner on live.
 
-##### 10. `ithildin pin unblock --environment <e> --digest <d>`
+###### `ithildin pin unblock --environment <e> --digest <d>`
 
 This removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
 
-#### What the last eight writing commands ask of a person
+#### What a command outside the stop group asks of a person
 
-The last eight each do these things.
+Every writing command outside the stop group does these things.
 
 - They take a required `--reason`.
 - They print what they will do and to which account.
