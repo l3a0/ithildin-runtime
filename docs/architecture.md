@@ -1079,7 +1079,7 @@ flowchart TB
 
 #### Prepare, once per decision
 
-Three more checks sit inside these steps, as [How a rerun never doubles anything](design.md#rule-9-how-a-rerun-never-doubles-anything) says.
+Three more checks sit inside these steps, as [How a rerun never doubles anything](design.md#rule-9-how-a-rerun-never-doubles-anything) and [Who takes over a dead send stage](design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) say.
 
 1. An instance checks the kill switch when it receives the event.
 2. The sync settles each order in doubt.
@@ -1235,7 +1235,7 @@ old. Data applies that rule.
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
 than reading the silence as a target of zero. A flat position is a forecast
-with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets, which starts at 0 and which [the decisions of 2026-11-06](design.md#2026-11-06) sets out.
+with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets, which starts at 0 and which [a decision of 2026-11-06](design.md#2026-11-06) sets out.
 
 ### A restart before the data is ready
 
@@ -1405,7 +1405,7 @@ sequenceDiagram
     Note over X,L: A broker's own trade can close the whole<br/>position while this halt stands
 ```
 
-A trade placed on a book the broker disagrees with trades the wrong difference. So the platform compares the two, and a difference it cannot explain halts trading until a person has.
+Execution trades the difference between a target and the book, so a book the broker disagrees with sends the wrong order. So the platform compares the two, and a difference it cannot explain halts trading until a person has.
 
 #### Who compares the book with the broker
 
@@ -1418,7 +1418,7 @@ Both compare positions, open orders and cash. So an order the broker holds and t
 
 #### What each difference leads to
 
-A mismatch in a position means one of two things: a fill the platform never journaled, or a position the broker changed on its own. Both need a person. The table below lists the exceptions.
+A mismatch in a position means one of two things: a fill the platform never journaled, or a position the broker changed on its own. Both need a person. The table below lists each case and what it needs.
 
 **Table:** What the platform does with each thing the comparison finds
 
@@ -1426,14 +1426,14 @@ A mismatch in a position means one of two things: a fill the platform never jour
 | --- | --- | --- |
 | A fill the platform never journaled | Halts | Explains the difference |
 | A position the broker changed on its own | Halts | Explains the difference |
-| A split or an assignment, in shadow or on paper | Lets an outside entry explain it, under the rule that any other difference from the broker halts ([Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs)) | Nothing |
-| A broker's own trade that closes one leg of a position | Halts. The order that closes the rest of the position can go out before a person acts, under the close after a broker's trade ([A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)) | On a live account, clears the halt once every leg has ended. In shadow and on paper the outside entry releases it then |
+| A split or an assignment, in shadow or on paper | Halts. An outside entry from the broker's own record releases the halt once it explains the whole difference and any close has ended, under the rule that any difference from the broker halts trading ([Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs)) | Nothing for a split. An assignment leaves its strategy off until a person switches it back on |
+| A broker's own trade, such as a forced close or a buy-in | Halts. The order that closes the rest of the position can go out before a person acts, under the close after a broker's trade ([A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)) | On a live account, clears the halt once every leg has ended. In shadow and on paper the outside entry releases it then |
 | An order the broker holds and the journal marks lost or abandoned | Halts the day it appears | Explains the difference |
 | A broker record of a type on the closed list, with its amount in range | Journals it with no halt | Nothing |
 | A broker record that leaves a difference unexplained | Halts | Explains the difference |
 | By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a record that repeats a record id with different content | Halts | Explains the difference |
 
-The closed list of record types is in design.md's `### Strategies, schedules and decisions`.
+The closed list of record types, and the four cases that halt, are in [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions).
 
 #### Who owns reconciliation
 
