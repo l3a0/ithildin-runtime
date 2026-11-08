@@ -2891,74 +2891,108 @@ erDiagram
     }
 ```
 
-The entities live in eight stores, one of them kept by marketlake, and
-each keeps its own rule.
+### Where each entity is kept
 
-1. **marketlake holds `VINTAGE` and `BAR`.** Every bar, captured or imported,
-   lives there, with its source and checksum in marketlake's manifest. A
-   repair can overwrite a partition, whose old copy marketlake's bucket
-   versioning keeps, so [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says lake partitions are not vintages. A
-   bar's `vintage_id` is therefore its partition's path and S3 version id,
-   which together name one copy, and a re-read fetches by that version. marketlake's lake is private
-   and backed up off the machine, which is what the premise asks
-   of captured bars, and it keeps them out of this public repository. The checksums
-   this repository commits are the partition checksums a snapshot records,
-   for any run a test or a report pins. Imported history
-   from quantitative-trading arrives with that repository's own checksums,
-   from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the
-   recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
-2. **The run, D1, holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and
-   `OUTPUT_FILE`,** as blobs in S3 under the run's prefix, each written once at
-   a key fixed by the run, the stage, the decision and, for an output file, its name. A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional. A signal record holds a value the run computed,
-   such as the hedge ratio, the z-score or the forecast, keyed by run,
-   component, decision and name. Each blob's header names the blobs it came from, and a halt says
-   why a decision stopped. A deterministic component's blobs are regenerable
-   from marketlake, the journal and the code, but data's snapshots,
-   execution's account files, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt capture what was true at the moment, so none can be, and all are recorded data. The restart records the host's stop handler writes cannot be regenerated either, but they are diagnostics rather than recorded data: they are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it. A
-   backtest's blobs sit in a memory-backed folder and vanish when it ends,
-   because a backtest can be regenerated. The blobs also make a question such
-   as "how did the backtest's z-score on a decision differ from the shadow
-   run's" a lookup rather than a recomputation.
-3. **The security master, D2, holds `INSTRUMENT`.** It is a small committed file
-   that changes only through a pull request. The file ships in the release image, so the digest records the mapping. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that rows only add, an id is never reused or removed, and a rename is a dated row, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. The price is that a renamed ticker needs a release.
-4. **The journal, D3, holds `JOURNAL_ENTRY`.** It is the one numbered log:
-   one per broker account, outside every run, because the book is replayed
-   from it across runs. Each entry is a blob at a key fixed by the account and its sequence number, holding its number, the time it was built, to the microsecond, its body and the hash of the entry before it, so the entry itself is the record. Its own hash is the SHA-256 of those bytes, as `### File formats and keys` says. `Journal` writes through `BlobStore` for the account the
-   broker adapter names.
-   `ORDER` and `FILL` are read from journal entries rather than kept as
-   records of their own. Each entry is stored before the step it records
-   happens. The `ithildin` tool, the supervisor when it clears a lease, monitoring and execution can all write,
-   and S3's refusal of an existing key is what keeps two of them from taking
-   one number: the writer that is refused reads the new entries, decides its
-   step again, and takes the next number. Changing an entry would break the
-   link from the entry after it, and the bucket refuses every principal, the
-   owner's included, any replacement or delete there, keeps every version,
-   locks each entry with S3 Object Lock, and alarms on a delete event, so an
-   edit cannot hide. Before live, the live journal, every override, every release, every halt and
-   every recorded capture are replicated to a bucket in a second AWS
-   account, as [The replica before live](design.md#rule-1-the-replica-before-live) says.
-5. **Run reports, D4, hold `RUN` and `REPORT`.** A report is computed from the
-   journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the
-   owner to read, not as a record.
-6. **The simulated broker's account, one blob per simulated account per call, written before the call returns, outside every run,** holds the orders, open and closed, with both ids and each submission time, and the positions the simulator keeps. The simulated broker's adapter reads and writes it
-   through a `BlobStore` the entry point hands it, so execution's own outputs
-   are the same whichever broker it holds. Backtest and shadow use the same
-   form, so an order still resting when a shadow run ends is there in the
-   next run, or on a new VM. Each simulated account has its
-   own lease and kill switch, so a backtest never shares the paper account's.
-   This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-7. **The account's own blobs, D5, outside every run,** hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`,
-   the kill switch, each strategy's off switch, a fired loss stop and the
-   hard caps blob, at keys fixed by the account or the deployment under prefixes of their own, with the rules [The kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs) and [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need)
-   give. `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD`
-   sit under prefixes of their own, keyed by writer and time and by worker
-   and restart count. The bucket's lifecycle expires heartbeats and the
-   noncurrent versions a lease's rewrites leave under `leases/`, and
-   nothing else. A snapshot a decision read sits under its run's prefix
-   with data's other outputs and is recorded data, so no lifecycle rule may
-   match it, as design.md's `### Data has a cost, except the data that
-   cannot be recaptured` says.
-8. **Split records and saved broker statements** are recorded facts, so nothing overwrites or silently drops one, every read verifies its checksum, and a copy leaves the machine from the first session. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds where they sit.
+The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule.
+
+1. [marketlake](#marketlake-holds-vintage-and-bar) holds `VINTAGE` and `BAR`.
+2. [The run, D1](#the-run-d1), holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
+3. [The security master, D2](#the-security-master-d2), holds `INSTRUMENT`.
+4. [The journal, D3](#the-journal-d3), holds `JOURNAL_ENTRY`.
+5. [Run reports, D4](#run-reports-d4), hold `RUN` and `REPORT`.
+6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions.
+7. [The account's own blobs, D5](#the-accounts-own-blobs-d5), hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE` and the account's switches, stop and caps.
+8. [Split records and saved broker statements](#split-records-and-saved-broker-statements).
+
+#### marketlake holds `VINTAGE` and `BAR`
+
+Every bar, captured or imported, lives there, with its source and checksum in marketlake's manifest.
+
+A repair can overwrite a partition, whose old copy marketlake's bucket versioning keeps, so [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says lake partitions are not vintages. A bar's `vintage_id` is therefore its partition's path and S3 version id, which together name one copy, and a re-read fetches by that version.
+
+marketlake's lake is private and backed up off the machine, which is what the premise asks of captured bars, and it keeps them out of this public repository. The checksums this repository commits are the partition checksums a snapshot records, for any run a test or a report pins.
+
+Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
+
+#### The run, D1
+
+The run holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
+
+- A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional.
+- A signal record holds a value the run computed, such as the hedge ratio, the z-score or the forecast, keyed by run, component, decision and name.
+- Each blob's header names the blobs it came from, and a halt says why a decision stopped.
+
+**Table:** Which of the run's blobs can be regenerated
+
+| Blobs | Can they be regenerated? |
+| --- | --- |
+| A deterministic component's blobs | Yes, from marketlake, the journal and the code |
+| Data's snapshots, execution's account files, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
+| The restart records the host's stop handler writes | No, but they are diagnostics rather than recorded data. They are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it |
+| A backtest's blobs | Yes. They sit in a memory-backed folder and vanish when it ends, because a backtest can be regenerated |
+
+The blobs also make a question such as "how did the backtest's z-score on a decision differ from the shadow run's" a lookup rather than a recomputation.
+
+#### The security master, D2
+
+The security master holds `INSTRUMENT`. It is a small committed file that changes only through a pull request. The file ships in the release image, so the digest records the mapping. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that rows only add, an id is never reused or removed, and a rename is a dated row, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. The price is that a renamed ticker needs a release.
+
+#### The journal, D3
+
+The journal holds `JOURNAL_ENTRY`. It is the one numbered log: one per broker account, outside every run, because the book is replayed from it across runs.
+
+Each entry is a blob at a key fixed by the account and its sequence number. It holds four things, so the entry itself is the record.
+
+1. Its number.
+2. The time it was built, to the microsecond.
+3. Its body.
+4. The hash of the entry before it.
+
+Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal` writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
+
+Four writers can append.
+
+1. The `ithildin` tool.
+2. The supervisor, when it clears a lease.
+3. Monitoring.
+4. Execution.
+
+S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
+
+Changing an entry would break the link from the entry after it. The bucket also does four things, so an edit cannot hide.
+
+1. It refuses every principal, the owner's included, any replacement or delete there.
+2. It keeps every version.
+3. It locks each entry with S3 Object Lock.
+4. It alarms on a delete event.
+
+Before live, the live journal, every override, every release, every halt and every recorded capture are replicated to a bucket in a second AWS account, as [The replica before live](design.md#rule-1-the-replica-before-live) says.
+
+#### Run reports, D4
+
+Run reports hold `RUN` and `REPORT`. A report is computed from the journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the owner to read, not as a record.
+
+#### The simulated broker's account
+
+One blob per simulated account per call, written before the call returns, outside every run, holds the orders, open and closed, with both ids and each submission time, and the positions the simulator keeps.
+
+The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
+
+This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+
+#### The account's own blobs, D5
+
+Outside every run, the account's own blobs hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, each strategy's off switch, a fired loss stop and the hard caps blob. They sit at keys fixed by the account or the deployment under prefixes of their own, with the rules [The kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs) and [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) give.
+
+`PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD` sit under prefixes of their own, keyed by writer and time and by worker and restart count.
+
+The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's rewrites leave under `leases/`, and nothing else. A snapshot a decision read sits under its run's prefix with data's other outputs and is recorded data, so no lifecycle rule may match it, as design.md's `### Data has a cost, except the data that cannot be recaptured` says.
+
+#### Split records and saved broker statements
+
+Split records and saved broker statements are recorded facts, so nothing overwrites or silently drops one, every read verifies its checksum, and a copy leaves the machine from the first session. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds where they sit.
+
+### How recorded blobs are checked
 
 One scheduled job reads every recorded blob back on a rolling cycle, verifying each checksum and comparing its copies, and a restore drill restores to a scratch place and checks counts and checksums, as [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold.
 
@@ -3076,12 +3110,23 @@ format has a committed fixture entry and a test that replays it.
 The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `unmatched_order`, `unmatched_fill`, `cancel`, `sort`, `sort_done`,
 `override`, `clear` or `switch_pull`, and that kind's fields. A writer builds
 an entry once and resends the same bytes on a retry, so a live process
-recognises its own earlier attempt by hash. A process that restarted builds
-new bytes, so before it appends it checks the field that names the step
-against the journal instead: the client order id for `intent`, `sending` and
-`cancel`, the broker's fill id and correction identifier for `fill` and `outside_fill` together, with an identical repeat skipped and a differing one journaled, which halts, the broker's order id for `outside_order`, the broker's fill or order id for `unmatched_fill` and `unmatched_order`, the broker's own record id for an outside entry with no order or fill, the off switch's or halt's id for `sort` and `sort_done`, the override blob's SHA-256 for
-`override`, the halt's id with the release hash for `clear`, counting only a valid release as already done, and the firing's id for a halt's own entry. A switch already pulled makes
-`switch_pull` say so rather than journal it twice.
+recognises its own earlier attempt by hash. A process that restarted builds new bytes, so before it appends it checks the field that names the step against the journal instead.
+
+**Table:** The field a restarted writer checks against the journal before it appends, by kind of entry
+
+| Kind of entry | The field it checks |
+| --- | --- |
+| `intent`, `sending` and `cancel` | The client order id |
+| `fill` and `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
+| `outside_order` | The broker's order id |
+| `unmatched_fill` and `unmatched_order` | The broker's fill or order id |
+| An outside entry with no order or fill | The broker's own record id |
+| `sort` and `sort_done` | The off switch's or halt's id |
+| `override` | The override blob's SHA-256 |
+| `clear` | The halt's id with the release hash, counting only a valid release as already done |
+| A halt's own entry | The firing's id |
+
+A switch already pulled makes `switch_pull` say so rather than journal it twice.
 
 **Keys.** Every key below sits in its environment's bucket, as
 `### Four environments` says. Deployments and accounts appear by the alias
@@ -3128,17 +3173,17 @@ not come again is kept rather than discarded.
 | A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
 | The release pin, deploy records, block records, promotion records and pin changes | `release/pin.json`, `release/deploys/<digest>.json`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json`, `release/changes/<UTC time>.json` |
 
-`<run>` is the session date in shadow, paper and live, and the span's first
-and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by
-one function in `core`. `<decision>` is the decision's UTC time in the compact form `20261102T204000Z`, and `<UTC time>` is `20261102T204001.123456Z`, so each sorts in order. `<boot>` is the boot id
-of the VM that wrote the record, so a replacement VM whose restart count
-starts again never meets an earlier record's key. A halt's id is the key of
-the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. Twelve
-digits of sequence number cover a million million entries, which at thirty
-entries a minute around the clock last tens of thousands of years. The
-prefixes are the ones the grants of [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need)
-and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as
-[Four environments](#four-environments) says.
+**Table:** What each part of a key stands for
+
+| Part | What it stands for |
+| --- | --- |
+| `<run>` | The session date in shadow, paper and live, and the span's first and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by one function in `core` |
+| `<decision>` | The decision's UTC time in the compact form `20261102T204000Z`, so it sorts in order |
+| `<UTC time>` | A time such as `20261102T204001.123456Z`, so it sorts in order |
+| `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
+| `<seq>` | The journal entry's number, padded to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
+
+A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. The prefixes are the ones the grants of [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as [Four environments](#four-environments) says.
 
 ## Where it runs
 
