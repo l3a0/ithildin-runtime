@@ -2407,7 +2407,7 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. It draws only the sources this section names.
+The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. The diagram draws only the sources this section names, so four of the values in `GateInputs` have no arrow.
 
 ```mermaid
 flowchart LR
@@ -2417,7 +2417,7 @@ flowchart LR
     snapshot["The snapshot"]
     file["The risk model's constraints file"]
     caps["The hard caps blob,<br/>which only the owner can write"]
-    checked["The order path checks every field and halts<br/>if one is missing, not finite or of the wrong sign"]
+    checked["OrderPath checks every field and halts<br/>if one is missing, not finite or of the wrong sign"]
     constraints["The run's Constraints"]
     stop["The stop blob"]
     owner["The owner's record"]
@@ -2427,10 +2427,10 @@ flowchart LR
     journal -->|"send replays it just before each check"| book
     file --> checked
     caps --> checked
-    checked -->|"the tighter of each pair applies,<br/>a proposal for issue 7"| constraints
+    checked -->|"the tighter of each field and its hard cap<br/>applies, a proposal for issue 7"| constraints
     stop -->|"OrderPath reads its state"| inputs
-    journal -->|"for a close, OrderPath reads its entry"| inputs
-    owner -->|"for a close, OrderPath reads any confirmation"| inputs
+    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
+    owner -->|"for a close, OrderPath reads any confirmation,<br/>never from the order or a caller"| gate
     order --> gate
     book --> gate
     snapshot --> gate
@@ -2455,19 +2455,19 @@ flowchart LR
 
 The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `send` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit.
 
-The gate checks seven limits, one for each field of `Constraints` in the data diagram above. Three of the seven limits need the snapshot's prices to value the book.
+The gate checks seven limits, one for each field of `Constraints` in the data diagram above, as [#7](https://github.com/l3a0/ithildin-runtime/issues/7) counts them. Three of the seven limits need the snapshot's prices to value the book.
 
 **Table:** The seven limits, and which need the snapshot's prices
 
 | Field of `Constraints` | Needs the snapshot's prices to value the book |
 | --- | --- |
-| `max_order_qty` | No |
-| `max_position` | No |
+| `max_order_qty`, the maximum order size | No |
+| `max_position`, the maximum position per instrument | No |
 | `max_gross`, the maximum portfolio size | Yes |
-| `max_open_orders` | No |
+| `max_open_orders`, the maximum open orders | No |
 | `max_net`, the net exposure | Yes |
 | `loss_stop`, the loss stop | Yes |
-| `moc_cutoff` | No |
+| `moc_cutoff`, the market-on-close cutoff | No |
 
 ##### How the gate reads the cutoff
 
