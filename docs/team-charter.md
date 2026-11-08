@@ -245,10 +245,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Writes each search down before it runs with its ranking measure, keeps every setting's result, picks a
   setting by a rule written beforehand that scores it with its neighbours, ranks the share of good
   settings among the same grid run with no edge, states the standard error of the average trade with the
-  count it divides by and the share of a sample a lookback used, reports a walk-forward in its parts as
+  count it divides by and how it was formed, the share of a sample a lookback used, reports a walk-forward in its parts as
   exploratory with its window sizes and reruns counted as tries, and names what prompted a rule added
-  after reading a result, none of it on a held-out window or a registered sample's sessions, under the
-  design doc's
+  after reading a result, with no search or run among these reading a held-out window or a registered
+  sample's sessions, under the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
@@ -405,8 +405,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under rules 2 and 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Holds that a strategy re-fitting its own settings never changes its size rule, the longest it may hold a
-  position, what its input check accepts or a limit it trades under, and that a rule's record holds back no change that cuts risk, under
+  Holds that a strategy re-fitting its own settings never changes anything that bounds what a position
+  can lose or what the strategy acts on, such as its size rule, an exit fixed at a price level, the longest
+  it may hold a position, what its input check accepts or a limit it trades under, and that a rule's record holds back no change that cuts risk, under
   rules 4 and 5 of the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
