@@ -2588,7 +2588,7 @@ saying no.
 
 The only way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out.
 
-A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out. It stays because a request sent just before a crash can still arrive after that read.
+A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, when it becomes `Lost`. It stays because a request sent just before a crash can still arrive after that read.
 
 ### What the next decision does with `Abandoned` and `Lost`
 
@@ -2599,20 +2599,24 @@ A lookup that finds nothing, or a whole order list that does not show the order,
 | `Abandoned` | The order never reached the broker | Plans from the book as if the order had never existed |
 | `Lost` | The platform stopped waiting, and sending is unproved | Plans from the book the same way |
 
-### When the broker shows an order the journal wrote off
+### What halts as unmatched
 
 An open order or a fill on an order the journal holds as `Lost` or `Abandoned` is journaled as received as unmatched and halts. So is a late order under an older lease.
 
-### What each answer to a cancel does
+### What becomes of an order after its cancel
 
-**Table:** What happens to an order after each answer to its cancel
+**Table:** What happens to an order after each way its cancel can end
 
-| The answer to the cancel | What happens to the order |
+| How the cancel ends | What happens to the order |
 | --- | --- |
 | The broker reports it as pending | It stays `CancelSent`, still counted at its worst case |
 | The broker refuses it | It returns to the state it was in, still counted, with the alarm for a cancel that failed |
-| The answer is lost | It stays `CancelSent`. [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says when the cancel is sent again and when it halts new orders. For a plan's cancel no stage resends yet, and the next recover stage settles what it can by lookup |
-| A check stops the cancel before the broker call | Execution journals that, and the order returns the same way as after a refused cancel |
+| The answer is lost | It stays `CancelSent` |
+| A check stops the cancel before the broker call | Execution journals that, and the order returns to the state it was in, still counted |
+
+For a cancel whose answer is lost, [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says when it is sent again and when it halts new orders. For a plan's cancel no stage resends yet, and the next recover stage settles what it can by lookup.
+
+### How an order reaches `Cancelled`
 
 `Cancelled` is reached four ways.
 
