@@ -40,7 +40,10 @@ measuring a result against the risk it took and for choosing size live in the de
 [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
 The rules from Larry Harris's *Trading and Exchanges* (Oxford University Press, 2003) for what a fill cost and
 for what a market can do to a position live in the design doc's
-[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). The
+[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+The rules from Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2nd ed., Wiley, 2008)
+for searching a strategy's settings and reading what the search found live in the design doc's
+[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -239,6 +242,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data
   its research already read and never on a held-out window or a registered sample's sessions, under rules 1 to 4 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+  Writes each search down before it runs with its ranking measure, keeps every setting's result, picks a
+  setting by a rule written beforehand that scores it with its neighbours, states the standard error of
+  the average trade and the share of a sample a lookback used, reports a walk-forward in its parts as
+  exploratory, and names what prompted a rule added after reading a result, under the design doc's
+  [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
