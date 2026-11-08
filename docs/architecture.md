@@ -2379,15 +2379,24 @@ Alpaca's trading API [allows 200 requests a minute](https://alpaca.markets/suppo
 | The reserve | A quarter, 50 a minute | 16 a minute, rounded down | Cancels, and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included |
 | Orders and lookups | The rest | 50 a minute | New orders and other lookups, which never draw on the reserve |
 
-Both shares are split evenly across the deployment's execution instances. Each instance holds two token buckets, one for its share of orders and lookups and one for its share of the reserve. Each bucket refills continuously and holds at most 10 tokens, so a burst cannot spend a minute's share in a second, and the sum stays under the limit with no shared counter.
+The first sketch draws that table to scale, for three instances.
 
-- A request takes a token or waits the time the bucket names.
-- An instance alarms when its requests pass 75% of its share.
-- An order that would pass its instance's share waits for the budget before the order path takes the account's lease, so a wait never holds the lease.
+![Animated sketch titled “How the account's 200 a minute are shared”, drawn to scale. A berry box “reserve: 50” takes the first quarter of a bar, and a black box “orders and lookups: the rest” takes the remainder. Three rows follow, one per instance, each a berry box “16” under the reserve and a black box “instance 1: 50”, “instance 2: 50” or “instance 3: 50” under the rest, set side by side so they tile the bar. The third reserve box stops just short of the reserve's edge. Two notes close it: “Each instance takes 16 of the reserve, rounded down, and 50 of the rest.” and “Together the shares stay under the limit, so no counter is shared.” The finished drawing holds for 12 seconds.](figures/rate-limit-shares.gif)
 
-The sketch follows a request through its instance's two buckets. It leaves out the alarm at 75% of a share, and what a 429 does, which the table below gives.
+Both shares are split evenly across the deployment's execution instances. Each instance holds two token buckets, one for its share of orders and lookups and one for its share of the reserve. Each bucket refills continuously and holds at most 10 tokens, so a burst cannot spend a minute's share in a second, and the sum stays under the limit with no shared counter. A request takes a token or waits the time the bucket names.
 
-![A sketch of one execution instance's two token buckets. A cancel, or a read or lookup that a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, goes to the reserve bucket. A new order or another lookup goes to the bucket for orders and lookups. Each bucket refills continuously and holds at most 10 tokens. A request takes a token and goes to the broker, and an order takes the account's lease only then. A request that finds its bucket empty waits the time the bucket names.](figures/rate-limit-buckets.svg)
+The second sketch follows a request through its instance's two buckets.
+
+![Animated sketch titled “One instance, two token buckets”. A bucket with berry tokens is drawn and named “the reserve”, with a grey arrow into it labelled “refills all the time” and a dashed line labelled “holds at most 10 tokens”. An arrow brings “cancels, and the reads and lookups a cancel or a sort needs” into it, and an arrow out, labelled “takes a token”, leads to “goes to the broker”. A second bucket, “orders and lookups”, with the same refill and dashed line, takes “new orders and other lookups” and leads to “an order takes the account's lease only now, then the broker”. Last, a vermilion empty bucket with a cross is labelled “empty: the request waits the time the bucket names”. The finished drawing holds for 12 seconds.](figures/rate-limit-buckets.gif)
+
+An instance's share sets two thresholds.
+
+1. An instance alarms when its requests pass 75% of its share.
+2. An order that would pass its instance's share waits for the budget before the order path takes the account's lease, so a wait never holds the lease.
+
+The third sketch draws both on one instance's share.
+
+![Animated sketch titled “When an instance alarms, and when it waits”. A line runs from a tick labelled “none” to a heavier tick labelled “its share”. A thick berry bar labelled “its requests in a minute” fills most of it. A vermilion dashed line three quarters of the way along is labelled “75% of its share: the instance alarms”. Last, a note under the share's tick reads “an order that would pass its share waits for the budget, before the order path takes the account's lease”. How far the bar fills is illustrative. The finished drawing holds for 12 seconds.](figures/rate-limit-alarm.gif)
 
 **Table:** What a broker 429, its answer for too many requests, does on a submit and on a cancel
 
