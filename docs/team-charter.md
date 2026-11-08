@@ -76,8 +76,8 @@ cannot see each other.
 ## The premise: what must not fail
 
 Three things cannot be recovered once lost, and everything else is
-regenerable, apart from a search's written record and the count of settings it
-evaluated, which the design doc keeps as recorded data.
+regenerable, apart from a search's record, which the design doc keeps as
+recorded data.
 
 1. **Captured data.** A market snapshot not recorded at the time is gone, and
    a vendor's history is restated after the fact. Data is recorded with the
@@ -243,9 +243,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data
   its research already read and never on a held-out window or a registered sample's sessions, under rules 1 to 4 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Writes each search down before it runs with its ranking measure, keeps that record and the count of
-  settings it evaluated as recorded data, with the record pushed to git before the first result and
-  a count that can overstate the settings run but never understate them, keeps every setting's result, picks a
+  Writes each search down before it runs with its ranking measure, keeps that record, the count of
+  settings it evaluated and the proof the record came first as recorded data, with the record pushed to
+  git before the first result and a count that never understates the settings run, keeps every setting's result, picks a
   setting by a rule written beforehand that scores it with its neighbours, ranks the share of good
   settings among the same grid run with no edge, states the standard error of the average trade with the
   count it divides by and how it was formed, the share of a sample a lookback used, reports a walk-forward in its parts as
