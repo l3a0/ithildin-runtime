@@ -2665,16 +2665,16 @@ Monitoring reconciles again, and no decision waits on it.
 
 ### Where the run's state is kept
 
-The supervisor holds none of these states in memory. It reads them from storage: which components have a decision result, and whether a result is a halt. A restart reads the same storage.
+The supervisor holds none of these states in memory. It reads them from storage: which components have a decision result, and whether a result is a halt.
 
-1. A restarted supervisor finds the state the same way, while the workers keep running.
-2. A worker the host restarts checks its own result key for each decision, reads the blobs that exist, and writes the ones that are missing.
+- A restarted supervisor finds the state the same way, while the workers keep running.
+- A worker the host restarts checks its own result key for each decision, reads the blobs that exist, and writes the ones that are missing.
 
 ### How a halt differs from a failure
 
 A halt and a failure differ in what they stop.
 
-- A halt stops one decision, and in every mode the span goes on to the next.
+- A halt stops one decision, and in every mode the run goes on to the next decision.
 - A failure stops the whole run.
 
 Both pass through `Reporting`, so a halted or failed decision still writes its report and its journal entry, and monitoring sends the alarm with its reason to the environment's push topic, which delivers each one. If monitoring itself is what failed, no ping arrives, and the dead-man check raises the alarm.
@@ -2692,7 +2692,7 @@ The run's stop waits for two things.
 
 So execution serves a pull of the kill switch until the last moment a cancel could land, and the closing auction's fills are reconciled the same evening.
 
-This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that the stop follows the read after the close in five steps. The same steps appear under [After the close](#after-the-close).
+This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that the read after the close runs in five steps. The same steps appear, grouped as three, under [After the close](#after-the-close).
 
 1. Execution reads the day's fills and the broker's positions, open orders, cash and records.
 2. It sorts what it finds as design.md's `Sorting what the broker reports` says.
@@ -2700,22 +2700,20 @@ This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10)
 4. It reconciles, and stores a result naming each order the journal holds as open as settled or still open.
 5. The supervisor reads that result before it stores the stop.
 
+In shadow the read finds the market-on-close order open, which counts as read. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how.
+
 The host's timer stops every unit after that stop.
 
 ### When the read after the close goes wrong
 
-This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what happens in two cases.
+This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what happens in two cases. One of them journals a halt for the holding-halt check, which halts each later decision while the journal holds an unreleased halt whose cause holds the account, as [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) says.
 
 **Table:** What happens when the read after the close goes wrong
 
 | What goes wrong | What happens |
 | --- | --- |
-| The read fails or misses a written time | It pages the owner, the next recover stage reads the fills, and the host's timer ends the run, which [How a run stops](design.md#rule-7-how-a-run-stops) proposes not to count as a clean shutdown |
-| The read finds a difference | It halts and pages with its reason. Execution journals the open halt the holding-halt check reads, and neither that write nor the page waits on the result or the stop |
-
-The holding-halt check is the one check that reads which halt causes hold an account until a person clears them, as [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) says.
-
-In shadow the read finds the market-on-close order open, which counts as read. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how.
+| The read fails or misses a written time | It pages the owner, the next recover stage, where execution settles orders and journals fills before a decision, reads the fills, and the host's timer ends the run, which [How a run stops](design.md#rule-7-how-a-run-stops) proposes not to count as a clean shutdown |
+| The read finds a difference | The difference halts and pages with its reason. Execution journals the open halt the holding-halt check reads, and neither that write nor the page waits on the result or the stop |
 
 ## What is stored
 
