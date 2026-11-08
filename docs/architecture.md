@@ -2582,22 +2582,37 @@ stateDiagram-v2
 `Refused` is the platform's own risk gate saying no. `Rejected` is the broker
 saying no.
 
-`InDoubt` is the state a crash between sending and the ack lands in. It lets
-the journal say "the platform does not know whether the broker has this order",
-rather than leaving the next decision to guess. The only way out is to ask the
-broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out. An order
-that ends `Abandoned` never reached the broker, so the next decision's
-order manager plans from the book as if it had never existed. `Lost` means the
-platform stopped waiting and sending is unproved, and the order manager plans
-from the book the same way. A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, because a request sent just before a crash can still arrive after that read. An open order or a fill on an order the journal holds as `Lost`
-or `Abandoned` is journaled as received as unmatched and halts, and so is a late order under an older lease. A cancel the broker reports as pending leaves the order
-`CancelSent`, still counted at its worst case, and a refused cancel returns it
-to the state it was in, still counted, with the alarm for a cancel that
-failed. A cancel whose answer is lost stays `CancelSent`, and [Faults are
-expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says when it is sent again and when it halts new orders. For a
-plan's cancel no stage resends yet, and the
-next recover stage settles what it can by lookup. A cancel a check stopped
-before the broker call journals that, and returns the order the same way.
+### How an order leaves `InDoubt`
+
+`InDoubt` is the state a crash between sending and the ack lands in. It lets the journal say "the platform does not know whether the broker has this order", rather than leaving the next decision to guess.
+
+The only way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out.
+
+A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out. It stays because a request sent just before a crash can still arrive after that read.
+
+### What the next decision does with `Abandoned` and `Lost`
+
+**Table:** The two end states the order manager plans around
+
+| State | What it means | What the next decision's order manager does |
+| --- | --- | --- |
+| `Abandoned` | The order never reached the broker | Plans from the book as if the order had never existed |
+| `Lost` | The platform stopped waiting, and sending is unproved | Plans from the book the same way |
+
+### When the broker shows an order the journal wrote off
+
+An open order or a fill on an order the journal holds as `Lost` or `Abandoned` is journaled as received as unmatched and halts. So is a late order under an older lease.
+
+### What each answer to a cancel does
+
+**Table:** What happens to an order after each answer to its cancel
+
+| The answer to the cancel | What happens to the order |
+| --- | --- |
+| The broker reports it as pending | It stays `CancelSent`, still counted at its worst case |
+| The broker refuses it | It returns to the state it was in, still counted, with the alarm for a cancel that failed |
+| The answer is lost | It stays `CancelSent`. [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says when the cancel is sent again and when it halts new orders. For a plan's cancel no stage resends yet, and the next recover stage settles what it can by lookup |
+| A check stops the cancel before the broker call | Execution journals that, and the order returns the same way as after a refused cancel |
 
 `Cancelled` is reached four ways.
 
