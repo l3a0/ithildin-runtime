@@ -244,8 +244,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
   Writes each search down before it runs with its ranking measure, keeps every setting's result, picks a
   setting by a rule written beforehand that scores it with its neighbours, states the standard error of
-  the average trade and the share of a sample a lookback used, reports a walk-forward in its parts as
-  exploratory, and names what prompted a rule added after reading a result, under the design doc's
+  the average trade beside the count of independent decisions and the share of a sample a lookback used,
+  reports a walk-forward in its parts as exploratory with its window sizes and reruns counted as tries, and names what prompted a rule added after reading
+  a result, never on a held-out window or a registered sample's sessions, under the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
