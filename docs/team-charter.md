@@ -244,7 +244,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   its research already read and never on a held-out window or a registered sample's sessions, under rules 1 to 4 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
   Writes each search down before it runs with its ranking measure, keeps that record and the count of
-  settings it evaluated as recorded data, keeps every setting's result, picks a
+  settings it evaluated as recorded data, with the record pushed to git before the first result and
+  the count appended as each setting runs, keeps every setting's result, picks a
   setting by a rule written beforehand that scores it with its neighbours, ranks the share of good
   settings among the same grid run with no edge, states the standard error of the average trade with the
   count it divides by and how it was formed, the share of a sample a lookback used, reports a walk-forward in its parts as
