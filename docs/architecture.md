@@ -707,17 +707,17 @@ flowchart LR
             data["Data"]
             models["Alpha, risk, cost and<br/>portfolio construction"]
             mon["Monitoring"]
-            d2[("D2 Security master,<br/>in the release image")]
+            d2[("Security master,<br/>in the release image")]
             subgraph tb_exec["Trust boundary: execution, the only role with the broker key"]
                 exec["Execution"]
             end
         end
         queue["Queues"]
         secret[("Secret store")]
-        d1[("D1 The run's blobs")]
-        d3[("D3 Journal")]
-        d4[("D4 Run reports")]
-        d5[("D5 Account controls")]
+        d1[("The run's blobs")]
+        d3[("Journal")]
+        d4[("Run reports")]
+        d5[("Account controls")]
     end
 
     registry -->|"0 image"| sup
@@ -772,7 +772,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
 
-The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every blob in D1 is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
+The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every one of the run's blobs is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
 ### What the data flow guarantees
 
@@ -2893,15 +2893,15 @@ erDiagram
 
 ### Where each entity is kept
 
-The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. D1 to D5 are the stores' labels in the diagram under [Data flow](#data-flow).
+The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. Five of them are the cylinders in the diagram under [Data flow](#data-flow), by the same names.
 
 1. [marketlake](#marketlake-holds-vintage-and-bar) holds `VINTAGE` and `BAR`.
-2. [The run, D1](#the-run-d1), holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
-3. [The security master, D2](#the-security-master-d2), holds `INSTRUMENT`.
-4. [The journal, D3](#the-journal-d3), holds `JOURNAL_ENTRY`.
-5. [Run reports, D4](#run-reports-d4), hold `RUN` and `REPORT`.
+2. [The run's blobs](#the-runs-blobs) hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
+3. [The security master](#the-security-master) holds `INSTRUMENT`.
+4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
+5. [Run reports](#run-reports) hold `RUN` and `REPORT`.
 6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, as proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-7. [The account's own blobs, D5](#the-accounts-own-blobs-d5), hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
+7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
 8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds.
 
 #### marketlake holds `VINTAGE` and `BAR`
@@ -2914,9 +2914,9 @@ marketlake's lake is private and backed up off the machine, which is what the pr
 
 Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
 
-#### The run, D1
+#### The run's blobs
 
-The run holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
+The run's blobs hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
 
 - A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional.
 - A signal record holds a value the run computed, such as the hedge ratio, the z-score or the forecast, keyed by run, component, decision and name.
@@ -2933,11 +2933,11 @@ The run holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPU
 
 The blobs also make a question such as "how did the backtest's z-score on a decision differ from the shadow run's" a lookup rather than a recomputation.
 
-#### The security master, D2
+#### The security master
 
 The security master holds `INSTRUMENT`. It is a small committed file that changes only through a pull request. The file ships in the release image, so the digest records the mapping. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that rows only add, an id is never reused or removed, and a rename is a dated row, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. The price is that a renamed ticker needs a release.
 
-#### The journal, D3
+#### The journal
 
 The journal holds `JOURNAL_ENTRY`. It is the one numbered log: one per broker account, outside every run, because the book is replayed from it across runs.
 
@@ -2968,7 +2968,7 @@ Changing an entry would break the link from the entry after it. Beside that link
 
 Before live, the live journal, every override, every release, every halt and every recorded capture are replicated to a bucket in a second AWS account, as [The replica before live](design.md#rule-1-the-replica-before-live) says.
 
-#### Run reports, D4
+#### Run reports
 
 Run reports hold `RUN` and `REPORT`. A report is computed from the journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the owner to read, not as a record.
 
@@ -2980,9 +2980,9 @@ The simulated broker's adapter reads and writes it through a `BlobStore` the ent
 
 This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
-#### The account's own blobs, D5
+#### Account controls
 
-Outside every run, the account's own blobs hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, each strategy's off switch, a fired loss stop and the hard caps blob. They sit at keys fixed by the account or the deployment under prefixes of their own, with the rules [The kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs) and [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) give.
+Outside every run, account controls, the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, each strategy's off switch, a fired loss stop and the hard caps blob. They sit at keys fixed by the account or the deployment under prefixes of their own, with the rules [The kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs) and [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) give.
 
 #### Where the plan, heartbeats and restart records sit, and what the lifecycle expires
 
