@@ -714,7 +714,7 @@ flowchart LR
         end
         queue["Queues"]
         secret[("Secret store")]
-        d1[("The run's blobs")]
+        d1[("Run records")]
         d3[("Journal")]
         d4[("Run reports")]
         d5[("Account controls")]
@@ -772,7 +772,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
 
-The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every one of the run's blobs is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
+The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every run record is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
 ### What the data flow guarantees
 
@@ -2896,7 +2896,7 @@ erDiagram
 The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. Five of them are the cylinders in the diagram under [Data flow](#data-flow), by the same names.
 
 1. [marketlake](#marketlake-holds-vintage-and-bar) holds `VINTAGE` and `BAR`.
-2. [The run's blobs](#the-runs-blobs) hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
+2. [Run records](#run-records) hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
 3. [The security master](#the-security-master) holds `INSTRUMENT`.
 4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
 5. [Run reports](#run-reports) hold `RUN` and `REPORT`.
@@ -2914,9 +2914,11 @@ marketlake's lake is private and backed up off the machine, which is what the pr
 
 Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
 
-#### The run's blobs
+#### Run records
 
-The run's blobs hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
+Run records serve two purposes. They are how the workers pass work to each other, since each stage's output is the next stage's input, and they are the record of what each decision saw and did.
+
+Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
 
 - A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional.
 - A signal record holds a value the run computed, such as the hedge ratio, the z-score or the forecast, keyed by run, component, decision and name.
