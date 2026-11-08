@@ -2407,6 +2407,38 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
+The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. It draws only the sources this section names.
+
+```mermaid
+flowchart LR
+    order["The order"]
+    journal["The journal"]
+    book["The book"]
+    snapshot["The snapshot"]
+    file["The risk model's constraints file"]
+    caps["The hard caps blob,<br/>which only the owner can write"]
+    checked["The order path checks every field and halts<br/>if one is missing, not finite or of the wrong sign"]
+    constraints["The run's Constraints"]
+    stop["The stop blob"]
+    owner["The owner's record"]
+    inputs["GateInputs: the share, the stress move, the vintage hash,<br/>the portfolio value, the stop blob's state, and a close's entry"]
+    gate["The risk gate's check"]
+    verdict["The Verdict, which names<br/>any term the gate could not compute"]
+    journal -->|"send replays it just before each check"| book
+    file --> checked
+    caps --> checked
+    checked -->|"the tighter of each pair applies,<br/>a proposal for issue 7"| constraints
+    stop -->|"OrderPath reads its state"| inputs
+    journal -->|"for a close, OrderPath reads its entry"| inputs
+    owner -->|"for a close, OrderPath reads any confirmation"| inputs
+    order --> gate
+    book --> gate
+    snapshot --> gate
+    constraints --> gate
+    inputs --> gate
+    gate --> verdict
+```
+
 ##### What the gate is handed
 
 `check` takes five things.
@@ -2423,11 +2455,19 @@ The third sketch draws both on one instance's share.
 
 The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `send` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit.
 
-Three of the seven limits need the snapshot's prices to value the book.
+The gate checks seven limits, one for each field of `Constraints` in the data diagram above. Three of the seven limits need the snapshot's prices to value the book.
 
-1. Maximum portfolio size, the `max_gross` field.
-2. Net exposure.
-3. The loss stop.
+**Table:** The seven limits, and which need the snapshot's prices
+
+| Field of `Constraints` | Needs the snapshot's prices to value the book |
+| --- | --- |
+| `max_order_qty` | No |
+| `max_position` | No |
+| `max_gross`, the maximum portfolio size | Yes |
+| `max_open_orders` | No |
+| `max_net`, the net exposure | Yes |
+| `loss_stop`, the loss stop | Yes |
+| `moc_cutoff` | No |
 
 ##### How the gate reads the cutoff
 
