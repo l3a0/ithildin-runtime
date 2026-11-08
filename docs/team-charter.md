@@ -76,8 +76,8 @@ cannot see each other.
 ## The premise: what must not fail
 
 Three things cannot be recovered once lost, and everything else is
-regenerable, apart from a search's written record, which the design doc keeps
-as recorded data.
+regenerable, apart from a search's written record and the count of settings it
+evaluated, which the design doc keeps as recorded data.
 
 1. **Captured data.** A market snapshot not recorded at the time is gone, and
    a vendor's history is restated after the fact. Data is recorded with the

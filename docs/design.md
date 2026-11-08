@@ -37,8 +37,8 @@ from those three. A search's written record and the count of settings it
 evaluated are the parts of a backtest that are not, because they show what was
 planned before the results and how much was tried, so they are kept as recorded
 data. That asymmetry is what the ranking rule in [CLAUDE.md](../CLAUDE.md)
-protects. A path that can lose captured data, the order record or a search's
-record is never deferred, and a path that can lose capital sits behind
+protects. A path that can lose captured data, the order record, or a search's
+record or its count is never deferred, and a path that can lose capital sits behind
 the hard limits, which no ranking overrides.
 
 ## One runtime
