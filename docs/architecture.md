@@ -716,7 +716,7 @@ flowchart LR
         secret[("Secret store")]
         d1[("Run records")]
         d3[("Journal")]
-        d4[("Run reports")]
+        d4[("Decision reports")]
         d5[("Account controls")]
     end
 
@@ -2899,7 +2899,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 2. [Run records](#run-records) hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
 3. [The security master](#the-security-master) holds `INSTRUMENT`.
 4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
-5. [Run reports](#run-reports) hold `RUN` and `REPORT`.
+5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
 6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, as proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
 8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds.
@@ -2970,9 +2970,9 @@ Changing an entry would break the link from the entry after it. Beside that link
 
 Before live, the live journal, every override, every release, every halt and every recorded capture are replicated to a bucket in a second AWS account, as [The replica before live](design.md#rule-1-the-replica-before-live) says.
 
-#### Run reports
+#### Decision reports
 
-Run reports hold `RUN` and `REPORT`. A report is computed from the journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the owner to read, not as a record.
+Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring writes for each decision. A report is computed from the journal and the snapshot, so losing one costs nothing. The run writes it to S3 for the owner to read, not as a record.
 
 #### The simulated broker's account
 
