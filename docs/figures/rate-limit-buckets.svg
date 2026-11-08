@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 620" width="860" height="620" role="img" aria-labelledby="title desc">
+  <title id="title">One execution instance holds two token buckets</title>
+  <desc id="desc">A sketch of one execution instance's two token buckets. A cancel, or a read or lookup that a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, draws on the reserve bucket. A new order or another lookup draws on the bucket for orders and lookups. Each bucket refills continuously and holds at most 10 tokens. A request takes a token and goes to the broker, and an order takes the account's lease only after its token. A request that finds its bucket empty waits the time the bucket names.</desc>
+  <defs>
+    <filter id="rough" filterUnits="userSpaceOnUse" x="0" y="0" width="860" height="620">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="3"/>
+    </filter>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9" fill="none" stroke="#222" stroke-width="1.6"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: "Chalkboard SE", "Comic Sans MS", "Comic Neue", cursive; fill: #222; font-size: 15px; }
+    .title { font-size: 21px; font-weight: bold; }
+    .muted { fill: #666; font-size: 13.5px; }
+    .name { font-weight: bold; }
+    .warn { fill: #C0440A; }
+    .ink { fill: none; stroke: #222; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .thin { fill: none; stroke: #666; stroke-width: 1.6; stroke-dasharray: 6 5; }
+    .water { fill: #DCEAF5; stroke: none; }
+    .token { fill: #0072B2; stroke: #08466c; stroke-width: 1; }
+    .drip { fill: #0072B2; }
+    .redink { fill: none; stroke: #C0440A; stroke-width: 2.2; stroke-linecap: round; }
+  </style>
+
+  <rect x="0" y="0" width="860" height="620" rx="14" fill="#FBF9F2"/>
+
+  <text class="title" x="30" y="42">One execution instance holds two token buckets</text>
+
+  <!-- Row A: the reserve -->
+  <text x="30" y="150">A cancel, or a read or lookup</text>
+  <text x="30" y="170">that a cancel, a sort or a</text>
+  <text x="30" y="190">pair-keeping cancel needs,</text>
+  <text x="30" y="210">the kill switch's included</text>
+  <path class="ink" d="M 262 178 L 352 178" marker-end="url(#head)" filter="url(#rough)"/>
+
+  <g filter="url(#rough)">
+    <path class="ink" d="M 372 100 L 400 100 L 400 110"/>
+    <path class="water" d="M 368 170 L 492 170 L 479 242 L 381 242 Z"/>
+    <path class="ink" d="M 362 122 L 498 122 L 481 244 L 379 244 Z"/>
+    <path class="thin" d="M 366 140 L 494 140"/>
+  </g>
+  <circle class="drip" cx="400" cy="117" r="3"/>
+  <circle class="token" cx="402" cy="230" r="7"/>
+  <circle class="token" cx="420" cy="231" r="7"/>
+  <circle class="token" cx="438" cy="230" r="7"/>
+  <circle class="token" cx="456" cy="231" r="7"/>
+  <circle class="token" cx="411" cy="216" r="7"/>
+  <circle class="token" cx="429" cy="216" r="7"/>
+  <text class="muted" x="408" y="104">refills continuously</text>
+  <text class="muted" x="506" y="144">holds at most 10 tokens</text>
+  <text class="name" x="370" y="270">The reserve bucket</text>
+
+  <path class="ink" d="M 488 205 L 610 205" marker-end="url(#head)" filter="url(#rough)"/>
+  <text class="muted" x="510" y="196">takes a token</text>
+  <text x="624" y="210">goes to the broker</text>
+
+  <!-- Row B: orders and lookups -->
+  <text x="30" y="370">A new order or another lookup</text>
+  <path class="ink" d="M 262 378 L 352 378" marker-end="url(#head)" filter="url(#rough)"/>
+
+  <g filter="url(#rough)">
+    <path class="ink" d="M 372 300 L 400 300 L 400 310"/>
+    <path class="water" d="M 368 360 L 492 360 L 479 442 L 381 442 Z"/>
+    <path class="ink" d="M 362 322 L 498 322 L 481 444 L 379 444 Z"/>
+    <path class="thin" d="M 366 340 L 494 340"/>
+  </g>
+  <circle class="drip" cx="400" cy="317" r="3"/>
+  <circle class="token" cx="402" cy="430" r="7"/>
+  <circle class="token" cx="420" cy="431" r="7"/>
+  <circle class="token" cx="438" cy="430" r="7"/>
+  <circle class="token" cx="456" cy="431" r="7"/>
+  <circle class="token" cx="411" cy="416" r="7"/>
+  <circle class="token" cx="429" cy="416" r="7"/>
+  <circle class="token" cx="447" cy="416" r="7"/>
+  <circle class="token" cx="420" cy="402" r="7"/>
+  <text class="muted" x="408" y="304">refills continuously</text>
+  <text class="muted" x="506" y="344">holds at most 10 tokens</text>
+  <text class="name" x="350" y="470">The bucket for orders and lookups</text>
+
+  <path class="ink" d="M 488 405 L 610 405" marker-end="url(#head)" filter="url(#rough)"/>
+  <text class="muted" x="510" y="396">takes a token</text>
+  <text x="624" y="392">an order takes the</text>
+  <text x="624" y="412">account's lease only now,</text>
+  <text x="624" y="432">then goes to the broker</text>
+
+  <!-- The empty case -->
+  <g filter="url(#rough)">
+    <path class="ink" d="M 36 512 L 92 512 L 85 562 L 43 562 Z"/>
+    <path class="redink" d="M 50 528 L 78 552 M 78 528 L 50 552"/>
+  </g>
+  <text class="warn" x="110" y="542">An empty bucket: the request waits the time the bucket names.</text>
+
+  <text class="muted" x="30" y="596">The cap of 10 means a burst cannot spend a minute's share in a second.</text>
+</svg>

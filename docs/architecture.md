@@ -2385,6 +2385,10 @@ Both shares are split evenly across the deployment's execution instances. Each i
 - An instance alarms when its requests pass 75% of its share.
 - An order that would pass its instance's share waits for the budget before the order path takes the account's lease, so a wait never holds the lease.
 
+The sketch follows a request through its instance's two buckets. It leaves out the alarm at 75% of a share, and what a 429 does, which the table below gives.
+
+![A sketch of one execution instance's two token buckets. A cancel, or a read or lookup that a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, goes to the reserve bucket. A new order or another lookup goes to the bucket for orders and lookups. Each bucket refills continuously and holds at most 10 tokens. A request takes a token and goes to the broker, and an order takes the account's lease only then. A request that finds its bucket empty waits the time the bucket names.](figures/rate-limit-buckets.svg)
+
 **Table:** What a broker 429, its answer for too many requests, does on a submit and on a cancel
 
 | The call | What the 429 means | What follows |
