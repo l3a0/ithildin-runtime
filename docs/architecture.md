@@ -2294,7 +2294,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 
 ##### Which bars a snapshot returns
 
-Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns only bars whose `end` and knowable time are both at or before the decision time. Three things set those two times.
+Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns only bars whose `end` and knowable time are both at or before the decision time. Three rules set those times.
 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
@@ -2304,12 +2304,7 @@ Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns onl
 
 ##### What a quote and a snapshot's flags carry
 
-A `Quote` keeps four things, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
-
-1. The vendor's stamp as received.
-2. The capture time.
-3. Whether the quote was real time.
-4. Its volume.
+A `Quote` keeps the vendor's stamp as received, the capture time, whether the quote was real time, and its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
 
 A snapshot's `flags` hold a spike flag with both prices per instrument, so the send stage's flag test has a field to read.
 
@@ -2349,7 +2344,7 @@ So a fill the broker posts late is still fetched.
 
 `Journal.append` returns a `JournalAck` naming the entry's number and hash. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
 
-Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead.
+Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead, also before it uses the value.
 
 Each call ends in one of these outcomes.
 
@@ -2358,9 +2353,9 @@ Each call ends in one of these outcomes.
 3. Provably not sent.
 4. Unknown.
 5. Not found.
-6. More than one, an outcome only a `find_order` can end.
+6. More than one, an outcome only a `find_order` can reach.
 
-`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form.
+`orders(since)` reads a takeover's whole list, open and closed orders across every page. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form of these outcomes and of that list.
 
 ##### One function lists the differences from the broker
 
@@ -2390,12 +2385,12 @@ Both shares are split evenly across the deployment's execution instances. Each i
 - An instance alarms when its requests pass 75% of its share.
 - An order that would pass its instance's share waits for the budget before the order path takes the account's lease, so a wait never holds the lease.
 
-**Table:** What a broker 429, its answer for too many requests, does on each call
+**Table:** What a broker 429, its answer for too many requests, does on a submit and on a cancel
 
 | The call | What the 429 means | What follows |
 | --- | --- | --- |
 | A submit | The order is left in doubt | A lookup settles it like any other order in doubt |
-| A cancel | A definite answer, which the contract suite proves | An alarm, and execution retries the cancel inside the reserve |
+| A cancel | A definite answer, which the contract suite proves | Because the answer is definite, an alarm, and execution retries the cancel inside the reserve |
 
 #### The risk gate holds no state of its own
 
@@ -2427,9 +2422,9 @@ Three of the seven limits need the snapshot's prices to value the book.
 
 ##### Where the limits come from
 
-The `Constraints` come from the risk model's constraints file, so the order path first checks every field of that file, and every hard cap in the hard caps blob only the owner can write. Each must be present, finite and of the sign the field expects, and the order path halts otherwise. Then it takes the tighter of each pair.
+The `Constraints` come from the risk model's constraints file, so the order path first checks every field of that file, and every hard cap in the hard caps blob only the owner can write. Each must be present, finite and of the sign the field expects, and the order path halts otherwise. Then it takes the tighter of each pair, a field of the constraints file and its hard cap.
 
-**Table:** Which value of each pair the gate applies
+**Table:** Which value of each pair applies
 
 | The pair | The one that applies |
 | --- | --- |
