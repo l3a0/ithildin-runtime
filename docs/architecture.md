@@ -2893,16 +2893,16 @@ erDiagram
 
 ### Where each entity is kept
 
-The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule.
+The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. D1 to D5 are the stores' labels in the diagram under [Data flow](#data-flow).
 
 1. [marketlake](#marketlake-holds-vintage-and-bar) holds `VINTAGE` and `BAR`.
 2. [The run, D1](#the-run-d1), holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.
 3. [The security master, D2](#the-security-master-d2), holds `INSTRUMENT`.
 4. [The journal, D3](#the-journal-d3), holds `JOURNAL_ENTRY`.
 5. [Run reports, D4](#run-reports-d4), hold `RUN` and `REPORT`.
-6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions.
-7. [The account's own blobs, D5](#the-accounts-own-blobs-d5), hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE` and the account's switches, stop and caps.
-8. [Split records and saved broker statements](#split-records-and-saved-broker-statements).
+6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, as proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+7. [The account's own blobs, D5](#the-accounts-own-blobs-d5), hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
+8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds.
 
 #### marketlake holds `VINTAGE` and `BAR`
 
@@ -2922,7 +2922,7 @@ The run holds `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPU
 - A signal record holds a value the run computed, such as the hedge ratio, the z-score or the forecast, keyed by run, component, decision and name.
 - Each blob's header names the blobs it came from, and a halt says why a decision stopped.
 
-**Table:** Which of the run's blobs can be regenerated
+**Table:** Which blobs can be regenerated
 
 | Blobs | Can they be regenerated? |
 | --- | --- |
@@ -2941,12 +2941,12 @@ The security master holds `INSTRUMENT`. It is a small committed file that change
 
 The journal holds `JOURNAL_ENTRY`. It is the one numbered log: one per broker account, outside every run, because the book is replayed from it across runs.
 
-Each entry is a blob at a key fixed by the account and its sequence number. It holds four things, so the entry itself is the record.
+Each entry is a blob at a key fixed by the account and its sequence number. It holds these, so the entry itself is the record.
 
-1. Its number.
-2. The time it was built, to the microsecond.
-3. Its body.
-4. The hash of the entry before it.
+- Its number.
+- The time it was built, to the microsecond.
+- Its body.
+- The hash of the entry before it.
 
 Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal` writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
 
@@ -2959,9 +2959,9 @@ Four writers can append.
 
 S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
-Changing an entry would break the link from the entry after it. The bucket also does four things, so an edit cannot hide.
+Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
-1. It refuses every principal, the owner's included, any replacement or delete there.
+1. It refuses any replacement or delete by every principal, the owner's included.
 2. It keeps every version.
 3. It locks each entry with S3 Object Lock.
 4. It alarms on a delete event.
@@ -2983,6 +2983,8 @@ This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10)
 #### The account's own blobs, D5
 
 Outside every run, the account's own blobs hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, each strategy's off switch, a fired loss stop and the hard caps blob. They sit at keys fixed by the account or the deployment under prefixes of their own, with the rules [The kill switch and the hard caps are blobs](#rule-4-the-kill-switch-and-the-hard-caps-are-blobs) and [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) give.
+
+#### Where the plan, heartbeats and restart records sit, and what the lifecycle expires
 
 `PLAN` sits under the run's prefix. `HEARTBEAT` and `RESTART_RECORD` sit under prefixes of their own, keyed by writer and time and by worker and restart count.
 
@@ -3179,9 +3181,9 @@ not come again is kept rather than discarded.
 | --- | --- |
 | `<run>` | The session date in shadow, paper and live, and the span's first and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by one function in `core` |
 | `<decision>` | The decision's UTC time in the compact form `20261102T204000Z`, so it sorts in order |
-| `<UTC time>` | A time such as `20261102T204001.123456Z`, so it sorts in order |
+| `<UTC time>` | A UTC time to the microsecond, in the compact form `20261102T204001.123456Z`, so it sorts in order |
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
-| `<seq>` | The journal entry's number, padded to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
+| `<seq>` | The journal entry's sequence number. A journal entry's own key pads it to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
 
 A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. The prefixes are the ones the grants of [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as [Four environments](#four-environments) says.
 
