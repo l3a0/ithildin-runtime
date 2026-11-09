@@ -551,7 +551,7 @@ carries that tag, so a derived output is never copied. The send stage's broker r
 tag on every capture the store writes. The
 retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
 live gate. A recorded blob not found in the replica within a written bound raises an alarm
-that reaches the owner, and a test shows the replication rule matches a key from every class this rule says the replica carries.
+that reaches the owner, and a test shows the replication rule matches a key from every class of recorded data that rule 1 of [Data has a cost](#data-has-a-cost-except-the-data-that-cannot-be-recaptured) lists, apart from any class this rule names as left out.
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
 
 ### Rule 1: clock times in headers and captures

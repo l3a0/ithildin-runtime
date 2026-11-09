@@ -2902,7 +2902,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
 6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, as proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
-8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds.
+8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place is not yet written.
 
 #### marketlake holds `VINTAGE` and `BAR`
 
@@ -2994,7 +2994,7 @@ The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's 
 
 #### Split records and saved broker statements
 
-Split records and saved broker statements are recorded facts, written through `BlobStore` to the environment's bucket, since the VM keeps no state. So nothing overwrites or silently drops one, and every read verifies its checksum. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds where they sit.
+Split records and saved broker statements are recorded facts, written through `BlobStore` to the environment's bucket, since the VM keeps no state. So nothing overwrites or silently drops one, and every read verifies its checksum. Where they sit is not yet written: [#46](https://github.com/l3a0/ithildin-runtime/issues/46) asks [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to name the place for split records, and no issue holds it for saved broker statements yet.
 
 ### How recorded blobs are checked
 
@@ -3002,7 +3002,7 @@ S3 checks every blob at rest on its own schedule and repairs corruption from red
 
 1. Every write through `BlobStore` sends its SHA-256, and S3 refuses an upload whose bytes do not match it.
 2. Before live, a recorded blob not found in the second account's bucket within a written bound raises an alarm that reaches the owner.
-3. A restore drill restores to a scratch place and checks counts and checksums, on a schedule whose maximum interval sits beside the code. A mismatch it finds pages at once, naming the key and both hashes or the prefix and both counts. Monitoring also pages when its last passing run is older than that interval, and a run that fails before it compares is no passing run.
+3. A restore drill restores to a scratch place and checks counts and checksums, on a schedule whose maximum interval sits beside the code. A mismatch it finds pages at once, naming the key and both hashes or the prefix and both counts. A blob missing because of a removal the law required, which appends its own record, is expected and no mismatch. Monitoring also pages when its last passing run is older than that interval, and a run that fails before it compares is no passing run.
 
 This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that it holds the restore drill and the replication alarm, their routes to the owner and their drills, which its body does not yet name. Each drill shows its alarm firing and leaves nothing in live's journal, captures or replica that a replay reads.
 
