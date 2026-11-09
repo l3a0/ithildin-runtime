@@ -47,7 +47,10 @@ for searching a strategy's settings and reading what the search found live in th
 The rules from Ernest P. Chan's *Quantitative Trading* (2nd ed., Wiley, 2021) for keeping later data out of a
 backtest, computing the figures a result is quoted in and checking that paper trades what the backtest traded
 live in the design doc's
-[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition). The
+[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+The rules from Chan's *Algorithmic Trading* (Wiley, 2013) for which price a backtest of a closing order may
+use and for testing a pair's inputs as the pair it trades live in the design doc's
+[A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-and-a-pairs-inputs-are-tested-as-the-pair-it-trades). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -265,6 +268,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   alone, with its half-life, and reads a gap between paper and the backtest for a bug or a mismatched trade
   before any other cause, under rules 1, 2, 4 and 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+  Has a backtest of an order filled at the open or close read the primary exchange's auction print or name
+  the gap, runs a pair's reversion test on the prices of the instruments it trades with a fund's futures
+  named, and names the null hypothesis and its distribution beside every significance figure, under rules
+  1, 3 and 4 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-and-a-pairs-inputs-are-tested-as-the-pair-it-trades).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -304,6 +312,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   fitted value or mark of the account that read it, and keeps the flag as a record beside the price,
   which stays as it arrived, under rule 3 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+  Records whether each recorded close and open is the primary exchange's auction print, and has the check
+  for a wrong price judge a pair's quote by its effect on the spread, under rules 1 and 2 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-and-a-pairs-inputs-are-tested-as-the-pair-it-trades).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path,
   or a git branch or ref, holding recorded data as the design doc defines it, a recorded format with
@@ -974,6 +985,13 @@ are worked examples on the author's data, so none is adopted as a threshold. Hal
 limit of five parameters with its minimum backtest lengths, and its strategy that re-fits its settings each day are left out, with the
 reasons in the design doc's register. What it adds here is keeping later data out of what a strategy
 fits, one definition for each figure a result is quoted in, and a comparison of paper with its replay.
+
+*Algorithmic Trading* dates from 2013 and writes for traders of mean-reverting and momentum strategies
+in MATLAB. Its chapters on futures, currencies, intraday and high-frequency tactics, and its code listings,
+are left out, as are its sizing and stop-loss chapters, whose points the design already carries from
+Chan's earlier book or rejects in its register. Its figures are worked examples, most before costs, so
+none is adopted as a threshold. What it adds here is the auction print behind a closing order's backtest,
+and testing a pair's inputs as the pair it trades.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
