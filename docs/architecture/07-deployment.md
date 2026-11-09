@@ -191,6 +191,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | `leases/` | Read |
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
 | The apply and VM change credentials, the approved drill role and live's drill job's role | A run's plan and stop under `runs/`, and `leases/accounts/` | Read, for the window's check |
+| The VM change credential on paper and live, and the apply credential on shadow, in a rollback the owner overrides for an emergency | Each account's switch in its environment, `accounts/<account>/switch.json` | Create, which pulls it, never delete |
 | The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
@@ -563,7 +564,7 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that makes the new launch template version starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from four rules that [design.md's decisions](../design.md#decisions) settle.
 
-1. The apply starts a refresh only inside the window between sessions that [When a refresh may run](#when-a-refresh-may-run) defines.
+1. The apply starts a refresh only inside the window between sessions that [When a refresh may run](#when-a-refresh-may-run) defines, apart from an emergency rollback the owner overrides it for.
 2. A session refuses to start unless AWS reports no refresh on its group, or the latest one as succeeded or rolled back.
 3. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
 4. An apply that finds itself outside the window changes nothing, and waits for the next window.
@@ -663,6 +664,14 @@ A VM whose checks fail sets off four steps, in order.
 ##### What rolls back a VM image that fails after its refresh
 
 A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply waits for the same window, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts a refresh whose desired configuration is the previous launch template version.
+
+In an emergency the owner may override the window for that rollback, so it runs while a session is open. The override is the owner's alone and is recorded with its reason, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it is given, as for the incident override of an apply that touches execution. An overridden rollback runs in three steps.
+
+1. It pulls the kill switch of every account in its environment.
+2. It waits until the pull's own check finds execution's entry saying the cancels are done. Where that check does not find it by its deadline, the pull's alarm fires and the rollback starts no refresh.
+3. It starts the refresh, whose start alarms.
+
+Each new VM's execution comes up halted and the session waits for the owner, as a VM that starts mid-session does under [Item 1](#item-1-how-a-lost-vm-is-replaced). The switch stays pulled until the principals who may clear it clear it, the owner alone on live. The price is that an open session runs on two VM images while the refresh replaces them, which the pulled switch makes safe, since no new order leaves while it is set.
 
 ##### Why an app release never rolls out this way
 
