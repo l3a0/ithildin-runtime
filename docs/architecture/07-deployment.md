@@ -593,10 +593,10 @@ A session that finds the marker refuses to start, with the reason "session refus
 
 **Table:** How a refresh replaces the VMs of each size of group
 
-| Group | The refresh's setting | What the refresh does |
+| Group | The refresh's setting | What happens |
 | --- | --- | --- |
-| The cluster of three | Keeps at least 66 percent of the group healthy | Replaces one of the three VMs at a time, so two stay up throughout |
-| Slice 1's group of one | Sets a maximum healthy percentage of 200 | Starts the new VM beside the old one, and terminates the old one only once the new one completes its hook |
+| The cluster of three | Keeps at least 66 percent of the group healthy | The refresh replaces one of the three VMs at a time, so two stay up throughout |
+| Slice 1's group of one | Sets a maximum healthy percentage of 200 | The group starts the new VM beside the old one, and terminates the old one only once the new one completes its hook |
 
 In slice 1's group of one the refresh still runs only outside sessions.
 
