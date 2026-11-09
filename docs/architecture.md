@@ -2994,7 +2994,7 @@ The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's 
 
 #### Split records and saved broker statements
 
-Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Where that is, is not yet written. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) starts the one place for split records from marketlake's ledger and asks [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to close the ways that ledger can lose a record, or say why it cannot be the place. One way #46 does not list is the `actions` lifecycle rule in marketlake's `infra/live/bucket.tf`, which expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
+Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Where that is, is not yet written. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) starts the one place for split records from marketlake's ledger and asks [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to close the ways that ledger can lose a record, or say why it cannot be the place. One way [#46](https://github.com/l3a0/ithildin-runtime/issues/46) does not list is the `actions` lifecycle rule in marketlake's `infra/live/bucket.tf`, which expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
 
 ### How recorded blobs are checked
 
