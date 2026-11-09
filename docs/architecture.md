@@ -3017,9 +3017,9 @@ Both fail if the same values can be written two ways, such as a different key or
 
 #### Who writes and reads a blob
 
-**One codec in `core` writes and reads every blob.** `core.encode` turns an object into bytes and `core.decode` turns bytes of a named kind back into an object. No worker, tool or test calls a JSON library itself. Two workers that each followed the standard library would differ: Python's `json` sorts keys by code point where RFC 8785 sorts by UTF-16 units, and `Decimal(0.1)` carries fifty-five digits of the float behind it. Each field's type in `core` declares how the codec writes it, and `core`'s storage contract holds one key builder for each row of the key table below, so no module puts a key together from strings.
+**One codec in `core` writes and reads every blob.** `core.encode` turns an object into bytes and `core.decode` turns bytes of a named kind back into an object. No worker, tool or test calls a JSON library itself. Two workers that each followed the standard library would differ: Python's `json` sorts keys by code point where RFC 8785, the JSON Canonicalization Scheme, sorts by UTF-16 units, and `Decimal(0.1)` carries fifty-five digits of the float behind it. Each field's type in `core` declares how the codec writes it, and `core`'s storage contract holds one key builder for each row of the key table below, so no module puts a key together from strings.
 
-**The codec writes its bytes with a published RFC 8785 library rather than an encoder of its own.** The library is Trail of Bits' [`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python implementation with no dependencies of its own, pinned at an exact version, 0.1.4 on 2026-11-08. Run on Python 3.12, it sorts keys by UTF-16 units, and it refuses a `Decimal`, a NaN and an integer of 2⁵³ or more. It does print a float, so `core.encode` turns each decimal and each time into its string, and refuses a float before the library sees the value. The library only encodes, so `core.decode` parses with Python's `json` and checks the bytes by encoding what it parsed again.
+**The codec writes its bytes with a published RFC 8785 library rather than an encoder of its own.** The library is Trail of Bits' [`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python implementation with no dependencies of its own, pinned at an exact version, 0.1.4, its latest release on 2026-11-08. A run of that version on Python 3.12 showed that it sorts keys by UTF-16 units, and that it refuses a `Decimal`, a NaN, an infinity and an integer whose magnitude is 2⁵³ or more, as [its source](https://github.com/trailofbits/rfc8785.py/blob/v0.1.4/src/rfc8785/_impl.py) also shows. It does print a float, so `core.encode` turns each decimal and each time into its string, and refuses a float before the library sees the value. The library only encodes, so `core.decode` parses with Python's `json` and checks the bytes by encoding what it parsed again.
 
 The figure draws both paths in order.
 
@@ -3027,7 +3027,7 @@ The figure draws both paths in order.
 flowchart TB
     subgraph writing["Writing a blob"]
         direction TB
-        w1["A worker hands core.encode an object"]
+        w1["A worker, tool or test hands core.encode an object"]
         w2["core.encode turns each decimal and each time into its string, and refuses a float"]
         w3["The rfc8785 library writes the bytes"]
         w1 --> w2 --> w3
@@ -3055,15 +3055,15 @@ The price is a third-party library on the path that writes the journal, where a 
 
 #### Why not another format
 
-**No other format passes the same-bytes test.** The test is whether the same values give the same bytes across releases and languages, which both rules that lean on exact bytes need. A second test is whether a person can read a blob straight from S3.
+**Only canonical JSON passes both tests.** The first test is whether the same values give the same bytes across releases and languages, which both rules that lean on exact bytes need. A second test is whether a person can read a blob straight from S3.
 
 **Table:** The formats weighed for the blobs, against the two tests
 
 | Format | Same bytes for the same values | Readable from S3 |
 | --- | --- | --- |
-| Parquet | No. Its writer records its own version in each file, so the same values change bytes across releases | No, it is binary |
+| Parquet | No. Its writer records its own version in each file, in [the footer's `created_by` field](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift), so the same values change bytes across releases | No, it is binary |
 | Protocol Buffers | No. [Its documentation](https://protobuf.dev/programming-guides/serialization-not-canonical/) says its serialization "is not (and cannot be) canonical" | No, it is binary |
-| CBOR with [RFC 8949's deterministic encoding](https://www.rfc-editor.org/rfc/rfc8949#section-4.2) | Only with rules of the platform's own. RFC 8949 leaves the deterministic form of a decimal fraction to the application, and [the IETF's common profile](https://datatracker.ietf.org/doc/draft-ietf-cbor-cde/) expired as a draft | No, it is binary |
+| CBOR with [RFC 8949's deterministic encoding](https://www.rfc-editor.org/rfc/rfc8949#section-4.2) | Yes, with rules of the platform's own for decimals and times, as JSON needs too. RFC 8949 leaves the deterministic form of a decimal fraction to the application, and [the IETF's common profile](https://datatracker.ietf.org/doc/draft-ietf-cbor-cde/) expired as a draft | No, it is binary |
 | Canonical JSON after RFC 8785, with the five rules above | Yes | Yes |
 
 #### How a value received from outside is kept
@@ -3076,7 +3076,7 @@ marketlake stores prices as 64-bit floats, so for its values "as sent" means the
 
 This doc proposes, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), that a received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. [#22](https://github.com/l3a0/ithildin-runtime/issues/22) holds that form, and a body that cannot be stored halts.
 
-#### How a time on the exchange's clock becomes UTC
+#### Which clock a schedule follows, and how it becomes UTC
 
 **Two rules are stated on the exchange's clock, and resolved to UTC once.** They follow New York's clock because the market does.
 
@@ -3085,7 +3085,7 @@ This doc proposes, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22)
 
 A rule written in UTC would move by an hour against the close each time the clocks change. So each is written as the exchange's local time, and one calendar function in `core` turns it into a UTC instant for each session.
 
-A time stated as minutes before the close, such as a strategy's close−20 decision or the market-on-close cutoff, close−12 in the hard caps this doc recommends, under Alpaca's close−10, resolves through the same function from that session's close. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
+A time stated as minutes before the close resolves through the same function from that session's close. Two such times are a strategy's close−20 decision and the market-on-close cutoff, which is close−12 in the hard caps this doc recommends, under Alpaca's close−10. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
 
 The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it runs at 22:00 UTC, after the close in both summer and winter.
 
@@ -3102,7 +3102,7 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 #### What an output file holds
 
-**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The header's `format` is a number per kind, raised when that kind's fields change, under the rule of [A rollback is a pin to an earlier digest](#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
+**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The header's `format` is a number per kind, raised when that kind's fields change. [A rollback is a pin to an earlier digest](#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
 
 #### How a journal entry is hashed and checked
 
@@ -3110,7 +3110,7 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 ```mermaid
 flowchart LR
-    e1["Entry 1 carries sixty-four zeros as its prev_hash"]
+    e1["An account's first entry carries sixty-four zeros as its prev_hash"]
     e2["Entry 2 carries the SHA-256 of entry 1's stored bytes as its prev_hash"]
     e3["Entry 3 carries the SHA-256 of entry 2's stored bytes as its prev_hash"]
     e1 --> e2 --> e3
@@ -3122,7 +3122,7 @@ A blob cannot hold its own hash, so `JournalEntry.hash()` computes it from the b
 2. That each key's number equals the `seq` inside it.
 3. That it knows the entry's `format`.
 
-Every journal format ever written stays readable by every later release, because the book can be replayed from the first entry, whatever book snapshot a rebuild starts from, and each format has a committed fixture entry and a test that replays it.
+Every journal format ever written stays readable by every later release, because the book can always be replayed from the first entry, even when a rebuild starts from a book snapshot, and each format has a committed fixture entry and a test that replays it.
 
 #### What a journal entry's body holds, and how a retry is recognised
 
@@ -4286,7 +4286,7 @@ in [design.md](design.md)'s `## Decisions`.
 | What [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store) and [Each environment has an AWS account of its own](#rule-11-each-environment-has-an-aws-account-of-its-own) add to the accounts: the service control policies binding each account's root user, and the one read-only statement in marketlake's bucket policy. [The 2026-11-02 entries](design.md#2026-11-02) settled an account per environment and the broker key's place | None named | A read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16) |
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
-| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core` that writes its bytes with the `rfc8785` library at a pinned version, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, Protocol Buffers, whose serialization is not canonical, CBOR, which needs rules of the platform's own for decimals and is binary, an RFC 8785 encoder of the runtime's own, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, every blob is larger than a binary form would be, and a third-party library on the journal's write path, whose upgrade a byte-comparing fixture test guards | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core` that writes its bytes with the `rfc8785` library at a pinned version, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, Protocol Buffers, whose serialization is not canonical, CBOR, which is binary and needs the same rules of the platform's own, an RFC 8785 encoder of the runtime's own, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, every blob is larger than a binary form would be, and a third-party library on the journal's write path, whose upgrade a byte-comparing fixture test guards | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Execution's recover stage reconciles positions, open orders and cash before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) lets an outside entry explain in shadow or on paper | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
