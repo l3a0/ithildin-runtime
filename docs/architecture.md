@@ -3026,6 +3026,20 @@ type in `core` declares how the codec writes it, and `core`'s storage
 contract holds one key builder for each row of the key table below, so no
 module puts a key together from strings.
 
+**The codec writes its bytes with a published RFC 8785 library rather than
+an encoder of its own.** The library is Trail of Bits'
+[`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python
+implementation with no dependencies of its own, pinned at an exact version,
+0.1.4 on 2026-11-08. Run on Python 3.12, it sorts keys by UTF-16 units, and it
+refuses a `Decimal`, a NaN and an integer of 2⁵³ or more. It does print a
+float, so `core.encode` turns each decimal and each time into its string, and
+refuses a float before the library sees the value. The library only encodes,
+so `core.decode` parses with Python's `json` and checks the bytes by encoding
+what it parsed again. The price is a third-party library on the path that
+writes the journal, where a change in its output would break the hash chain.
+A test encodes committed fixture values and compares the bytes, so an upgrade
+that changes them fails CI before it ships.
+
 **Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON
 Canonicalization Scheme, for encoding, whitespace and key order, and adds
 rules of its own for numbers, times and empty fields.
@@ -3046,6 +3060,20 @@ rules of its own for numbers, times and empty fields.
    order means something, such as a plan's decisions, and is sorted by its
    key when it does not, such as a header's inputs, which is this doc's
    rule rather than RFC 8785's.
+
+**No other format passes the same-bytes test.** The test is whether the same
+values give the same bytes across releases and languages, which both rules
+that lean on exact bytes need. A second test is whether a person can read a
+blob straight from S3.
+
+**Table:** The formats weighed for the blobs, against the two tests
+
+| Format | Same bytes for the same values | Readable from S3 |
+| --- | --- | --- |
+| Parquet | No. Its writer records its own version in each file, so the same values change bytes across releases | No |
+| Protocol Buffers | No. [Its documentation](https://protobuf.dev/programming-guides/serialization-not-canonical/) says its serialization "is not (and cannot be) canonical" | No, it is binary |
+| CBOR with [RFC 8949's deterministic encoding](https://www.rfc-editor.org/rfc/rfc8949#section-4.2) | Only with rules of the platform's own. RFC 8949 leaves the deterministic form of a decimal fraction to the application, and [the IETF's common profile](https://datatracker.ietf.org/doc/draft-ietf-cbor-cde/) expired as a draft | No, it is binary |
+| Canonical JSON after RFC 8785, with the five rules above | Yes | Yes |
 
 **A value received from outside is kept exactly as it arrived.** A fill's
 quantity and price, a position, an open order's quantity, and marketlake's
@@ -4280,7 +4308,7 @@ in [design.md](design.md)'s `## Decisions`.
 | What [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store) and [Each environment has an AWS account of its own](#rule-11-each-environment-has-an-aws-account-of-its-own) add to the accounts: the service control policies binding each account's root user, and the one read-only statement in marketlake's bucket policy. [The 2026-11-02 entries](design.md#2026-11-02) settled an account per environment and the broker key's place | None named | A read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16) |
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](design.md#processes-and-files) proposes |
-| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core`, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, and every blob is larger than a binary form would be | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| Every blob is canonical JSON after RFC 8785, written and read by one codec in `core` that writes its bytes with the `rfc8785` library at a pinned version, with computed decimals as strings at places `core` declares, received values kept exactly as sent, times in UTC, and a journal entry's hash taken over its whole stored blob | Parquet, whose writer records its own version in each file so the same values change bytes across releases, Protocol Buffers, whose serialization is not canonical, CBOR, which needs rules of the platform's own for decimals and is binary, an RFC 8785 encoder of the runtime's own, JSON floats, and a hash of the entry's body alone | A worker rounds a computed value at its edge, so a value on a rounding boundary can differ between releases, every blob is larger than a binary form would be, and a third-party library on the journal's write path, whose upgrade a byte-comparing fixture test guards | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | `Journal` and the storage contract live in `core` | The journal writer in `execution`, which the supervisor and monitoring could not import | `core` holds behaviour beyond what its types need | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
 | Execution's recover stage reconciles positions, open orders and cash before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Any order or fill the journal did not send is journaled as received, halts, and holds the account until a person clears it, apart from the split or assignment that [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) lets an outside entry explain in shadow or on paper | Ignoring unstamped orders, or an outside book for hand trades | A halt on a broker's liquidation even when it is harmless | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
