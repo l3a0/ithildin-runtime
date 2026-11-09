@@ -90,7 +90,7 @@ cannot see each other.
 Three things cannot be recovered once lost, and everything else is
 regenerable, apart from a search's record, which the design doc's
 [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours)
-defines and keeps as recorded data, and a read of a held-out window, which its
+defines and keeps as recorded data, and the record of a held-out window's load, which its
 [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
 keeps the same way.
 
@@ -281,15 +281,15 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-  States beside every backtest quoted as evidence on data its research already read what the same exposure
-  earns with no timing, and each
-  instrument's average signed exposure and average daily change, tests its return with the drift its
-  exposure earned taken out, builds a resampled null so the no-edge assumption holds in it, reads a picked
-  result's p-value against the best of its search's own candidates resampled and beside the
-  false-discovery-rate figure, gives an average return quoted as evidence its interval, a ratio its own
-  distribution and a hit rate its rate with no signal, and labels a result on a held-out window that has
-  already been read as in-sample, each labelled exploratory where it comes from a backtest, a shadow run or
-  a paper run with no sample open, under rules 1 to 5 of the design doc's
+  States for every backtest quoted as evidence each instrument's average signed exposure and average daily
+  change and tests its return with the drift its exposure earned taken out, states beside it on data its
+  research already read what the same exposure earns with no timing, builds a resampled null so the no-edge
+  assumption holds in it, reads a picked result's p-value against the best of every candidate its search
+  tried, resampled, with the same picking on random signals and the false-discovery-rate figure beside it,
+  gives an average return quoted as evidence its interval, labelled unadjusted around a search's pick, a
+  ratio its own distribution and a hit rate its rate with no signal, and labels a result on a window that
+  overlaps one already loaded, by any session, as in-sample, each labelled exploratory where it comes from a
+  backtest, a shadow run or a paper run with no sample open, under rules 1 to 5 of the design doc's
   [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
@@ -550,11 +550,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
   [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
-  Holds the tests [#63](https://github.com/l3a0/ithildin-runtime/issues/63) lists under rules 1 to 5 of the design doc's
-  [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds), among them the exact drift case with a
-  long and a short exposure, the planted skilled signal, the resampler's centring, length and shared draws
-  across instruments and candidates, and the tests of the code behind every significance figure on
-  candidates with no edge and on a planted edge, at the level, count of runs and seed [#63](https://github.com/l3a0/ithildin-runtime/issues/63) states.
+  Holds the tests rules 1 to 5 of the design doc's [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
+  require, with the cases, level, count of runs and seed that
+  [#63](https://github.com/l3a0/ithildin-runtime/issues/63) proposes and each build settles, among them the
+  exact drift case with a long and a short exposure, the planted skilled signal, the resampler's centring,
+  length and shared draws across instruments and candidates, and the tests of the code behind every
+  significance figure on candidates with no edge, on a synthetic series whose days depend on each other,
+  and on a planted edge.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
