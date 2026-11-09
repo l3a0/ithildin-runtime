@@ -587,7 +587,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Rolls shadow and paper back with `ithildin pin set`, recorded with who and why. Clears a paper or shadow account's halt, kill switch and lease, journaled,
   which the owner can do too, and may pull any account's kill switch. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
-  live account's override. The owner runs every drill on live, and no agent does.
+  live account's override, apart from a live drill's run the owner approved, which
+  pulls and clears the switch. The owner approves every drill on live that changes
+  live's state, and no agent starts or approves one.
   Runs the drills the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
   names, proves Paper's alert route, and owns the alarm on the check of fills going silent.
   Keeps a change log, where a change is any action that modifies the system or

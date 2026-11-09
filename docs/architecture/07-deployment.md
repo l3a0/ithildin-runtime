@@ -164,7 +164,7 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 
 #### Who pulls and clears the kill switch
 
-The runtime's credential can create the switch, which pulls it, and can never delete it. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Neither credential sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner alone. Pulling the switch needs no deploy.
+The runtime's credential can create the switch, which pulls it, and can never delete it. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls and clears it too, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner and the approved drill role. Pulling the switch needs no deploy.
 
 #### Who may create and delete a fired loss stop or a strategy's off switch
 
@@ -203,8 +203,8 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | Every other role | `leases/` | Read at most |
 | The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
 | The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete, only with `If-Match` on the tag it read |
-| The owner's credential, on live, for a drill that changes live's state | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
-| Live's drill job's role, for the read-only checks | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. Nothing else in the bucket |
+| The approved drill role, on live, for a drill that changes live's state | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned or on the tag it read of a marker its group's earlier job left |
+| Live's drill job's role, for the read-only checks | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned or on the tag it read of a marker its group's earlier job left. Nothing else in the bucket |
 | The runtime's credential | `markers/` | Read and list. No runtime role creates or deletes a marker |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
 
@@ -236,7 +236,7 @@ The bucket's policy, whose refusals name the runtime's principals, makes the eig
 | The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
-| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
+| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
 | Every principal | Any create under `markers/` that lacks `If-None-Match`, and any version delete there |
 | Every principal but those the table of what each role may do names for `markers/` | Any create or delete under `markers/` |
@@ -607,13 +607,15 @@ A session that finds the marker refuses to start, with the reason "session refus
 
 ##### How two applies are kept from meeting
 
-Every job that creates or deletes the refresh marker runs in one GitHub Actions concurrency group for its environment. That covers the apply or VM change job that rolls out a new launch template version, and the cleanup. GitHub's page on concurrency, read on 2026-11-09, gives the group three properties ([Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs)).
+Every job that creates or deletes the refresh marker runs in one GitHub Actions concurrency group for its environment. That covers the apply or VM change job that rolls out a new launch template version, the cleanup, and the drill that tests the markers' grants. The cleanup is the apply workflow itself, run at `main`'s head, in every environment. The group sets `cancel-in-progress: false`, so GitHub never cancels a job of the group once it has started. GitHub's page on concurrency, read on 2026-11-09, gives the group three properties ([Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs)).
 
 1. One job of the group runs at a time, and "at most one job or workflow run can be `pending`".
 2. A newly queued job cancels any older one still pending.
 3. A group is shared across the repository's workflows.
 
 A newer job replacing an older pending one loses nothing, because every apply runs `main`'s head, and an apply whose commit is not `main`'s head refuses, which also covers GitHub's warning that "ordering is not guaranteed". So a marker that a newly started job finds belongs to a job that has ended. That job runs the cleanup's checks on it, as [What the cleanup checks before it deletes a stale marker](#what-the-cleanup-checks-before-it-deletes-a-stale-marker) says, before it creates its own. A create that still fails changes nothing and deletes nothing, and the job waits and runs again from its first step, as a refused apply does.
+
+The group follows GitHub's view of a job, not its runner. A runner that still acts after GitHub has marked its job ended is not fenced, so a job re-reads its marker's tag just before it starts the refresh. That narrows the window and does not close it, as with the send to the broker under [Every fact has one writer](../design.md#every-fact-has-one-writer). [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds what a waiting job waits for, its time limit and alarm, and any further guard on that window.
 
 ##### Why the group's template changes only when its refresh succeeds
 
@@ -675,7 +677,7 @@ The job that started the refresh waits for the refresh's end event and then dele
 | Environment | Who clears it |
 | --- | --- |
 | Shadow and paper | The next merge's apply job |
-| Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. The run uses the apply credential and records who started it |
+| Live | The apply workflow, run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. The run uses the apply credential and records who started it |
 
 ##### What the cleanup checks before it deletes a stale marker
 
@@ -867,7 +869,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 
-5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the drill job's role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
+5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
@@ -1087,7 +1089,7 @@ A drill and a session's supervisor each write first and check second.
 | First | Creates a marker with a create-only write | Writes the plan |
 | Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
 
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The owner's credential creates it for a drill the owner runs, which is every live drill that changes live's state. Live's drill job's role creates one for the read-only checks, which also run only while no live session is open. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The approved drill role creates it for a drill that changes live's state, and live's drill job's role for the read-only checks, which also run only while no live session is open. The jobs that write one drill's marker run in one concurrency group, as the refresh marker's jobs do under [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting). So a marker a newly started drill job finds belongs to a job that has ended, and the new job deletes it, on the tag it read, before it creates its own. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
 
 ##### How an overdue drill reaches the owner
 
@@ -1095,9 +1097,9 @@ Each drill records when it last ran, and the job raises one overdue through the 
 
 #### Rule 10: who runs them
 
-A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other. It reminds the owner when a drill that changes live's state is due, which the owner runs by hand. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job reports to a CloudWatch alarm of its own.
+A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other. It reminds the owner when a drill that changes live's state is due. That drill runs as a job behind live's reviewer under the approved drill role, so the owner approves it rather than running it. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job reports to a CloudWatch alarm of its own.
 
-The owner runs every live drill, and alone pulls and clears the live switch in one. No agent runs a drill on live.
+The owner approves every live drill that changes live's state, and only a run the owner approved pulls and clears the live switch in one. No agent session starts or approves a drill on live. The one exception is the check of the operator's credential, which must run under the operator's role, so the owner runs it by hand, as [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store) and the drills page say.
 
 #### Rule 10: how an environment's infrastructure is applied
 
