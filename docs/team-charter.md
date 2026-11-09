@@ -431,8 +431,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   rules 4 and 5 of the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
   Has a proposal on a live size show each candidate's leverage as a multiple of one Kelly leverage, with
-  what the leverage is a share of, the Kelly figure's inputs and uncertainty, and any candidate above half
-  of it, as a figure that sets no limit, under rule 5 of the design doc's
+  what the leverage is a share of, the Kelly figure's inputs, window and uncertainty, and any candidate
+  above half of it, a missing figure showing as missing, as a figure that sets no limit, under rule 5 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
@@ -563,9 +563,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   names, once the runbook's checks pass.
   Has each paper session's orders, apart from a person's override, compared with a replay of that session,
-  as shadow's are, with a result recorded each session. An order paper sent that the replay did not emit, and any other difference no journaled record of a kind
-  [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) list explains, reaches the owner as a found error.
-  The dead-man check watches the age of the last result, a comparison that cannot run alerts, and all
+  as shadow's are, with a result recorded each session. An order paper sent that the replay did not emit, and any other difference no journaled record of a kind on the list
+  [#57](https://github.com/l3a0/ithildin-runtime/issues/57) asks [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to write explains, reaches the owner as a found error.
+  The dead-man check alerts on a paper session with no result and on a journal it cannot read, a comparison that cannot read its inputs
+  alerts and never reads as a match, the operator switches the strategy off on a found error, and all
   three alerts, the found error included, fire in a drill before a sample opens on Paper, under rule 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
