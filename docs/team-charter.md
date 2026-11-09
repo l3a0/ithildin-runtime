@@ -90,7 +90,9 @@ cannot see each other.
 Three things cannot be recovered once lost, and everything else is
 regenerable, apart from a search's record, which the design doc's
 [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours)
-defines and keeps as recorded data.
+defines and keeps as recorded data, and a read of a held-out window, which its
+[A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
+keeps the same way.
 
 1. **Captured data.** A market snapshot not recorded at the time is gone, and
    a vendor's history is restated after the fact. Data is recorded with the
@@ -279,12 +281,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-  States beside every backtest quoted as evidence what its exposure to each instrument earns with no skill,
-  and tests its return with each instrument's average daily change taken out, builds a resampled null where
-  the null holds, reads a picked result's p-value against the best of its search with no edge beside the
+  States beside every backtest quoted as evidence what the same exposure earns with no timing and tests its
+  return with the drift its exposure earned taken out, builds a resampled null so the no-edge assumption holds
+  in it, reads a picked result's p-value against the best of its search with no edge and beside the
   false-discovery-rate figure, gives an average return quoted as evidence its interval, a ratio its own
-  distribution and a hit rate its rate with no signal, and treats a held-out window that has judged anything
-  as data its research already read, under rules 1 to 5 of the design doc's
+  distribution and a hit rate its rate with no signal, and labels a result on a held-out window that has
+  already judged anything as in-sample, each labelled exploratory where it comes from a backtest, a shadow
+  run or a paper run with no sample open, under rules 1 to 5 of the design doc's
   [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
@@ -545,10 +548,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
   [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
-  Holds the test that a rule with no skill and a position bias scores near zero once each instrument's
-  average daily change is taken out, the test that no signal, sizing or live path reads that average, and
-  the tests of the code behind every significance figure on candidates with no edge, where it rejects at
-  about its stated level, and on a planted edge, where it finds it, under rules 1 and 2 of the design doc's
+  Holds the exact case that a constant exposure scores zero once the drift it earned is taken out, the
+  case that a planted skilled signal keeps its hand-worked score, the tests that the resampler centres a
+  bootstrap, draws the sample's length and gives different candidates the same dates, and the tests of the
+  code behind every significance figure, on a single candidate and on a search, on series with no edge
+  and the recorded data's dependence from day to day, within a two-sided band worked from the binomial,
+  and on a planted edge, under rules 1 to 3 of the design doc's
   [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds), with each test's cases on
   [#63](https://github.com/l3a0/ithildin-runtime/issues/63).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
@@ -1024,12 +1029,13 @@ tested on the prices it trades, and the null hypothesis behind a significance fi
 
 *Evidence-Based Technical Analysis* dates from 2007 and writes for technical analysts who test signals on
 historical data. Its chapters on the psychology of judging charts by eye, the philosophy of science and
-theories of why prices move are left out as rules, apart from the four counts behind a hit rate, since the
-design already counts tries, writes a hypothesis down first and judges a change after a failure. Its study of 6,402 rules on S&P 500 data and
-its other figures are worked examples or simulations, so none is adopted as a threshold. What it adds here
-is a backtest judged against what its position bias earns with no skill, a significance figure whose
-resampling holds its null and whose code is tested where the answer is known, an interval beside an
-average return, and a held-out window spent once it judges anything.
+theories of why prices move have no rule here, apart from the four counts behind a hit rate. Its chapters
+on counting tries, writing a hypothesis down first, keeping later data out of a backtest and a rule changed
+after it fails repeat rules the design already carries. Its study of 6,402 rules on S&P 500 data and its
+other figures are worked examples or simulations, so none is adopted as a threshold. What it adds here is
+a backtest judged with the market's drift taken out, a significance figure whose resampling holds its null
+and whose code is tested where the answer is known, an interval beside an average return, and a held-out
+window spent once it judges anything.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
