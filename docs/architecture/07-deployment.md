@@ -201,13 +201,13 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
-| The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete |
-| The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete |
-| The credential each drill runs under | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete |
+| The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
+| The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete, only with `If-Match` on the tag it read |
+| The owner's credential, on live, for a drill that changes live's state | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
 | The runtime's credential | `markers/` | Read and list. No runtime role creates or deletes a marker |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
 
-The bucket's policy refuses a create under `markers/` that does not carry `If-None-Match`, which S3 lets a bucket policy require ([Enforce conditional writes on Amazon S3 buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html)). So every marker is created only where none exists, and of two creates at one key S3 lets the first to finish succeed and refuses the other with `412 Precondition Failed` ([How to prevent object overwrites with conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)).
+The bucket's policy refuses a create under `markers/` that does not carry `If-None-Match`, which S3 lets a bucket policy require ([Enforce conditional writes on Amazon S3 buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html)), and refuses every write there to a principal the rows above do not name, as [What the bucket's policy refuses, and to whom](#what-the-buckets-policy-refuses-and-to-whom) lists. So every marker is created only where none exists. Of two creates at one key, S3 lets the first to finish succeed and refuses the other with `412 Precondition Failed`, and a create that races a delete can get `409 Conflict` ([How to prevent object overwrites with conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)). A job whose create gets any answer but success holds no marker and deletes nothing. Every delete of a marker carries `If-Match` on the tag its own create returned, or for the cleanup the tag it read, which S3 refuses with `412 Precondition Failed` when the tag differs ([DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html)). So a job never deletes another job's marker.
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -226,7 +226,7 @@ No credential the runtime holds can delete a version, or change any of these fou
 
 #### What the bucket's policy refuses, and to whom
 
-The bucket's policy, whose refusals name the runtime's principals, makes the six refusals in this table.
+The bucket's policy, whose refusals name the runtime's principals, makes the eight refusals in this table.
 
 **Table:** What the bucket's policy refuses, by the principal it refuses
 
@@ -237,6 +237,8 @@ The bucket's policy, whose refusals name the runtime's principals, makes the six
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
+| Every principal | Any create under `markers/` that lacks `If-None-Match`, and any version delete there |
+| Every principal but those the table of what each role may do names for `markers/` | Any create or delete under `markers/` |
 | All but the owner | Changes to the policy itself |
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
@@ -662,7 +664,7 @@ The job that started the refresh waits for the refresh's end event and then dele
 | Environment | Who clears it |
 | --- | --- |
 | Shadow and paper | The next merge's apply job |
-| Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. That run records who started it |
+| Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. The run uses the apply credential and records who started it |
 
 ##### What the cleanup checks before it deletes a stale marker
 
@@ -1074,7 +1076,7 @@ A drill and a session's supervisor each write first and check second.
 | First | Creates a marker with a create-only write | Writes the plan |
 | Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
 
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The owner's credential creates it, because the owner runs every live drill that changes live's state. Whether the live drill job's read-only checks take a marker is not yet stated. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
 
 ##### How an overdue drill reaches the owner
 
