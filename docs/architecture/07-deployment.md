@@ -201,7 +201,13 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
+| The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete |
+| The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete |
+| The credential each drill runs under | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete |
+| The runtime's credential | `markers/` | Read and list. No runtime role creates or deletes a marker |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
+
+The bucket's policy refuses a create under `markers/` that does not carry `If-None-Match`, which S3 lets a bucket policy require ([Enforce conditional writes on Amazon S3 buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html)). So every marker is created only where none exists, and of two creates at one key S3 lets the first to finish succeed and refuses the other with `412 Precondition Failed` ([How to prevent object overwrites with conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)).
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -590,7 +596,7 @@ sequenceDiagram
 
 ##### When a refresh may run
 
-An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. The marker is the one key `markers/refresh.json` in the environment's bucket, so of two applies that start together only one creates it, as the bucket table in [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says. What an apply whose create fails then does is not yet stated. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
@@ -1068,7 +1074,7 @@ A drill and a session's supervisor each write first and check second.
 | First | Creates a marker with a create-only write | Writes the plan |
 | Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
 
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
 
 ##### How an overdue drill reaches the owner
 
