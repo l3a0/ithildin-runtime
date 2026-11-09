@@ -37,7 +37,7 @@ from dataclasses import dataclass
 
 OCC = re.compile(r"^(\S+)\s*(\d{6})([CP])(\d{8})$")
 NAKED_CALL = 10**12  # cents; a naked call has no cash bound, so it must lose
-NEVER = 10**15       # cents; a pairing the broker would not allow
+NEVER = 10**15  # cents; a pairing the broker would not allow
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Contract:
     ticker: str
     root: str
     expiry: str  # YYMMDD sorts as a date
-    right: str   # "C" or "P", or "S" for a 100-share stock lot
+    right: str  # "C" or "P", or "S" for a 100-share stock lot
     strike: float
 
 
@@ -122,8 +122,7 @@ def pair(options, stocks):
         return []
     # One column per cover, then one "uncovered" column per short.
     matrix = [
-        [cost_cents(s, c) for c in covers] + [cost_cents(s, None)] * len(shorts)
-        for s in shorts
+        [cost_cents(s, c) for c in covers] + [cost_cents(s, None)] * len(shorts) for s in shorts
     ]
     assigned = hungarian(matrix)
     result = []
@@ -174,8 +173,9 @@ def main(path):
     candidates = {}
     cash = round(data["cash"] * 100)
     candidates["broker cash"] = cash - held
-    print(f"\nBroker cash ${cash / 100:,.2f} - held ${held / 100:,.2f}"
-          f" = ${(cash - held) / 100:,.2f}")
+    print(
+        f"\nBroker cash ${cash / 100:,.2f} - held ${held / 100:,.2f} = ${(cash - held) / 100:,.2f}"
+    )
 
     # A cash account's buying power can count a fill or a sweep that has not
     # reached the cash balance yet. Where buying power equals cash, as at
@@ -184,11 +184,12 @@ def main(path):
         bbp = round(data["broker_buying_power"] * 100)
         candidates["broker buying power"] = bbp
         gap = bbp - (cash - held)
-        print(f"Broker buying power ${bbp / 100:,.2f}, ${gap / 100:+,.2f} against"
-              " cash - held")
+        print(f"Broker buying power ${bbp / 100:,.2f}, ${gap / 100:+,.2f} against cash - held")
         if gap and bbp < cash:
-            print("  GAP: look for a fill or sweep in the last two business days"
-                  " that explains it, and name it in the report.")
+            print(
+                "  GAP: look for a fill or sweep in the last two business days"
+                " that explains it, and name it in the report."
+            )
 
     tos = data.get("tos")
     if tos:
@@ -203,19 +204,27 @@ def main(path):
         share = f" ({stock_maint / lmv:.1%} of long marginable value)" if lmv else ""
         print(f"  Stock maintenance = maintenance - spreads = ${stock_maint / 100:,.2f}{share}")
         print(f"  Loan value of holdings = ${loan_value / 100:,.2f} (this is margin)")
-        print(f"  Margin equity - maintenance - held - option BP = ${residual / 100:,.2f}"
-              "  (should be $0.00)")
+        print(
+            f"  Margin equity - maintenance - held - option BP = ${residual / 100:,.2f}"
+            "  (should be $0.00)"
+        )
         if residual:
-            print("  MISMATCH: the pairing above does not match how thinkorswim"
-                  " holds cash. Find the difference before trusting either figure.")
+            print(
+                "  MISMATCH: the pairing above does not match how thinkorswim"
+                " holds cash. Find the difference before trusting either figure."
+            )
         # Option buying power is already net of open orders.
         candidates["thinkorswim"] = obp - loan_value
-        print(f"  Option BP ${obp / 100:,.2f} - loan value ${loan_value / 100:,.2f}"
-              f" = ${candidates['thinkorswim'] / 100:,.2f}")
+        print(
+            f"  Option BP ${obp / 100:,.2f} - loan value ${loan_value / 100:,.2f}"
+            f" = ${candidates['thinkorswim'] / 100:,.2f}"
+        )
         implied = me - lmv
         if implied != cash:
-            print(f"  Cash implied by thinkorswim ${implied / 100:,.2f} differs from"
-                  f" broker cash by ${(cash - implied) / 100:,.2f}")
+            print(
+                f"  Cash implied by thinkorswim ${implied / 100:,.2f} differs from"
+                f" broker cash by ${(cash - implied) / 100:,.2f}"
+            )
 
     source = min(candidates, key=candidates.get)
     free = candidates[source]
@@ -228,8 +237,10 @@ def main(path):
                 px = round(buy[label] * 100)
                 shares = free // px
                 left = free - shares * px
-                print(f"  At ${px / 100:,.2f} ({label}): {shares:,} shares,"
-                      f" ${shares * px / 100:,.2f}, ${left / 100:,.2f} left")
+                print(
+                    f"  At ${px / 100:,.2f} ({label}): {shares:,} shares,"
+                    f" ${shares * px / 100:,.2f}, ${left / 100:,.2f} left"
+                )
 
 
 if __name__ == "__main__":
