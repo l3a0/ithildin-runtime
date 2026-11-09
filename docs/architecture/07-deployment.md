@@ -585,7 +585,7 @@ sequenceDiagram
 
 ##### When a refresh may run
 
-The apply job first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it change the launch template and start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+An apply whose plan changes the launch template first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it change the launch template and start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
@@ -593,10 +593,14 @@ A session that finds the marker refuses to start, with the reason "session refus
 
 ##### What a refused apply does
 
-An apply that finds a session open changes nothing. It deletes its own marker, alarms that the image did not roll out, naming the session it found, and exits. The change waits for a later apply that finds no session open.
+An apply that finds a session open changes nothing, in its whole plan. It deletes its own marker and alarms that the image did not roll out, naming the session it found and whether the delete succeeded. A delete that fails pages the owner at once, naming the marker, because the marker would stop the next session.
+
+The apply then waits for the session to end and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the launch template as a difference from the code.
 
 1. **Deleting the marker** means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
-2. **Checking before the template changes** means the launch template never names an image the VMs do not run while a session is open. A VM lost mid-session is replaced from the launch template, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says, so a template changed ahead of the VMs would bring that replacement up on the new image, and the session would run two VM images.
+2. **Checking before the template changes** means a refused apply never leaves the launch template ahead of the VMs. A VM lost mid-session is replaced from the launch template, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says, so a template changed ahead of the VMs would bring that replacement up on the new image, and the session would run two VM images.
+
+A job that dies after changing the template and before its refresh ends can still leave the template ahead of the VMs. The cleanup of stale markers below deletes only the marker, and neither restores the template nor finishes the refresh. This doc does not yet say what clears that case.
 
 ##### How many VMs a refresh replaces at a time
 
@@ -641,7 +645,7 @@ The job that started the refresh waits for the refresh's end event and then dele
 
 ##### What rolls back a VM image that fails after its refresh
 
-A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit applies the previous launch template version, which starts a refresh outside sessions under the same session check, the one [When a refresh may run](#when-a-refresh-may-run) describes.
+A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply runs the same session check before it changes the launch template back to the previous version, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts the refresh, outside sessions.
 
 ##### Why an app release never rolls out this way
 
