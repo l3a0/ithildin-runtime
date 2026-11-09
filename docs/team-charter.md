@@ -301,8 +301,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   on every record (DDIA L12920, L16445). Checks the vendor's sequence numbers
   against what capture recorded. Closes each capture segment within its
   stated age, backs up closed segments with the journal position they cover,
-  keeps a copy off the machine and alarms on its lag, runs the scheduled
-  read-back of recorded data, and drills a restore that checks counts and
+  keeps a copy off the machine and alarms on its lag, sends a checksum with
+  every recorded write, and drills a restore that checks counts and
   checksums (DDIA L7227, L4777).
   Where a rule selects a universe, keeps instruments that later delisted in the
   security master [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds,

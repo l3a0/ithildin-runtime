@@ -2998,7 +2998,11 @@ Split records and saved broker statements are recorded facts, so nothing overwri
 
 ### How recorded blobs are checked
 
-One scheduled job reads every recorded blob back on a rolling cycle, verifying each checksum and comparing its copies, and a restore drill restores to a scratch place and checks counts and checksums, as [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold.
+S3 checks every blob at rest on its own schedule and repairs corruption from redundant copies, so no job of the platform's reads blobs back. Three checks remain, as [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says.
+
+1. Every write through `BlobStore` sends its SHA-256, and S3 refuses an upload whose bytes do not match it.
+2. Before live, S3's report of a failed replication to the second account's bucket raises an alarm.
+3. A restore drill restores to a scratch place and checks counts and checksums, which [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds.
 
 ### File formats and keys
 
