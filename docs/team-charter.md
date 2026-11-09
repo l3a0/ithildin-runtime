@@ -47,7 +47,11 @@ for searching a strategy's settings and reading what the search found live in th
 The rules from Ernest P. Chan's *Quantitative Trading* (2nd ed., Wiley, 2021) for keeping later data out of a
 backtest, computing the figures a result is quoted in and checking that paper trades what the backtest traded
 live in the design doc's
-[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition). The
+[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+The rules from Chan's *Algorithmic Trading* (Wiley, 2013) for which price a backtest of a closing order may
+use, for testing a pair's reversion on the prices it trades and for what a significance figure states live in
+the design doc's
+[A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -309,6 +313,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   alone, with its half-life, and reads a gap between paper and the backtest for a bug or a mismatched trade
   before any other cause, under rules 1, 2, 4 and 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+  Has a backtest quoted as evidence of an order filled at the open or close read the primary exchange's
+  auction print or name the gap, as must a backtest whose signal reads a high or low consolidated or of unstated venues, runs a pair's reversion
+  test on the prices of the instruments it trades with any fund that holds futures named as one, and names
+  the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
+  3 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -348,6 +358,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   fitted value or mark of the account that read it, and keeps the flag as a record beside the price,
   which stays as it arrived, under rule 3 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+  Checks that a backtest quoted as evidence of an order filled at the open or close names the kind of price
+  it filled at, which [#50](https://github.com/l3a0/ithildin-runtime/issues/50) has each recorded price state,
+  under rule 1 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path,
   or a git branch or ref, holding recorded data as the design doc defines it, a recorded format with
@@ -391,6 +405,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   to what calibrating the cost model needs, from the first order, and tests each side
   of an order, under the design doc's
   [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
+  Has the simulated broker's fill of an order meant for the opening or closing auction state which price it
+  filled at, so a backtest quoted as evidence can state it, under rule 1 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with
+  [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holding the mechanism.
   Holds that a position's initial risk rebuilds from the journal alone, and its R multiple from
   the journal, the fills and the named cost, under the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
@@ -552,6 +570,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition), with each test's cases on
   [#57](https://github.com/l3a0/ithildin-runtime/issues/57).
+  Holds the test that a backtest quoted as evidence names the gap when it fills an opening or closing order
+  at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
+  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
+  [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -1037,6 +1059,14 @@ are worked examples on the author's data, so none is adopted as a threshold. Hal
 limit of five parameters with its minimum backtest lengths, and its strategy that re-fits its settings each day are left out, with the
 reasons in the design doc's register. What it adds here is keeping later data out of what a strategy
 fits, one definition for each figure a result is quoted in, and a comparison of paper with its replay.
+
+*Algorithmic Trading* dates from 2013 and writes for traders of mean-reverting and momentum strategies
+in MATLAB. Its chapters on futures, currencies, intraday and high-frequency tactics, and its code listings,
+are left out, apart from its point on the roll return a fund holding futures carries, which the design's
+rule on testing a pair's reversion takes up. Its sizing and stop-loss chapters are left out too. Of their points the design carries only the Kelly
+leverage, from Chan's earlier book, and the register already rejects a price stop on the slice 1 spread. Its figures are worked examples, most before costs, so none is adopted as a
+threshold. What it adds here is the auction print behind a closing order's backtest, a pair's reversion
+tested on the prices it trades, and the null hypothesis behind a significance figure.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
