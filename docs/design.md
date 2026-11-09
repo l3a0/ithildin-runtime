@@ -551,7 +551,7 @@ carries that tag, so a derived output is never copied. The send stage's broker r
 tag on every capture the store writes. The
 retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
 live gate. A recorded blob not found in the replica within a written bound raises an alarm
-that reaches the owner, and a test shows the replication rule matches a key from every class of recorded data that rule 1 of [Data has a cost](#data-has-a-cost-except-the-data-that-cannot-be-recaptured) lists, apart from two it leaves out: data marketlake holds, which marketlake backs up under its own contract, and the replica itself.
+that reaches the owner, and a test shows the replication rule matches a key from every class of recorded data that rule 1 of [Data has a cost](#data-has-a-cost-except-the-data-that-cannot-be-recaptured) lists, apart from three it leaves out: data marketlake holds, which marketlake backs up under its own contract, the replica itself, and saved broker statements, which the broker can issue again.
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
 
 ### Rule 1: clock times in headers and captures
@@ -2947,6 +2947,8 @@ This section lists every decision made on the project, oldest first, one heading
 ### 2026-11-08
 
 1. The owner ruled that the platform runs no scheduled read-back of recorded blobs kept in S3. The owner asked "why is it even needed?" of the job, and the reply found that S3 already checks all data at rest, repairs it from redundant copies and refuses an upload whose checksum does not match, while the rule came from a book about disks a system manages itself. The owner's words were "Drop it". Every write still sends its checksum, the restore drill stays, and a failed replication to the second account alarms. The ruling governs rule 3 of [Faults are expected, and the platform checks itself while it runs](#faults-are-expected-and-the-platform-checks-itself-while-it-runs).
+
+2. The owner ruled that saved broker statements stay out of the replica in the second account. A statement is the broker's own record of the account, which the broker can issue again, while every other class the replica leaves out is held elsewhere. The owner's words were "No, leave them", answering a recommendation to copy them, whose deciding question was whether every statement could be had again from the broker after losing the main account. The ruling governs [Rule 1: the replica before live](#rule-1-the-replica-before-live). Saved published texts count as captured data, so the replica already carries them.
 
 ## Considered and rejected
 
