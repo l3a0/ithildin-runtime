@@ -204,6 +204,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
 | The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete, only with `If-Match` on the tag it read |
 | The owner's credential, on live, for a drill that changes live's state | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
+| Live's drill job's role, for the read-only checks | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. Nothing else in the bucket |
 | The runtime's credential | `markers/` | Read and list. No runtime role creates or deletes a marker |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
 
@@ -235,7 +236,7 @@ The bucket's policy, whose refusals name the runtime's principals, makes the eig
 | The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
-| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
+| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
 | Every principal | Any create under `markers/` that lacks `If-None-Match`, and any version delete there |
 | Every principal but those the table of what each role may do names for `markers/` | Any create or delete under `markers/` |
@@ -856,7 +857,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 
-5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
+5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the drill job's role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
@@ -1076,7 +1077,7 @@ A drill and a session's supervisor each write first and check second.
 | First | Creates a marker with a create-only write | Writes the plan |
 | Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
 
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The owner's credential creates it, because the owner runs every live drill that changes live's state. Whether the live drill job's read-only checks take a marker is not yet stated. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The owner's credential creates it for a drill the owner runs, which is every live drill that changes live's state. Live's drill job's role creates one for the read-only checks, which also run only while no live session is open. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
 
 ##### How an overdue drill reaches the owner
 
