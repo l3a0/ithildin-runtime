@@ -561,24 +561,82 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-The refresh keeps at least 66 percent of the group healthy, so it replaces one of the three VMs at a time and two stay up throughout.
+Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out when each old VM is terminated, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
 
-A launch lifecycle hook holds each new VM out of service until its provisioning step has verified the pin's provenance and pulled the image, and the read-only drill checks pass, and only then does the VM complete the hook. The VM's role may complete the hook on its own group and nothing else in Auto Scaling. A VM whose checks fail sets off four steps, in order.
+```mermaid
+sequenceDiagram
+    participant Job as The job that starts the refresh
+    participant Marker as The refresh's marker
+    participant Group as The Auto Scaling group
+    participant VM as Each new VM
+    Job->>Marker: creates it with a create-only write
+    Job->>Job: goes on only while no session is open
+    Job->>Group: starts the instance refresh
+    loop One VM at a time
+        Group->>VM: launches it and holds it out of service at the launch lifecycle hook
+        VM->>VM: verifies the pin's provenance, pulls the image and runs the read-only drill checks
+        VM->>Group: completes the hook once every check passes
+    end
+    Job->>Group: waits for the refresh's end event
+    Job->>Marker: deletes it
+```
+
+##### When a refresh may run
+
+A refresh first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+
+A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin, which runs past the host's timer, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
+
+A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
+
+##### How many VMs a refresh replaces at a time
+
+**Table:** How a refresh replaces the VMs of each size of group
+
+| Group | The refresh's setting | What the refresh does |
+| --- | --- | --- |
+| The cluster of three | Keeps at least 66 percent of the group healthy | Replaces one of the three VMs at a time, so two stay up throughout |
+| Slice 1's group of one | Sets a maximum healthy percentage of 200 | Starts the new VM beside the old one, and terminates the old one only once the new one completes its hook |
+
+In slice 1's group of one the refresh still runs only outside sessions.
+
+##### How a new VM proves itself before it serves
+
+A launch lifecycle hook holds each new VM out of service. The VM completes the hook only once three things have happened.
+
+1. Its provisioning step has verified the pin's provenance.
+2. That step has pulled the image.
+3. The read-only drill checks pass.
+
+The VM's role may complete the hook on its own group and nothing else in Auto Scaling.
+
+##### What happens when a new VM's checks fail
+
+A VM whose checks fail sets off four steps, in order.
 
 1. The VM never completes the hook.
 2. The hook's timeout abandons the VM.
 3. The refresh fails.
 4. The refresh's automatic rollback restores the earlier launch template.
 
-In slice 1's group of one the refresh sets a maximum healthy percentage of 200, so the group starts the new VM beside the old one and terminates the old one only once the new one completes its hook. It still runs only outside sessions.
+##### Who deletes the refresh's marker
 
-A refresh first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
+The job that started the refresh waits for the refresh's end event and then deletes the marker. `ithildin` gets no command for it, so the jobs in this table clear a stale marker.
 
-The job that started the refresh waits for the refresh's end event and then deletes the marker. `ithildin` gets no command for it, so the next merge's apply job clears a stale marker on shadow and paper, and on live a run behind live's reviewer does, whose run records who started it.
+**Table:** Who clears a stale refresh marker in each environment
 
-A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit applies the previous launch template version, which starts a refresh outside sessions under the same session check.
+| Environment | Who clears it |
+| --- | --- |
+| Shadow and paper | The next merge's apply job |
+| Live | A run behind live's reviewer, the approval GitHub requires before a run in live's environment goes ahead. That run records who started it |
 
-An app release never rolls out this way, because two releases in one run write different bytes to one key, which the create-only rule turns into a halt. A release changes only at a session's start, through the pin and the promotion from shadow to paper to live.
+##### What rolls back a VM image that fails after its refresh
+
+A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit applies the previous launch template version, which starts a refresh outside sessions under the same session check, the one [When a refresh may run](#when-a-refresh-may-run) describes.
+
+##### Why an app release never rolls out this way
+
+An app release never rolls out this way, because two releases in one run write different bytes to one key, which the create-only rule turns into a halt. That rule lets each key be written only once, as [Processes and files](../design.md#processes-and-files) says. A release changes only at a session's start, through the pin and the promotion from shadow to paper to live.
 
 #### Item 7: how Auto Scaling's events reach the owner
 
