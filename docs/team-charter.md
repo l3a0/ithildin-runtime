@@ -90,7 +90,7 @@ cannot see each other.
 Three things cannot be recovered once lost, and everything else is
 regenerable, apart from a search's record, which the design doc's
 [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours)
-defines and keeps as recorded data, and the record of a held-out window's load, which its
+defines and keeps as recorded data, and the list of held-out windows and the record of each load of one, which its
 [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
 keeps the same way.
 
@@ -558,7 +558,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   significance figure on candidates with no edge, on a synthetic series whose days depend on each other
   where the strategy holds a position for more than one session, and on a planted edge, and the tests that
   a held-out load's record is stored before its data, that a failed write fails with an error, and that a
-  decision's read is neither recorded nor refused.
+  read by a decision, the gate, the loss stop, reconciliation or the kill switch is neither recorded as a
+  load nor refused.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
