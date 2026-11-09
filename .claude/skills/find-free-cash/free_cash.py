@@ -11,13 +11,18 @@ left over.
 
 Usage: python3 -I free_cash.py input.json
 
-Input, all money in dollars:
+Input, all money in dollars. The comments explain each field and are not
+part of the JSON, so leave them out of the file:
 
     {
       "cash": 140000.00,                       # broker's cash balance
-      "stocks": {"SGOV": 1000},                # shares held, any symbol
-      "options": {"QQQ   261030P00700000": -1},# OCC ticker -> contracts, short < 0
-      "open_order_reserve": 0,                 # cost of open buy orders, optional
+      "stocks": {"SGOV": 1000},                # shares held, {} for none
+      "options": {                             # OCC ticker -> contracts, short < 0
+        "QQQ   261120P00700000": -1,           # {} for none
+        "QQQ   261120C00745000": -10,
+        "QQQ   261120C00746000": 10
+      },
+      "open_order_reserve": 0,                 # cost of open buy orders
       "broker_buying_power": 140000.00,        # SnapTrade buying_power, optional
       "tos": {                                 # thinkorswim Account Info, optional
         "margin_equity": 240000.00,
@@ -27,6 +32,11 @@ Input, all money in dollars:
       },
       "buy": {"price": 100.70, "limit": 100.74}# optional share count
     }
+
+The first four fields are required, because a field left out would read as
+nothing held and overstate the free cash. The script stops with an error on
+an unknown or repeated field, a contract count that is not a whole number, a
+negative share count or order reserve, and an uncovered short call.
 """
 
 import json
@@ -110,6 +120,72 @@ def hungarian(cost):
     return {p[j] - 1: j - 1 for j in range(1, m + 1) if p[j]}
 
 
+REQUIRED = ("cash", "stocks", "options", "open_order_reserve")
+OPTIONAL = ("broker_buying_power", "tos", "buy")
+TOS_FIELDS = (
+    "margin_equity",
+    "maintenance_requirement",
+    "option_buying_power",
+    "long_marginable_value",
+)
+
+
+def no_repeats(pairs):
+    keys = [k for k, _ in pairs]
+    repeated = sorted({k for k in keys if keys.count(k) > 1})
+    if repeated:
+        sys.exit(f"repeated field, which would drop a position: {repeated}")
+    return dict(pairs)
+
+
+def money(value, name, minimum=None):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        sys.exit(f"{name} must be a number, got {value!r}")
+    if minimum is not None and value < minimum:
+        sys.exit(f"{name} must be at least {minimum}, got {value!r}")
+    return value
+
+
+def load(path):
+    """Read the input and refuse anything that would drop or shrink a hold."""
+    with open(path) as f:
+        data = json.load(f, object_pairs_hook=no_repeats)
+    if not isinstance(data, dict):
+        sys.exit("input must be a JSON object")
+    missing = [k for k in REQUIRED if k not in data]
+    if missing:
+        sys.exit(f"missing field {missing}; write {{}} or 0 where nothing is held")
+    unknown = sorted(set(data) - set(REQUIRED) - set(OPTIONAL))
+    if unknown:
+        sys.exit(f"unknown field {unknown}")
+    money(data["cash"], "cash")
+    money(data["open_order_reserve"], "open_order_reserve", 0)
+    if "broker_buying_power" in data:
+        money(data["broker_buying_power"], "broker_buying_power")
+    for name in ("stocks", "options"):
+        if not isinstance(data[name], dict):
+            sys.exit(f"{name} must be an object, {{}} for none")
+    for symbol, shares in data["stocks"].items():
+        money(shares, f"shares of {symbol}", 0)
+    for ticker, units in data["options"].items():
+        money(units, f"contracts of {ticker}")
+        if units == 0 or units != int(units):
+            sys.exit(f"contracts of {ticker} must be a nonzero whole number, got {units!r}")
+    tos = data.get("tos")
+    if tos is not None:
+        for name in TOS_FIELDS:
+            if name not in tos:
+                sys.exit(f"tos is missing {name}")
+            money(tos[name], f"tos {name}")
+    buy = data.get("buy")
+    if buy is not None:
+        for name, px in buy.items():
+            if name not in ("price", "limit"):
+                sys.exit(f"unknown buy field {name!r}")
+            money(px, f"buy {name}", 0.01)
+    return data
+
+
 def pair(options, stocks):
     shorts, covers = [], []
     for ticker, units in options.items():
@@ -133,9 +209,8 @@ def pair(options, stocks):
 
 
 def main(path):
-    with open(path) as f:
-        data = json.load(f)
-    pairs = pair(data.get("options", {}), data.get("stocks", {}))
+    data = load(path)
+    pairs = pair(data["options"], data["stocks"])
 
     put_reserve = spread_req = 0
     naked_calls = []
@@ -163,8 +238,10 @@ def main(path):
         print("WARNING: uncovered short calls, no cash figure is reliable:")
         for t in sorted(set(naked_calls)):
             print(f"  {naked_calls.count(t)} x {t}")
+        # A naked call has no cash limit on its loss, so no figure is printed.
+        sys.exit(1)
 
-    order_reserve = round(data.get("open_order_reserve", 0) * 100)
+    order_reserve = round(data["open_order_reserve"] * 100)
     held = put_reserve + spread_req + order_reserve
     print(f"\nHeld for short puts:   ${put_reserve / 100:,.2f}")
     print(f"Held for spreads:      ${spread_req / 100:,.2f}")
@@ -213,6 +290,16 @@ def main(path):
                 "  MISMATCH: the pairing above does not match how thinkorswim"
                 " holds cash. Find the difference before trusting either figure."
             )
+        # The check above sees put and order holds only. Spreads sit inside the
+        # maintenance figure, so a spread thinkorswim pairs more expensively
+        # than the script shows up here instead, as stock maintenance larger
+        # than the stocks it is charged on.
+        if loan_value < 0:
+            sys.exit(
+                "  STOP: stock maintenance exceeds long marginable value, so"
+                " thinkorswim holds more for spreads than the pairing above."
+                " Find the difference before giving a figure."
+            )
         # Option buying power is already net of open orders.
         candidates["thinkorswim"] = obp - loan_value
         print(
@@ -231,16 +318,17 @@ def main(path):
     print(f"\nFREE CASH (lower figure, from {source}): ${free / 100:,.2f}")
 
     buy = data.get("buy")
-    if buy:
-        for label in ("price", "limit"):
-            if label in buy:
-                px = round(buy[label] * 100)
-                shares = free // px
-                left = free - shares * px
-                print(
-                    f"  At ${px / 100:,.2f} ({label}): {shares:,} shares,"
-                    f" ${shares * px / 100:,.2f}, ${left / 100:,.2f} left"
-                )
+    if buy and free > 0:
+        # Count at the higher price, so an order at the limit never costs
+        # more than the free cash.
+        label = max(buy, key=buy.get)
+        px = round(buy[label] * 100)
+        shares = free // px
+        left = free - shares * px
+        print(
+            f"  At ${px / 100:,.2f} ({label}): {shares:,} shares,"
+            f" ${shares * px / 100:,.2f}, ${left / 100:,.2f} left"
+        )
 
 
 if __name__ == "__main__":
