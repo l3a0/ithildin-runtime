@@ -3008,147 +3008,127 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 ### File formats and keys
 
-Two rules lean on exact bytes. A deterministic stage that is run again must
-write the same bytes, because S3 refuses the second write and the worker
-then compares SHA-256s, alarming on a difference. And the journal chains each
-entry to the hash of the one before it. Both fail if the same values can be
-written two ways, such as a different key order, a float printed with one
-more digit, or a time in another zone. This subsection is this doc's
-proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), where `core` defines the file form of every type.
+Two rules lean on exact bytes.
 
-**One codec in `core` writes and reads every blob.** `core.encode` turns an
-object into bytes and `core.decode` turns bytes of a named kind back into an
-object. No worker, tool or test calls a JSON library itself. Two workers
-that each followed the standard library would differ: Python's `json`
-sorts keys by code point where RFC 8785 sorts by UTF-16 units, and
-`Decimal(0.1)` carries fifty-five digits of the float behind it. Each field's
-type in `core` declares how the codec writes it, and `core`'s storage
-contract holds one key builder for each row of the key table below, so no
-module puts a key together from strings.
+1. A deterministic stage that is run again must write the same bytes, because S3 refuses the second write and the worker then compares SHA-256s, alarming on a difference.
+2. The journal chains each entry to the hash of the one before it.
 
-**The codec writes its bytes with a published RFC 8785 library rather than
-an encoder of its own.** The library is Trail of Bits'
-[`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python
-implementation with no dependencies of its own, pinned at an exact version,
-0.1.4 on 2026-11-08. Run on Python 3.12, it sorts keys by UTF-16 units, and it
-refuses a `Decimal`, a NaN and an integer of 2⁵³ or more. It does print a
-float, so `core.encode` turns each decimal and each time into its string, and
-refuses a float before the library sees the value. The library only encodes,
-so `core.decode` parses with Python's `json` and checks the bytes by encoding
-what it parsed again. The price is a third-party library on the path that
-writes the journal, where a change in its output would break the hash chain.
-A test encodes committed fixture values and compares the bytes, so an upgrade
-that changes them fails CI before it ships.
+Both fail if the same values can be written two ways, such as a different key order, a float printed with one more digit, or a time in another zone. This subsection is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), where `core` defines the file form of every type.
 
-**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON
-Canonicalization Scheme, for encoding, whitespace and key order, and adds
-rules of its own for numbers, times and empty fields.
+#### Who writes and reads a blob
+
+**One codec in `core` writes and reads every blob.** `core.encode` turns an object into bytes and `core.decode` turns bytes of a named kind back into an object. No worker, tool or test calls a JSON library itself. Two workers that each followed the standard library would differ: Python's `json` sorts keys by code point where RFC 8785 sorts by UTF-16 units, and `Decimal(0.1)` carries fifty-five digits of the float behind it. Each field's type in `core` declares how the codec writes it, and `core`'s storage contract holds one key builder for each row of the key table below, so no module puts a key together from strings.
+
+**The codec writes its bytes with a published RFC 8785 library rather than an encoder of its own.** The library is Trail of Bits' [`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python implementation with no dependencies of its own, pinned at an exact version, 0.1.4 on 2026-11-08. Run on Python 3.12, it sorts keys by UTF-16 units, and it refuses a `Decimal`, a NaN and an integer of 2⁵³ or more. It does print a float, so `core.encode` turns each decimal and each time into its string, and refuses a float before the library sees the value. The library only encodes, so `core.decode` parses with Python's `json` and checks the bytes by encoding what it parsed again.
+
+The figure draws both paths in order.
+
+```mermaid
+flowchart TB
+    subgraph writing["Writing a blob"]
+        direction TB
+        w1["A worker hands core.encode an object"]
+        w2["core.encode turns each decimal and each time into its string, and refuses a float"]
+        w3["The rfc8785 library writes the bytes"]
+        w1 --> w2 --> w3
+    end
+    subgraph reading["Reading a blob"]
+        direction TB
+        r1["core.decode parses the bytes with Python's json"]
+        r2["core.decode encodes what it parsed again and compares the bytes"]
+        r1 --> r2
+    end
+    writing ~~~ reading
+```
+
+The price is a third-party library on the path that writes the journal, where a change in its output would break the hash chain. A test encodes committed fixture values and compares the bytes, so an upgrade that changes them fails CI before it ships.
+
+#### What a blob's bytes look like
+
+**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
 
 1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
-3. No JSON floats. RFC 8785 prints a number in its shortest double form,
-   which cannot hold most decimal prices exactly, and it recommends a
-   string for a number that needs more precision than a double holds. So
-   every decimal quantity, such as a price, a share count, a dollar amount,
-   a hedge ratio or a z-score, is a JSON string in plain decimal notation,
-   such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a
-   bar's volume, are JSON integers. Share counts are decimals, because the
-   GLD leg is fractional.
+3. No JSON floats. RFC 8785 prints a number in its shortest double form, which cannot hold most decimal prices exactly, and it recommends a string for a number that needs more precision than a double holds. So every decimal quantity, such as a price, a share count, a dollar amount, a hedge ratio or a z-score, is a JSON string in plain decimal notation, such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a bar's volume, are JSON integers. Share counts are decimals, because the GLD leg is fractional.
 4. Every time the platform writes is UTC, in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
-5. A field with no value is `null`, never left out, so a reader can tell an
-   empty field from a format that lacks it. A list keeps its order when the
-   order means something, such as a plan's decisions, and is sorted by its
-   key when it does not, such as a header's inputs, which is this doc's
-   rule rather than RFC 8785's.
+5. A field with no value is `null`, never left out, so a reader can tell an empty field from a format that lacks it. A list keeps its order when the order means something, such as a plan's decisions, and is sorted by its key when it does not, such as a header's inputs, which is this doc's rule rather than RFC 8785's.
 
-**No other format passes the same-bytes test.** The test is whether the same
-values give the same bytes across releases and languages, which both rules
-that lean on exact bytes need. A second test is whether a person can read a
-blob straight from S3.
+#### Why not another format
+
+**No other format passes the same-bytes test.** The test is whether the same values give the same bytes across releases and languages, which both rules that lean on exact bytes need. A second test is whether a person can read a blob straight from S3.
 
 **Table:** The formats weighed for the blobs, against the two tests
 
 | Format | Same bytes for the same values | Readable from S3 |
 | --- | --- | --- |
-| Parquet | No. Its writer records its own version in each file, so the same values change bytes across releases | No |
+| Parquet | No. Its writer records its own version in each file, so the same values change bytes across releases | No, it is binary |
 | Protocol Buffers | No. [Its documentation](https://protobuf.dev/programming-guides/serialization-not-canonical/) says its serialization "is not (and cannot be) canonical" | No, it is binary |
 | CBOR with [RFC 8949's deterministic encoding](https://www.rfc-editor.org/rfc/rfc8949#section-4.2) | Only with rules of the platform's own. RFC 8949 leaves the deterministic form of a decimal fraction to the application, and [the IETF's common profile](https://datatracker.ietf.org/doc/draft-ietf-cbor-cde/) expired as a draft | No, it is binary |
 | Canonical JSON after RFC 8785, with the five rules above | Yes | Yes |
 
-**A value received from outside is kept exactly as it arrived.** A fill's
-quantity and price, a position, an open order's quantity, and marketlake's
-bar and quote values are stored as the decimal string the broker or
-marketlake sent, never passed through a float and never rounded, and so is a time received from outside, with its UTC instant written beside it. The journal and the snapshot are the only
-records of what the broker and the market said, so a rounded copy would
-lose a value that cannot be recaptured: at four places, a leftover
-position of `0.00004` would record as zero, and the book replayed from
-rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded. marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
+#### How a value received from outside is kept
+
+**A value received from outside is kept exactly as it arrived.** A fill's quantity and price, a position, an open order's quantity, and marketlake's bar and quote values are stored as the decimal string the broker or marketlake sent, never passed through a float and never rounded, and so is a time received from outside, with its UTC instant written beside it.
+
+The journal and the snapshot are the only records of what the broker and the market said, so a rounded copy would lose a value that cannot be recaptured: at four places, a leftover position of `0.00004` would record as zero, and the book replayed from rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded.
+
+marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
 
 This doc proposes, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), that a received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. [#22](https://github.com/l3a0/ithildin-runtime/issues/22) holds that form, and a body that cannot be stored halts.
 
-**Two rules are stated on the exchange's clock, and resolved to UTC once.**
-They follow New York's clock because the market does.
+#### How a time on the exchange's clock becomes UTC
 
-1. The host's timer, which starts the run before the session and stops it
-   after the close.
+**Two rules are stated on the exchange's clock, and resolved to UTC once.** They follow New York's clock because the market does.
+
+1. The host's timer, which starts the run before the session and stops it after the close.
 2. The heartbeat check's cron expression.
 
-A rule written in UTC would move by an hour against the close each time the
-clocks change. So each is written as the exchange's local time, and one
-calendar function in `core` turns it into a UTC instant for each session.
-A time stated as minutes before the close, such as a strategy's close−20
-decision or the market-on-close cutoff, close−12 in the hard caps this doc
-recommends, under Alpaca's close−10, resolves through the same function from
-that session's close.
-The plan, every key, every timestamp the platform writes and every
-comparison hold only that instant. The promotion job's schedule is a GitHub
-Actions cron, which runs in UTC, so it runs at 22:00 UTC, after the close in
-both summer and winter.
+A rule written in UTC would move by an hour against the close each time the clocks change. So each is written as the exchange's local time, and one calendar function in `core` turns it into a UTC instant for each session.
 
-**A value the platform computes is rounded once, in one place.** The types
-in `core` hold `Decimal`. A statistic, such as the alpha model's hedge
-ratio and z-score or the cost model's estimate, may be computed in floats
-and converted at the stage's output by `core.to_decimal`, which takes the
-float's shortest form and rounds it half to even to the field's declared
-places. The risk gate, the order manager, `Journal.replay` and
-reconciliation compute in `Decimal` throughout, and the quantity journaled
-for an order is the exact string the broker adapter sends and the gate
-checks. A `dict` field's values take the declared places of their value
-type, such as a share count in `TargetPortfolio.shares`. A field's declared
-places never shrink in a later release.
+A time stated as minutes before the close, such as a strategy's close−20 decision or the market-on-close cutoff, close−12 in the hard caps this doc recommends, under Alpaca's close−10, resolves through the same function from that session's close. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
 
-The price is that a value computed in floats that falls exactly on a
-rounding boundary can round differently under another release's numeric
-library. A run never mixes releases, because a worker on another release
-halts with "release changed", so the difference can appear only between
-runs, where the header's `release` explains it.
+The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it runs at 22:00 UTC, after the close in both summer and winter.
 
-**Every output file has a header and a body.** Each output file is one
-object with two members, `header`, the `BlobHeader`, and `body`. The
-header's `format` is a number per kind, raised when that kind's fields
-change, under the rule of [A rollback is a pin to an earlier digest](#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) that each
-release writes only formats the release before it can read. Each hash is lowercase hex
-SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3
-checks it before it stores the blob.
+#### How a computed value is rounded
 
-**A journal entry hashes its whole blob.** Each entry is one blob holding
-`seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256
-of those bytes exactly as stored, which the next entry carries as its
-`prev_hash`, and the first entry of an account carries sixty-four zeros. A
-hash of the body alone would leave an entry's number and its link outside
-what the next entry vouches for. A blob cannot hold its own hash, so
-`JournalEntry.hash()` computes it from the bytes S3 returns, never from a
-re-encoding of the parsed fields. A reader also checks that those bytes are
-the canonical encoding of what it parsed, that each key's number equals the
-`seq` inside it, and that it knows the entry's `format`, and halts
-otherwise. Every journal format ever written stays readable by every later
-release, because the book can be replayed from the first entry, whatever book snapshot a rebuild starts from, and each
-format has a committed fixture entry and a test that replays it.
+**A value the platform computes is rounded once, in one place.** The types in `core` hold `Decimal`.
 
-The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `unmatched_order`, `unmatched_fill`, `cancel`, `sort`, `sort_done`,
-`override`, `clear` or `switch_pull`, and that kind's fields. A writer builds
-an entry once and resends the same bytes on a retry, so a live process
-recognises its own earlier attempt by hash. A process that restarted builds new bytes, so before it appends it checks the field that names the step against the journal instead.
+- A statistic, such as the alpha model's hedge ratio and z-score or the cost model's estimate, may be computed in floats and converted at the stage's output by `core.to_decimal`, which takes the float's shortest form and rounds it half to even to the field's declared places.
+- The risk gate, the order manager, `Journal.replay` and reconciliation compute in `Decimal` throughout, and the quantity journaled for an order is the exact string the broker adapter sends and the gate checks.
+
+A `dict` field's values take the declared places of their value type, such as a share count in `TargetPortfolio.shares`. A field's declared places never shrink in a later release.
+
+The price is that a value computed in floats that falls exactly on a rounding boundary can round differently under another release's numeric library. A run never mixes releases, because a worker on another release halts with "release changed", so the difference can appear only between runs, where the header's `release` explains it.
+
+#### What an output file holds
+
+**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The header's `format` is a number per kind, raised when that kind's fields change, under the rule of [A rollback is a pin to an earlier digest](#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
+
+#### How a journal entry is hashed and checked
+
+**A journal entry hashes its whole blob.** Each entry is one blob holding `seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those bytes exactly as stored, which the next entry carries as its `prev_hash`, and the first entry of an account carries sixty-four zeros. A hash of the body alone would leave an entry's number and its link outside what the next entry vouches for.
+
+```mermaid
+flowchart LR
+    e1["Entry 1 carries sixty-four zeros as its prev_hash"]
+    e2["Entry 2 carries the SHA-256 of entry 1's stored bytes as its prev_hash"]
+    e3["Entry 3 carries the SHA-256 of entry 2's stored bytes as its prev_hash"]
+    e1 --> e2 --> e3
+```
+
+A blob cannot hold its own hash, so `JournalEntry.hash()` computes it from the bytes S3 returns, never from a re-encoding of the parsed fields. A reader also checks three things, and halts otherwise.
+
+1. That those bytes are the canonical encoding of what it parsed.
+2. That each key's number equals the `seq` inside it.
+3. That it knows the entry's `format`.
+
+Every journal format ever written stays readable by every later release, because the book can be replayed from the first entry, whatever book snapshot a rebuild starts from, and each format has a committed fixture entry and a test that replays it.
+
+#### What a journal entry's body holds, and how a retry is recognised
+
+The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `unmatched_order`, `unmatched_fill`, `cancel`, `sort`, `sort_done`, `override`, `clear` or `switch_pull`, and that kind's fields.
+
+A writer builds an entry once and resends the same bytes on a retry, so a live process recognises its own earlier attempt by hash. A process that restarted builds new bytes, so before it appends it checks the field that names the step against the journal instead.
 
 **Table:** The field a restarted writer checks against the journal before it appends, by kind of entry
 
@@ -3166,15 +3146,11 @@ recognises its own earlier attempt by hash. A process that restarted builds new 
 
 A switch already pulled makes `switch_pull` say so rather than journal it twice.
 
-**Keys.** Every key below sits in its environment's bucket, as
-`### Four environments` says. Deployments and accounts appear by the alias
-the release's table gives them, never by a broker's account number. A
-create-only write that S3 refuses, whose stored SHA-256 differs from the
-writer's, alarms, as [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill) lists. For a capturing
-stage, data's snapshot and execution's recover stage, the differing capture
-is also stored at the next attempt number, by `core`'s key builder for that
-row, and named in the decision result, so a second read of a source that may
-not come again is kept rather than discarded.
+#### Where each blob is stored
+
+Every key below sits in its environment's bucket, as [Four environments](#four-environments) says. Deployments and accounts appear by the alias the release's table gives them, never by a broker's account number.
+
+A create-only write that S3 refuses, whose stored SHA-256 differs from the writer's, alarms, as [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill) lists. For a capturing stage, data's snapshot and execution's recover stage, the differing capture is also stored at the next attempt number, by `core`'s key builder for that row, and named in the decision result, so a second read of a source that may not come again is kept rather than discarded.
 
 **Table:** The key each store writes under
 
@@ -3210,6 +3186,8 @@ not come again is kept rather than discarded.
 | A heartbeat | `heartbeats/<deployment>/<writer>/<UTC time>.json` |
 | A restart record | `restarts/<deployment>/<run>/<worker>/<boot>/<count>.json`, with the count padded to six digits |
 | The release pin, deploy records, block records, promotion records and pin changes | `release/pin.json`, `release/deploys/<digest>.json`, `release/blocked/<digest>.json`, `release/promotions/<digest>.json`, `release/changes/<UTC time>.json` |
+
+#### What each part of a key stands for
 
 **Table:** What each part of a key stands for
 
