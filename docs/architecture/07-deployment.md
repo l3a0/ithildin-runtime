@@ -562,7 +562,7 @@ Execution's check of the account's lease tag before every broker call stops a wo
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that makes the new launch template version starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from four rules that [design.md's decisions](../design.md#decisions) settle.
 
 1. The apply checks for an open session before it starts the refresh.
-2. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself.
+2. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
 3. An apply that refuses deletes its own marker and waits for the session to end.
 4. The cleanup of a stale marker deletes it only once no refresh runs and every VM runs the version the group names.
 
@@ -598,13 +598,16 @@ A session that finds the marker refuses to start, with the reason "session refus
 
 ##### Why the group's template changes only when its refresh succeeds
 
-The apply creates a numbered version of the launch template and passes it to the refresh as its desired configuration. It never changes the group's launch template itself. AWS's pages, read on 2026-11-09, give three reasons this works.
+The apply creates a numbered version of the launch template and passes it to the refresh as its desired configuration. It never changes the group's launch template itself, and the group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store. AWS's pages, read on 2026-11-09, give four reasons this works.
 
 1. The group's settings change to the desired configuration only "once the instance refresh succeeds" ([StartInstanceRefresh](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html)).
 2. Automatic rollback "is only available if you specify a desired configuration", and restores "the configuration that you last saved on the Auto Scaling group before starting the instance refresh" ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)).
-3. A second refresh is refused with `InstanceRefreshInProgress` while one runs ([StartInstanceRefresh](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html)).
+3. A rollback works only to "a specific numbered version", and is not available when the group uses `$Latest` or `$Default`, or a launch template that uses an AMI alias from Parameter Store ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)). A group that named `$Latest` would also take the new version the moment it was created.
+4. A second refresh is refused with `InstanceRefreshInProgress` while one runs ([StartInstanceRefresh](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html)).
 
-So until a refresh succeeds, the group names the version its VMs run, and a VM lost outside a refresh is replaced from that version, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says. A job that dies before its refresh starts leaves the group as it was, and a refresh that has started runs to its end in AWS without the job.
+So until a refresh succeeds, the group names the version its VMs ran before the refresh started, and a VM lost outside a refresh is replaced from that version, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says. A job that dies before its refresh starts leaves the group as it was, and a refresh that has started runs to its end in AWS without the job.
+
+After a rollback, the template's newest version holds the new image while the group still names the old one, so the next apply sees no change and starts no refresh. So the scheduled drift check compares the version the group names, and the version each VM runs, with the version the code makes, and reports any difference.
 
 ##### What a refused apply does
 
@@ -673,7 +676,7 @@ An app release never rolls out this way, because two releases in one run write d
 
 #### Item 7: how Auto Scaling's events reach the owner
 
-**Auto Scaling's own events reach the alert channel.** An EventBridge rule in each environment's account matches Auto Scaling's instance refresh failed, instance refresh rollback and instance launch events, and sends each to the environment's push topic, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These alarms start in AWS rather than on a VM, so they reach the owner while no VM is up.
+**Auto Scaling's own events reach the alert channel.** An EventBridge rule in each environment's account matches Auto Scaling's instance refresh failed, instance refresh cancelled, rollback started, rollback succeeded and rollback failed events, and its instance launch events, and sends each to the environment's push topic, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). These alarms start in AWS rather than on a VM, so they reach the owner while no VM is up.
 
 #### How big each VM is
 
