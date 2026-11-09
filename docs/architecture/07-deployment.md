@@ -561,7 +561,7 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out when each old VM is terminated, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
+Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out a refresh refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind. The subsections below give each of them except what happens to a refused refresh's marker, which this item does not say.
 
 ```mermaid
 sequenceDiagram
@@ -574,10 +574,11 @@ sequenceDiagram
     Job->>Group: starts the instance refresh
     loop One VM at a time
         Group->>VM: launches it and holds it out of service at the launch lifecycle hook
-        VM->>VM: verifies the pin's provenance, pulls the image and runs the read-only drill checks
-        VM->>Group: completes the hook once every check passes
+        VM->>VM: verifies the pin's provenance and pulls the image
+        VM->>VM: waits for the read-only drill checks to pass
+        VM->>Group: completes the hook
     end
-    Job->>Group: waits for the refresh's end event
+    Job->>Job: waits for the refresh's end event
     Job->>Marker: deletes it
 ```
 
@@ -585,7 +586,7 @@ sequenceDiagram
 
 A refresh first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
-A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin, which runs past the host's timer, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
+A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
 A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
 
@@ -598,15 +599,15 @@ A session that finds the marker refuses to start, with the reason "session refus
 | The cluster of three | Keeps at least 66 percent of the group healthy | The refresh replaces one of the three VMs at a time, so two stay up throughout |
 | Slice 1's group of one | Sets a maximum healthy percentage of 200 | The group starts the new VM beside the old one, and terminates the old one only once the new one completes its hook |
 
-In slice 1's group of one the refresh still runs only outside sessions.
+Though its new VM starts beside the old one, slice 1's group of one still refreshes only outside sessions.
 
 ##### How a new VM proves itself before it serves
 
 A launch lifecycle hook holds each new VM out of service. The VM completes the hook only once three things have happened.
 
-1. Its provisioning step has verified the pin's provenance.
+1. Its provisioning step has verified the pin's provenance. The pin names the release to run, as [The pin names the release](#rule-1-the-pin-names-the-release) says.
 2. That step has pulled the image.
-3. The read-only drill checks pass.
+3. The read-only drill checks have passed.
 
 The VM's role may complete the hook on its own group and nothing else in Auto Scaling.
 
@@ -628,7 +629,7 @@ The job that started the refresh waits for the refresh's end event and then dele
 | Environment | Who clears it |
 | --- | --- |
 | Shadow and paper | The next merge's apply job |
-| Live | A run behind live's reviewer, the approval GitHub requires before a run in live's environment goes ahead. That run records who started it |
+| Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. That run records who started it |
 
 ##### What rolls back a VM image that fails after its refresh
 
