@@ -593,7 +593,7 @@ An apply whose plan rolls out a new launch template version starts the refresh o
 1. No session is open.
 2. The next session's scheduled start is more than a written bound away.
 
-A job that cannot read whether a session is open, or cannot work out the next start, counts as outside the window and alarms. The next start is the host's timer's next firing, read from the timer's committed setting through `core`'s calendar function, the one that turns the timer's New York time into UTC under [Which clock a schedule follows, and how it becomes UTC](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc), so the job and the timer never disagree across a change of daylight saving time or a holiday.
+The same window holds for a merge's apply that touches execution, its roles and grants, its queue, the host's restart settings and switch, or the stores of the journal, the halt state or the lease, as [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says. A job that cannot read whether a session is open, or cannot work out the next start, counts as outside the window and alarms. The next start is the host's timer's next firing, read from the timer's committed setting through `core`'s calendar function, the one that turns the timer's New York time into UTC under [Which clock a schedule follows, and how it becomes UTC](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc), so the job and the timer never disagree across a change of daylight saving time or a holiday.
 
 The host's timer starts a session's supervisor at a time known in advance, as the scheduler in this page's container diagram shows, and nothing else starts a session. So the bound keeps a refresh from starting while a session is about to. A way to start a session added later still meets the check of AWS's refresh status below, which every session start makes. The bound covers the longest refresh, including the hour AWS's automatic rollback keeps trying replacements before it fails ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)), and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets its value.
 
@@ -628,7 +628,7 @@ After a rollback, the template's newest version holds the new image while the gr
 
 An apply that finds itself outside the window changes nothing, in its whole plan. It alarms that the image did not roll out, naming the open session or the next start it found.
 
-The apply then waits for the next window and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the new launch template version as a difference from the code.
+The apply then waits for the next window and runs again from its first step, as a merge's apply that touches execution does under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the new launch template version as a difference from the code.
 
 ##### How many VMs a refresh replaces at a time
 
