@@ -55,7 +55,7 @@ the design doc's
 The rules from Marcos López de Prado's *Advances in Financial Machine Learning* (Wiley, 2018) for what a
 backtest counts, what a search keeps, how a spread's profit is computed, how the code behind a fitted value
 is tested and how a model is kept from scoring on what it has already seen. They live in the design doc's
-[A result counts its bets](design.md#a-result-counts-its-bets-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-and-a-fitted-value-is-tested-where-its-answer-is-known). The
+[A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -279,12 +279,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-  Has each setting a search evaluates give its return after cost, under the cost model and version its
-  record names, in every period on the calendar its record names, with a period it could not compute missing with its reason and never zero, counts a position from
-  flat to flat by the one calculation every reader uses and never a fill, an order, a leg or an addition on
-  its own, and computes a spread's profit and loss leg by leg so a change of its weights earns nothing,
+  Has each setting a search evaluates give its return before and after cost in every session, naming the
+  cost model's version, with a session whose decision could not run missing with its reason and never
+  zero, counts a position from flat to flat by the one calculation every reader uses and never a fill, an
+  order, a leg, an addition or a partial reduction on its own, and computes a spread's profit and loss leg
+  by leg so a change of its weights earns nothing,
   under rules 1 to 3 of the design doc's
-  [A result counts its bets](design.md#a-result-counts-its-bets-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-and-a-fitted-value-is-tested-where-its-answer-is-known).
+  [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on).
   Once the platform trains a model, records each label's start and the time its outcome was known, scores
   and tunes only on splits that remove the training labels whose spans overlap a test label's and the
   training labels inside an embargo after each test block, treats every cross-validated score as
@@ -392,10 +393,6 @@ time is the scarce resource, so work reaches the owner already reviewed.
   halt holds it and no order in doubt blocks its instrument, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
   limit order is sent, has its simulated fill name what it assumes, under rules 1, 5, 6 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Has the simulated broker treat a change of a spread's weights as an order on each leg it changes, which
-  passes the one pre-trade risk gate and pays its cost like any other order, under rule 3 of the design
-  doc's [A result counts its bets](design.md#a-result-counts-its-bets-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-and-a-fitted-value-is-tested-where-its-answer-is-known), with
-  [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holding the mechanism.
 - **Vetoes:** an order path without a journal entry, a send before durable
   storage has acknowledged its journal entry, a fill the reconciliation
   cannot match, any resend of an order in doubt, a resend of a cancel
@@ -557,10 +554,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the hand-built cases of the count of positions, the tests that a change of hedge ratio on flat prices
   earns nothing before costs and loses exactly the rebalance's costs after them and that moving prices are
   scored from the shares held in each period, the seeded test of each value a strategy fits on series made
-  with known parameters, whose tolerance comes from the spread across its seeds, with its exact
-  hand-built case, and, once a model is trained, the test that no training label's span meets a test
-  label's, under rules 1 to 5 of the design doc's
-  [A result counts its bets](design.md#a-result-counts-its-bets-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-and-a-fitted-value-is-tested-where-its-answer-is-known), with each test's cases on
+  with known parameters, whose pass mark is recorded before it first runs and which is shown to fail on
+  each kind of error it claims to catch, with its exact hand-built case, and, once a model is trained, the
+  test that no training label's span overlaps a test label's, under rules 1 to 5 of the design doc's
+  [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on), with each test's cases on
   [#65](https://github.com/l3a0/ithildin-runtime/issues/65).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
@@ -1043,8 +1040,7 @@ an estimator against a known answer. Its chapters on sizing a bet from a model's
 hierarchical risk parity and on high-performance and quantum computing are left out, because slice 1
 trades one spread with no model and no allocation between strategies. Its chapter on the probability a
 strategy falls short of the hit rate its target needs is left out as a rule, because the rules on win and
-loss sizes and the sample length set before the first registration already cover what it measures, and it
-can serve as an exploratory input to that decision. Its figures are worked examples, simulations or the
+loss sizes already report its inputs. Its figures are worked examples, simulations or the
 author's experience, so none is adopted as a threshold. What it adds here is every setting's returns kept
 period by period for reading a picked result, one count of positions, a spread's profit and loss computed
 leg by leg, a known answer behind each fitted value, and labels kept apart from what a model is scored on.
