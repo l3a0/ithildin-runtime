@@ -164,7 +164,7 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 
 #### Who pulls and clears the kill switch
 
-The runtime's credential can create the switch, which pulls it, and can never delete it. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls it and clears only the pull its own run made, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag. Pulling the switch needs no deploy.
+The runtime's credential can create the switch, which pulls it, and can never delete it. In a VM image rollback the owner overrides for an emergency, the rollback's credential pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls it and clears only the pull its own run made, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag. Pulling the switch needs no deploy.
 
 #### Who may create and delete a fired loss stop or a strategy's off switch
 
@@ -191,7 +191,8 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | `leases/` | Read |
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
 | The apply and VM change credentials, the approved drill role and live's drill job's role | A run's plan and stop under `runs/`, and `leases/accounts/` | Read, for the window's check |
-| The VM change credential on paper and live, and the apply credential on shadow, in a rollback the owner overrides for an emergency | Each account's switch in its environment, `accounts/<account>/switch.json` | Create, which pulls it, never delete |
+| The VM change credential on paper and live, and the apply credential on shadow, in a rollback the owner overrides for an emergency | Each account's switch in its environment, `accounts/<account>/switch.json` | Write, which pulls it, as a new version each time, never delete |
+| The same credentials, in that rollback | `journal/` | Read, and create the pull's own entry, only with `If-None-Match` at the next number |
 | The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
@@ -667,8 +668,8 @@ A VM image that passes its refresh and fails later rolls back by a revert commit
 
 In an emergency the owner may override the window for that rollback, so it runs while a session is open. The override is the owner's alone and is recorded with its reason, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it is given, as for the incident override of an apply that touches execution. An overridden rollback runs in three steps.
 
-1. It pulls the kill switch of every account in its environment.
-2. It waits until the pull's own check finds execution's entry saying the cancels are done. Where that check does not find it by its deadline, the pull's alarm fires and the rollback starts no refresh.
+1. It pulls the kill switch of every account the release's environment table names for its environment, and journals each pull. Each pull writes a new version of the switch blob even where the switch is already set, so it starts a fresh cancel pass.
+2. It waits until, for every one of those accounts, execution's entry saying the cancels are done names the switch version that pull wrote. Where one is missing by the pull's deadline, the pull's alarm fires and the rollback starts no refresh.
 3. It starts the refresh, whose start alarms.
 
 Each new VM's execution comes up halted and the session waits for the owner, as a VM that starts mid-session does under [Item 1](#item-1-how-a-lost-vm-is-replaced). The switch stays pulled until the principals who may clear it clear it, the owner alone on live. The price is that an open session runs on two VM images while the refresh replaces them, which the pulled switch makes safe, since no new order leaves while it is set.

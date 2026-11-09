@@ -160,7 +160,7 @@ Writing commands take more friction the more they can resume trading, so they ar
 
 | # | Group | Command | What it does |
 | --- | --- | --- | --- |
-| 1 | Stop trading | `ithildin switch pull` | Creates the kill switch blob |
+| 1 | Stop trading | `ithildin switch pull` | Writes a new version of the kill switch blob |
 | 2 | Stop trading | `ithildin strategy off` | Creates a strategy's off switch |
 | 3 | Correct the record | `ithildin override` | Records a correction the book cannot work out alone |
 | 4 | Resume trading | `ithildin halt clear` | Records that a person has looked at a halt |
@@ -179,10 +179,10 @@ These two take a default reason and ask for no confirmation, because stopping sh
 
 This is one command with a default reason, because stopping should never be slow.
 
-1. The tool creates the kill switch blob, journals the pull and raises the alarm.
+1. The tool writes the kill switch blob, as a new version even where the switch is already set, journals the pull and raises the alarm.
 2. The blob's own event wakes execution.
 3. Execution reads the switch itself and cancels every resting order in the account, stamped or not, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says.
-4. The tool reads the journal once, at a deadline set before the [cancel cutoff](architecture/06-runtime.md#the-cancel-cutoff), for execution's entry saying the cancels are done.
+4. The tool reads the journal once, at a deadline set before the [cancel cutoff](architecture/06-runtime.md#the-cancel-cutoff), for execution's entry saying the cancels are done, which names the switch version the pull wrote, so an entry left by an earlier pull never counts.
 5. If that entry is not there, the tool tells the person to cancel at the broker's own console.
 
 A pull past that deadline names the console at once.

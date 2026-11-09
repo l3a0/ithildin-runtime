@@ -843,7 +843,7 @@ sequenceDiagram
     participant A as Alert channel
 
     P->>K: pulls the kill switch
-    K->>F: creates the kill switch blob
+    K->>F: writes a new version of the kill switch blob
     K->>J: journals the halt, reason "kill switch"
     K->>A: raises the alarm
     par
@@ -859,7 +859,7 @@ sequenceDiagram
     X->>J: journals each cancel
     X->>B: cancels
     X->>J: journals any failed cancel
-    X->>J: journals that the switch's cancels are done
+    X->>J: journals that the cancels are done, naming the switch version it read
     X->>F: releases the account's lease
     M->>A: raises the alarm if any cancel failed
     M->>J: are the cancels done within the deadline of the pull?
