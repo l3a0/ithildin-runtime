@@ -599,11 +599,21 @@ sequenceDiagram
 
 ##### When a refresh may run
 
-An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. The marker is the one key `markers/refresh.json` in the environment's bucket, so of two applies that start together only one creates it, as the bucket table in [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says. What an apply whose create fails then does is not yet stated. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. The marker is the one key `markers/refresh.json` in the environment's bucket, so of two applies that start together only one creates it, as the bucket table in [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says, and [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting) says what the other does. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
 A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
+
+##### How two applies are kept from meeting
+
+Every job that creates or deletes the refresh marker runs in one GitHub Actions concurrency group for its environment. That covers the apply or VM change job that rolls out a new launch template version, and the cleanup. GitHub's page on concurrency, read on 2026-11-09, gives the group three properties ([Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs)).
+
+1. One job of the group runs at a time, and "at most one job or workflow run can be `pending`".
+2. A newly queued job cancels any older one still pending.
+3. A group is shared across the repository's workflows.
+
+A newer job replacing an older pending one loses nothing, because every apply runs `main`'s head, and an apply whose commit is not `main`'s head refuses, which also covers GitHub's warning that "ordering is not guaranteed". So a marker that a newly started job finds belongs to a job that has ended. That job runs the cleanup's checks on it, as [What the cleanup checks before it deletes a stale marker](#what-the-cleanup-checks-before-it-deletes-a-stale-marker) says, before it creates its own. A create that still fails changes nothing and deletes nothing, and the job waits and runs again from its first step, as a refused apply does.
 
 ##### Why the group's template changes only when its refresh succeeds
 
@@ -673,7 +683,7 @@ While a stale marker stays, no session starts, and a session that tries alarms w
 
 1. The cleanup deletes a stale marker only once no refresh runs on the group and every VM runs the launch template version the group names. Where a VM differs, it keeps the marker, starts no refresh, and pages the owner, naming both versions.
 2. A marker that outlives its job, and a cleanup that fails, page the owner, naming the marker.
-3. The cleanup never deletes the marker of a job that is still running.
+3. The cleanup never deletes the marker of a job that is still running. The concurrency group holds this, because the cleanup runs in the same group as every job that writes the marker, as [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting) says.
 
 ##### What rolls back a VM image that fails after its refresh
 
