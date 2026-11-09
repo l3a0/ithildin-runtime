@@ -555,8 +555,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [#63](https://github.com/l3a0/ithildin-runtime/issues/63) proposes and each build settles, among them the
   exact drift case with a long and a short exposure, the planted skilled signal, the resampler's centring,
   length and shared draws across instruments and candidates, and the tests of the code behind every
-  significance figure on candidates with no edge, on a synthetic series whose days depend on each other,
-  and on a planted edge.
+  significance figure on candidates with no edge, on a synthetic series whose days depend on each other
+  where the strategy holds positions across days, and on a planted edge, and the tests of a held-out load
+  that [#63](https://github.com/l3a0/ithildin-runtime/issues/63) lists under item 5.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
