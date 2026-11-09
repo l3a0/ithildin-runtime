@@ -2994,17 +2994,17 @@ The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's 
 
 #### Split records and saved broker statements
 
-Split records and saved broker statements are recorded facts, so nothing overwrites or silently drops one, and every read verifies its checksum. They live in the environment's bucket, since the VM keeps no state, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds their keys and how the replica reaches them. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds where they sit.
+Split records and saved broker statements are recorded facts, written through `BlobStore` to the environment's bucket, since the VM keeps no state. So nothing overwrites or silently drops one, and every read verifies its checksum. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds where they sit.
 
 ### How recorded blobs are checked
 
 S3 checks every blob at rest on its own schedule and repairs corruption from redundant copies, so no job of the platform's reads blobs back. Three checks remain, as [Faults are expected](design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says.
 
 1. Every write through `BlobStore` sends its SHA-256, and S3 refuses an upload whose bytes do not match it.
-2. Before live, a recorded blob that fails to reach the second account's bucket raises an alarm that reaches the owner.
-3. A restore drill restores to a scratch place and checks counts and checksums, on a schedule whose maximum interval sits beside the code. Monitoring pages when its last passing run is older than that, and a run that fails before it compares is no passing run.
+2. Before live, a recorded blob not found in the second account's bucket within a written bound raises an alarm that reaches the owner.
+3. A restore drill restores to a scratch place and checks counts and checksums, on a schedule whose maximum interval sits beside the code. A mismatch it finds pages at once, naming the key and both hashes or the prefix and both counts. Monitoring also pages when its last passing run is older than that interval, and a run that fails before it compares is no passing run.
 
-This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that it holds the restore drill and the replication alarm, their routes to the owner and their drills, which its body does not yet name. Each drill shows its alarm firing and leaves nothing in live's recorded data or its replica.
+This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that it holds the restore drill and the replication alarm, their routes to the owner and their drills, which its body does not yet name. Each drill shows its alarm firing and leaves nothing in live's journal, captures or replica that a replay reads.
 
 ### File formats and keys
 
