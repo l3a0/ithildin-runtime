@@ -15,7 +15,7 @@ The platform halts rather than guess, so every halt that needs judgement
 waits for a person, and the person's actions are as much a part of the
 record as the platform's. The owner or
 the operator clears a halt, and only the owner clears a live account's
-kill switch. This
+kill switch, apart from the pull a live drill the owner approved makes and clears. This
 section is this doc's proposal for what those commands are and how an alarm
 leads to one, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 

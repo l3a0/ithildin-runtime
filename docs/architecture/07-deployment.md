@@ -164,7 +164,7 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 
 #### Who pulls and clears the kill switch
 
-The runtime's credential can create the switch, which pulls it, and can never delete it. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls and clears it too, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner and the approved drill role. Pulling the switch needs no deploy.
+The runtime's credential can create the switch, which pulls it, and can never delete it. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls it and clears only the pull its own run made, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag. Pulling the switch needs no deploy.
 
 #### Who may create and delete a fired loss stop or a strategy's off switch
 
@@ -172,8 +172,8 @@ The runtime's credential can create the switch, which pulls it, and can never de
 
 | Blob | Who may create it | Who may delete it |
 | --- | --- | --- |
-| A fired loss stop's blob, which takes the same grants as the switch | Execution's role, which may never delete it | The principals who may clear the switch, the owner alone on live and the operator too on shadow and paper |
-| A strategy's off switch, which sits beside a fired loss stop's blob | Any person's credential | The principals who may clear the switch, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop |
+| A fired loss stop's blob, which takes the same grants as the switch | Execution's role, which may never delete it | The principals who may clear the switch, the owner alone on live, never the approved drill role, and the operator too on shadow and paper |
+| A strategy's off switch, which sits beside a fired loss stop's blob | Any person's credential | The principals who may clear the switch, the owner alone on live, never the approved drill role, and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop |
 
 #### Who may write the hard caps and the releases
 
@@ -190,6 +190,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | `runs/`, `journal/` and `sim/` | Create and read |
 | The runtime's credential | `leases/` | Read |
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
+| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else beyond the drill markers |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
 | The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
@@ -486,7 +487,7 @@ manual dispatch.
 | --- | --- | --- | --- |
 | The test job | No | No | Yes, for the test role alone |
 | The publish job | Yes, and it alone | Yes, and it alone | Yes |
-| Each deploy, promotion, plan, apply and VM change job | No | No | Yes, each in its own GitHub environment |
+| Each deploy, promotion, plan, apply, VM change and approved drill job | No | No | Yes, each in its own GitHub environment |
 | Every other job | No | No | No. It reads only |
 
 #### How a digest is checked before it becomes a pin
@@ -894,7 +895,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The tags and paths are this doc's proposal.
 
-6. **GitHub's tokens reach a role only from one workflow file on `main`.** The repository's OIDC subject template includes `context`, which carries `environment:<name>` for a job that runs in a GitHub environment, and the calling workflow's `job_workflow_ref`. Each deploy, promotion, publish, plan, apply and VM change role's trust matches both exactly: its own GitHub environment, and its one workflow file on `refs/heads/main`. The test job runs in no deploy environment, so its token matches none of those roles.
+6. **GitHub's tokens reach a role only from one workflow file on `main`.** The repository's OIDC subject template includes `context`, which carries `environment:<name>` for a job that runs in a GitHub environment, and the calling workflow's `job_workflow_ref`. Each deploy, promotion, publish, plan, apply, VM change and approved drill role's trust matches both exactly: its own GitHub environment, and its one workflow file on `refs/heads/main`. The approved drill role's environment is live's deploy environment, the one that names live's reviewer, and its workflow starts only by `workflow_dispatch`. The test job runs in no deploy environment, so its token matches none of those roles.
 
    The deploy, promotion and infrastructure workflows have no `pull_request_target`, `workflow_run`, `issues` or `issue_comment` trigger, check out only the commit that started them, and read no event payload. Each GitHub environment's branch rule names `main` alone, with no tag rule.
 
@@ -1076,7 +1077,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 ##### How often each kind of drill runs
 
-Drills that end in a clear only the owner can make run once a month, and the rest run more often. After an apply the read-only checks run at once, and the owner-cleared drills keep their monthly turn, with the time one takes recorded on paper.
+Drills that end in a clear only the owner can make or approve run once a month, and the rest run more often. After an apply the read-only checks run at once, and the drills the owner clears or approves keep their monthly turn, with the time one takes recorded on paper.
 
 ##### How a drill and a live session never both pass
 
@@ -1103,7 +1104,7 @@ The owner approves every live drill that changes live's state, and only a run th
 
 #### Rule 10: how an environment's infrastructure is applied
 
-Each environment's infrastructure is applied by a plan of its own. A bad apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule. That environment's read-only checks run again after every apply, while live's owner-cleared drills keep their monthly turn.
+Each environment's infrastructure is applied by a plan of its own. A bad apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
 
 ##### What an apply puts on the host
 
