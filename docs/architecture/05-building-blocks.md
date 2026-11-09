@@ -14,6 +14,9 @@ This page is section 5 of [the architecture](00-README.md), in the order of the 
   - [The interfaces](#the-interfaces)
   - [Eight choices for a reviewer to check](#eight-choices-for-a-reviewer-to-check)
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
+  - [Which module may import which](#which-module-may-import-which)
+  - [How tests hold the rule](#how-tests-hold-the-rule)
+  - [What the rule costs](#what-the-rule-costs)
 
 ## The loop and its adapters
 
@@ -892,6 +895,10 @@ No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runti
 
 ## Package layout and the import rule
 
+Every module may import only `core`, and only `runtime` puts the modules together, so no module can reach a sibling's code or choose its own adapter.
+
+### Which module may import which
+
 The figure below is a C4 component diagram.
 
 ```mermaid
@@ -938,41 +945,49 @@ flowchart TB
 
 An arrow means "may import". The diagram draws four rules.
 
-1. Every module imports `core` and none of its siblings. The types that cross
-   modules, such as `Forecast`, `Constraints` and `TargetPortfolio`, and every
-   `Protocol`, including `RiskGate`, live in `core` for that reason. So do
-   `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to, and the storage contract every
-   worker uses: the `BlobStore` port, writing a blob S3 refuses to replace,
-   the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes, and `reconcile`, the one comparison of a book with the broker's account. `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
-2. Only `runtime` imports the modules together. Each worker's entry point
-   lives there, and so does the one receive loop every worker and the
-   supervisor run. It picks the adapters for the mode it is given, and the
-   execution worker's entry point hands the risk module's `RiskGate` to the
-   order path. The supervisor lives there too, in `runtime.supervisor`, and
-   imports `core`, `adapters` and the receive loop's module, `runtime.loop`,
-   and nothing else. `runtime.loop` itself imports only `core`, so the
-   supervisor reaches no worker module through it. It starts no worker. It writes nothing but the plan's lease, whose conditional writes carry the run's status, the plan, its heartbeat, the halts of workers that failed, a halt of the run with a halt for every decision left in the plan, the run's stop, which `core`'s storage contract, queue and `Journal` cover. The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`. Only the entry points read the plan's mode, and a module is handed
-   only the decisions.
-3. Only `runtime` imports `execution.brokers`, and only the execution worker's
-   entry point builds a broker, which it hands to `OrderPath` alone.
-4. Only `runtime` imports `adapters`, which holds the S3, memory-backed
-   folder, SQS and named-pipe adapters, so boto3 is imported there alone,
-   marketlake's package only in `data`, and Alpaca's SDK only in
-   `execution.brokers`. The `ithildin` tool, which lives in `runtime`,
-   imports only `core` and `adapters`. The supervisor imports those two and
-   `runtime.loop`, as rule 2 says. The import test gives each of them that
-   narrower arrow of its own and allows nothing more.
+1. **Every module imports `core` and none of its siblings.** For that reason these live in `core`:
+   - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
+   - every `Protocol`, including `RiskGate`;
+   - `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to;
+   - the storage contract every worker uses: the `BlobStore` port, writing a blob S3 refuses to replace, the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes, and `reconcile`, the one comparison of a book with the broker's account.
 
-A test reads every module's imports with Python's `ast` module and fails on an
-arrow the diagram does not draw. A second test runs a day under the supervisor
-against a fake broker that fails on three things.
+   `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
+2. **Only `runtime` imports the modules together.**
+   - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
+   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
+   - It starts no worker. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover:
+     - the plan's lease, whose conditional writes carry the run's status;
+     - the plan;
+     - its heartbeat;
+     - the halts of workers that failed;
+     - a halt of the run, with a halt for every decision left in the plan;
+     - the run's stop.
+
+     The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
+   - Only the entry points read the plan's mode, and a module is handed only the decisions.
+3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
+4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each outside library is imported in one place.
+
+   **Table:** The one module that imports each outside library
+
+   | Library | The only module that imports it |
+   | --- | --- |
+   | boto3 | `adapters` |
+   | marketlake's package | `data` |
+   | Alpaca's SDK | `execution.brokers` |
+
+   The `ithildin` tool, which lives in `runtime`, imports only `core` and `adapters`. The supervisor imports those two and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
+
+### How tests hold the rule
+
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw. A second test runs a day under the supervisor against a fake broker that fails on three things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received.
 
-Together they turn
-test 3's "no order reaches the broker adapter without passing the gate" into
-something executed rather than reviewed. The price is two more tests to keep
-in step with the diagram, and a module that needs a sibling has to argue for a
-new arrow.
+Together they turn acceptance test 3's "no order reaches the broker adapter without passing the gate" into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
+
+### What the rule costs
+
+The price is two more tests to keep in step with the diagram, and a module that needs a sibling has to argue for a new arrow.
