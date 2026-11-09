@@ -190,7 +190,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | `runs/`, `journal/` and `sim/` | Create and read |
 | The runtime's credential | `leases/` | Read |
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
-| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else beyond the drill markers |
+| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
 | The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
@@ -202,14 +202,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
-| The credential whose job rolls out a new launch template version, the apply credential on shadow and the VM change credential on paper and live | The refresh marker, `markers/refresh.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned |
-| The apply credential, as the cleanup of a stale refresh marker | `markers/refresh.json` | Delete, only with `If-Match` on the tag it read |
-| The approved drill role, on live, for a drill that changes live's state | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned or on the tag it read of a marker its group's earlier job left |
-| Live's drill job's role, for the read-only checks | A drill's marker, `markers/drills/<drill>.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned or on the tag it read of a marker its group's earlier job left. Nothing else in the bucket |
-| The runtime's credential | `markers/` | Read and list. No runtime role creates or deletes a marker |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
-
-The bucket's policy refuses a create under `markers/` that does not carry `If-None-Match`, which S3 lets a bucket policy require ([Enforce conditional writes on Amazon S3 buckets](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html)), and refuses every write there to a principal the rows above do not name, as [What the bucket's policy refuses, and to whom](#what-the-buckets-policy-refuses-and-to-whom) lists. So every marker is created only where none exists. Of two creates at one key, S3 lets the first to finish succeed and refuses the other with `412 Precondition Failed`, and a create that races a delete can get `409 Conflict` ([How to prevent object overwrites with conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)). A job whose create gets any answer but success holds no marker and deletes nothing. Every delete of a marker carries `If-Match` on the tag its own create returned, or for the cleanup the tag it read, which S3 refuses with `412 Precondition Failed` when the tag differs ([DeleteObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html)). So a job never deletes another job's marker.
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -228,7 +221,7 @@ No credential the runtime holds can delete a version, or change any of these fou
 
 #### What the bucket's policy refuses, and to whom
 
-The bucket's policy, whose refusals name the runtime's principals, makes the eight refusals in this table.
+The bucket's policy, whose refusals name the runtime's principals, makes the six refusals in this table.
 
 **Table:** What the bucket's policy refuses, by the principal it refuses
 
@@ -237,10 +230,8 @@ The bucket's policy, whose refusals name the runtime's principals, makes the eig
 | The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
-| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
+| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
-| Every principal | Any create under `markers/` that lacks `If-None-Match`, and any version delete there |
-| Every principal but those the table of what each role may do names for `markers/` | Any create or delete under `markers/` |
 | All but the owner | Changes to the policy itself |
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
@@ -571,21 +562,19 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that makes the new launch template version starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from four rules that [design.md's decisions](../design.md#decisions) settle.
 
-1. The apply checks for an open session before it starts the refresh.
-2. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
-3. An apply that refuses deletes its own marker and waits for the session to end.
-4. The cleanup of a stale marker deletes it only once no refresh runs and every VM runs the version the group names.
+1. The apply starts a refresh only inside the window between sessions that [When a refresh may run](#when-a-refresh-may-run) defines.
+2. A session refuses to start while AWS reports a refresh on its group that has not ended.
+3. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
+4. An apply that finds itself outside the window changes nothing, and waits for the next window.
 
-Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out an apply refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
+Dynamic diagram: one refresh that passes, from the apply's check of the window to the group naming the new version. It leaves out an apply refused outside the window, a session refused while a refresh runs, when slice 1's group of one terminates its old VM, and a VM whose checks fail, which the subsections below give.
 
 ```mermaid
 sequenceDiagram
     participant Job as The apply job that starts the refresh
-    participant Marker as The refresh's marker
     participant Group as The Auto Scaling group
     participant VM as Each new VM
-    Job->>Marker: creates it with a create-only write
-    Job->>Job: goes on only while no session is open
+    Job->>Job: goes on only inside the window between sessions
     Job->>Group: starts the instance refresh, with the new version as its desired configuration
     loop One VM at a time
         Group->>VM: launches it and holds it out of service at the launch lifecycle hook
@@ -594,29 +583,30 @@ sequenceDiagram
         VM->>Group: completes the hook
     end
     Group->>Group: names the new version once the refresh succeeds
-    Job->>Job: waits for the refresh's end event
-    Job->>Marker: deletes it
 ```
 
 ##### When a refresh may run
 
-An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. The marker is the one key `markers/refresh.json` in the environment's bucket, so of two applies that start together only one creates it, as the bucket table in [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says, and [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting) says what the other does. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+An apply whose plan rolls out a new launch template version starts the refresh only inside a window between sessions. That means two things hold when it checks, and again just before it starts the refresh.
+
+1. No session is open.
+2. The next session's scheduled start is more than a written bound away.
+
+The host's timer starts a session's supervisor at a time known in advance, as the scheduler in this page's container diagram shows, and nothing else starts a session. So the bound keeps a refresh from starting while a session is about to. A way to start a session added later still meets the check of AWS's refresh status below, which every session start makes. The bound covers the longest refresh, including the hour AWS's automatic rollback keeps trying replacements before it fails ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)), and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets its value.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
-A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
+A session refuses to start while AWS reports an instance refresh on its group that has not ended, with the reason "session refused: instance refresh open", and the refusal alarms. The runtime's role holds a read of Auto Scaling's refresh status for this. The check catches a refresh that outruns the bound, and one started by a job's runner that still acts after GitHub has marked the job ended, because AWS's status shows every refresh that has started. So a session never starts on a group with two VM images in it.
 
 ##### How two applies are kept from meeting
 
-Every job that creates or deletes the refresh marker runs in one GitHub Actions concurrency group for its environment. That covers the apply or VM change job that rolls out a new launch template version, the cleanup, and the drill that tests the markers' grants. The cleanup is the apply workflow itself, run at `main`'s head, in every environment. The group sets `cancel-in-progress: false`, so GitHub never cancels a job of the group once it has started. GitHub's page on concurrency, read on 2026-11-09, gives the group three properties ([Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs)).
+Every job that rolls out a new launch template version runs in one GitHub Actions concurrency group for its environment, which sets `cancel-in-progress: false`, so GitHub never cancels a job of the group once it has started. GitHub's page on concurrency, read on 2026-11-09, gives the group three properties ([Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-jobs)).
 
 1. One job of the group runs at a time, and "at most one job or workflow run can be `pending`".
 2. A newly queued job cancels any older one still pending.
 3. A group is shared across the repository's workflows.
 
-A newer job replacing an older pending one loses nothing, because every apply runs `main`'s head, and an apply whose commit is not `main`'s head refuses, which also covers GitHub's warning that "ordering is not guaranteed". So a marker that a newly started job finds belongs to a job that has ended. That job runs the cleanup's checks on it, as [What the cleanup checks before it deletes a stale marker](#what-the-cleanup-checks-before-it-deletes-a-stale-marker) says, before it creates its own. A create that still fails changes nothing and deletes nothing, and the job waits and runs again from its first step, as a refused apply does.
-
-The group follows GitHub's view of a job, not its runner. A runner that still acts after GitHub has marked its job ended is not fenced, so a job re-reads its marker's tag just before it starts the refresh. That narrows the window and does not close it, as with the send to the broker under [Every fact has one writer](../design.md#every-fact-has-one-writer). [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds what a waiting job waits for, its time limit and alarm, and any further guard on that window.
+A newer job replacing an older pending one loses nothing, because every apply runs `main`'s head, and an apply whose commit is not `main`'s head refuses, which also covers GitHub's warning that "ordering is not guaranteed". AWS also refuses a second refresh while one runs, as the list below says.
 
 ##### Why the group's template changes only when its refresh succeeds
 
@@ -633,11 +623,9 @@ After a rollback, the template's newest version holds the new image while the gr
 
 ##### What a refused apply does
 
-An apply that finds a session open changes nothing, in its whole plan. It deletes its own marker and alarms that the image did not roll out, naming the session it found and whether the delete succeeded. A delete that fails pages the owner at once, naming the marker, because the marker would stop the next session.
+An apply that finds itself outside the window changes nothing, in its whole plan. It alarms that the image did not roll out, naming the open session or the next start it found.
 
-The apply then waits for the session to end and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the new launch template version as a difference from the code.
-
-Deleting the marker means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
+The apply then waits for the next window and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the new launch template version as a difference from the code.
 
 ##### How many VMs a refresh replaces at a time
 
@@ -669,28 +657,9 @@ A VM whose checks fail sets off four steps, in order.
 3. The refresh fails.
 4. The refresh's automatic rollback restores the earlier launch template version, which the group still names because the refresh did not succeed.
 
-##### Who deletes the refresh's marker
-
-The job that started the refresh waits for the refresh's end event and then deletes the marker. A refused apply deletes its marker before it exits, as [What a refused apply does](#what-a-refused-apply-does) says. A marker can still be left behind when its job dies between the write and the delete. `ithildin` gets no command for it, so the jobs in this table clear a stale marker.
-
-**Table:** Who clears a stale refresh marker in each environment
-
-| Environment | Who clears it |
-| --- | --- |
-| Shadow and paper | The next merge's apply job |
-| Live | The apply workflow, run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. The run uses the apply credential and records who started it |
-
-##### What the cleanup checks before it deletes a stale marker
-
-While a stale marker stays, no session starts, and a session that tries alarms with "session refused: instance refresh open". So the cleanup must not leave sessions blocked, and must not let one start on a group in two states. Three things hold, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6750260870) holds how each is built.
-
-1. The cleanup deletes a stale marker only once no refresh runs on the group and every VM runs the launch template version the group names. Where a VM differs, it keeps the marker, starts no refresh, and pages the owner, naming both versions.
-2. A marker that outlives its job, and a cleanup that fails, page the owner, naming the marker.
-3. The cleanup never deletes the marker of a job that is still running. The concurrency group holds this, because the cleanup runs in the same group as every job that writes the marker, as [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting) says.
-
 ##### What rolls back a VM image that fails after its refresh
 
-A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply runs the same session check, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts a refresh whose desired configuration is the previous launch template version, outside sessions.
+A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply waits for the same window, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts a refresh whose desired configuration is the previous launch template version.
 
 ##### Why an app release never rolls out this way
 
@@ -870,7 +839,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 
-5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
+5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the approved drill role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
@@ -1081,16 +1050,9 @@ Drills that end in a clear only the owner can make or approve run once a month, 
 
 ##### How a drill and a live session never both pass
 
-A drill and a session's supervisor each write first and check second.
+A live drill, whether a job the owner approved or the read-only checks, starts only inside the same window between sessions as a refresh, which [When a refresh may run](#when-a-refresh-may-run) defines, and refuses while live's account lease is held. It checks the window again before each step that changes live's state, and the window's bound covers the longest drill as well as the longest refresh. A session's supervisor halts the run until whatever the last drill left behind checks clean.
 
-**Table:** What a drill and a session's supervisor each do, in order
-
-| Step | A drill | A session's supervisor |
-| --- | --- | --- |
-| First | Creates a marker with a create-only write | Writes the plan |
-| Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
-
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill's marker is `markers/drills/<drill>.json`, so two runs of one drill never both hold it, and a session's supervisor lists `markers/drills/` to find any. The approved drill role creates it for a drill that changes live's state, and live's drill job's role for the read-only checks, which also run only while no live session is open. The jobs that write one drill's marker run in one concurrency group, as the refresh marker's jobs do under [How two applies are kept from meeting](#how-two-applies-are-kept-from-meeting). So a marker a newly started drill job finds belongs to a job that has ended, and the new job deletes it, on the tag it read, before it creates its own. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill never starts while a session is open or about to start, and what a drill left behind stops the next session until it checks clean.
 
 ##### How an overdue drill reaches the owner
 
