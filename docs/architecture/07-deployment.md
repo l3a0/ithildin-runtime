@@ -190,7 +190,8 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | `runs/`, `journal/` and `sim/` | Create and read |
 | The runtime's credential | `leases/` | Read |
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
-| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket |
+| The apply and VM change credentials, the approved drill role and live's drill job's role | A run's plan and stop under `runs/`, and `leases/accounts/` | Read, for the window's check |
+| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
 | The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
@@ -230,7 +231,7 @@ The bucket's policy, whose refusals name the runtime's principals, makes the six
 | The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
-| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
+| Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
 | All but the owner | Changes to the policy itself |
 
@@ -563,7 +564,7 @@ Execution's check of the account's lease tag before every broker call stops a wo
 **A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that makes the new launch template version starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from four rules that [design.md's decisions](../design.md#decisions) settle.
 
 1. The apply starts a refresh only inside the window between sessions that [When a refresh may run](#when-a-refresh-may-run) defines.
-2. A session refuses to start while AWS reports a refresh on its group that has not ended.
+2. A session refuses to start unless AWS reports no refresh on its group, or the latest one as succeeded or rolled back.
 3. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
 4. An apply that finds itself outside the window changes nothing, and waits for the next window.
 
@@ -592,11 +593,13 @@ An apply whose plan rolls out a new launch template version starts the refresh o
 1. No session is open.
 2. The next session's scheduled start is more than a written bound away.
 
+A job that cannot read whether a session is open, or cannot work out the next start, counts as outside the window and alarms. The next start is the host's timer's next firing, read from the timer's committed setting through `core`'s calendar function, the one that turns the timer's New York time into UTC under [Which clock a schedule follows, and how it becomes UTC](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc), so the job and the timer never disagree across a change of daylight saving time or a holiday.
+
 The host's timer starts a session's supervisor at a time known in advance, as the scheduler in this page's container diagram shows, and nothing else starts a session. So the bound keeps a refresh from starting while a session is about to. A way to start a session added later still meets the check of AWS's refresh status below, which every session start makes. The bound covers the longest refresh, including the hour AWS's automatic rollback keeps trying replacements before it fails ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)), and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets its value.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
-A session refuses to start while AWS reports an instance refresh on its group that has not ended, with the reason "session refused: instance refresh open", and the refusal alarms. The runtime's role holds a read of Auto Scaling's refresh status for this. The check catches a refresh that outruns the bound, and one started by a job's runner that still acts after GitHub has marked the job ended, because AWS's status shows every refresh that has started. So a session never starts on a group with two VM images in it.
+A session refuses to start unless AWS reports no instance refresh on its group, or reports the latest one as `Successful` or `RollbackSuccessful`, with the reason "session refused: instance refresh open", and the refusal alarms. Any other status refuses, an unknown one included, because a refresh that was cancelled or whose rollback failed can leave the group on two images. So does a status the session cannot read. The runtime's role holds a read of Auto Scaling's refresh status for this. The check catches a refresh that outruns the bound, and one started by a job's runner that still acts after GitHub has marked the job ended, because AWS's status shows every refresh that has started. So a session never starts on a group with two VM images in it.
 
 ##### How two applies are kept from meeting
 
@@ -839,7 +842,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 
-5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the approved drill role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
+5. **Each role reaches only its own environment's resources, by ARN and path, never by tag.** Each bucket's policy refuses every principal but that environment's own runtime, deploy, promotion, plan, apply and VM change roles, the owner's and the operator's, and on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn`, as [The runtime's credential does only what the rules need](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) says.
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
@@ -1046,11 +1049,11 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 ##### How often each kind of drill runs
 
-Drills that end in a clear only the owner can make or approve run once a month, and the rest run more often. After an apply the read-only checks run at once, and the drills the owner clears or approves keep their monthly turn, with the time one takes recorded on paper.
+Drills that end in a clear only the owner can make or approve run once a month, and the rest run more often. After an apply the read-only checks run in the next window, and the drills the owner clears or approves keep their monthly turn, with the time one takes recorded on paper.
 
 ##### How a drill and a live session never both pass
 
-A live drill, whether a job the owner approved or the read-only checks, starts only inside the same window between sessions as a refresh, which [When a refresh may run](#when-a-refresh-may-run) defines, and refuses while live's account lease is held. It checks the window again before each step that changes live's state, and the window's bound covers the longest drill as well as the longest refresh. A session's supervisor halts the run until whatever the last drill left behind checks clean.
+After the owner switches live on, a live drill, whether a job the owner approved or the read-only checks, starts only inside the same window between sessions as a refresh, which [When a refresh may run](#when-a-refresh-may-run) defines, and refuses while live's account lease is held. Before the switch, live's drills run in a live session started with the kill switch already set, as the table of when each environment's drills run says. A drill checks the window again before each step that changes live's state. The window's bound covers the longest drill as well as the longest refresh, each drill job's `timeout-minutes` is below the bound, and a refresh or drill that runs past the bound pages the owner. A session's supervisor halts the run until whatever the last drill left behind checks clean.
 
 A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill never starts while a session is open or about to start, and what a drill left behind stops the next session until it checks clean.
 
