@@ -3293,7 +3293,7 @@ The journal is one of the three things the premise says cannot be recovered, so 
 - At boot the provisioning step writes each worker user a credential file only that user can read, never carried in the VM's start-up data.
 - Only the execution user's credential can read the secret store's broker path.
 
-#### How execution holds the key once it reads it
+#### How execution holds the key, and the drill that tries every route to it
 
 Execution reads the key from the store into its own memory, never into its environment, which other processes and child processes can see, and never into a file. It is a broker key with no withdrawal or transfer permission, which is hard limit 5.
 
@@ -3353,8 +3353,8 @@ The runtime's credential can create the switch, which pulls it, and can never de
 
 | Blob | Who may create it | Who may delete it |
 | --- | --- | --- |
-| A fired loss stop's blob, which takes the same grants as the switch | Execution's role, which may never delete it | The same principals, the owner alone on live and the operator too on shadow and paper |
-| A strategy's off switch, which sits beside it | Any person's credential | The same principals, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop |
+| A fired loss stop's blob, which takes the same grants as the switch | Execution's role, which may never delete it | The principals who may clear the switch, the owner alone on live and the operator too on shadow and paper |
+| A strategy's off switch, which sits beside a fired loss stop's blob | Any person's credential | The principals who may clear the switch, the owner alone on live and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop |
 
 #### Who may write the hard caps and the releases
 
@@ -3390,7 +3390,7 @@ A [drill](halts-and-drills.md#drills-with-no-alarm) checks that. The lease grant
 
 The bucket's lifecycle expires heartbeats and the noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
 
-#### Who can change the bucket's own settings
+#### Who can change the bucket's settings or delete a version
 
 No credential the runtime holds can delete a version, or change any of these four, and no credential but the owner's can change those four.
 
@@ -3407,7 +3407,7 @@ The bucket's policy, whose refusals name the runtime's principals, makes the six
 
 | Refused to | What the policy refuses |
 | --- | --- |
-| The runtime's principals | Any write on the prefixes the first table lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
+| The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
@@ -3426,7 +3426,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
-**systemd keeps every process running, up to a limit.** Each unit restarts up to a start limit, and the host alarms when one reaches it. Execution's and capture's units have no start limit.
+**systemd keeps every process running, up to a limit.** Each unit with a start limit restarts up to it, and the host alarms when a unit reaches its limit or fails. Execution's units, and capture's once this platform runs it, have no start limit.
 
 #### Which units systemd runs
 
@@ -3449,9 +3449,9 @@ Execution's units, and capture's once this platform runs it, are the exception u
 
 A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale, because systemd's own watchdog cannot see a process inside a container. The worker's receive loop touches that file only while every busy handler is making progress.
 
-#### What happens when a container stops
+#### What happens when a container fails or is killed
 
-The flowchart below draws a unit that has a start limit. Each unit's stop handler, `ExecStopPost`, runs on the host and records why the container stopped, for the restart record [Each blob names what made it](design.md#rule-5-each-blob-names-what-made-it) describes.
+The flowchart below draws a unit that has a start limit. Each unit's stop handler, `ExecStopPost`, runs on the host and records why the container stopped, for the restart record [Each blob names what made it](design.md#rule-5-each-blob-names-what-made-it) describes. The flowchart leaves out the alarm a restarted supervisor sends, which [How a failure reaches the owner](#how-a-failure-reaches-the-owner) names.
 
 ```mermaid
 flowchart TB
@@ -3465,7 +3465,7 @@ flowchart TB
     stale --> record
     record --> limit
     limit -->|"no"| restart
-    limit -->|"yes"| alarm
+    limit -->|"yes, so the unit fails"| alarm
 ```
 
 #### How a failure reaches the owner
@@ -3698,7 +3698,7 @@ adapter stays SQS, as it already is on the VM.
 
 #### How slice 1 runs on one VM
 
-Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component.
+Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component.
 
 #### Which items hold for slice 1's one VM
 
@@ -3720,13 +3720,13 @@ So a replacement needs no person to start, though mid-session its execution come
 
 A VM that started on another release stops its units and starts them again on the plan's, and writes the reason "release differs from plan" to the restart record and to the host's direct alarm route.
 
-#### Item 3: when a VM counts as gone
+#### Item 3: when a VM counts as gone, and when a VM fences itself
 
 **A VM counts as gone when its supervisors go quiet.** Each supervisor instance's heartbeat blob names its VM. Another VM counts a VM as gone once no supervisor instance on it has written a heartbeat within a limit longer than a supervisor's restart, or once the group reports it terminated. Only then does an instance take over a send stage that VM's handler was running.
 
 A VM whose supervisor instances find their own last heartbeat older than that limit, as after a freeze, stops its units, which start again as a fresh member. So a woken VM never carries on work another VM took over. This self-fence writes the reason "own heartbeat stale past limit" to the restart record and to the host's direct alarm route.
 
-Execution's check of the account's lease tag before every broker call stops its send even if it tried.
+Execution's check of the account's lease tag before every broker call stops a woken VM's send even if it tried.
 
 #### Item 4: what each VM keeps to itself
 
@@ -3776,11 +3776,11 @@ An app release never rolls out this way, because two releases in one run write d
 
 Both machines the table names are burstable: each earns CPU credits and spends them to run above a baseline, which [AWS's baseline table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html) puts at 30% of each vCPU for `t4g.large` and 20% for `t4g.small`. So the measure of load counts CPU beside memory, shadow shows whether the named machine holds, and the machine stays as named.
 
-#### When an environment moves to three VMs, and what one VM risks until then
+#### What one VM risks until the cluster
 
 Until load calls for the cluster, losing the VM or its zone stops the environment until the group starts a replacement, and mid-session until the owner releases execution's halt.
 
-#### What scaling out costs
+#### What scaling out costs, and what comes past it
 
 Scaling out costs three VMs per environment, each on the machine the table names for the cluster, and subnets in three zones. It brings [five drills](halts-and-drills.md#drills-with-no-alarm), which run before anything relies on the cluster. Each VM group has a written limit of deployments, and the next split past it is an account-to-group mapping in configuration, as design.md's `## Design for 10x, plan the rewrite before 100x, build at 1x` says.
 
@@ -3795,17 +3795,17 @@ Test, shadow, paper and live run in separate environments.
 
 Hard limit 6, in CLAUDE.md and in the charter, matches: merging to `main` is the owner's, a merge deploys to shadow and, once shadow is healthy, to paper, and deploying to live is the owner's, by hand.
 
-#### Why each mode gets an environment of its own
-
-Modes kept apart inside one VM and one bucket, by key prefix and by the account a lease names, would let one wrong role or one wrong prefix reach every mode: a drill could pull the live switch, or a shadow run could read a broker key. With an environment each, no runtime role of one environment can reach another environment's resources.
-
 What this section says an agent cannot reach, it says of the design. Until agents move off the owner's admin login, a move deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), those statements are rules agents follow, as [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says.
 
 The owner's and the operator's credentials still span environments by design. One read-only grant lets the promotion job judge shadow. [Each environment has an AWS account of its own](#rule-11-each-environment-has-an-aws-account-of-its-own) says which AWS account each environment lives in.
 
-#### What design.md settles and what this doc proposes
+#### Why each mode gets an environment of its own
 
-What this subsection adds to the environments, accounts and pipeline that design.md's `## Decisions` settles is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11):
+Modes kept apart inside one VM and one bucket, by key prefix and by the account a lease names, would let one wrong role or one wrong prefix reach every mode: a drill could pull the live switch, or a shadow run could read a broker key. With an environment each, no runtime role of one environment can reach another environment's resources.
+
+#### What this doc proposes beyond design.md
+
+What `### Four environments` adds to the environments, accounts and pipeline that design.md's `## Decisions` settles is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11):
 
 - the records a promotion reads
 - a pin's form and checks
