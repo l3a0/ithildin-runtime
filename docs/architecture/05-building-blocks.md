@@ -895,7 +895,7 @@ No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runti
 
 ## Package layout and the import rule
 
-Every module may import only `core`, and only `runtime` puts the modules together, so no module can reach a sibling's code or choose its own adapter.
+Every module outside `runtime` may import only `core`, and only `runtime` puts the modules together, so no module can reach a sibling's code or choose its own mode.
 
 ### Which module may import which
 
@@ -949,13 +949,20 @@ An arrow means "may import". The diagram draws four rules.
    - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
    - every `Protocol`, including `RiskGate`;
    - `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to;
-   - the storage contract every worker uses: the `BlobStore` port, writing a blob S3 refuses to replace, the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes, and `reconcile`, the one comparison of a book with the broker's account.
+   - the storage contract every worker uses:
+     - the `BlobStore` port, writing a blob S3 refuses to replace;
+     - the blob header;
+     - the decision result and its halt;
+     - the plan;
+     - the queue port;
+     - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
+   - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
    - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
-   - It starts no worker. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover:
+   - The supervisor starts no worker. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover:
      - the plan's lease, whose conditional writes carry the run's status;
      - the plan;
      - its heartbeat;
@@ -966,9 +973,9 @@ An arrow means "may import". The diagram draws four rules.
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
    - Only the entry points read the plan's mode, and a module is handed only the decisions.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
-4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each outside library is imported in one place.
+4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of these three outside libraries is imported in one module.
 
-   **Table:** The one module that imports each outside library
+   **Table:** The one module that imports each of three outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
@@ -986,7 +993,7 @@ A test reads every module's imports with Python's `ast` module and fails on an a
 2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received.
 
-Together they turn acceptance test 3's "no order reaches the broker adapter without passing the gate" into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
+Together they turn acceptance test 3's claim that no order reaches the broker adapter without passing the gate into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
 
 ### What the rule costs
 
