@@ -119,6 +119,8 @@ The live system is three models feeding a fourth, which feeds a fifth (L920,
 L941, L994). Data and research sit outside that loop and feed it (L920, L970).
 Each box below is a module with a typed interface, and each has one owning role.
 
+The figure below is a C4 container diagram.
+
 ```mermaid
 flowchart LR
     vendor(["Vendor feeds"])

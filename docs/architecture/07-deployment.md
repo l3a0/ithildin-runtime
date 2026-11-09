@@ -198,7 +198,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | Execution's role alone among the runtime's roles | `leases/accounts/` | Rewrite, only with `If-Match`, a take on the tag it read and a renewal or a release on the tag its own last write returned. Create with `If-None-Match`, only where an absent lease allows it, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). No principal deletes a lease |
 | The owner's role alone, on every account | The owner's records, under a prefix [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names | Create. No role deletes one |
 | Execution's and monitoring's roles | The owner's records | Read |
-| The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as `## What a person runs` says |
+| The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
@@ -446,7 +446,7 @@ Five things follow.
 #### What CI runs on a pull request
 
 CI builds the image on every pull request and runs the tests inside it,
-in the two required checks `### How CI runs them` describes.
+in the two required checks [How CI runs them](10-quality.md#how-ci-runs-them) describes.
 
 #### Why the guard on publishing is provenance
 
@@ -652,7 +652,7 @@ Shadow, paper and live each run exactly one mode, the one with the same name. Te
 
 | Environment | Runs | Machine | Bucket | Broker credential | Release pin |
 | --- | --- | --- | --- | --- | --- |
-| Test | CI's checks on every pull request and every push to `main`, as `### How CI runs them` says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
+| Test | CI's checks on every pull request and every push to `main`, as [How CI runs them](10-quality.md#how-ci-runs-them) says | A GitHub runner, gone after each run | The test bucket and test queues, which only the store and queue suites' runs on `main` touch. Backtests keep the memory-backed folder | None | None. CI tests the commit it builds |
 | Shadow | Shadow mode on live data | The shadow VM, scaling out to a cluster | The shadow bucket, with the shadow journal | None. Shadow fills in the simulator | Moved by the deploy job once the owner merges to `main` |
 | Paper | Paper mode | The paper VM, scaling out to a cluster | The paper bucket, with the paper journal | Alpaca's paper key, readable by paper's execution user alone | Moved by the promotion job once shadow is healthy on the same digest |
 | Live | Live mode, once the owner switches | The live VM, scaling out to a cluster | The live bucket, with the live journal | A live key at Alpaca, for the platform's own account, which nobody trades by hand. [What stops the live key from withdrawing money](#what-stops-the-live-key-from-withdrawing-money) says how hard limit 5 holds for it | Moved only by the owner, by hand |
@@ -667,9 +667,9 @@ A whitelist entry the key adds between sessions turns approved on its own after 
 
 That, with the rule that moving money out requires a human's sign-off, is how hard limit 5 holds, as [#10](https://github.com/l3a0/ithildin-runtime/issues/10) records. That limit says a broker credential never carries withdrawal or transfer permission.
 
-#### What the runtime's VM and bucket mean in the rest of this doc
+#### What the runtime's VM and bucket mean on every architecture page
 
-Where the rest of this doc says the runtime's VM or the runtime's bucket, it means the one in the environment at hand. The VM means that environment's one VM in slice 1, or each of its three VMs once it scales out to the cluster in [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms).
+Where any architecture page says the runtime's VM or the runtime's bucket, it means the one in the environment at hand. The VM means that environment's one VM in slice 1, or each of its three VMs once it scales out to the cluster in [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms).
 
 #### How a digest moves from a merge to paper
 
@@ -912,7 +912,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
    CloudWatch [runs an alarm's actions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) and [sends its state-change event](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/cloudwatch-and-eventbridge.html) only when the alarm changes state. So an alarm still in alarm on a second missed day sends neither, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how a repeat reaches both routes.
 2. Its reporter holds only the grant for its own metric.
-3. An EventBridge rule carries the alarm's change to that environment's push topic, and the page carries the three lines `### From an alarm to a command` requires. The email carries the same three lines.
+3. An EventBridge rule carries the alarm's change to that environment's push topic, and the page carries the three lines [From an alarm to a command](../what-a-person-runs.md#from-an-alarm-to-a-command) requires. The email carries the same three lines.
 
    1. The first line names the environment, the account, the decision and the reason.
    2. The second line is the command to run first.

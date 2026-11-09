@@ -46,7 +46,7 @@ two runs differ in two ways.
 Shadow running measures both gaps rather than leaving them to argument.
 
 The charter's paper gate also asks for every alarm to fire in a drill, which
-covers more than test 4 names. The reconciliation mismatch above is one such
+covers more than test 4 names. The reconciliation mismatch in [The book and the broker disagree](06-runtime.md#the-book-and-the-broker-disagree) is one such
 alarm, and its drill belongs on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -88,7 +88,7 @@ exists, so it is built last. This doc proposes building it on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which owns the startup order and waits on every
 other module. The fake-broker test goes there too, since it runs a whole day
 under the supervisor. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s body names neither today, and its acceptance
-covers tests 2 and 4 but not test 3, so `## Proposals awaiting a ruling` lists both as a
+covers tests 2 and 4 but not test 3, so [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) lists both as a
 proposal.
 
 ### How CI runs them

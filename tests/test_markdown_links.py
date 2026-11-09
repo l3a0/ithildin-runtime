@@ -28,6 +28,17 @@ def test_a_repeated_heading_gets_a_numbered_anchor() -> None:
     assert anchors("## Price\n\n## Price\n\n## Price\n") == {"price", "price-1", "price-2"}
 
 
+def test_an_anchor_drops_html_links_and_emphasis_markers() -> None:
+    assert anchor('<a id="x"></a>Tag') == "tag"
+    assert anchor("[A link](x.md) here") == "a-link-here"
+    assert anchor("_under_ and **bold**") == "under-and-bold"
+    assert anchor("snake_case stays") == "snake_case-stays"
+
+
+def test_a_repeated_heading_skips_a_number_already_taken() -> None:
+    assert anchors("## Foo 1\n\n## Foo\n\n## Foo\n") == {"foo-1", "foo", "foo-2"}
+
+
 def test_a_heading_inside_a_fence_makes_no_anchor() -> None:
     assert anchors("```\n## Not a heading\n```\n\n## Real\n") == {"real"}
 

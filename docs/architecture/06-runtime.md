@@ -150,7 +150,7 @@ An order sent from anywhere else would escape the gate. So only execution talks 
 
 Every order carries the platform's stamp, a client order id naming its strategy and decision, or for a close its close entry. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
 
-The figure below is a C4 container diagram.
+The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TD

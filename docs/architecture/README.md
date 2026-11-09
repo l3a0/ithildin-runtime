@@ -26,7 +26,7 @@ The journal is the one numbered log.
 [design.md](../design.md#processes-and-files)'s `## Processes and files` carries
 the rules the workers follow.
 
-The owner's part in reviewing this doc is one section at the end, [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling), a table where each row says what this doc proposes, what it
+The owner's part in reviewing this doc is one page, [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling), a table where each row says what this doc proposes, what it
 turned down, the price and the issue it goes on. Object to a row there. Settled choices sit in [design.md](../design.md)'s `## Decisions`, ordered by when they were decided.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
@@ -56,7 +56,7 @@ broker on its own, off the path that sends orders.
 
 ## Pages
 
-The pages follow the twelve sections of the [arc42 template](https://arc42.org/overview), so each kind of question has one page. Sections 2, 4 and 12 already live in [design.md](../design.md), which carries the reasoning, and section 11 lists the prices the design accepts. The operator's pages are reference and how-to rather than architecture, so they sit beside the drills, in the [Diátaxis](https://diataxis.fr/) split between explaining and doing.
+The pages follow the twelve sections of the [arc42 template](https://arc42.org/overview), so each kind of question has one page. Sections 2, 4 and 12 already live in [design.md](../design.md), with the hard limits of section 2 in [the charter](../team-charter.md#hard-limits), which carries the reasoning, and section 11 lists the prices the design accepts. The operator's pages are reference and how-to rather than architecture, so they sit beside the drills, in the [Diátaxis](https://diataxis.fr/) split between explaining and doing.
 
 Each diagram names its level in the [C4 model](https://c4model.com/) in the sentence before it: system context, container, component or code for structure, and dynamic or deployment for the views that show behaviour over time or the machines a piece runs on.
 

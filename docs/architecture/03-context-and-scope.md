@@ -56,7 +56,7 @@ that captures market data before anything computes on it. Each source is
 transformed into marketlake once, stored durably there, and read by every mode
 through one query, so a backtest and a live run never read bars by different
 paths. The runtime runs on a VM of its own and reads a local mirror of the
-partitions it downloads from marketlake's bucket, as `## Where it runs` says.
+partitions it downloads from marketlake's bucket, as [Where it runs](07-deployment.md#where-it-runs) says.
 marketlake holds three kinds of bar.
 
 **Table:** The three kinds of bar marketlake holds
@@ -147,6 +147,8 @@ has already acted. The read has five parts.
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets decides at the same minute. The
    data worker reads an unsealed day through the one reader marketlake publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004), which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. Given a ticker, a day and a time, the reader returns the quote rows captured so far, the same rows the seal would produce for those minutes, so joining a ticker-day's segments has one implementation. marketlake's publication lag, from a cycle's capture to its segment in the bucket, is a published input. A decision whose newest cycle has not landed by the decision time treats that quote as missing or stale under the rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how, and shadow measures the lag.
 
+   The figure below is a C4 dynamic diagram.
+
    ```mermaid
    flowchart LR
        seg["Segment in the bucket"] --> sha["Match its SHA-256 against the object's<br/>stored SHA-256 and metadata"]
@@ -166,6 +168,8 @@ has already acted. The read has five parts.
    happens picks the read. A live decision before the seal reads segments,
    because no partition exists yet. A replay reads the sealed partitions, up to
    the decision's time, because the partition is what stays.
+
+   The figure below is a C4 dynamic diagram.
 
    ```mermaid
    flowchart TD
@@ -233,7 +237,7 @@ The platform sends orders to one place, Alpaca's paper account. Shadow fills its
 
 Two switches come from outside the loop.
 
-1. **The live switch** is the live environment, which only the owner builds, gives the live key and pins a release in, which is hard limit 1 in [CLAUDE.md](../../CLAUDE.md). Paper and live never share a VM, a bucket or a key, as `### Four environments` says.
+1. **The live switch** is the live environment, which only the owner builds, gives the live key and pins a release in, which is hard limit 1 in [CLAUDE.md](../../CLAUDE.md). Paper and live never share a VM, a bucket or a key, as [Four environments](07-deployment.md#four-environments) says.
 2. **The kill switch** halts trading. The
    risk engineer builds it and writes when to pull it, and the operator pulls
    it by that guidance. The owner can pull it too.

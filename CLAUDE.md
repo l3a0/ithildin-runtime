@@ -184,7 +184,7 @@ Every table has a title, on a line of its own above it, starting with `**Table:*
 
 markdownlint has no rule for the tilde, for a table whose rows are tight throughout, or for a table with no title, so `tests/test_markdown_hygiene.py` carries all three. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
 
-When a heading changes, verify the Contents anchors still resolve. `tests/test_markdown_links.py` fails any relative link whose file or heading is gone, so a renamed heading on one page cannot silently break a link on another.
+When a heading changes, verify the Contents anchors still resolve. `tests/test_markdown_links.py` fails any relative link whose file or heading is gone, so a renamed heading on one page cannot silently break a link on another. It reads links only, so a heading named in a code span still needs its page named beside it.
 
 ## Running things
 
@@ -219,7 +219,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture.md`'s `## Where it runs` says who can read it. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture/07-deployment.md`'s `## Where it runs` says who can read it. None exists yet.
 
 ## Committing
 

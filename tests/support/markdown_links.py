@@ -44,8 +44,23 @@ class BrokenLink:
 
 
 def anchor(heading: str) -> str:
-    """The anchor GitHub gives a heading with this text."""
-    text = re.sub(r"`([^`]*)`", r"\1", heading).strip().lower()
+    """The anchor GitHub gives a heading with this text.
+
+    GitHub builds it from the heading as rendered, so inline markup goes
+    first: a code span keeps its words, a link keeps its text, and raw HTML
+    tags and emphasis markers drop out.
+    """
+    parts = re.split(r"(`[^`]*`)", heading)
+    rendered = []
+    for part in parts:
+        if part.startswith("`") and part.endswith("`") and len(part) > 1:
+            rendered.append(part[1:-1])
+            continue
+        part = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", part)
+        part = re.sub(r"<[^>]+>", "", part)
+        part = re.sub(r"(\*\*|__|\*|(?<!\w)_|_(?!\w))", "", part)
+        rendered.append(part)
+    text = "".join(rendered).strip().lower()
     text = re.sub(r"[^\w\- ]", "", text)
     return text.replace(" ", "-")
 
@@ -69,9 +84,11 @@ def anchors(text: str) -> set[str]:
         heading = _HEADING.match(line)
         if heading:
             base = anchor(heading.group(2))
-            count = seen.get(base, 0)
-            seen[base] = count + 1
-            found.add(base if count == 0 else f"{base}-{count}")
+            slug = base
+            while slug in found:
+                seen[base] = seen.get(base, 0) + 1
+                slug = f"{base}-{seen[base]}"
+            found.add(slug)
     return found
 
 

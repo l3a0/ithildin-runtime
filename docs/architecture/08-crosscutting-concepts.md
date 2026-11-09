@@ -406,7 +406,7 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 **A journal entry hashes its whole blob.** Each entry is one blob holding `seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those bytes exactly as stored, which the next entry carries as its `prev_hash`, and the first entry of an account carries sixty-four zeros. A hash of the body alone would leave an entry's number and its link outside what the next entry vouches for.
 
-The figure below is a C4 dynamic diagram.
+The figure below is a C4 code diagram.
 
 ```mermaid
 flowchart LR

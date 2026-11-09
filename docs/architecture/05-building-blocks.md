@@ -943,7 +943,7 @@ An arrow means "may import". The diagram draws four rules.
    `Protocol`, including `RiskGate`, live in `core` for that reason. So do
    `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to, and the storage contract every
    worker uses: the `BlobStore` port, writing a blob S3 refuses to replace,
-   the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that `### File formats and keys` describes, and `reconcile`, the one comparison of a book with the broker's account. `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
+   the blob header, the decision result and its halt, the plan, the queue port, the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes, and `reconcile`, the one comparison of a book with the broker's account. `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. Only `runtime` imports the modules together. Each worker's entry point
    lives there, and so does the one receive loop every worker and the
    supervisor run. It picks the adapters for the mode it is given, and the
