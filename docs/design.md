@@ -550,8 +550,9 @@ the overrides' and the releases' prefixes, the halt folders and every object und
 carries that tag, so a derived output is never copied. The send stage's broker read, a takeover's broker order list and the order list that maps an order in doubt carry the same tag. A test pins that
 tag on every capture the store writes. The
 retention period is proposed for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and the replica for the
-live gate. The replication rule turns on S3 Replication metrics, without which S3 sends no
-failure event, and an alarm listens for `s3:Replication:OperationFailedReplication`. The event fires only for an object the rule matches, so the tag or a matched prefix covers every recorded class.
+live gate. A recorded blob that fails to reach the replica raises an alarm that reaches
+the owner, and a test shows the replication rule matches a key from every recorded class.
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
 
 ### Rule 1: clock times in headers and captures
 
