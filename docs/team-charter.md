@@ -40,7 +40,10 @@ measuring a result against the risk it took and for choosing size live in the de
 [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
 The rules from Larry Harris's *Trading and Exchanges* (Oxford University Press, 2003) for what a fill cost and
 for what a market can do to a position live in the design doc's
-[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). The
+[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+The rules from Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2nd ed., Wiley, 2008)
+for searching a strategy's settings and reading what the search found live in the design doc's
+[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -73,7 +76,9 @@ cannot see each other.
 ## The premise: what must not fail
 
 Three things cannot be recovered once lost, and everything else is
-regenerable.
+regenerable, apart from a search's record, which the design doc's
+[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours)
+defines and keeps as recorded data.
 
 1. **Captured data.** A market snapshot not recorded at the time is gone, and
    a vendor's history is restated after the fact. Data is recorded with the
@@ -281,6 +286,16 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data
   its research already read and never on a held-out window or a registered sample's sessions, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+  Writes each search down before it runs with its ranking measure, keeps that record, the count of
+  settings it evaluated and the proof the record came first as recorded data, with the record pushed to
+  git before the first result and a count that never understates the settings run, keeps every setting's result, picks a
+  setting by a rule written beforehand that scores it with its neighbours, ranks the share of good
+  settings among the same grid run with no edge, states the standard error of the average trade with the
+  count it divides by and how it was formed, the share of a sample a lookback used, reports a walk-forward in its parts as
+  exploratory with its window sizes and reruns counted as tries, and names what prompted a rule added
+  after reading a result, with no search or run among these reading a held-out window or a registered
+  sample's sessions, under the design doc's
+  [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -316,8 +331,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   its opening names, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
-  any cleanup or retention rule, new or existing, that could match a path
-  holding recorded data as the design doc defines it, a recorded format with
+  any cleanup or retention rule, new or existing, that could match a path,
+  or a git branch or ref, holding recorded data as the design doc defines it, a recorded format with
   no schema identifier, a store that compacts recorded data by key, and
   Python's `pickle`, its built-in format for saving objects, in any reader or
   writer of captured data or the journal (DDIA L3623, L3632). This path is
@@ -431,6 +446,11 @@ time is the scarce resource, so work reaches the owner already reviewed.
   a broker or a venue can do to a position, from their published text with its date, and reads its dated
   terms again before the owner raises the capital cap, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+  Holds that a strategy re-fitting its own settings never changes anything that bounds what a position
+  can lose or what the strategy acts on, such as its size rule, an exit fixed at a price level, the longest
+  it may hold a position, what its input check accepts or a limit it trades under, and that a rule's record holds back no change that cuts risk, under
+  rules 4 and 5 of the design doc's
+  [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
