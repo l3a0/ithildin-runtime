@@ -280,8 +280,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
   Has each setting a search evaluates give its return before and after cost in every session under one
-  cost model, never reading a session as zero unless it decided and held nothing and never leaving one
-  out silently, counts a position from flat to flat by the one calculation every reader uses and never a fill, an
+  cost model, never reading a session as zero in place of a return it could not compute, a session whose
+  decision could not run missing with its reason whatever it held, and never leaving one out silently, counts a position from flat to flat by the one calculation every reader uses and never a fill, an
   order, a leg, an addition or a partial reduction on its own, and computes a spread's profit and loss leg
   by leg so a change of its weights earns nothing,
   under rules 1 to 3 of the design doc's
@@ -550,12 +550,13 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
   [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
-  Holds the test that a setting's period returns read no session as zero unless it held nothing and leave
-  none out silently,
+  Holds the test that a setting's period returns read no session as zero in place of a return it could not
+  compute, keep a session whose decision could not run missing whatever it held, and leave none out
+  silently,
   the hand-built cases of the count of positions, the tests that a change of hedge ratio on flat prices
   earns nothing before costs and loses exactly the rebalance's costs after them and that moving prices are
   scored from the shares held in each period, the seeded test of each value a strategy fits on series made
-  with known parameters, whose pass mark is recorded before it first runs and which is shown to fail on
+  with known parameters, whose pass-mark rule is recorded before it first runs and which is shown to fail on
   each kind of error it claims to catch, with its exact hand-built case, and, once a model is trained, the
   test that no training label's span overlaps a test label's, under rules 1 to 5 of the design doc's
   [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on), with each test's cases on
@@ -1036,7 +1037,7 @@ who train machine-learning models on large data sets, with Python 2 code on the 
 chapters on bars sampled by trades, volume or dollars traded, and its features built from the flow of
 trades, are left out, because they need trade-level data and the one bar provider's published query
 serves none, its finest bar being one minute. A study that wants such bars asks marketlake for a published
-query first. Its structural-break, entropy and other microstructure features are left out because slice 1
+query first. Its structural-break, entropy and microstructure features are left out because slice 1
 trains no model and fits none of them, though rule 4 borrows the entropy chapter's test of an estimator
 against a known answer. Its chapters on sizing a bet from a model's probability, on hierarchical risk
 parity and on high-performance and quantum computing are left out, because slice 1 trades one spread with
