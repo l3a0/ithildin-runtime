@@ -784,7 +784,7 @@ The issue that proposes the Live step meets five conditions.
 4. A pass can be cited only if the gap that section leaves on a frozen quote was closed and stayed closed through that whole sample, or the owner accepted it for that sample before it opened, and if that gap is found to have fired during the sample it goes back to the owner first.
 5. A sample that did not look for a decision that read a frozen quote says so, and the gap stays unknown beside its verdict rather than reading as not fired.
 
-Test, shadow, paper and live run in separate environments, and a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture.md](architecture.md#four-environments) lays out.
+Test, shadow, paper and live run in separate environments, and a merge to `main` deploys to shadow and a healthy shadow to paper. A platform version passes the same gates on its way: CI, which is the test environment, then shadow, then paper, and it reaches live only by the owner's hand, as [architecture/07-deployment.md](architecture/07-deployment.md#four-environments) lays out.
 
 A platform version also passes four checks between design and steady
 running, each placed where it is cheapest (AoS L6250, L6377).

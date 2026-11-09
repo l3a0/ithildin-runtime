@@ -165,6 +165,13 @@ The owner's global `~/.claude/CLAUDE.md` is the source for the general form of t
 7. **Structure for a reader with no context.** Give each question its own subheading and break a mechanism into numbered steps. Draw a mechanism with several actors or steps in Mermaid and a data type as a UML class diagram, and show the variations a diagram leaves out. Title every table, as Markdown hygiene below says. Link every source the text leans on. Render each diagram and read the words it drew before reporting it done.
 8. **Diagrams, tables and figures are prose.** A ruling changes the body, every diagram that shows the old behaviour and `## Decisions` in one commit. Check every value stated twice against its source, and a number copied from an issue against that issue's latest comment. Re-read a long-lived design branch when `main` moves.
 
+**Lay a document out by four standards (owner directive, 2026-11-09).** The owner asked how to apply arc42, the C4 model, Diátaxis and ISO 24495-1 to the docs, then said "update agent instructions and skills to do this as well". A document here follows all four from its first draft.
+
+1. **arc42 decides where architecture text goes.** `docs/architecture/` holds one page per section of the [arc42 template](https://arc42.org/overview), and its `README.md` maps every section to its page. New text goes on the page for the question it answers. Constraints, the solution strategy and the glossary stay in `docs/design.md`, and a section that names a price is listed on `11-risks.md`.
+2. **The [C4 model](https://c4model.com/) sets each diagram's zoom.** The sentence before a diagram names its level: system context, container, component, code, dynamic or deployment, as in "The figure below is a C4 dynamic diagram." A diagram that needs two levels becomes two.
+3. **[Diátaxis](https://diataxis.fr/) keeps each page to one kind of writing.** `docs/design.md` explains, the architecture pages describe the design and its reasons, and `docs/what-a-person-runs.md` and `docs/halts-and-drills.md` are how-to and reference for the owner and the operator. A step a person runs goes on those two pages, with a link to its reasoning.
+4. **ISO 24495-1, the plain-language standard, sets the reader's checks.** A review asks whether a reader gets what they need, finds it from the contents alone, understands it on one read, and can act on it.
+
 **A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone. A question on money, contracts or law that goes to the board names what is decided, the metric and any price already measured, and carries no recommendation.
 
 **Keep the work where the owner put it.** A change on the same issue as an open pull request goes on that pull request, not on a new one, unless the owner says otherwise.
@@ -177,7 +184,7 @@ Every table has a title, on a line of its own above it, starting with `**Table:*
 
 markdownlint has no rule for the tilde, for a table whose rows are tight throughout, or for a table with no title, so `tests/test_markdown_hygiene.py` carries all three. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
 
-When a heading changes, verify the Contents anchors still resolve.
+When a heading changes, verify the Contents anchors still resolve. `tests/test_markdown_links.py` fails any relative link whose file or heading is gone, so a renamed heading on one page cannot silently break a link on another.
 
 ## Running things
 
@@ -212,7 +219,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture.md`'s `## Where it runs` says who can read it. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture.md`'s `## Where it runs` says who can read it. None exists yet.
 
 ## Committing
 

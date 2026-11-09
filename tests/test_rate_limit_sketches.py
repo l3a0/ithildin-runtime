@@ -3,7 +3,7 @@
 The scenes live in ``docs/figures/sketches/rate_limit.py`` and draw with
 :mod:`ithildincore.whiteboard`. These tests pin each scene's words, colours,
 figures and geometry, the layout rules every sketch shares, each GIF's place
-and alt text in ``docs/architecture.md``, and that each committed GIF is a
+and alt text in ``docs/architecture/05-building-blocks.md``, and that each committed GIF is a
 fresh draw.
 """
 
@@ -241,13 +241,13 @@ PLACES = {
 
 
 def _embed(gif: str) -> re.Match:
-    found = re.search(r"!\[([^\]]*)\]\(figures/" + re.escape(gif) + r"\)", DOC_TEXT)
+    found = re.search(r"!\[([^\]]*)\]\(\.\./figures/" + re.escape(gif) + r"\)", DOC_TEXT)
     assert found is not None, f"{gif} is not embedded"
     return found
 
 
 def test_the_doc_embeds_exactly_these_gifs_in_the_section() -> None:
-    embedded = set(re.findall(r"\]\(figures/(rate-limit-[^)]+)\)", DOC_TEXT))
+    embedded = set(re.findall(r"\]\(\.\./figures/(rate-limit-[^)]+)\)", DOC_TEXT))
     assert embedded == set(PLACES)
     assert {r.gif_name(scene) for scene in r.scenes(FOUND)} == set(PLACES)
 

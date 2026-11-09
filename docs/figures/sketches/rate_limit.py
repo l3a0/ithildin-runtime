@@ -1,4 +1,4 @@
-"""Sketches for docs/architecture.md, in "How the broker's rate limit is shared".
+"""Sketches for docs/architecture/05-building-blocks.md, in "How the broker's rate limit is shared".
 
 Three scenes, each an animated whiteboard GIF in docs/figures, drawn in the
 style of the blog's sketch notes with :mod:`ithildincore.whiteboard`.
@@ -49,7 +49,7 @@ from ithildincore.whiteboard import (
 
 #: The folder the GIFs go in, and the doc whose section they draw.
 FIGURES_DIR = Path(__file__).resolve().parents[1]
-DOC = FIGURES_DIR.parent / "architecture.md"
+DOC = FIGURES_DIR.parent / "architecture" / "05-building-blocks.md"
 SECTION = "##### How the broker's rate limit is shared"
 
 _WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
