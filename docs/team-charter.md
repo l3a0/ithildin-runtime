@@ -279,8 +279,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-  Has each setting a search evaluates give its return after cost in every period on the calendar its record
-  names, with a period it could not compute missing with its reason and never zero, counts a position from
+  Has each setting a search evaluates give its return after cost, under the cost model and version its
+  record names, in every period on the calendar its record names, with a period it could not compute missing with its reason and never zero, counts a position from
   flat to flat by the one calculation every reader uses and never a fill, an order, a leg or an addition on
   its own, and computes a spread's profit and loss leg by leg so a change of its weights earns nothing,
   under rules 1 to 3 of the design doc's
