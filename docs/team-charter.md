@@ -43,7 +43,11 @@ for what a market can do to a position live in the design doc's
 [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 The rules from Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2nd ed., Wiley, 2008)
 for searching a strategy's settings and reading what the search found live in the design doc's
-[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours). The
+[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
+The rules from Ernest P. Chan's *Quantitative Trading* (2nd ed., Wiley, 2021) for keeping later data out of a
+backtest, computing the figures a result is quoted in and checking that paper trades what the backtest traded
+live in the design doc's
+[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -254,6 +258,12 @@ time is the scarce resource, so work reaches the owner already reviewed.
   after reading a result, with no search or run among these reading a held-out window or a registered
   sample's sessions, under the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
+  Fits each value a strategy computes, such as a hedge ratio or a half-life, on a window that ends before
+  the first decision using it, quotes a Sharpe ratio, a drawdown and a growth rate from the one function
+  each has with how it was computed, rests a traded spread's case on a recorded test that it reverts and
+  its half-life rather than on correlation, and reads a gap between paper and the backtest for a bug or a
+  mismatched trade before any other cause, under rules 1, 2, 4 and 6 of the design doc's
+  [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -288,6 +298,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   or the gate stopped from reading a price of unstated kind, and stores what a decision or the gate read or a halt refused, and each published text
   its opening names, under the opening and rules 2 and 5 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+  Has a backtest read its history through the same check that flags a wrong price for a live decision,
+  and keeps the flag as a record beside the price it flags, which stays as it arrived, under rule 3 of the
+  design doc's [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** any change that can overwrite or silently drop a recorded value,
   any cleanup or retention rule, new or existing, that could match a path,
   or a git branch or ref, holding recorded data as the design doc defines it, a recorded format with
@@ -414,6 +427,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   it may hold a position, what its input check accepts or a limit it trades under, and that a rule's record holds back no change that cuts risk, under
   rules 4 and 5 of the design doc's
   [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
+  Has a proposal on a live size show, at each candidate size, its leverage as a multiple of the Kelly
+  leverage with the inputs behind it, as a figure that sets no limit, under rule 5 of the design doc's
+  [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** any change to the order path, the gate or the limits, as a
   required reviewer, any handling that answers bad input wherever trading
   reads it with a neutral value, the closest legal value, a logged warning
@@ -485,6 +501,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
   Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, the close after a broker's trade, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the opening and rules 1, 2, 5 and 7 of the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+  Holds each strategy's test that drops its latest sessions and compares the positions both runs share,
+  the hand-built series that pins the Sharpe ratio, a drawdown and its duration and a growth rate, and the
+  test that a wrong low price adds nothing to a mean-reverting strategy's backtest, under rules 1 to 3 of
+  the design doc's [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -535,6 +555,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   and paper, after a stop of the kind rule 4 of the design doc's
   [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
   names, once the runbook's checks pass.
+  Has each paper session's orders compared with a replay of that session, as shadow's are, and sends a
+  difference with no named cause to the owner as a found error, under rule 6 of the design doc's
+  [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
 - **Vetoes:** a deploy without a rollback, a strategy with no way to switch it
   off, and an alarm, off switch or rollback nobody has seen work in a drill.
   An alarm reads zero while it is healthy, so count the cycles it watched
