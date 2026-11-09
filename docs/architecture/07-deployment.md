@@ -559,18 +559,19 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 #### Item 6: how a new VM image rolls out
 
-**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from two rules that [design.md's decisions](../design.md#decisions) settle. The apply checks for an open session before it changes the launch template, and an apply that refuses deletes its own marker.
 
-Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out a refresh refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind. The subsections below give each of them except what happens to a refused refresh's marker, which this item does not say.
+Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out an apply refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
 
 ```mermaid
 sequenceDiagram
-    participant Job as The job that starts the refresh
+    participant Job as The apply job that starts the refresh
     participant Marker as The refresh's marker
     participant Group as The Auto Scaling group
     participant VM as Each new VM
     Job->>Marker: creates it with a create-only write
     Job->>Job: goes on only while no session is open
+    Job->>Group: changes the group's launch template
     Job->>Group: starts the instance refresh
     loop One VM at a time
         Group->>VM: launches it and holds it out of service at the launch lifecycle hook
@@ -584,11 +585,18 @@ sequenceDiagram
 
 ##### When a refresh may run
 
-A refresh first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+The apply job first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it change the launch template and start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
 A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
+
+##### What a refused apply does
+
+An apply that finds a session open changes nothing. It deletes its own marker, alarms that the image did not roll out, naming the session it found, and exits. The change waits for a later apply that finds no session open.
+
+1. **Deleting the marker** means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
+2. **Checking before the template changes** means the launch template never names an image the VMs do not run while a session is open. A VM lost mid-session is replaced from the launch template, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says, so a template changed ahead of the VMs would bring that replacement up on the new image, and the session would run two VM images.
 
 ##### How many VMs a refresh replaces at a time
 
@@ -622,7 +630,7 @@ A VM whose checks fail sets off four steps, in order.
 
 ##### Who deletes the refresh's marker
 
-The job that started the refresh waits for the refresh's end event and then deletes the marker. `ithildin` gets no command for it, so the jobs in this table clear a stale marker.
+The job that started the refresh waits for the refresh's end event and then deletes the marker. A refused apply deletes its marker before it exits, as [What a refused apply does](#what-a-refused-apply-does) says. A marker can still be left behind when its job dies between the write and the delete. `ithildin` gets no command for it, so the jobs in this table clear a stale marker.
 
 **Table:** Who clears a stale refresh marker in each environment
 
@@ -1033,7 +1041,7 @@ A drill and a session's supervisor each write first and check second.
 | First | Creates a marker with a create-only write | Writes the plan |
 | Then | Refuses to go on while live has a session open, or its account lease is held | Halts the run while a drill's marker exists or until whatever the last drill left behind checks clean |
 
-A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass.
+A session is open here when a run's plan exists, its stop does not and its close has not passed by design.md's margin. So a drill and a session that start together never both pass. A drill that refuses deletes its own marker before it exits, so a refusal leaves nothing for the next session to find.
 
 ##### How an overdue drill reaches the owner
 
