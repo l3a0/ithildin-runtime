@@ -559,11 +559,12 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 #### Item 6: how a new VM image rolls out
 
-**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from three rules that [design.md's decisions](../design.md#decisions) settle.
+**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that makes the new launch template version starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from four rules that [design.md's decisions](../design.md#decisions) settle.
 
-1. The apply checks for an open session before it changes the launch template.
-2. An apply that refuses deletes its own marker and waits for the session to end.
-3. The cleanup of a stale marker finishes a dead job's refresh before it deletes the marker.
+1. The apply checks for an open session before it starts the refresh.
+2. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself.
+3. An apply that refuses deletes its own marker and waits for the session to end.
+4. The cleanup of a stale marker deletes it only once no refresh runs and every VM runs the version the group names.
 
 Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out an apply refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
 
@@ -575,36 +576,43 @@ sequenceDiagram
     participant VM as Each new VM
     Job->>Marker: creates it with a create-only write
     Job->>Job: goes on only while no session is open
-    Job->>Group: changes the group's launch template
-    Job->>Group: starts the instance refresh
+    Job->>Group: starts the instance refresh, with the new version as its desired configuration
     loop One VM at a time
         Group->>VM: launches it and holds it out of service at the launch lifecycle hook
         VM->>VM: verifies the pin's provenance and pulls the image
         VM->>VM: waits for the read-only drill checks to pass
         VM->>Group: completes the hook
     end
+    Group->>Group: names the new version once the refresh succeeds
     Job->>Job: waits for the refresh's end event
     Job->>Marker: deletes it
 ```
 
 ##### When a refresh may run
 
-An apply whose plan changes the launch template first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it change the launch template and start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
+An apply whose plan rolls out a new launch template version first creates a marker with a create-only write and refuses to go on while a session is open, by the same two-sided check that keeps a drill and a session apart. Only once that check passes does it start the refresh. In that check each side writes first and checks second, so two that start together never both pass, as [How a drill and a live session never both pass](#how-a-drill-and-a-live-session-never-both-pass) says.
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
 A session that finds the marker refuses to start, with the reason "session refused: instance refresh open". So a session never starts on a group with two VM images in it.
 
+##### Why the group's template changes only when its refresh succeeds
+
+The apply creates a numbered version of the launch template and passes it to the refresh as its desired configuration. It never changes the group's launch template itself. AWS's pages, read on 2026-11-09, give three reasons this works.
+
+1. The group's settings change to the desired configuration only "once the instance refresh succeeds" ([StartInstanceRefresh](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html)).
+2. Automatic rollback "is only available if you specify a desired configuration", and restores "the configuration that you last saved on the Auto Scaling group before starting the instance refresh" ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)).
+3. A second refresh is refused with `InstanceRefreshInProgress` while one runs ([StartInstanceRefresh](https://docs.aws.amazon.com/autoscaling/ec2/APIReference/API_StartInstanceRefresh.html)).
+
+So until a refresh succeeds, the group names the version its VMs run, and a VM lost outside a refresh is replaced from that version, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says. A job that dies before its refresh starts leaves the group as it was, and a refresh that has started runs to its end in AWS without the job.
+
 ##### What a refused apply does
 
 An apply that finds a session open changes nothing, in its whole plan. It deletes its own marker and alarms that the image did not roll out, naming the session it found and whether the delete succeeded. A delete that fails pages the owner at once, naming the marker, because the marker would stop the next session.
 
-The apply then waits for the session to end and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the launch template as a difference from the code.
+The apply then waits for the session to end and runs again from its first step, as a merge's apply that touches execution already waits for the session to end under [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault). So nobody has to start it again. Until it runs, the scheduled drift check reports the new launch template version as a difference from the code.
 
-1. **Deleting the marker** means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
-2. **Checking before the template changes** means a refused apply never leaves the launch template ahead of the VMs. A VM lost mid-session is replaced from the launch template, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says, so a template changed ahead of the VMs would bring that replacement up on the new image, and the session would run two VM images.
-
-A job that dies after changing the template and before its refresh ends can still leave the template ahead of the VMs. [How the cleanup finishes what a dead job left](#how-the-cleanup-finishes-what-a-dead-job-left) says what brings the group up to date.
+Deleting the marker means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
 
 ##### How many VMs a refresh replaces at a time
 
@@ -634,7 +642,7 @@ A VM whose checks fail sets off four steps, in order.
 1. The VM never completes the hook.
 2. The hook's timeout abandons the VM.
 3. The refresh fails.
-4. The refresh's automatic rollback restores the earlier launch template.
+4. The refresh's automatic rollback restores the earlier launch template version, which the group still names because the refresh did not succeed.
 
 ##### Who deletes the refresh's marker
 
@@ -647,20 +655,17 @@ The job that started the refresh waits for the refresh's end event and then dele
 | Shadow and paper | The next merge's apply job |
 | Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. That run records who started it |
 
-##### How the cleanup finishes what a dead job left
+##### What the cleanup checks before it deletes a stale marker
 
-A job that dies after changing the launch template and before its refresh ends leaves the template ahead of the VMs. While its marker stays no session starts, and a session that tries alarms with "session refused: instance refresh open". So the cleanup brings the group up to date before it deletes the marker, in four steps.
+While a stale marker stays, no session starts, and a session that tries alarms with "session refused: instance refresh open". So the cleanup must not leave sessions blocked, and must not let one start on a group in two states. Three things hold, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6750260870) holds how each is built.
 
-1. It waits until no instance refresh runs on the group, because a refresh runs in AWS and can outlive the job that started it.
-2. It compares the launch template version each VM was built from, which Auto Scaling reports, with the template's current version.
-3. Where any VM differs, it starts a refresh under the same marker, after the same session check, waiting for a session to end as a refused apply does. It deletes the marker when that refresh ends.
-4. Where every VM matches, it deletes the marker.
-
-So no session starts after a dead job while the template is ahead of the VMs. Each step can run again, so a cleanup that dies is finished by the next one. The cleanup is the apply job the table names, which already changes the template and starts a refresh, so it needs no new credential.
+1. The cleanup deletes a stale marker only once no refresh runs on the group and every VM runs the launch template version the group names. Where a VM differs, it keeps the marker, starts no refresh, and pages the owner, naming both versions.
+2. A marker that outlives its job, and a cleanup that fails, page the owner, naming the marker.
+3. The cleanup never deletes the marker of a job that is still running.
 
 ##### What rolls back a VM image that fails after its refresh
 
-A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply runs the same session check before it changes the launch template back to the previous version, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts the refresh, outside sessions.
+A VM image that passes its refresh and fails later rolls back by a revert commit on `main`, approved like any VM change. That commit's apply runs the same session check, as [When a refresh may run](#when-a-refresh-may-run) describes, and only then starts a refresh whose desired configuration is the previous launch template version, outside sessions.
 
 ##### Why an app release never rolls out this way
 
