@@ -559,7 +559,11 @@ Execution's check of the account's lease tag before every broker call stops a wo
 
 #### Item 6: how a new VM image rolls out
 
-**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from two rules that [design.md's decisions](../design.md#decisions) settle. The apply checks for an open session before it changes the launch template, and an apply that refuses deletes its own marker.
+**A new VM image rolls out by instance refresh, outside sessions.** A change to the VM itself, such as an OS patch, a Docker upgrade or a new machine image in the launch template, rolls out through the group's instance refresh. The apply that changes the launch template starts it, and on paper and live that apply waits for the owner. The rest of this item is this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), apart from three rules that [design.md's decisions](../design.md#decisions) settle.
+
+1. The apply checks for an open session before it changes the launch template.
+2. An apply that refuses deletes its own marker and waits for the session to end.
+3. The cleanup of a stale marker finishes a dead job's refresh before it deletes the marker.
 
 Dynamic diagram: one refresh that passes, from its marker to the marker's deletion. It leaves out an apply refused because a session is open, when slice 1's group of one terminates its old VM, a VM whose checks fail, and a marker its job left behind, which the subsections below give.
 
@@ -600,7 +604,7 @@ The apply then waits for the session to end and runs again from its first step, 
 1. **Deleting the marker** means a refusal blocks no later session. A marker left behind would stop the next session from starting although no refresh runs.
 2. **Checking before the template changes** means a refused apply never leaves the launch template ahead of the VMs. A VM lost mid-session is replaced from the launch template, as [Item 1](#item-1-how-a-lost-vm-is-replaced) says, so a template changed ahead of the VMs would bring that replacement up on the new image, and the session would run two VM images.
 
-A job that dies after changing the template and before its refresh ends can still leave the template ahead of the VMs. The cleanup of stale markers below deletes only the marker, and neither restores the template nor finishes the refresh. This doc does not yet say what clears that case.
+A job that dies after changing the template and before its refresh ends can still leave the template ahead of the VMs. [How the cleanup finishes what a dead job left](#how-the-cleanup-finishes-what-a-dead-job-left) says what brings the group up to date.
 
 ##### How many VMs a refresh replaces at a time
 
@@ -642,6 +646,17 @@ The job that started the refresh waits for the refresh's end event and then dele
 | --- | --- |
 | Shadow and paper | The next merge's apply job |
 | Live | A run behind live's reviewer, the required reviewer on live's deploy environment, whom GitHub makes approve a run there before it goes ahead. That run records who started it |
+
+##### How the cleanup finishes what a dead job left
+
+A job that dies after changing the launch template and before its refresh ends leaves the template ahead of the VMs. While its marker stays no session starts, and a session that tries alarms with "session refused: instance refresh open". So the cleanup brings the group up to date before it deletes the marker, in four steps.
+
+1. It waits until no instance refresh runs on the group, because a refresh runs in AWS and can outlive the job that started it.
+2. It compares the launch template version each VM was built from, which Auto Scaling reports, with the template's current version.
+3. Where any VM differs, it starts a refresh under the same marker, after the same session check, waiting for a session to end as a refused apply does. It deletes the marker when that refresh ends.
+4. Where every VM matches, it deletes the marker.
+
+So no session starts after a dead job while the template is ahead of the VMs. Each step can run again, so a cleanup that dies is finished by the next one. The cleanup is the apply job the table names, which already changes the template and starts a refresh, so it needs no new credential.
 
 ##### What rolls back a VM image that fails after its refresh
 
