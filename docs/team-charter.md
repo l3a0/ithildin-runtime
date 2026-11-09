@@ -556,8 +556,9 @@ time is the scarce resource, so work reaches the owner already reviewed.
   exact drift case with a long and a short exposure, the planted skilled signal, the resampler's centring,
   length and shared draws across instruments and candidates, and the tests of the code behind every
   significance figure on candidates with no edge, on a synthetic series whose days depend on each other
-  where the strategy holds positions across days, and on a planted edge, and the tests of a held-out load
-  that [#63](https://github.com/l3a0/ithildin-runtime/issues/63) lists under item 5.
+  where the strategy holds a position for more than one session, and on a planted edge, and the tests that
+  a held-out load's record is stored before its data, that a failed write fails with an error, and that a
+  decision's read is neither recorded nor refused.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
