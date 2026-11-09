@@ -1,6 +1,6 @@
 # Architecture, section 3: Context and scope
 
-This page is section 3 of [the architecture](README.md), in the order of the arc42 template. It answers what the platform talks to outside itself, and what crosses each edge.
+This page is section 3 of [the architecture](00-README.md), in the order of the arc42 template. It answers what the platform talks to outside itself, and what crosses each edge.
 
 ## Contents
 

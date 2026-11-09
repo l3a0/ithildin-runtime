@@ -1,6 +1,6 @@
 # Architecture, section 6: Runtime
 
-This page is section 6 of [the architecture](README.md), in the order of the arc42 template. It answers what happens while the platform runs: a decision's data flow, a trading day, faults, and the life of an order and of a run.
+This page is section 6 of [the architecture](00-README.md), in the order of the arc42 template. It answers what happens while the platform runs: a decision's data flow, a trading day, faults, and the life of an order and of a run.
 
 ## Contents
 

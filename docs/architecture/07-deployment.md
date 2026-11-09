@@ -1,6 +1,6 @@
 # Architecture, section 7: Deployment
 
-This page is section 7 of [the architecture](README.md), in the order of the arc42 template. It answers which machine each piece runs on, what crosses each machine's edge, and how the four environments are kept apart.
+This page is section 7 of [the architecture](00-README.md), in the order of the arc42 template. It answers which machine each piece runs on, what crosses each machine's edge, and how the four environments are kept apart.
 
 ## Contents
 

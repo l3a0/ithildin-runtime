@@ -16,7 +16,7 @@ its tests show it works.
 - [docs/team-charter.md](docs/team-charter.md) holds the team's roles, the
   lifecycle from plan to operate, and why the MVP is a walking skeleton.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
-- [docs/architecture/](docs/architecture/README.md) draws how slice 1's modules
+- [docs/architecture/](docs/architecture/00-README.md) draws how slice 1's modules
   fit together, as diagrams, one page per section of the arc42 template.
 - [docs/what-a-person-runs.md](docs/what-a-person-runs.md) holds the command line
   tool the owner and the operator run, and how an alarm leads to a command.

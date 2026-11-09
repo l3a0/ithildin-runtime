@@ -1,6 +1,6 @@
 # Architecture, section 1: Introduction and goals
 
-This page is section 1 of [the architecture](README.md), in the order of the arc42 template. It answers what the platform's first slice must do, and the strategy it runs to prove it.
+This page is section 1 of [the architecture](00-README.md), in the order of the arc42 template. It answers what the platform's first slice must do, and the strategy it runs to prove it.
 
 ## Contents
 

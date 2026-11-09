@@ -1,6 +1,6 @@
 # Architecture, section 5: Building blocks
 
-This page is section 5 of [the architecture](README.md), in the order of the arc42 template. It answers which modules and workers make up the platform, the types they pass, and which may import which.
+This page is section 5 of [the architecture](00-README.md), in the order of the arc42 template. It answers which modules and workers make up the platform, the types they pass, and which may import which.
 
 ## Contents
 

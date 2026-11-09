@@ -1,6 +1,6 @@
 # Architecture, section 8: Crosscutting concepts
 
-This page is section 8 of [the architecture](README.md), in the order of the arc42 template. It answers what is stored, where, and in which format, for every component.
+This page is section 8 of [the architecture](00-README.md), in the order of the arc42 template. It answers what is stored, where, and in which format, for every component.
 
 ## Contents
 

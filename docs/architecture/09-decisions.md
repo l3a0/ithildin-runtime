@@ -1,6 +1,6 @@
 # Architecture, section 9: Architecture decisions
 
-This page is section 9 of [the architecture](README.md), in the order of the arc42 template. It answers what this design proposes and is waiting on a ruling for.
+This page is section 9 of [the architecture](00-README.md), in the order of the arc42 template. It answers what this design proposes and is waiting on a ruling for.
 
 ## Contents
 

@@ -1,6 +1,6 @@
 # What a person runs
 
-This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, and how a person goes from an alarm to the command that answers it. The reasoning behind each rule sits in [the architecture](architecture/README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
+This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, and how a person goes from an alarm to the command that answers it. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
 
 ## Contents
 
