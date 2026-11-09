@@ -11,7 +11,10 @@ a heading whose anchor matches.
 An anchor follows GitHub's rule for headings: lowercase the heading's text,
 drop every character that is not a letter, a digit, an underscore, a hyphen
 or a space, and turn each space into a hyphen. A second heading with the same
-anchor gets `-1`, a third `-2`, and so on.
+anchor gets `-1`, a third `-2`, and so on, skipping any number another
+heading already took. Inline markup goes first, as GitHub renders it: a code
+span keeps its words, a link keeps its text, and HTML tags and emphasis
+markers drop out.
 
 Links inside a fenced block or a backtick span are not links, so they are
 skipped, the same way the prose sweeps skip them.
