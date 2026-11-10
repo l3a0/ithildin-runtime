@@ -3,65 +3,31 @@
 This is the prompt a coordinating session loads to run an agent team that plans,
 builds, tests and operates a systematic trading platform. The first product is
 the platform Rishi Narang outlines in *Inside the Black Box* (3rd ed., Wiley,
-2024). Citations like (L941) are Kindle locations in the owner's highlights,
-kept in the sibling repository at
-[research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md),
-or of a screen of the book's full text. The rules from reading the whole book, for
-backtests, a strategy's stated bet, limits and the fill record, live in the design doc's
-[A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
-Citations like (AoS L4156) are Kindle locations in *The Art of Scalability*
-(Abbott and Fisher, 1st ed., Addison-Wesley, 2009), whose operating and review
-practices the roles and lifecycle below adopt. Most are the locations of the
-owner's own highlights, and the rest point into the book's text, which no
-public notes file holds. Citations like (DDIA L9274) are Kindle locations in
-*Designing Data-Intensive Applications* (Kleppmann, 1st ed., O'Reilly Media,
-2017), of the owner's highlights or of the book's full text, and (DDIA
-L\~14160) marks a full-text location good to about one screen. The roles below
-also adopt its rules for faults, clocks, retries and records. Citations like (CC p. 481) are
-printed pages of *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004), whose practices for
-building, testing, reviewing and debugging code the roles and lifecycle below also adopt.
-Citations like (RD p. 199) are printed pages of McConnell's *Rapid Development* (Microsoft Press,
-1996), whose rules for estimating, cutting and tracking the work the design doc's
-[How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries. Citations like (BM L3354) are
-Kindle locations in Sam Newman's *Building Microservices* (O'Reilly Media, 2015), whose rules for
-module boundaries, releases, tracing and dependency failure the roles below also adopt, and (BM L\~932)
-marks a location good to about one screen.
-Citations like (DT p. 247) are printed pages of Viktor Farcic's *The DevOps 2.0 Toolkit* (2016), whose
-rules for checking a release where it runs, building machines from code, healing without hiding a
-fault and gathering logs off the machine the roles below also adopt.
-The rules from Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) for judging a
-strategy over a sample, and for the human acts around one, live in the
-design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
-The rules from Nassim Nicholas Taleb's *Fooled by Randomness* (2nd ed., Random House, 2004) for what a
-result can and cannot show live in the design doc's
-[A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
-The rules from Van K. Tharp's *Trade Your Way to Financial Freedom* (2nd ed., McGraw-Hill, 2007) for
-measuring a result against the risk it took and for choosing size live in the design doc's
-[A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-The rules from Larry Harris's *Trading and Exchanges* (Oxford University Press, 2003) for what a fill cost and
-for what a market can do to a position live in the design doc's
-[A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-The rules from Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2nd ed., Wiley, 2008)
-for searching a strategy's settings and reading what the search found live in the design doc's
-[A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
-The rules from Ernest P. Chan's *Quantitative Trading* (2nd ed., Wiley, 2021) for keeping later data out of a
-backtest, computing the figures a result is quoted in and checking that paper trades what the backtest traded
-live in the design doc's
-[A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
-The rules from Chan's *Algorithmic Trading* (Wiley, 2013) for which price a backtest of a closing order may
-use, for testing a pair's reversion on the prices it trades and for what a significance figure states live in
-the design doc's
-[A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-The rules from David R. Aronson's *Evidence-Based Technical Analysis* (Wiley, 2007) for what a backtest's
-position bias earns with no skill and for how a significance figure's distribution is built and checked
-live in the design doc's
-[A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
-The rules from Marcos López de Prado's *Advances in Financial Machine Learning* (Wiley, 2018) for what a
-backtest counts, what a search keeps, how a spread's profit is computed, how the code behind a fitted value
-is tested and how a model is kept from scoring on what it has already seen. They live in the design doc's
-[A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on). The
-architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
-and a role below points to a rule there by its title rather than restating it.
+2024).
+
+The roles and the lifecycle below draw on sixteen books. Seven of them are cited in this charter by a short form, as in (AoS L4156). Each entry below gives that form, the book, and what the charter takes from it.
+
+1. **(L941)**, *Inside the Black Box*. A citation like this is a Kindle location in the owner's highlights, kept in the sibling repository at [research/book-notes/inside-the-black-box.md](https://github.com/l3a0/trading-strategies/blob/main/research/book-notes/inside-the-black-box.md), or of a screen of the book's full text. The rules from reading the whole book, for backtests, a strategy's stated bet, limits and the fill record, live in the design doc's [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
+2. **(AoS L4156)**, *The Art of Scalability* (Abbott and Fisher, 1st ed., Addison-Wesley, 2009). A citation like this is a Kindle location. Most are the locations of the owner's own highlights, and the rest point into the book's text, which no public notes file holds. The roles and lifecycle below adopt its operating and review practices.
+3. **(DDIA L9274)**, *Designing Data-Intensive Applications* (Kleppmann, 1st ed., O'Reilly Media, 2017). A citation like this is a Kindle location of the owner's highlights or of the book's full text, and (DDIA L\~14160) marks a full-text location good to about one screen. The roles below also adopt its rules for faults, clocks, retries and records.
+4. **(CC p. 481)**, *Code Complete* (McConnell, 2nd ed., Microsoft Press, 2004). A citation like this is a printed page. The roles and lifecycle below also adopt its practices for building, testing, reviewing and debugging code.
+5. **(RD p. 199)**, McConnell's *Rapid Development* (Microsoft Press, 1996). A citation like this is a printed page. The design doc's [How work is cut and ordered](design.md#how-work-is-cut-and-ordered) carries its rules for estimating, cutting and tracking the work.
+6. **(BM L3354)**, Sam Newman's *Building Microservices* (O'Reilly Media, 2015). A citation like this is a Kindle location, and (BM L\~932) marks a location good to about one screen. The roles below also adopt its rules for module boundaries, releases, tracing and dependency failure.
+7. **(DT p. 247)**, Viktor Farcic's *The DevOps 2.0 Toolkit* (2016). A citation like this is a printed page. The roles below also adopt its rules for checking a release where it runs, building machines from code, healing without hiding a fault and gathering logs off the machine.
+
+The other nine books supply rules that live in the design doc, each in the section linked beside it.
+
+1. Mark Douglas's *Trading in the Zone* (Prentice Hall Press, 2000), for judging a strategy over a sample and for the human acts around one, in [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it).
+2. Nassim Nicholas Taleb's *Fooled by Randomness* (2nd ed., Random House, 2004), for what a result can and cannot show, in [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
+3. Van K. Tharp's *Trade Your Way to Financial Freedom* (2nd ed., McGraw-Hill, 2007), for measuring a result against the risk it took and for choosing size, in [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+4. Larry Harris's *Trading and Exchanges* (Oxford University Press, 2003), for what a fill cost and for what a market can do to a position, in [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
+5. Robert Pardo's *The Evaluation and Optimization of Trading Strategies* (2nd ed., Wiley, 2008), for searching a strategy's settings and reading what the search found, in [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
+6. Ernest P. Chan's *Quantitative Trading* (2nd ed., Wiley, 2021), for keeping later data out of a backtest, computing the figures a result is quoted in and checking that paper trades what the backtest traded, in [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
+7. Chan's *Algorithmic Trading* (Wiley, 2013), for which price a backtest of a closing order may use, for testing a pair's reversion on the prices it trades and for what a significance figure states, in [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
+8. David R. Aronson's *Evidence-Based Technical Analysis* (Wiley, 2007), for what a backtest's position bias earns with no skill and for how a significance figure's distribution is built and checked, in [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
+9. Marcos López de Prado's *Advances in Financial Machine Learning* (Wiley, 2018), for what a backtest counts, what a search keeps, how a spread's profit is computed, how the code behind a fitted value is tested and how a model is kept from scoring on what it has already seen, in [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on).
+
+The architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles), and a role below points to a rule there by its title rather than restating it.
 
 ## Contents
 
