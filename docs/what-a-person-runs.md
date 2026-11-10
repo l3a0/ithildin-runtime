@@ -179,7 +179,7 @@ These two take a default reason and ask for no confirmation, because stopping sh
 
 This is one command with a default reason, because stopping should never be slow.
 
-1. The tool writes the kill switch blob, as a new version even where the switch is already set, journals the pull and raises the alarm. On live the operator's credential creates no journal entry, so what journals an operator's pull there is open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+1. The tool writes the kill switch blob, as a new version even where the switch is already set, journals the pull and raises the alarm. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that on live the operator's credential creates no journal entry, so what journals an operator's pull there is open on that issue.
 2. The blob's own event wakes execution.
 3. Execution reads the switch itself and cancels every resting order in the account, stamped or not, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says.
 4. The tool reads the journal once, at a deadline set before the [cancel cutoff](architecture/06-runtime.md#the-cancel-cutoff), for execution's entry saying the cancels are done, which names the switch version the pull wrote, so an entry left by an earlier pull never counts.
@@ -189,7 +189,7 @@ A pull past that deadline names the console at once.
 
 ###### `ithildin strategy off --account <a> --strategy <s>`
 
-This creates the strategy's off switch with a default reason and journals it, because stopping should never be slow. On live the operator's credential creates no journal entry, so what journals an operator's switch-off there is open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+This creates the strategy's off switch with a default reason and journals it, because stopping should never be slow. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that on live the operator's credential creates no journal entry, so what journals an operator's switch-off there is open on that issue.
 
 A decision that finds the off switch already set plans no orders for the strategy, as [Prepare, once per decision](architecture/06-runtime.md#prepare-once-per-decision) says. For a switch set later, execution reads the off switch right before each of that strategy's orders, abandons them, and keeps sending the account's other strategies' orders. It never reads as a target of zero, so nothing is flattened. The strategy's cancels still go out.
 

@@ -849,6 +849,7 @@ sequenceDiagram
     P->>K: pulls the kill switch
     K->>F: writes a new version of the kill switch blob
     K->>J: journals the halt, reason "kill switch"
+    Note over K,J: An operator's pull on live writes no entry here,<br/>which issue 11 settles
     K->>A: raises the alarm
     par
         F-->>X: sends the blob's event
@@ -862,7 +863,7 @@ sequenceDiagram
     loop until a successful read lists no open orders
         X->>B: reads the account's open orders
         X->>J: journals the read as received
-        loop each order the journal holds open or the read lists,<br/>with no cancel journaled
+        loop each order the journal holds open or the read lists,<br/>with no cancel pending or in doubt
             X->>J: journals its cancel
             X->>F: is the lease tag unchanged?
             X->>B: cancels it by the broker's order id
@@ -877,7 +878,7 @@ sequenceDiagram
     M->>J: are the cancels done within the deadline of the pull?
     M->>A: raises a second alarm if not,<br/>naming the broker's own console
     K->>J: reads once at its own deadline<br/>for the cancels-done entry
-    K->>P: if it is missing, names the broker's own console
+    K->>P: if it is missing or cannot be read,<br/>names the broker's own console
     Note over F,X: Every worker checks the switch when it starts and whenever an event wakes it,<br/>and execution right before every broker call
 
     Note over H,A: A decision that never finishes
@@ -907,7 +908,7 @@ The kill switch is a command, not a running process. It creates a blob at one ke
 
 1. The blob's S3 event reaches the queues of execution, the supervisor and monitoring.
 2. Whichever execution instance receives that event takes the account's lease. The lease is free after at most one order in flight, or on the lease's release.
-3. That instance cancels every resting order in the account, stamped or not, through the order path and by the broker's order id: the union of the orders the journal holds open and the orders the broker lists, so an empty or failed answer never reads as nothing to cancel. Each cancel is journaled before it is sent and checks the lease's tag just before its broker call. A cancel whose answer is lost is looked up first, and repeated only when the lookup shows the order still working and no cancel pending, at most a written number of times, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says. An order in doubt is cancelled once a row or a lookup gives its broker id. It reads the broker again, and cancels each order a later read lists that has no cancel journaled, until a successful read lists no open orders. It journals that the cancels are done only once that read lists none and a lookup has settled each journal order the broker no longer lists, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) says. If that entry is not journaled by the pull's deadline, monitoring raises its second alarm.
+3. That instance cancels every resting order in the account, stamped or not, through the order path and by the broker's order id: the union of the orders the journal holds open and the orders the broker lists, so an empty or failed answer never reads as nothing to cancel. Each cancel is journaled before it is sent and checks the lease's tag just before its broker call. A cancel whose answer is lost is looked up first, and repeated only when the lookup shows the order still working and no cancel pending, at most a written number of times, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says. An order in doubt is cancelled once a row or a lookup gives its broker id. It reads the broker again, and cancels each order a later read lists that has no cancel pending or in doubt, until a successful read lists no open orders. It journals that the cancels are done only once that read lists none and a lookup has settled each journal order the broker no longer lists, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) says. If that entry is not journaled by the pull's deadline, monitoring raises its second alarm.
 4. `ithildin switch pull` reads the journal once at a deadline before the cancel cutoff, and names the broker's own console when the done entry is not there or cannot be read.
 
 Monitoring's report says the switch is set.
