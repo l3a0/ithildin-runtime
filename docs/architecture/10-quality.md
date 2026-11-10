@@ -155,7 +155,7 @@ three levels, from fast to slow.
    written before every container stops is still there after. Tests 1 and 2
    and test 3's fake-broker run go through this level, with the simulated
    broker and the history clock, and so do the drills that crash, freeze or
-   restart a worker, among them the crash between a pair's legs. Tests show that a write in one container reaches the queue of every container the table lists as its reader, and no other's. This level runs three instances of each component and of the supervisor, as a deployment on the cluster does, one more than slice 1's one VM runs, and runs test 2's replay without its kill, once with three instances and once with one instance of each, expecting the same journal and the same blobs byte for byte, apart from what design.md's `### How a component learns of a change` leaves out.
+   restart a worker, among them the crash between a pair's legs. Tests show that a write in one container reaches the queue of every container the table lists as its reader, and no other's. This level runs two instances of each component and of the supervisor, as slice 1's deployment does, and runs test 2's replay without its kill, once as a deployment does and once with one instance of each, expecting the same journal and the same blobs byte for byte, apart from what design.md's `### How a component learns of a change` leaves out.
 
 On a run with no credential, tests 1 and 2 read [the vintages](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl) quantitative-trading commits, at a pinned commit and against their committed checksums, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds. An absent input fails the check.
 
