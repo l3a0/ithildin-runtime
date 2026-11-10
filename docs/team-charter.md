@@ -51,7 +51,11 @@ live in the design doc's
 The rules from Chan's *Algorithmic Trading* (Wiley, 2013) for which price a backtest of a closing order may
 use, for testing a pair's reversion on the prices it trades and for what a significance figure states live in
 the design doc's
-[A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null). The
+[A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
+The rules from David R. Aronson's *Evidence-Based Technical Analysis* (Wiley, 2007) for what a backtest's
+position bias earns with no skill and for how a significance figure's distribution is built and checked
+live in the design doc's
+[A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds). The
 architecture rules drawn from the books live in the design doc's [Design principles](design.md#design-principles),
 and a role below points to a rule there by its title rather than restating it.
 
@@ -86,7 +90,9 @@ cannot see each other.
 Three things cannot be recovered once lost, and everything else is
 regenerable, apart from a search's record, which the design doc's
 [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours)
-defines and keeps as recorded data.
+defines and keeps as recorded data, and the list of held-out windows and the record of each load of one, which its
+[A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
+keeps the same way.
 
 1. **Captured data.** A market snapshot not recorded at the time is gone, and
    a vendor's history is restated after the fact. Data is recorded with the
@@ -275,6 +281,16 @@ time is the scarce resource, so work reaches the owner already reviewed.
   the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
   3 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
+  States for every backtest quoted as evidence each instrument's average signed exposure and average daily
+  change and tests its return with the drift its exposure earned taken out, states beside it on data its
+  research already read what the same exposure earns with no timing, builds a resampled null so the no-edge
+  assumption holds in it, reads a picked result's p-value against the best of every candidate its search
+  tried, resampled, with the same picking on random signals and the false-discovery-rate figure beside it,
+  gives an average return quoted as evidence its interval, labelled unadjusted around a search's pick, a
+  ratio its own distribution and a hit rate its rate with no signal, and labels a result on a window that
+  overlaps one already loaded, by any session, as in-sample, each labelled exploratory where it comes from a
+  backtest, a shadow run or a paper run with no sample open, under rules 1 to 5 of the design doc's
+  [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
@@ -534,6 +550,16 @@ time is the scarce resource, so work reaches the owner already reviewed.
   at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
   [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
+  Holds the tests rules 1 to 5 of the design doc's [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
+  require, with the cases, level, count of runs and seed that
+  [#63](https://github.com/l3a0/ithildin-runtime/issues/63) proposes and each build settles, among them the
+  exact drift case with a long and a short exposure, the planted skilled signal, the resampler's centring,
+  length and shared draws across instruments and candidates, and the tests of the code behind every
+  significance figure on candidates with no edge, on a synthetic series whose days depend on each other
+  where the strategy holds a position for more than one session, and on a planted edge, and the tests that
+  a held-out load's record is stored before its data, that a failed write fails with an error, and that a
+  read by a decision, the gate, the loss stop, reconciliation or the kill switch is neither recorded as a
+  load nor refused.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
@@ -1004,6 +1030,16 @@ rule on testing a pair's reversion takes up. Its sizing and stop-loss chapters a
 leverage, from Chan's earlier book, and the register already rejects a price stop on the slice 1 spread. Its figures are worked examples, most before costs, so none is adopted as a
 threshold. What it adds here is the auction print behind a closing order's backtest, a pair's reversion
 tested on the prices it trades, and the null hypothesis behind a significance figure.
+
+*Evidence-Based Technical Analysis* dates from 2007 and writes for technical analysts who test signals on
+historical data. Its chapters on the psychology of judging charts by eye, the philosophy of science and
+theories of why prices move have no rule here, apart from the four counts behind a hit rate. Its chapters
+on counting tries, writing a hypothesis down first, keeping later data out of a backtest and a rule changed
+after it fails repeat rules the design already carries. Its study of 6,402 rules on S&P 500 data and its
+other figures are worked examples or simulations, so none is adopted as a threshold. What it adds here is
+a backtest judged with the market's drift taken out, a significance figure whose resampling holds its null
+and whose code is tested where the answer is known, an interval beside an average return, and a held-out
+window spent once it is loaded.
 
 *Inside the Black Box* writes for investors choosing a quant manager. Its chapters on high-speed and
 high-frequency trading, on judging a manager's integrity and on the case for and against quants have
