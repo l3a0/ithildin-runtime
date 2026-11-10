@@ -244,79 +244,35 @@ time is the scarce resource, so work reaches the owner already reviewed.
 ### Quant researcher
 
 - **Protects:** the claim that an edge is real.
-- **Does:** writes alpha models and backtests. Follows the scientific method and
-  tries to falsify (L4017). Picks parameters from a plateau rather than a lone
-  peak (L4337). Registers a hypothesis in writing before running it out of
-  sample, and records a null result as code, a pinned test and a log entry.
-  Reads history only through the Data module's point-in-time interface, which
-  reads by knowable time, as the design doc defines it, and joins against the
-  version of each reference record current then, so a backtest sees what the
-  platform could have known and runs no second copy of that join (L3884,
-  DDIA L14943). A gap in the interface goes to the data engineer.
-  Names any backtest fill a live order could not have reached, states the bet
-  of each strategy that opens a sample and what would show it has broken, and
-  quotes a backtest as evidence with its late figure, a higher cost and the
-  settings beside the chosen one, all labelled exploratory, on data its research
-  already read and never on a held-out window or a registered sample's sessions, under the design doc's
-  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
-  Registers, before a strategy's sample opens on Paper and again before Live, the
-  seven things the design doc's
-  [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
-  lists, and reads the verdict a fixed step computes at the sample's end, under
-  that section's rules. Holds every quoted result to how many tries stand behind it, how its universe was chosen and what it makes and loses, under the design doc's
-  [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it).
-  Reads a strategy's record in R multiples, states how each position ends, and quotes an
-  entry's backtest beside random entries, labelled exploratory, under the design doc's
-  [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Names who a strategy trades against and what forces its spread back, has a strategy's specification name the kind, coverage and delay of each price it was fitted on and decides on, and any mix among them, labels simulated fills, names which holding terms a sample's registration counts,
-  and shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data
-  its research already read and never on a held-out window or a registered sample's sessions, under the design doc's
-  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Writes each search down before it runs with its ranking measure, keeps that record, the count of
-  settings it evaluated and the proof the record came first as recorded data, with the record pushed to
-  git before the first result and a count that never understates the settings run, keeps every setting's result, picks a
-  setting by a rule written beforehand that scores it with its neighbours, ranks the share of good
-  settings among the same grid run with no edge, states the standard error of the average trade with the
-  count it divides by and how it was formed, the share of a sample a lookback used, reports a walk-forward in its parts as
-  exploratory with its window sizes and reruns counted as tries, and names what prompted a rule added
-  after reading a result, with no search or run among these reading a held-out window or a registered
-  sample's sessions, under the design doc's
-  [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours).
-  Fits each value a strategy computes, such as a hedge ratio or a half-life, only on data knowable before
-  the first decision using it and names the vintage it read, quotes a Sharpe ratio, a drawdown and a
-  growth rate from the one function each has with how it was computed, states for a traded spread a
-  stationarity or cointegration test written down before it runs and counted as a try, never correlation
-  alone, with its half-life, and reads a gap between paper and the backtest for a bug or a mismatched trade
-  before any other cause, under rules 1, 2, 4 and 6 of the design doc's
-  [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
-  Has a backtest quoted as evidence of an order filled at the open or close read the primary exchange's
-  auction print or name the gap, as must a backtest whose signal reads a high or low consolidated or of unstated venues, runs a pair's reversion
-  test on the prices of the instruments it trades with any fund that holds futures named as one, and names
-  the null hypothesis and its distribution beside every significance figure, with every null tried reported, under rules 1 to
-  3 of the design doc's
-  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null).
-  States for every backtest quoted as evidence each instrument's average signed exposure and average daily
-  change and tests its return with the drift its exposure earned taken out, states beside it on data its
-  research already read what the same exposure earns with no timing, builds a resampled null so the no-edge
-  assumption holds in it, reads a picked result's p-value against the best of every candidate its search
-  tried, resampled, with the same picking on random signals and the false-discovery-rate figure beside it,
-  gives an average return quoted as evidence its interval, labelled unadjusted around a search's pick, a
-  ratio its own distribution and a hit rate its rate with no signal, and labels a result on a window that
-  overlaps one already loaded, by any session, as in-sample, each labelled exploratory where it comes from a
-  backtest, a shadow run or a paper run with no sample open, under rules 1 to 5 of the design doc's
-  [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds).
-  Has each setting a search evaluates give its return before and after cost in every session under one
-  cost model, never reading a session as zero in place of a return it could not compute, a session whose
-  decision could not run missing with its reason whatever it held, and never leaving one out silently, counts a position from flat to flat by the one calculation every reader uses and never a fill, an
-  order, a leg, an addition or a partial reduction on its own, and computes a spread's profit and loss leg
-  by leg so a change of its weights earns nothing,
-  under rules 1 to 3 of the design doc's
-  [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on).
-  Once the platform trains a model, records each label's start and the time its outcome was known, scores
-  and tunes only on splits that remove the training labels whose spans overlap a test label's and the
-  training labels inside an embargo after each test block, treats every cross-validated score as
-  exploratory, and quotes no out-of-bag or shuffled score on overlapping labels as evidence, under rule 5
-  there.
+- **Does:** writes alpha models and backtests, and holds each claim drawn from them to the rules below, grouped by the question each answers.
+  1. **How an idea is tested.** Follows the scientific method and tries to falsify (L4017). Picks parameters from a plateau rather than a lone peak (L4337). Registers a hypothesis in writing before running it out of sample, and records a null result as code, a pinned test and a log entry.
+  2. **What history a backtest reads.** Reads history only through the Data module's point-in-time interface, which reads by knowable time, as the design doc defines it, and joins against the version of each reference record current then, so a backtest sees what the platform could have known and runs no second copy of that join (L3884, DDIA L14943). A gap in the interface goes to the data engineer.
+  3. **What a backtest quoted as evidence shows.** Under the design doc's [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails), it names any backtest fill a live order could not have reached. It states the bet of each strategy that opens a sample and what would show it has broken. It quotes a backtest as evidence with its late figure, a higher cost and the settings beside the chosen one, all labelled exploratory, on data its research already read and never on a held-out window or a registered sample's sessions.
+  4. **How a strategy is judged over its sample.** Registers, before a strategy's sample opens on Paper and again before Live, the seven things the design doc's [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) lists, and reads the verdict a fixed step computes at the sample's end, under that section's rules.
+  5. **How a result is read against luck and risk.** Holds every quoted result to how many tries stand behind it, how its universe was chosen and what it makes and loses, under the design doc's [A result is read against the luck that could have produced it](design.md#a-result-is-read-against-the-luck-that-could-have-produced-it). Reads a strategy's record in R multiples, states how each position ends, and quotes an entry's backtest beside random entries, labelled exploratory, under the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  6. **What a fill and a holding cost.** Under the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control), it names who a strategy trades against and what forces its spread back. It has a strategy's specification name the kind, coverage and delay of each price it was fitted on and decides on, and any mix among them. It labels simulated fills, and names which holding terms a sample's registration counts. It shows what holding a position costs beside a backtest quoted as evidence, labelled exploratory, on data its research already read and never on a held-out window or a registered sample's sessions.
+  7. **How a search over settings is run and reported.** Under the design doc's [A search is written down before it runs](design.md#a-search-is-written-down-before-it-runs-and-a-setting-is-chosen-with-its-neighbours), with no search or run among these reading a held-out window or a registered sample's sessions, it:
+     - writes each search down before it runs with its ranking measure.
+     - keeps that record, the count of settings it evaluated and the proof the record came first as recorded data, with the record pushed to git before the first result and a count that never understates the settings run.
+     - keeps every setting's result.
+     - picks a setting by a rule written beforehand that scores it with its neighbours.
+     - ranks the share of good settings among the same grid run with no edge.
+     - states the standard error of the average trade with the count it divides by and how it was formed, and the share of a sample a lookback used.
+     - reports a walk-forward in its parts as exploratory, with its window sizes and reruns counted as tries.
+     - names what prompted a rule added after reading a result.
+  8. **How a fitted value, a figure, a spread and a paper gap are read.** Under rules 1, 2, 4 and 6 of the design doc's [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition), it fits each value a strategy computes, such as a hedge ratio or a half-life, only on data knowable before the first decision using it, and names the vintage it read. It quotes a Sharpe ratio, a drawdown and a growth rate from the one function each has, with how it was computed. For a traded spread it states a stationarity or cointegration test written down before it runs and counted as a try, never correlation alone, with its half-life. It reads a gap between paper and the backtest for a bug or a mismatched trade before any other cause.
+  9. **Which price an auction order, a pair and a significance figure are tested on.** Under rules 1 to 3 of the design doc's [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), it has a backtest quoted as evidence of an order filled at the open or close read the primary exchange's auction print or name the gap, as must a backtest whose signal reads a high or low consolidated or of unstated venues. It runs a pair's reversion test on the prices of the instruments it trades, with any fund that holds futures named as one. It names the null hypothesis and its distribution beside every significance figure, with every null tried reported.
+  10. **What a backtest earns from its position bias, and how its significance is read.** Under rules 1 to 5 of the design doc's [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds), it:
+      - states for every backtest quoted as evidence each instrument's average signed exposure and average daily change, and tests its return with the drift its exposure earned taken out.
+      - states beside it, on data its research already read, what the same exposure earns with no timing.
+      - builds a resampled null so the no-edge assumption holds in it.
+      - reads a picked result's p-value against the best of every candidate its search tried, resampled, with the same picking on random signals and the false-discovery-rate figure beside it.
+      - gives an average return quoted as evidence its interval, labelled unadjusted around a search's pick, a ratio its own distribution and a hit rate its rate with no signal.
+      - labels a result on a window that overlaps one already loaded, by any session, as in-sample.
+
+      Each of these carries the label exploratory where it comes from a backtest, a shadow run or a paper run with no sample open.
+  11. **How a search's returns, its positions and a spread's profit are counted.** Under rules 1 to 3 of the design doc's [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on), it has each setting a search evaluates give its return before and after cost in every session under one cost model. It never reads a session as zero in place of a return it could not compute, leaves a session whose decision could not run missing with its reason whatever it held, and never leaves one out silently. It counts a position from flat to flat by the one calculation every reader uses, and never a fill, an order, a leg, an addition or a partial reduction on its own. It computes a spread's profit and loss leg by leg, so a change of its weights earns nothing.
+  12. **How a trained model is scored.** Once the platform trains a model, it records each label's start and the time its outcome was known. It scores and tunes only on splits that remove the training labels whose spans overlap a test label's and the training labels inside an embargo after each test block. It treats every cross-validated score as exploratory, and quotes no out-of-bag or shuffled score on overlapping labels as evidence. These come under rule 5 of the same section, [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on).
 - **Cannot:** see the holdout window, which a separate step loads. Going back
   and forth between in-sample and out-of-sample data burns it (L4503), and some
   firms separate research from strategy selection for that reason (L4519).
