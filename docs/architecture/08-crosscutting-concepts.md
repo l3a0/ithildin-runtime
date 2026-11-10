@@ -254,13 +254,14 @@ Each entry is a blob at a key fixed by the account and its sequence number. It h
 
 Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal` writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
 
-Five writers can append.
+Six writers can append.
 
 1. The `ithildin` tool.
 2. The supervisor, when it clears a lease or takes one over.
 3. Monitoring.
 4. Execution.
 5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
+6. In a live drill the owner approved, the approved drill role, for the journal entries of its own kill switch pull and its own clear.
 
 As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
