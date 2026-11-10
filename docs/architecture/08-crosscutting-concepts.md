@@ -156,13 +156,18 @@ erDiagram
         string worker
         int restart_count
         int exit_status
+        string signal
         string error_tail
     }
     LEASE {
         string key
-        string holder
+        string holder "VM, boot, container, restart count and handler"
+        string release
+        string run
         string etag
         datetime taken
+        datetime expires
+        string status "only on a plan's lease"
     }
     OVERRIDE {
         string key
