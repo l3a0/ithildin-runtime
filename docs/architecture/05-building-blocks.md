@@ -929,7 +929,7 @@ The figure below is a C4 component diagram.
 
 ```mermaid
 flowchart TB
-    core["ithildinruntime.core<br/>shared types, Halt, every Protocol,<br/>Journal, the storage contract, the queue port,<br/>the codec, the key builders, reconcile"]
+    core["ithildinruntime.core<br/>the code every module shares"]
     adapters["adapters<br/>S3, memory-backed folder, SQS, named pipe"]
     data["data"]
     alpha["alpha"]
@@ -973,6 +973,7 @@ An arrow means "may import". The diagram draws four rules.
 
 1. **Every module imports `core` and none of its siblings.** For that reason these live in `core`:
    - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
+   - the `Halt` exception;
    - every `Protocol`, including `RiskGate`;
    - `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to;
    - the storage contract every worker uses:
