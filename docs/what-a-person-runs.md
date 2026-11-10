@@ -84,7 +84,7 @@ Neither holds a long-lived secret in a file. Each environment's bucket policy na
 - The live bucket's policy enforces the owner's split.
 - Inside every bucket, overrides sit under a prefix of their own per account, apart from the journal.
 - Only the owner's role may write a live account's overrides, and no runtime role may write any override.
-- Journal entries are created, never replaced, by execution, monitoring and the supervisor, and by the `ithildin` tool for the person running it.
+- Journal entries are created, never replaced, by execution, monitoring and the supervisor, by the `ithildin` tool for the person running it, by an emergency rollback's credential for its own kill switch pull, and on live by the approved drill role for its own drill's pull and clear.
 - On the live bucket, the switch, lease, override and release keys refuse every person's principal but the owner's, the operator's pull and strategy off switch aside.
 - The runtime's own roles keep the grants [The runtime's credential does only what the rules need](architecture/07-deployment.md#rule-5-the-runtimes-credential-does-only-what-the-rules-need) gives them there.
 
@@ -107,7 +107,7 @@ Two credentials keep duties apart only if a different principal holds each. So a
 | Pull the kill switch | The owner or the operator | The owner or the operator |
 | Switch a strategy off | Any person's credential | Any person's credential |
 | Switch a strategy back on | The owner, and whether the operator may too is undecided | The owner |
-| Clear a halt, a fired loss stop or the kill switch | The owner or the operator | The owner, apart from the kill switch pull a live drill the owner approved makes and clears |
+| Clear a halt, a fired loss stop or the kill switch | The owner or the operator | The owner. A live drill the owner approved also clears the kill switch it pulled itself |
 | Clear an account's lease | The owner or the operator | The owner |
 | Write an override | The owner or the operator | The owner |
 | Change the hard caps | The owner | The owner |
@@ -274,7 +274,7 @@ This deletes a fired loss stop's blob and journals the clear, so the gate takes 
 
 ###### `ithildin switch clear --account <a>`
 
-This deletes the switch and journals the clear.
+This journals the clear, then deletes the switch.
 
 ##### Recover from a dead host
 

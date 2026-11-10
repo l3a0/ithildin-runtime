@@ -172,7 +172,8 @@ for each bought module and what slice 1 uses instead.
 Product owner and the only person who can put capital at risk. Sets the order
 of the backlog, rules on questions an issue reserves, merges, which deploys to shadow and paper, deploys to live by hand, and switches anything to live. Moving agents off the owner's admin login is deferred, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds that work. Until the move, hard limit 1, that no agent places a live order or moves money, and hard limit 6, that the owner merges, hold by instruction alone. Two more
 actions are the owner's alone in live trading: releasing a loss stop or the
-kill switch once it has fired, and switching a strategy back on. In shadow
+kill switch once it has fired, apart from the kill switch pull a live drill
+the owner approved makes and clears, and switching a strategy back on. In shadow
 and paper the operator may release a fired loss stop or kill switch too.
 That the operator may also switch a strategy
 back on there is the design's proposal, read from those rules, which waits on
@@ -408,6 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   kill switch acts as a holder of the account's lease, never as a second
   sender.
   Once a halt, the kill switch or a loss stop fires on a live account, only the owner releases it,
+  apart from the kill switch pull a live drill the owner approved makes and clears,
   and on paper and shadow the operator may too. Each
   account's loss limit is its own, and no loss limit spans accounts.
   Holds that no caller carries a flag, a role or a credential that lets its
