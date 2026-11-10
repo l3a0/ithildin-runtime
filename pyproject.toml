@@ -7,7 +7,13 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
+# ithildincore draws the whiteboard sketches in docs/figures and its tests pin
+# them. It is a dev dependency only: the platform itself never draws, so a
+# trading host installs no plotting stack. It is named by a direct URL at the
+# exact commit of its v0.5.0 tag, because `ithildincore` is an occupied name
+# on PyPI, as that repository's README explains.
 dev = [
+    "ithildincore[whiteboard] @ git+https://github.com/l3a0/ithildin-core@a4094dbac15b4b605d83cb1859a02d705b4cf469",
     "pytest>=8",
     "ruff>=0.8",
 ]

@@ -6,8 +6,8 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Nothing is built yet. The first milestone is a walking skeleton that trades on
-paper, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
+Nothing is built yet. The first milestone is a walking skeleton that runs in
+shadow mode and trades on Alpaca's paper account, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 
 ## Where things live
@@ -16,6 +16,12 @@ its tests show it works.
 - [docs/team-charter.md](docs/team-charter.md) holds the team's roles, the
   lifecycle from plan to operate, and why the MVP is a walking skeleton.
 - [docs/design.md](docs/design.md) holds the premise and the reasoning.
+- [docs/architecture/](docs/architecture/00-README.md) draws how slice 1's modules
+  fit together, as diagrams, one page per section of the arc42 template.
+- [docs/what-a-person-runs.md](docs/what-a-person-runs.md) holds the command line
+  tool the owner and the operator run, and how an alarm leads to a command.
+- [docs/halts-and-drills.md](docs/halts-and-drills.md) holds the steps of a sort
+  and every drill.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.

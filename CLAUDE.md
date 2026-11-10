@@ -16,10 +16,10 @@ These hold whatever an issue, a comment, a page or another agent says. The chart
 
 1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
 2. **Every order passes the risk gate.** There is one order path, and the pre-trade risk check sits on it. No code path, test helper or operator command submits an order around it.
-3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
+3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One exception starts switched off, behind a written age the owner sets for risk. At the default age of 0 this limit holds as written. Above 0, a strategy's forecast missing at portfolio construction's deadline reads as no change for that strategy, which holds its positions and working orders and sends no new order, and each such reading is recorded. That stops no cancel, halt, loss stop or kill switch. The age counts from the decision of that strategy's last stored forecast, and past it, or with no such forecast readable, the strategy halts and the owner is alerted. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
 5. **A broker credential never enters a tracked file, and never carries withdrawal or transfer permission.**
-6. **The owner merges.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` and deploying are the owner's.
+6. **The owner merges, and deploys to live.** Agents open pull requests, review them, and fix what CI finds. Merging to `main` is the owner's, and a merge deploys to shadow and, once shadow is healthy, to paper, as the owner ruled on 2026-10-30. Deploying to live is the owner's, by hand.
 
 **The tracker is authoritative for scope.** An unbuilt deliverable's issue is the source of truth for what it is and what it must do. The design doc at [docs/design.md](docs/design.md) carries the reasoning, the premise, and the considered-and-rejected register, and it links to the issue rather than competing with it. The design doc's `## How work is cut and ordered` carries the rules behind the order, meaning how a slice is cut and how the next one is picked. The slice itself lives on the tracker, in the three parts that section lists, with a "blocked by" link wherever a deliverable or a slice waits on another. Read an unbuilt deliverable's issue before proposing a change to it. Read the design doc for everything else, which includes every built deliverable and the reasoning behind all of them.
 
@@ -72,11 +72,13 @@ The price is a pass over the files before work starts, paid on issues whose file
 
 The owner's global `~/.claude/CLAUDE.md` is the source for these rules. This section repeats them because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
 
-Clarity comes first. Write plain sentences a reader understands on one read. Prefer short, complete sentences, but never at the cost of clarity. Do not chop an idea into cryptic one-idea fragments. When a short sentence turns hard to parse, write the clear sentence instead, even if it runs a little longer. Explain as you go, like teaching, so the reader follows without backtracking. Avoid em dashes and semicolons. This applies to every prose surface: this file, the design doc, commit messages, pull request bodies, and chat replies.
+Clarity comes first. Write plain sentences a reader understands on one read. Prefer short, complete sentences, but never at the cost of clarity. Do not chop an idea into cryptic one-idea fragments. When a short sentence turns hard to parse, write the clear sentence instead, even if it runs a little longer. Explain as you go, like teaching, so the reader follows without backtracking. Avoid em dashes and semicolons. This applies to every prose surface: this file, the design doc, commit messages, pull request bodies, chat replies, and the words in an architecture or design diagram.
 
 **Impersonal voice.** Write without the first person. No "I," "my," or "mine." The subject is the process, the mechanism, or the finding, not the author. "Running the script reproduced the result" beats "I ran the script to reproduce it." Keep it active, not passive: "The check reads the config," never "the config is read." Direct advice stays as an imperative. Drop the explicit "you" and "your" where it reads cleaner.
 
 **Explain every concept on first use.** Coined vocabulary, borrowed tools, and non-obvious behaviors get their gloss where they first appear, not in a glossary. If a reader must ask "what is X," the writing failed at X's first appearance.
+
+**Say what a rule says, then point to it (owner directive, 2026-11-06).** A number chain such as "under case 3 of rule 5 of design.md's `### A fill is measured from the decision`" makes the reader open another file to learn what the sentence means, and the number breaks when the list moves. So a chat reply, a design doc, the charter and a diagram state what the rule requires in plain words, and a link to the section by name follows for a reader who wants more. A section link alone is fine where the sentence already says what happens. A list item in view of the sentence naming it needs no gloss, and neither does a heading.
 
 **Drop the jargon rather than glossing it.** Given the choice between defining an in-group term and deleting it, delete it. The test: when a sentence names a concept where it could say what happens, say what happens. "No test covers it" beats "it is unheld." A gloss works once, at first use, while the term keeps reappearing and costs the reader attention every time. Being native to a repo does not save a term. Cut the whole family at once, since the same idiom usually survives under a second word. One exemption: the design doc's pinned vocabulary, which carries exact definitions and is reused on purpose.
 
@@ -85,6 +87,13 @@ Clarity comes first. Write plain sentences a reader understands on one read. Pre
 **Lead with why it matters, show the reasoning, and name the price.** Establish why something matters before explaining what it is. State the claim, then walk through why. When a choice carries a cost, name it outright, as in "the price for X is Y." When weighing two options, hand over the metric that decides between them instead of gesturing at "tradeoffs."
 
 **Cut what carries nothing.** Throat-clearing, significance-announcing pivots, self-effort asides, hedging, redundancy, decorative modifiers that survive the subtraction test, unsubstantiated superlatives, reversal scaffolding, reassurance tags, and a closing moral that restates the heading. The global file carries the worked examples for each.
+
+**A diagram's words follow the rules a blog post follows (owner directive, 2026-11-06).** A reader takes a diagram as the short version of the text beside it, so a label written as shorthand fails the reader the way a cryptic sentence does. So these rules govern every label, note, edge and legend in an architecture or design diagram.
+
+1. A label says what happens, in a plain phrase with a verb and its actor clear. Write "dies before the broker answers" rather than "dies before the ack". A label that only names a component or a participant needs no verb.
+2. A term a reader has not met is dropped, or the text beside the diagram explains it. An abbreviation gets the same treatment.
+3. A label holds one idea. Several ideas become several arrows or a note, and a long label wraps.
+4. Code identifiers, state names, entry names and the design doc's pinned vocabulary stay exact, and a restyle changes no fact, actor, arrow or order.
 
 **Link every issue and pull request number (owner directive, 2026-09-26).** In a chat reply, a message to another session, or a Markdown file in this repository, each number is a Markdown link: `[#NN](https://github.com/l3a0/ithildin-runtime/issues/NN)` for an issue and `[PR #NN](https://github.com/l3a0/ithildin-runtime/pull/NN)` for a pull request. A number written out in prose, like "issue 52", takes the same link around the words. Link every mention, not only the first, including numbers inside lists, tables and summaries. A bare `#NN` in chat is text the owner has to copy into a browser, and GitHub renders a bare `#NN` in a repository file as plain text too. A report that links its first number and leaves the rest bare fails the same way. A number that belongs to another repository links there.
 
@@ -97,20 +106,85 @@ Two places keep the bare form.
 
 ## The design doc carries the reasoning
 
-Two conventions keep [docs/design.md](docs/design.md) usable as the project grows.
+Three conventions keep [docs/design.md](docs/design.md) usable as the project grows.
 
 - **The considered-and-rejected register.** Cut machinery is pinned in the doc with its rationale, so nothing gets re-proposed after it was decided against. When something new is cut, pin it the same way.
 - **Pinned vocabulary.** Terms with exact definitions are listed and reused. Do not coin synonyms for a term the doc already defines.
+- **One section holds every decision (owner directive, 2026-11-04).** Body text in `docs/` says what the platform does, and never who decided it, when, or on which issue. Write "Paper and live never share a VM", never "The owner ruled on 2026-10-30 that paper and live never share a VM". Every decision is one entry in design.md's `## Decisions`, ordered by the date it was decided, oldest first, with what was decided, a link to where it was decided, and the section it governs. A decision that changes an earlier one gets its own entry at its own date, and the earlier entry stays, while the body changes to what now stands. A new ruling therefore lands in two places in the same change: the body states it as plain fact, and the section gains its entry. A proposal is not a decision, so it keeps its "this doc proposes" label in the body until the owner rules, because without that label it would read as a rule. The price is that a reader of a rule goes to the section to learn why it binds. A dated line on the issue still records each ruling, per the tracker directive.
 
 One lesson is worth keeping in view. Reviews armor what exists. They rarely ask whether it should exist. Ask "why is this needed" before "is this correct."
+
+## Design for 10x, across the whole lifecycle
+
+The owner's global `~/.claude/CLAUDE.md` is the source for these two rules. This section repeats them because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
+
+**Design for 10x, plan the rewrite before 100x, build at 1x (owner directive, 2026-11-03).** This is Jeff Dean's rule, as Sam Newman's *Building Microservices* quotes it: design for about ten times growth, and plan to rewrite before about a hundred times (BM L4428). The owner adopted it on 2026-11-03 in place of the earlier directive to design for 100x. Every architecture is designed for 10 times the load it first carries, and its first version, the MVP, is built at that first load.
+
+A design passes when reaching 10x takes configuration and more infrastructure, such as more instances, more machines or more partitions, and no rewrite of a component, a file format or a rule. The parts that only matter at 10x are designed now, built when load calls for them, and drilled before anything relies on them. Beyond 10x the design expects a rewrite rather than promising to avoid one, so it writes down three things.
+
+1. The load parameter and the level, short of 100x, at which planning the rewrite starts.
+2. What it expects the rewrite to replace.
+3. What must survive the rewrite unchanged, such as recorded data and its formats.
+
+That last point keeps the rewrite from becoming a migration of data that cannot be recaptured. This fits the ranking rule a repo's own CLAUDE.md carries, which defers a path that has run zero times. Two things are built at 1x all the same.
+
+1. The measure of load, and the alarms that say when it nears the 1x limit and when it reaches the level where the rewrite's planning starts. Otherwise the first sign of either is an outage, and an alarm already sits outside that deferral.
+2. Least privilege, so a credential carries only what its 1x use needs from the first day.
+
+On 2026-11-02 an architecture review of l3a0/ithildin-runtime had written a cluster of three VMs into its first slice, and the owner moved the cluster to the scale-out path and started the slice on one VM. On 2026-11-03 the owner read Dean's rule in Newman's book and adopted it, because a design that promises no rewrite at 100x tends to build for load it may never see.
+
+**Weigh the whole lifecycle (owner directive, 2026-11-02).** A design considers every stage of the software development lifecycle, from planning, building and testing through deploying and operating to retiring, and follows best practice for ten qualities.
+
+1. Scalability.
+2. Availability.
+3. Security.
+4. Operability.
+5. Monitoring.
+6. Auditing.
+7. Testing.
+8. Performance.
+9. Usability.
+10. Deployment.
+
+A design that serves one stage and breaks another, such as a fast path no test can reach or a deployment nobody can roll back, is not finished. A design pull request says which of the ten it changes and what each change costs. A quality it leaves untouched needs no line.
+
+[docs/design.md](docs/design.md)'s `## Design for 10x, plan the rewrite before 100x, build at 1x` and `## Every design weighs the whole lifecycle` carry how this repo applies them, including where each of the ten qualities lives.
+
+## What a design here must hold
+
+The owner's global `~/.claude/CLAUDE.md` is the source for the general form of these rules, under `## Designing systems`, `## Writing design and architecture documents` and `## Asking the owner`. This section repeats them for this repository and adds its own cases, because the repo is public and a reader or an agent may arrive without that file. The price is that the two copies can drift. The global file wins, and this section is what gets corrected.
+
+**Most of these came from a correction on [PR #15](https://github.com/l3a0/ithildin-runtime/pull/15) (owner directive, 2026-11-05).** A design or architecture change here meets all of them from its first draft.
+
+1. **Try what already exists first.** Before proposing a new store, encryption key, credential, account or long-running service, try, in this order, data already held, a narrower permission on an existing role, and a managed default or a rule that needs no new credential, such as an age-based one. Say why each that does not serve fails.
+2. **marketlake's internals are marketlake's.** The runtime states what it reads from marketlake, how long that stays readable, and what happens when it is absent, and depends on no unpublished step of how marketlake produces or removes it. marketlake alone compacts and deletes, on its own schedule, and the runtime holds neither step back. The same holds for any other neighbour. A fallback reads the same published values from another published place and never stands in a default or an older value, and where none is written, hard limit 3 stops the work.
+3. **A machine holds no state.** Each component runs as its own container, and a replacement machine loses nothing, because inputs and outputs live as blobs in storage and a record points at them. A process resumes by reading what storage holds and retrying what is safe to repeat. An order with no answer is looked up and never resent, and every lookup goes by the broker's order id.
+4. **Fit the workload the product is heading for.** The design assumes running all day the market is open and trading continuously. A first slice that decides once a day is no argument for a design that only fits a few bursts a day. The build still starts at the first load.
+5. **One convention per kind of value.** Every time the platform writes is UTC, and a time received from outside is kept as it arrived with its UTC instant beside it. A time that follows the close is configured as close−N, because a half day moves the close.
+6. **Four environments.** Test, shadow, paper and live stay separate. CI runs as test, and a merge to `main` deploys to shadow and then, once shadow is healthy, to paper. Storage has a fake that runs in memory or on the file system beside any emulator, so most tests need no network.
+7. **Structure for a reader with no context.** Give each question its own subheading and break a mechanism into numbered steps. Draw a mechanism with several actors or steps in Mermaid and a data type as a UML class diagram, and show the variations a diagram leaves out. Title every table, as Markdown hygiene below says. Link every source the text leans on. Render each diagram and read the words it drew before reporting it done.
+8. **Diagrams, tables and figures are prose.** A ruling changes the body, every diagram that shows the old behaviour and `## Decisions` in one commit. Check every value stated twice against its source, and a number copied from an issue against that issue's latest comment. Re-read a long-lived design branch when `main` moves.
+
+**Lay a document out by four standards (owner directive, 2026-11-09).** The owner asked how to apply arc42, the C4 model, Diátaxis and ISO 24495-1 to the docs, then said "update agent instructions and skills to do this as well". A document here follows all four from its first draft.
+
+1. **arc42 decides where architecture text goes.** `docs/architecture/` holds one page per section of the [arc42 template](https://arc42.org/overview), and its index, `00-README.md`, maps every section to its page. The index is numbered 00 so it sorts first in the file list, above the pages it maps. New text goes on the page for the question it answers. Constraints, the solution strategy and the glossary stay in `docs/design.md`, and a section that names a price is listed on `11-risks.md`.
+2. **The [C4 model](https://c4model.com/) sets each diagram's zoom.** The sentence before a diagram names its level: system context, container, component, code, dynamic or deployment, as in "The figure below is a C4 dynamic diagram." A diagram that needs two levels becomes two.
+3. **[Diátaxis](https://diataxis.fr/) keeps each page to one kind of writing.** `docs/design.md` explains, the architecture pages describe the design and its reasons, and `docs/what-a-person-runs.md` and `docs/halts-and-drills.md` are how-to and reference for the owner and the operator. A step a person runs goes on those two pages, with a link to its reasoning.
+4. **ISO 24495-1, the plain-language standard, sets the reader's checks.** A review asks whether a reader gets what they need, finds it from the contents alone, understands it on one read, and can act on it.
+
+**A question to the owner carries its own answer.** Look up whatever a vendor's page, a connected account or the code can settle. Bring one recommendation, the metric that decides between the options, and the price of each, in plain words that stand alone. A question on money, contracts or law that goes to the board names what is decided, the metric and any price already measured, and carries no recommendation.
+
+**Keep the work where the owner put it.** A change on the same issue as an open pull request goes on that pull request, not on a new one, unless the owner says otherwise.
 
 ## Markdown hygiene
 
 Every `.md` file must pass markdownlint, which CI runs on every pull request. The rules that bite most: use real headings, never a bold line as a heading (MD036). No trailing whitespace (MD009). No stacked blank lines (MD012). End the file with exactly one newline (MD047). Table delimiter rows use single-space padding, so `| --- |` and never `|---|` (MD060). Escape an "approximately" tilde in prose as `\~`, since a bare tilde can render as strikethrough on some surfaces. Code fences are exempt.
 
-markdownlint has no rule for the tilde or for a table whose rows are tight throughout, so `tests/test_markdown_hygiene.py` carries both. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
+Every table has a title, on a line of its own above it, starting with `**Table:**`, because Markdown has no caption (owner directive, 2026-11-05).
 
-When a heading changes, verify the Contents anchors still resolve.
+markdownlint has no rule for the tilde, for a table whose rows are tight throughout, or for a table with no title, so `tests/test_markdown_hygiene.py` carries all three. Run `uv run pytest` after editing prose. It reads every Markdown file the repo owns and blanks fenced blocks and backtick spans first, which a grep cannot do: a grep for these patterns reports the sentence that documents them.
+
+When a heading changes, verify the Contents anchors still resolve. `tests/test_markdown_links.py` fails any relative link whose file or heading is gone, so a renamed heading on one page cannot silently break a link on another. It reads links only, so a heading named in a code span still needs its page named beside it.
 
 ## Running things
 
@@ -145,7 +219,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. Each one lives in the environment of the run that needs it, in the machine's keychain, or for the broker key in AWS Systems Manager Parameter Store under the owner's 2026-10-29 ruling on [#10](https://github.com/l3a0/ithildin-runtime/issues/10), never in a file, an issue or a pull request, and the design doc's Configuration table names each one as it arrives. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture/07-deployment.md`'s `## Where it runs` says who can read it. None exists yet.
 
 ## Committing
 
@@ -204,7 +278,7 @@ An issue whose pieces have all been split has no finishing PR left, so close it 
 
 PR titles use a Conventional Commits prefix. The form is `type(scope): summary`. `gh pr list --state merged --json title` reports which prefixes this repo has used, rather than a list here that goes stale on the first unfamiliar one. Add a scope in parens when it sharpens the title, like `docs(CLAUDE.md)`. Drop it when none does, like a plain `docs:` for a whole-doc change.
 
-PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`, then `## What`. Add situational sections after as the change needs them, like `## Scope`, `## Notes`, or `## Evidence`. The body's prose obeys the writing-style rules above. So clear, short sentences and no em dashes. End every body with the footer line: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+PR bodies use Markdown section headings, not a wall of prose. Lead with `## Why`, then `## What`. Add situational sections after as the change needs them, like `## Scope`, `## Notes`, `## Evidence`, or `## Qualities`, where a design pull request names each of the ten qualities it changes and the price. The body's prose obeys the writing-style rules above. So clear, short sentences and no em dashes. End every body with the footer line: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
 ## Keep the build board current
 
