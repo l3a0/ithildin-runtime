@@ -506,8 +506,16 @@ classDiagram
     Snapshot o-- Bar
     Snapshot o-- Quote
     Bar --> Instrument
+    Quote --> Instrument
     Forecast --> Basket
     TargetPortfolio --> Instrument
+    OrderIntent --> Instrument
+    BrokerOrder --> Instrument
+    Ack o-- BrokerOrder
+    StoredBlob o-- BlobRef
+    DecisionResult o-- BlobHeader
+    DecisionResult o-- HaltRecord
+    HaltRecord o-- BlobRef
 ```
 
 ### The interfaces
