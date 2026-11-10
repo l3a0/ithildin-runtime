@@ -69,7 +69,7 @@ states of the diagram above.
 Steps 1 to 3 run every day whatever the state, which is why a held position
 trades on days the units do not change:
 
-The figure below is a C4 dynamic diagram.
+The figure below is a component-level flowchart of what each close runs, from the refit to what trades.
 
 ```mermaid
 flowchart TD

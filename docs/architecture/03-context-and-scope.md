@@ -155,7 +155,7 @@ has already acted. The read has five parts.
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets decides at the same minute. The
    data worker reads an unsealed day through the one reader marketlake publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004), which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. Given a ticker, a day and a time, the reader returns the quote rows captured so far, the same rows the seal would produce for those minutes, so joining a ticker-day's segments has one implementation. marketlake's publication lag, from a cycle's capture to its segment in the bucket, is a published input. A decision whose newest cycle has not landed by the decision time treats that quote as missing or stale under the rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how, and shadow measures the lag.
 
-   The figure below is a C4 dynamic diagram.
+   The figure below is a component-level flowchart of one step inside the data worker, from a segment to quote rows.
 
    ```mermaid
    flowchart LR
@@ -177,7 +177,7 @@ has already acted. The read has five parts.
    because no partition exists yet. A replay reads the sealed partitions, up to
    the decision's time, because the partition is what stays.
 
-   The figure below is a C4 dynamic diagram.
+   The figure below is a component-level flowchart of the choice between the two reads.
 
    ```mermaid
    flowchart TD
