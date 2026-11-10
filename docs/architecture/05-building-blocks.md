@@ -101,6 +101,7 @@ flowchart TB
     timer -. "Timer, for deadlines" .-> mon_report
     timer -. "Timer, for deadlines" .-> exec_recover
     timer -. "Timer, for deadlines" .-> exec_send
+    timer -. "Timer, for a late forecast" .-> pc
     clock -. "Clock, for the cutoff" .-> exec_send
     clock -. "Clock, for the simulator" .-> broker
     broker -. "Broker" .-> exec_recover
@@ -765,7 +766,7 @@ The third sketch draws both on one instance's share.
 | The call | What the 429 means | What follows |
 | --- | --- | --- |
 | A submit | The order is left in doubt | A lookup settles it like any other order in doubt |
-| A cancel | A refused cancel, where that account's latest scheduled contract-suite run shows a 429 on a cancel is definite. Otherwise the answer counts as lost | An alarm. Where the 429 is definite, execution journals a new cancel first and sends it under the lease, inside the reserve. Where it counts as lost, the rule for a cancel whose answer is lost applies. In either case no stage resends a plan's own cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
+| A cancel | A refused cancel, where that account's latest scheduled contract-suite run shows a 429 on a cancel is definite. Otherwise the answer counts as lost | An alarm. Where the 429 is definite, execution journals a new cancel first and sends it under the lease, inside the reserve, and each such cancel counts toward rule 6's written number and its clock, which runs from the first cancel's entry. Where it counts as lost, the rule for a cancel whose answer is lost applies. In either case no stage resends a plan's own cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 
 #### The risk gate holds no state of its own
 
@@ -816,7 +817,7 @@ flowchart LR
 5. A `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value, the stop blob's state and, for a close, its close entry.
 6. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
 
-`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, which the figure draws straight into the gate and whose field [#7](https://github.com/l3a0/ithildin-runtime/issues/7) places, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape.
+`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape. The figure draws the owner's confirmation straight into the gate because no field of `GateInputs` holds it yet, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) places that field.
 
 ##### How the gate values the book
 
@@ -1005,7 +1006,7 @@ A test reads every module's imports with Python's `ast` module and fails on an a
 3. A client order id it has already received.
 4. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included.
 
-The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so every path that sends a cancel meets the fourth check.
+The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fourth check. The fake broker applies the fourth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
 
 Together they turn acceptance test 3's claim that no order reaches the broker adapter without passing the gate into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
 

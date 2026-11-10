@@ -362,9 +362,11 @@ sequenceDiagram
     alt a leg rejected or unsent while another is accepted,<br/>or a leg's plan cancel stopped<br/>after its partner's was confirmed
         X->>F: takes the account's lease
         X->>J: journals each cancel
-        X->>F: is the lease tag unchanged?
-        X->>B: cancels the accepted legs
-        X->>J: journals each cancel's answer or its doubt
+        loop each accepted leg
+            X->>F: is the lease tag unchanged?
+            X->>B: cancels the leg
+            X->>J: journals its answer or its doubt
+        end
         X->>F: releases the account's lease
         loop a cancel's answer lost, inside the send stage's<br/>deadline, under design.md's rule<br/>for a cancel whose answer is lost
             X->>F: takes the account's lease
@@ -857,19 +859,17 @@ sequenceDiagram
     end
     X->>X: stops sending
     X->>F: takes the account's lease
-    X->>B: lists the account's open orders
-    X->>J: journals the list as received
-    X->>B: looks up each journal order the list leaves out<br/>or that has no broker id yet
-    X->>J: journals each lookup's answer
-    X->>J: journals a cancel for each order still working
-    loop each cancel
-        X->>F: is the lease tag unchanged?
-        X->>B: cancels it by the broker's order id
-        X->>J: journals its answer or its doubt
+    loop until a successful read lists no open orders
+        X->>B: reads the account's open orders
+        X->>J: journals the read as received
+        loop each order still working
+            X->>J: journals its cancel
+            X->>F: is the lease tag unchanged?
+            X->>B: cancels it by the broker's order id
+            X->>J: journals its answer or its doubt
+        end
     end
-    Note over X,B: A cancel whose answer is lost follows design.md's rule for one
-    X->>B: reads the open orders again
-    Note over X,J: The done entry waits until that read lists none of them<br/>and every lookup has settled
+    Note over X,J: design.md's Rule 10 and rule 6 of Faults are expected<br/>hold the lookups and a cancel whose answer is lost
     X->>J: journals that the cancels are done,<br/>naming the switch version it read
     X->>F: releases the account's lease
     M->>A: raises the alarm if any cancel failed
@@ -906,10 +906,8 @@ The kill switch is a command, not a running process. It creates a blob at one ke
 
 1. The blob's S3 event reaches the queues of execution, the supervisor and monitoring.
 2. Whichever execution instance receives that event takes the account's lease. The lease is free after at most one order in flight, or on the lease's release.
-3. That instance lists the account's open orders and journals the list. It looks up each order the journal holds open that the list leaves out or that has no broker id yet, such as an order in doubt, and journals each answer.
-4. It cancels the union of the orders the journal holds open and the orders the broker lists that are still working, stamped or not, through the order path, by the broker's order id. Each cancel is journaled before it is sent and checks the lease's tag just before its broker call, and each answer is journaled. So an empty or failed broker answer never reads as nothing to cancel. A cancel whose answer is lost follows design.md's rule for one, in rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs).
-5. It journals that the cancels are done only once a fresh read of the broker lists none of them and each lookup has settled. An order no lookup finds holds the done entry back, so monitoring's second alarm fires.
-6. `ithildin switch pull` reads the journal once at a deadline before the cancel cutoff, and names the broker's own console when the done entry is not there.
+3. That instance cancels every resting order in the account, stamped or not, through the order path and by the broker's order id: the union of the orders the journal holds open and the orders the broker lists. Each cancel is journaled before it is sent, and checks the lease's tag just before its broker call. It reads the broker again and cancels what that read still lists, until a successful read lists no open orders and a lookup has settled each journal order the broker no longer lists. Only then does it journal that the cancels are done, so an empty or failed answer never reads as nothing to cancel. [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob), rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) and item 4 of rule 3 in [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) hold how an order in doubt is found and how a cancel whose answer is lost is looked up and repeated.
+4. `ithildin switch pull` reads the journal once at a deadline before the cancel cutoff, and names the broker's own console when the done entry is not there or cannot be read.
 
 Monitoring's report says the switch is set.
 
@@ -927,7 +925,7 @@ A switch that cannot be read halts with the reason "kill switch unreadable" and 
 
 ##### Why a pull also cancels market-on-close orders
 
-Market-on-close orders rest at the broker from when they are sent, between close−20 and the cutoff, close−12 as this doc proposes, until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
+Market-on-close orders are sent between close−20 and the cutoff, which this doc proposes as close−12, and rest at the broker until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
 
 Cancelling an unfilled order sells nothing, so the pull is still a stop and not a flatten.
 
