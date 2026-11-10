@@ -683,7 +683,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 
-A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names, and [#50](https://github.com/l3a0/ithildin-runtime/issues/50) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) add the rest, since a module issue may change its own module's type.
+A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names, and [#50](https://github.com/l3a0/ithildin-runtime/issues/50) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) add the rest, since an issue that fills a shared type may add the fields it needs.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -891,7 +891,7 @@ A constraints file can tighten a limit and never loosen it. This is a proposal f
 
 #### The book comes from the journal
 
-`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool all append to it, and they are the only code that may import it, so no other module holds a writer of the journal.
+`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool are the only code that may import it, so they are the only code that holds the journal's writer. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
 
 #### The cost model writes a schedule rather than answering calls
 
@@ -961,6 +961,7 @@ flowchart TB
     runtime["runtime<br/>worker entry points, modes, CLI"]
     loop["runtime.loop<br/>the receive loop"]
     supervisor["runtime.supervisor<br/>the supervisor"]
+    tool["the ithildin tool, in runtime<br/>the command line tool a person runs"]
 
     data --> core
     alpha --> core
@@ -974,8 +975,8 @@ flowchart TB
     journal --> core
     execution --> journal
     monitoring --> journal
+    runtime --> core
     runtime --> adapters
-    runtime --> journal
     runtime --> data
     runtime --> alpha
     runtime --> risk
@@ -991,13 +992,18 @@ flowchart TB
     supervisor --> journal
     supervisor --> adapters
     supervisor --> loop
+    tool --> core
+    tool --> adapters
+    tool --> journal
 ```
 
-An arrow means "may import". The arrow from `runtime` to `journal` is the `ithildin` tool's. The diagram draws four rules.
+An arrow means "may import". Which code builds the `Journal` that `OrderPath` and `Monitoring` hold is [#80](https://github.com/l3a0/ithildin-runtime/issues/80)'s to settle, inside the four importers. The diagram draws four rules.
 
 1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
    1. `core`, which every module may import.
-   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, because they are the four that append to the journal, so no other module holds a writer of it.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, so they are the only code that holds the journal's writer. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
+
+   `adapters`, `execution.brokers` and `runtime.loop` import only `core`.
 
    These live in `core`:
 
@@ -1023,7 +1029,7 @@ An arrow means "may import". The arrow from `runtime` to `journal` is the `ithil
      - the plan's lease, whose conditional writes carry the run's status;
      - the plan;
      - the journal entry for each lease it clears or takes over;
-     - the journal entry for each capture lost when a worker's process died holding it, which names each capture the failed stage owed for that decision and that is absent at its key, read from the stage's declared outputs rather than from the halt's blob, because a process that died while S3 was down may never have stored that blob;
+     - the journal entry for each capture lost when a worker's process died holding it, as [A write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says;
      - its heartbeat;
      - the halts of workers that failed;
      - a halt of the run, with a halt for every decision left in the plan;
@@ -1059,4 +1065,4 @@ Together they turn acceptance test 3's claim that no order reaches the broker ad
 
 ### What the rule costs
 
-The price is two more tests to keep in step with the diagram, and a module that needs a sibling has to argue for a new arrow.
+The price is two more tests to keep in step with the diagram, and a module that needs a sibling has to argue for a new arrow. The `journal` package adds one more package to that price, with four arrows into it for the test to hold.

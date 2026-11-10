@@ -257,11 +257,13 @@ Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-for
 Six writers can append.
 
 1. The `ithildin` tool.
-2. The supervisor, when it clears a lease or takes one over, and when it journals as lost a capture whose worker's process died holding it.
+2. The supervisor, when it clears a lease or takes one over, and when it journals as lost a capture whose worker's process died holding it, as [A write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says.
 3. Monitoring.
 4. Execution.
 5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
 6. In a live drill the owner approved, the approved drill role, for the journal entries of its own kill switch pull and its own clear.
+
+Only the code of the first four holds the journal's writer, in the `journal` package. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
 
 As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
@@ -383,7 +385,7 @@ A received body is stored whole and unchanged, in a form canonical JSON can hold
 1. A body that is valid UTF-8 is stored as text, which canonical JSON returns byte for byte.
 2. Any other body is stored as base64.
 
-A body that cannot be stored halts.
+A body that cannot be stored halts, and is held as a capture under [Rule 1: a write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer).
 
 #### Which clock a schedule follows, and how it becomes UTC
 
@@ -396,10 +398,12 @@ A rule written in UTC would move by an hour against the close each time the cloc
 
 **The calendar function takes the trading sessions as data.** `core` imports no calendar library, because the usual one, `exchange_calendars` 4.13.2, would pull pandas and numpy into every worker. The table of sessions and their closes is a committed data file, checked by its SHA-256, which a script regenerates from `exchange_calendars` at a pinned version. An early close is the case that matters: on 2026-11-27 the close is 18:00 UTC, three hours before a normal day's, so close−20 falls at 17:40 UTC that day and at 20:40 UTC on 2026-11-30.
 
+Four rules hold the table.
+
 1. A session missing from the table halts.
 2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
 3. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
-4. A closure announced after the table was cut reads as a session with no data, which halts under hard limit 3.
+4. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).
 
 A time stated as minutes before the close resolves through the same function from that session's close. Two such times are a strategy's close−20 decision and the market-on-close cutoff, which is close−12 in the hard caps this doc recommends, under Alpaca's close−10. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
 

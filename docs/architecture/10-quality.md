@@ -64,11 +64,11 @@ package.
 | `Journal.append`, the hash chain and the reader's checks, in the `journal` package | [#80](https://github.com/l3a0/ithildin-runtime/issues/80) |
 | The queue's SQS and named-pipe adapters and their contract suite, the routes generated from the table in `runtime`, the receive loop | [#81](https://github.com/l3a0/ithildin-runtime/issues/81) |
 | The test environment's bucket, queues and role, which the store and queue suites run against on each push to `main` | [#78](https://github.com/l3a0/ithildin-runtime/issues/78) |
-| The fields `Bar` and `Quote` gain for each price's kind, venues and delay, with [#50](https://github.com/l3a0/ithildin-runtime/issues/50), `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
-| Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
-| `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
-| Flat and linear cost models, `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
-| Equal-risk-weight portfolio construction, `TargetPortfolio` naming every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
+| The fields `Bar` and `Quote` gain for each price's kind, venues and delay, with [#50](https://github.com/l3a0/ithildin-runtime/issues/50), the fields [#5](https://github.com/l3a0/ithildin-runtime/issues/5) adds to `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| Bollinger band alpha model, the fields [#6](https://github.com/l3a0/ithildin-runtime/issues/6) adds to `Basket` and `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
+| The fields [#7](https://github.com/l3a0/ithildin-runtime/issues/7) adds to `Constraints`, the risk gate that implements `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| Flat and linear cost models, the fields [#8](https://github.com/l3a0/ithildin-runtime/issues/8) adds to `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
+| Equal-risk-weight portfolio construction, the fields [#9](https://github.com/l3a0/ithildin-runtime/issues/9) adds to `TargetPortfolio`, which names every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | Order manager, `OrderPath`, a plan's cancels and replacements, the journal's entries for orders and fills, `Journal.in_doubt` and `Journal.replay`, fills keyed by the broker's fill id, the broker id mapped on each ack, the simulator and the Alpaca adapter around its SDK, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, the third level of CI and its second required check, the journal entry for a capture lost when a worker dies, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
