@@ -254,7 +254,7 @@ Five writers can append.
 2. The supervisor, when it clears a lease or takes one over.
 3. Monitoring.
 4. Execution.
-5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the pull's own entry.
+5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
 
 As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
