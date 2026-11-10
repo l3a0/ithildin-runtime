@@ -44,7 +44,7 @@ flowchart LR
     heartbeat -->|"alarms when a ping is late"| alerts
     alerts --> owner
     owner -->|"controls the live environment, its pin and the hard caps,<br/>and through ithildin uses the kill switch,<br/>clears halts and writes overrides"| loop
-    operator -->|"through ithildin pulls any account's kill switch,<br/>and on paper and shadow clears halts<br/>and writes overrides"| loop
+    operator -->|"through ithildin pulls any account's kill switch<br/>and switches a live strategy off,<br/>and on paper and shadow clears halts<br/>and writes overrides"| loop
     owner -->|"merges, which deploys to shadow, then paper"| github
     github -->|"pinned release"| loop
 ```

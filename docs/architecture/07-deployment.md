@@ -862,7 +862,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
-   The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. On the live bucket the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading.
+   The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. On the live bucket the operator may pull the switch, create a strategy's off switch, and read the log and state stores, as hard limit 1's one exception allows, and nothing else.
 
    The promotion role may only do three things.
 

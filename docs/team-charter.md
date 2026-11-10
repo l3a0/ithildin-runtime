@@ -645,7 +645,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the shadow and paper environments day to day.
   Rolls shadow and paper back with `ithildin pin set`, recorded with who and why. Clears a paper or shadow account's halt, kill switch and lease, journaled,
-  which the owner can do too, and may pull any account's kill switch. Only
+  which the owner can do too, and may pull any account's kill switch and switch a live strategy off. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
   live account's override, apart from a live drill's run the owner approved, which
   pulls and clears the switch. The owner approves every drill on live that changes

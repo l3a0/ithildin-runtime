@@ -58,7 +58,7 @@ Two credentials hold what the VM's credential deliberately cannot.
 1. **The owner's**, which may do everything below on any account.
 2. **The operator's**, which acts on paper and shadow accounts only, plus pulling a live account's switch and switching a live strategy off, since each can only stop trading. It cannot clear a live account's halt, switch or lease, or write a live account's override.
 
-Only the owner resumes live trading. The charter makes the operator an agent role, and hard limit 1 keeps agents to simulated and paper brokers.
+Only the owner resumes live trading. The charter makes the operator an agent role, and hard limit 1 keeps agents to simulated and paper brokers, apart from its one exception, a live pull and a live switch-off.
 
 #### The owner's credential
 
@@ -248,6 +248,8 @@ These run from the narrowest reach to the widest in the usual case: one halt, on
 ###### `ithildin halt clear <haltid>`
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
+
+A halt raised because S3 would not store a capture refuses the clear while any capture its blob names is neither stored nor journaled as lost, as [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says.
 
 On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
 
