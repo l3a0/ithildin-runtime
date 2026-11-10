@@ -508,17 +508,22 @@ storage port hands both back.
 
 ### Rule 1: what the bucket's policy refuses
 
-The bucket's policy refuses every
-principal, the owner's and the operator's included, any write on the
-runs', the journal's and the simulated accounts' prefixes that lacks the
-condition, and any delete there, and it refuses every principal any delete under `leases/`, so no lease is ever deleted. It refuses the owner's and the operator's principals any write under `leases/accounts/` that lacks `If-Match`, so a person cannot create a lease or overwrite one without its current tag. It refuses the runtime's principals the
-same on the leases' and the switch's prefixes, except that a lease may also be rewritten with
-`If-Match` on its current tag, which is how it is taken, renewed, released and taken over, and the switch keeps the delete rules of [the kill switch is a blob](#rule-10-the-kill-switch-is-a-blob). The bucket keeps every version, so the rule
-holds even against a bug in the runtime's own code or a person's
-mistake. A plain delete leaves a delete marker, and a create-only write
-can then land on the same key, so an S3 delete event under the journal's
-prefix alarms, and replay lists versions and halts on a journal key with
-a delete marker or a second version.
+The bucket's policy makes S3 enforce the rule that every write is a blob created once, and it binds the owner and the operator as well as the runtime. Each row of the table below is one request it refuses. "The condition" is the one [Every write is a blob, created once](#rule-1-every-write-is-a-blob-created-once) gives, which makes S3 refuse a write whose key exists.
+
+**Table:** What the bucket's policy refuses
+
+| Whose request | What it refuses | Where | The exception |
+| --- | --- | --- | --- |
+| Every principal, the owner's and the operator's included | Any write that lacks the condition | The runs', the journal's and the simulated accounts' prefixes | None |
+| Every principal, the owner's and the operator's included | Any delete | The runs', the journal's and the simulated accounts' prefixes | None |
+| Every principal | Any delete, so no lease is ever deleted | `leases/` | None |
+| The owner's and the operator's principals | Any write that lacks `If-Match`, so a person cannot create a lease or overwrite one without its current tag | `leases/accounts/` | None |
+| The runtime's principals | Any write that lacks the condition | The leases' and the switch's prefixes | A lease may also be rewritten with `If-Match` on its current tag, which is how it is taken, renewed, released and taken over |
+| The runtime's principals | Any delete | The leases' and the switch's prefixes | The switch keeps the delete rules of [the kill switch is a blob](#rule-10-the-kill-switch-is-a-blob), under which the runtime's credential can create the switch but never delete it, and only the owner's or the operator's command clears it, on a live account only the owner's |
+
+The bucket keeps every version, so the rule holds even against a bug in the runtime's own code or a person's mistake.
+
+A plain delete leaves a delete marker, and a create-only write can then land on the same key. So an S3 delete event under the journal's prefix alarms, and replay lists versions and halts on a journal key with a delete marker or a second version.
 
 ### Rule 1: Object Lock and the lifecycle rules
 
