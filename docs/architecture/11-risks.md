@@ -54,7 +54,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [A fill is measured from the decision, and a position depends on a market it does not control](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
 - [A result is measured against the risk it took, and size answers to what the owner can bear](../design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear)
 - [Data has a cost, except the data that cannot be recaptured](../design.md#data-has-a-cost-except-the-data-that-cannot-be-recaptured)
-- [Buy what does not set the venture apart](../design.md#buy-what-does-not-set-the-venture-apart)
+- [What these rules cost, and what they buy](../design.md#what-these-rules-cost-and-what-they-buy)
 - [2026-10-28](../design.md#2026-10-28)
 - [2026-10-29](../design.md#2026-10-29)
 - [2026-10-30](../design.md#2026-10-30)

@@ -43,11 +43,20 @@ flowchart LR
     loop -->|"pings after each decision"| heartbeat
     heartbeat -->|"alarms when a ping is late"| alerts
     alerts --> owner
-    owner -->|"controls the live environment, its pin and the hard caps,<br/>and through ithildin uses the kill switch,<br/>clears halts and writes overrides"| loop
-    operator -->|"through ithildin pulls any account's kill switch<br/>and switches a live strategy off,<br/>and on paper and shadow clears halts<br/>and writes overrides"| loop
+    owner -->|"controls the live environment and its pin"| loop
+    owner -->|"controls the hard caps"| loop
+    owner -->|"uses the kill switch through ithildin"| loop
+    owner -->|"clears halts through ithildin"| loop
+    owner -->|"writes overrides through ithildin"| loop
+    operator -->|"pulls any account's kill switch through ithildin"| loop
+    operator -->|"switches a live strategy off through ithildin"| loop
+    operator -->|"clears halts on paper and shadow through ithildin"| loop
+    operator -->|"writes overrides on paper and shadow through ithildin"| loop
     owner -->|"merges, which deploys to shadow, then paper"| github
     github -->|"pinned release"| loop
 ```
+
+`ithildin` is the one command line tool a person acts through, as [Where the tool runs](../what-a-person-runs.md#where-the-tool-runs) says.
 
 ### Where bars come from
 
@@ -136,84 +145,174 @@ sequenceDiagram
 
 The diagram shows one day's read before sealing. Look for the two checks either
 side of the seal, and for monitoring's comparison, which runs after the decision
-has already acted. The read has five parts.
+has already acted. The read has five parts, and each has a heading below.
 
-1. **What is read.** marketlake's capture daemon writes a segment each cycle and
-   never rewrites it once its manifest entry lands, which makes an early read
-   safe. marketlake uploads each segment to its bucket as soon as that entry
-   lands, refusing to replace an existing key. Any decision time inside
-   marketlake's capture hours reads those segments, up to the decision time. The
-   skeleton's close−20 is one such time, and the shadow run on SPY and QQQ that
-   [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sets decides at the same minute. The
-   data worker reads an unsealed day through the one reader marketlake publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004), which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. Given a ticker, a day and a time, the reader returns the quote rows captured so far, the same rows the seal would produce for those minutes, so joining a ticker-day's segments has one implementation. marketlake's publication lag, from a cycle's capture to its segment in the bucket, is a published input. A decision whose newest cycle has not landed by the decision time treats that quote as missing or stale under the rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets, [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how, and shadow measures the lag.
+1. [What is read](#what-is-read).
+2. [What is checked before deciding](#what-is-checked-before-deciding).
+3. [Which read a decision uses](#which-read-a-decision-uses).
+4. [What is compared after the seal](#what-is-compared-after-the-seal).
+5. [What this rests on](#what-this-rests-on).
 
-   The figure below is a C4 dynamic diagram.
+#### What is read
 
-   ```mermaid
-   flowchart LR
-       seg["Segment in the bucket"] --> sha["Match its SHA-256 against the object's<br/>stored SHA-256 and metadata"]
-       sha -- "Mismatch" --> halt["Halt the decision"]
-       sha -- "Match" --> read["marketlake's reader<br/>joins a ticker-day's segments"]
-       read --> rows["Quote rows"]
-   ```
+The data worker reads the segments marketlake has uploaded so far, and turns
+them into quote rows through marketlake's own reader.
 
-   The diagram shows one segment becoming quote rows. Look for which steps are
-   the runtime's. The SHA-256 match is the check [The runtime has a VM of its own](07-deployment.md#rule-8-the-runtime-has-a-vm-of-its-own)
-   requires, which reads the stored SHA-256 and metadata that carry the segment's manifest entry under `lake-live/`. The reader comes from marketlake's package, a
-   dependency at a pinned commit, and [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what it does when a segment is absent or fails its SHA-256, so the data worker can halt on it. The reader reads only the root the data worker checked, and the snapshot's list comes from the worker's own download.
-2. **What is checked before deciding.** The data worker runs its own minimum
-   checks before anything decides. A missing or stale quote at the decision time
-   halts the decision, a segment whose SHA-256 does not match its manifest entry halts it too, and a price spike is flagged in the snapshot, and the send stage's flag test halts the decision when the instrument is traded or held. This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
-3. **Which read a decision uses.** Whether the day is sealed when the read
-   happens picks the read. A live decision before the seal reads segments,
-   because no partition exists yet. A replay reads the sealed partitions, up to
-   the decision's time, because the partition is what stays.
+##### Why an early read is safe
 
-   The figure below is a C4 dynamic diagram.
+marketlake's capture daemon writes a segment each cycle and never rewrites it
+once its manifest entry lands, which makes an early read safe. marketlake
+uploads each segment to its bucket as soon as that entry lands, refusing to
+replace an existing key.
 
-   ```mermaid
-   flowchart TD
-       t{"Is the day sealed<br/>when the read happens?"}
-       t -- "No" --> seg["Read segments, marked provisional"]
-       t -- "Yes" --> part["Read sealed partitions<br/>up to the decision time"]
-       part --> same["A replay of a decision<br/>read before sealing lands here"]
-   ```
+##### Which decisions read this way
 
-   The diagram shows the choice. Look for the replay: a backtest that replays a
-   close−20 decision reads the sealed rows up to that decision's time. Those are
-   the rows the live decision read, unless a row's segment landed after the decision, or part 4's comparison found a
-   difference. On such a day a replay shows the sealed rows rather than what the
-   decision read, and the journal holds the difference. Test 2 covers both reads, with a sealed stretch for the replay and
-   a fixture day left unsealed for the read of segments. A decision after the
-   seal needs none of this.
-4. **What is compared after the seal.** The snapshot names each segment it read
-   by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
-   seals the day, monitoring compares each quote the snapshot used with the sealed
-   row of the same ticker and minute, by bid, ask and last as received, because a
-   segment and the partition built from it never share bytes. The stored snapshot
-   holds every `Quote` field and each bar's `vintage_id`, as `Snapshot` does in memory, so
-   monitoring reads the used quote from the snapshot. A segment that is gone
-   changes nothing, and the comparison holds for as long as the snapshot does.
-   The data worker's role, in the next session's run, reads the sealed row and stores it, so data stays the one reader of marketlake, and monitoring's role compares, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Each provisional snapshot gets a stored comparison result within a written bound after the close. A missing result, or a sealed day that never arrives, pages and stops no decision. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that the comparison also takes the newest sealed row at or before the decision time, so a row whose segment landed after the decision shows as a difference.
+Any decision time inside marketlake's capture hours reads those segments, up to
+the decision time. The skeleton's close−20 is one such time, and the shadow run
+on SPY and QQQ that [#16](https://github.com/l3a0/ithildin-runtime/issues/16)
+sets decides at the same minute.
 
-   **Table:** What monitoring does with each thing it finds after the seal
+##### How a segment becomes quote rows
 
-   | Monitoring finds | It does |
-   | --- | --- |
-   | A value that differs from the sealed row | Journals and alarms |
-   | A row the sealed day quarantined or lacks | Journals and alarms |
-   | A gap between the price the decision used and the official close | A report line, since the two differ by design |
-   | A gap between a market-on-close fill and that close | A report line, since the two differ by design |
+The data worker reads an unsealed day through the one reader marketlake
+publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004),
+which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. The
+reader comes from marketlake's package, a dependency at a pinned commit. The
+read takes three steps.
 
-5. **What this rests on.** marketlake publishes a window: each segment stays
-   readable for seven days after upload, with old versions kept about 90 days
-   more, as [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records, and nothing in the runtime knows when one goes. A read before sealing is the
-   only read that needs a segment, because a replay reads partitions and the
-   comparison reads the snapshot. Only the uploader refuses an overwrite so far, and
-   [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
-   keeps naming each segment it read, as the record of what the decision read,
-   though after the window those names point at nothing. The window reads age alone, so a day whose sealed partition never reached the bucket ends with marketlake's VM volume as its only copy, and [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the page that rests on. The provisional read
-   is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
+1. The data worker downloads the segments up to the decision time. The
+   snapshot's list of segments comes from the worker's own download.
+2. It matches each segment's SHA-256 against the object's stored SHA-256 and
+   metadata, which carry the segment's manifest entry under `lake-live/`. This
+   is the check [The runtime has a VM of its own](07-deployment.md#rule-8-the-runtime-has-a-vm-of-its-own)
+   requires.
+3. It reads the quote rows through marketlake's reader, which reads only the
+   root the data worker checked. Given a ticker, a day and a time, the reader
+   returns the quote rows captured so far, the same rows the seal would produce
+   for those minutes, so joining a ticker-day's segments has one
+   implementation.
+
+The figure below is a component-level flowchart of one step inside the data worker, from a segment to quote rows.
+
+```mermaid
+flowchart LR
+    seg["Segment in the bucket"] --> sha["Match its SHA-256 against the object's<br/>stored SHA-256 and metadata"]
+    sha -- "Mismatch" --> halt["Halt the decision"]
+    sha -- "Match" --> read["marketlake's reader<br/>joins a ticker-day's segments"]
+    read --> rows["Quote rows"]
+```
+
+The diagram shows one segment becoming quote rows. Look for which steps are
+the runtime's. The SHA-256 match is the data worker's own, and the reader
+comes from marketlake's package.
+
+##### What happens when a segment is late, absent or does not match
+
+marketlake's publication lag, from a cycle's capture to its segment in the
+bucket, is a published input, and shadow measures the lag.
+
+**Table:** What happens when a segment is late, absent or does not match
+
+| Case | What happens |
+| --- | --- |
+| A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
+| marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how the decision treats that quote |
+
+#### What is checked before deciding
+
+The data worker runs its own minimum checks before anything decides, and the send stage then tests the flags. Four checks halt or flag a decision.
+
+1. A missing or stale quote at the decision time halts the decision.
+2. A segment whose SHA-256 does not match its manifest entry halts it too.
+3. A price spike is flagged in the snapshot.
+4. The send stage's flag test halts the decision when the instrument is traded or held.
+
+This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
+
+#### Which read a decision uses
+
+Whether the day is sealed when the read
+happens picks the read. A live decision before the seal reads segments,
+because no partition exists yet. A replay reads the sealed partitions, up to
+the decision's time, because the partition is what stays.
+
+The figure below is a component-level flowchart of the choice between the two reads.
+
+```mermaid
+flowchart TD
+    t{"Is the day sealed<br/>when the read happens?"}
+    t -- "No" --> seg["Read segments, marked provisional"]
+    t -- "Yes" --> part["Read sealed partitions<br/>up to the decision time"]
+    part --> same["A replay of a decision<br/>read before sealing lands here"]
+```
+
+The diagram shows the choice. Look for the replay: a backtest that replays a
+close−20 decision reads the sealed rows up to that decision's time. Those are
+the rows the live decision read, unless a row's segment landed after the decision, or [the comparison after the seal](#what-is-compared-after-the-seal) found a
+difference. On such a day a replay shows the sealed rows rather than what the
+decision read, and the journal holds the difference. Test 2 covers both reads, with a sealed stretch for the replay and
+a fixture day left unsealed for the read of segments. A decision after the
+seal needs none of this.
+
+#### What is compared after the seal
+
+Once marketlake seals the day, monitoring checks each quote the decision used
+against the sealed day, after the decision has already acted.
+
+##### Who reads and who compares after the seal
+
+Two roles share the work, so data stays the one reader of marketlake, as
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Three steps
+follow the seal.
+
+1. The data worker's role, in the next session's run, reads the sealed row and
+   stores it.
+2. Monitoring's role compares each quote the snapshot used with the sealed row
+   of the same ticker and minute, by bid, ask and last as received.
+3. Monitoring stores the result. Each provisional snapshot gets a stored
+   comparison result within a written bound after the close.
+
+A missing result, or a sealed day that never arrives, pages and stops no
+decision.
+
+This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5),
+that the comparison also takes the newest sealed row at or before the decision
+time, so a row whose segment landed after the decision shows as a difference.
+
+##### What the comparison reads
+
+The snapshot names each segment it read by key, S3 version and SHA-256, and
+marks the read provisional. The stored snapshot holds every `Quote` field and
+each bar's `vintage_id`, as `Snapshot` does in memory, so monitoring reads the
+used quote from the snapshot. The comparison goes by bid, ask and last because
+a segment and the partition built from it never share bytes. A segment that is
+gone changes nothing, and the comparison holds for as long as the snapshot
+does.
+
+##### What monitoring does with each finding
+
+**Table:** What monitoring does with each thing it finds after the seal
+
+| Monitoring finds | It does |
+| --- | --- |
+| A value that differs from the sealed row | Journals and alarms |
+| A row the sealed day quarantined or lacks | Journals and alarms |
+| A gap between the price the decision used and the official close | A report line, since the two differ by design |
+| A gap between a market-on-close fill and that close | A report line, since the two differ by design |
+
+#### What this rests on
+
+marketlake publishes a window: each segment stays
+readable for seven days after upload, with old versions kept about 90 days
+more, as [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records, and nothing in the runtime knows when one goes. A read before sealing is the
+only read that needs a segment, because a replay reads partitions and the
+comparison reads the snapshot. Only the uploader refuses an overwrite so far, and
+[l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
+keeps naming each segment it read, as the record of what the decision read,
+though after the window those names point at nothing. The window reads age alone, so a day whose sealed partition never reached the bucket ends with marketlake's VM volume as its only copy, and [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the page that rests on. The provisional read
+is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
 
 ### The previous session's daily bar
 

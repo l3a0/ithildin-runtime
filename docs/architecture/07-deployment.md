@@ -28,11 +28,15 @@ The figure below is a C4 deployment diagram.
 
 ```mermaid
 flowchart TB
-    subgraph host["One environment's VM in slice 1, or each of three across availability zones once it scales out,<br/>separate from marketlake's, holding no state,<br/>an Auto Scaling group replaces it when lost"]
-        timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it has read the run's plan,<br/>the timer stops all after the close"]
+    subgraph host["One environment's VM, holding no state"]
+        subgraph sched["Scheduler"]
+            timer["systemd timer"]
+            pathu["systemd path unit"]
+        end
         docker["Docker daemon<br/>pulls the pinned image"]
-        guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
-        subgraph ctrs["Two containers per component and two supervisors per deployment on the one VM,<br/>or three of each spread across three VMs,<br/>each its own unit and its own user"]
+        wd["Host watchdog"]
+        onf["OnFailure handler"]
+        subgraph ctrs["Two containers per component and two supervisors per deployment"]
             sup["Supervisor<br/>writes the plan, sets deadlines"]
             data["Data"]
             alpha["Alpha model"]
@@ -45,14 +49,18 @@ flowchart TB
         
         creds[("Memory-backed storage<br/>a credential, an error and a heartbeat<br/>directory per container, and the release file")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
-        timer --> docker --> ctrs
-        guard -.-> ctrs
-        guard -. "kernel file change events" .-> creds
+        timer -->|"starts the supervisor before the session"| sup
+        pathu -->|"starts the workers once the supervisor<br/>has read the run's plan"| ctrs
+        timer -->|"stops every container after the close"| ctrs
+        docker --> ctrs
+        wd -.->|"kills a container whose heartbeat stops"| ctrs
+        wd -. "kernel file change events" .-> creds
 
         
         creds -. "each container mounts only its own" .-> ctrs
         mirror --> data
     end
+    asg["Auto Scaling group"]
     registry["GitHub's container registry<br/>holds the image by digest,<br/>and the VM verifies its provenance"]
     mlvm["marketlake's VM<br/>capture daemon"]
     lake[("marketlake's bucket")]
@@ -67,6 +75,7 @@ flowchart TB
     sns["SNS topic, one per account,<br/>with an email subscription"]
     person["Owner or operator<br/>the ithildin tool, off the VM"]
 
+    asg -->|"replaces the VM when it is lost"| host
     registry --> docker
     mlvm --> lake
     lake -->|"the data worker downloads, then checks the checksum"| mirror
@@ -78,13 +87,15 @@ flowchart TB
     execw <--> broker
     mon --> beat
     mon --> alerts
-    guard --> alerts
+    onf -->|"alarms when a unit gives up"| alerts
     beat --> alerts
     cw -->|"EventBridge route"| alerts
     cw -->|"promotion and live drill checks only"| sns
     sns -->|"email"| alerts
         person <-->|"reads status, clears halts, writes overrides,<br/>uses the kill switch"| bucket
 ```
+
+The figure draws slice 1, where the environment has one VM, separate from marketlake's. Each container runs as its own unit and its own user. Once the environment scales out, each of three VMs across availability zones runs these pieces, and three of each container and supervisor are spread across the three VMs, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
 
 Eleven rules hold the deployment to the premise and the hard limits.
 
@@ -164,7 +175,18 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 
 #### Who pulls and clears the kill switch
 
-The runtime's credential can create the switch, which pulls it, and can never delete it. In a VM image rollback the owner overrides for an emergency, the rollback's credential pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says. Only the owner's credential clears a live account's switch, and the operator's may also clear a paper or shadow account's. Inside a live drill, the approved drill role pulls it and clears only the pull its own run made, and only a job behind live's reviewer can assume that role. None of these credentials sits on the VM, and each environment's bucket policy exempts only those principals its own rule allows from its refusal of deletes on the switch's key, which on the live bucket is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag. Pulling the switch needs no deploy.
+The grants below say who pulls the switch and who clears it.
+
+- **The runtime's credential** can create the switch, which pulls it, and can never delete it.
+- **The rollback's credential**, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
+- **The owner's and the operator's credentials** pull any account's switch.
+- Apart from the drill role clearing its own pull, below, only **the owner's credential** clears a live account's switch.
+- **The operator's credential** may also clear a paper or shadow account's switch.
+- **The approved drill role**, inside a live drill, pulls it and clears only the pull its own run made. Only a job behind live's reviewer can assume that role.
+
+None of these credentials, apart from the runtime's, sits on the VM. Each environment's bucket policy refuses deletes on the switch's key, and exempts from that refusal only those principals its own rule allows. On the live bucket that is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag.
+
+Pulling the switch needs no deploy.
 
 #### Who may create and delete a fired loss stop or a strategy's off switch
 
@@ -576,7 +598,7 @@ Execution's check of the account's lease tag before every broker call stops a wo
 3. The apply passes the new version to the refresh as its desired configuration, and never changes the group's launch template itself. The group names a specific numbered version, never `$Latest` or `$Default`, and no AMI alias from Parameter Store.
 4. An apply that finds itself outside the window changes nothing, and waits for the next window.
 
-Dynamic diagram: one refresh that passes, from the apply's check of the window to the group naming the new version. It leaves out an apply refused outside the window, a session refused while a refresh runs, when slice 1's group of one terminates its old VM, and a VM whose checks fail, which the subsections below give.
+The figure below is a C4 dynamic diagram of one refresh that passes, from the apply's check of the window to the group naming the new version. It leaves out an apply refused outside the window, a session refused while a refresh runs, when slice 1's group of one terminates its old VM, and a VM whose checks fail, which the subsections below give.
 
 ```mermaid
 sequenceDiagram
@@ -601,13 +623,59 @@ An apply whose plan rolls out a new launch template version starts the refresh o
 1. No session is open.
 2. The next session's scheduled start is more than a written bound away.
 
-The same window holds for a merge's apply that touches execution, its roles and grants, its queue, the host's restart settings and switch, or the stores of the journal, the halt state or the lease, as [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says. Such an apply checks the window at its start and again just before its first change. The bound covers the longest such apply too, its job's `timeout-minutes` is below the bound, and one that runs past the bound pages the owner. No outside status plays the part AWS's refresh status plays for a refresh, so a runner that still acts after GitHub has marked its job ended is caught only by that page. A job that cannot read whether a session is open, or cannot work out the next start, counts as outside the window and alarms. The next start is the host's timer's next firing, read from the timer's committed setting through `core`'s calendar function, the one that turns the timer's New York time into UTC under [Which clock a schedule follows, and how it becomes UTC](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc), so the job and the timer never disagree across a change of daylight saving time or a holiday.
+###### Which other applies wait for the window
 
-The host's timer starts a session's supervisor at a time known in advance, as the scheduler in this page's container diagram shows, and nothing else starts a session. So the bound keeps a refresh from starting while a session is about to. A way to start a session added later still meets the check of AWS's refresh status below, which every session start makes. The bound covers the longest refresh, including the hour AWS's automatic rollback keeps trying replacements before it fails ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)), and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets its value.
+The same window holds for a merge's apply that touches any of these, as [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says.
+
+- Execution.
+- Its roles and grants.
+- Its queue.
+- The host's restart settings and switch.
+- The stores of the journal, the halt state or the lease.
+
+Such an apply checks the window at its start and again just before its first change. Three rules tie it to the bound.
+
+1. The bound covers the longest such apply too.
+2. Its job's `timeout-minutes` is below the bound.
+3. One that runs past the bound pages the owner.
+
+No outside status plays the part AWS's refresh status plays for a refresh. So a runner that still acts after GitHub has marked its job ended is caught only by that page.
+
+###### What a job reads to find the window
+
+A job that cannot read whether a session is open, or cannot work out the next start, counts as outside the window and alarms.
+
+The next start is the host's timer's next firing. The job reads it from the timer's committed setting through `core`'s calendar function, the one that turns the timer's New York time into UTC under [Which clock a schedule follows, and how it becomes UTC](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc). So the job and the timer never disagree across a change of daylight saving time or a holiday.
+
+###### Why the bound keeps a refresh from meeting a session
+
+The host's timer starts a session's supervisor at a time known in advance, as the scheduler in this page's deployment diagram shows, and nothing else starts a session. So the bound keeps a refresh from starting while a session is about to. A way to start a session added later still meets the check of AWS's refresh status below, which every session start makes. The bound covers the longest refresh, including the hour AWS's automatic rollback keeps trying replacements before it fails ([Undo changes with a manual or auto rollback](https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-rollback.html)), and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets its value.
+
+###### When a session counts as open
 
 A session is open while its run's plan exists, its stop does not and its close has not passed by design.md's margin. That margin runs past the host's timer, so a run still reading the day's fills counts as open, as [What a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held) says.
 
-A session refuses to start unless AWS reports no instance refresh on its group, or reports the latest one as `Successful` or `RollbackSuccessful`, with the reason "session refused: instance refresh open", and the refusal alarms. Any other status refuses, an unknown one included, because a refresh that was cancelled or whose rollback failed can leave the group on two images. So does a status the session cannot read. The runtime's role holds a read of Auto Scaling's refresh status for this. The check catches a refresh that outruns the bound, and one started by a job's runner that still acts after GitHub has marked the job ended, because AWS's status shows every refresh that has started. So a session never starts on a group with two VM images in it.
+###### What a session checks before it starts
+
+A session refuses to start unless AWS reports no instance refresh on its group, or reports the latest one as `Successful` or `RollbackSuccessful`. The runtime's role holds a read of Auto Scaling's refresh status for this.
+
+**Table:** What a session does with each answer about its group's instance refresh
+
+| What AWS reports | What the session does |
+| --- | --- |
+| No instance refresh on the group | Passes this check |
+| The latest refresh as `Successful` or `RollbackSuccessful` | Passes this check |
+| Any other status, an unknown one included | Refuses, because a refresh that was cancelled or whose rollback failed can leave the group on two images |
+| A status the session cannot read | Refuses |
+
+A refusal gives the reason "session refused: instance refresh open", and the refusal alarms.
+
+The check catches two kinds of refresh, because AWS's status shows every refresh that has started.
+
+1. A refresh that outruns the bound.
+2. One started by a job's runner that still acts after GitHub has marked the job ended.
+
+So a session never starts on a group with two VM images in it.
 
 ##### How two applies are kept from meeting
 
@@ -988,9 +1056,7 @@ Four things hold for the email.
 3. The owner writes each email subscription by hand, so the address enters no tracked file and no OpenTofu state.
 4. A subscription [sends nothing until it is confirmed](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html).
 
-   The owner confirms it with `aws sns confirm-subscription --authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click. So [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html), and a stray click or a mail scanner cannot end the route through the link in an alert.
-
-   The command takes the token from the emailed link without opening it, and a subscription confirmed by the link is removed and subscribed again.
+   The owner confirms it with the AWS command line, passing `--authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click, by the steps in [Confirm an alarm email subscription](../what-a-person-runs.md#confirm-an-alarm-email-subscription). So [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html), and a stray click or a mail scanner cannot end the route through the link in an alert.
 
    A [drill](../halts-and-drills.md#drills-with-no-alarm) confirms that it was confirmed that way and that an email arrives.
 

@@ -143,6 +143,7 @@ erDiagram
         datetime received_at
     }
     PLAN {
+        string deployment
         string run
         string mode
         string release
@@ -156,13 +157,18 @@ erDiagram
         string worker
         int restart_count
         int exit_status
+        string signal
         string error_tail
     }
     LEASE {
         string key
-        string holder
+        string holder "VM, boot, container, restart count and handler"
+        string release
+        string run
         string etag
         datetime taken
+        datetime expires
+        string status "only on a plan's lease"
     }
     OVERRIDE {
         string key
@@ -318,9 +324,7 @@ Both fail if the same values can be written two ways, such as a different key or
 
 **The codec writes its bytes with a published RFC 8785 library rather than an encoder of its own.** The library is Trail of Bits' [`rfc8785`](https://github.com/trailofbits/rfc8785.py), a pure-Python implementation with no dependencies of its own, pinned at an exact version, 0.1.4, its latest release on 2026-11-08. A run of that version on Python 3.12 showed that it sorts keys by UTF-16 units, and that it refuses a `Decimal`, a NaN, an infinity and an integer whose magnitude is 2⁵³ or more, as [its source](https://github.com/trailofbits/rfc8785.py/blob/v0.1.4/src/rfc8785/_impl.py) also shows. It does print a float, so `core.encode` turns each decimal and each time into its string, and refuses a float before the library sees the value. The library only encodes, so `core.decode` parses with Python's `json` and checks the bytes by encoding what it parsed again.
 
-The figure draws both paths in order.
-
-The figure below is a C4 dynamic diagram.
+The figure below is a component-level flowchart of the codec's two paths, in order.
 
 ```mermaid
 flowchart TB
