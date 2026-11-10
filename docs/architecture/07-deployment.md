@@ -182,7 +182,7 @@ The grants below say who pulls the switch and who clears it.
 - **The owner's and the operator's credentials** pull any account's switch.
 - Apart from the drill role clearing its own pull, below, only **the owner's credential** clears a live account's switch.
 - **The operator's credential** may also clear a paper or shadow account's switch.
-- **The approved drill role**, inside a live drill, pulls it and clears only the pull its own run made. Only a job behind live's reviewer can assume that role.
+- **The approved drill role**, inside a live drill, pulls it and clears only the pull its own run made, and journals both. Only a job behind live's reviewer can assume that role.
 
 None of these credentials, apart from the runtime's, sits on the VM. Each environment's bucket policy refuses deletes on the switch's key, and exempts from that refusal only those principals its own rule allows. On the live bucket that is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag.
 
@@ -215,7 +215,8 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The apply and VM change credentials, the approved drill role and live's drill job's role | A run's plan and stop under `runs/`, and `leases/accounts/` | Read, for the window's check |
 | The VM change credential on paper and live, and the apply credential on shadow, in a rollback the owner overrides for an emergency | Each account's switch in its environment, `accounts/<account>/switch.json` | Write, which pulls it, as a new version each time, never delete |
 | The same credentials, in that rollback | `journal/` | Read, and create the journal entry of the kill switch pull that rollback makes, only with `If-None-Match` at the next number |
-| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads |
+| The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads and the journal grant below |
+| The same role, in that drill | `journal/` | Read, and create the journal entries of its own pull and its own clear, only with `If-None-Match` at the next number |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
 | The role that raises a halt | `accounts/<account>/strategies/<strategy>/halts/` and `accounts/<account>/halts/` | Create, never delete |
@@ -230,7 +231,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
 | The owner's credential on every account, and the operator's on paper and shadow, by this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | `journal/` | Create, only with `If-None-Match` at the next number |
 
-"The runtime's credential" stands for each component's own role, and each role holds only the rows its component's writes need. Under `runs/` a stage's role creates only its own stage's blobs, and the supervisor's alone creates a run's plan, its halt and its stop, and the halt it writes at a failed worker's result key. Among the runtime's roles, only execution's, monitoring's and the supervisor's create entries under `journal/`, and only execution's creates under `sim/`. So a worker other than execution, monitoring and the supervisor, such as data, cannot write a journal entry or another stage's result. People and the rollback's credentials create journal entries too, under the rows that name them. S3 cannot limit what an entry says, so which kinds of entry each person's credential and the rollback's credentials may create, and what journals an operator's pull or switch-off on live, are open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which also holds each role's exact grant.
+"The runtime's credential" stands for each component's own role, and each role holds only the rows its component's writes need. Under `runs/` a stage's role creates only its own stage's blobs, and the supervisor's alone creates a run's plan, its halt and its stop, and the halt it writes at a failed worker's result key. Among the runtime's roles, only execution's, monitoring's and the supervisor's create entries under `journal/`, and only execution's creates under `sim/`. So a worker other than execution, monitoring and the supervisor, such as data, cannot write a journal entry or another stage's result. People, the rollback's credentials and the approved drill role create journal entries too, under the rows that name them. S3 cannot limit what an entry says, so which kinds of entry each person's credential, the rollback's credentials and the approved drill role may create, and what journals an operator's pull or switch-off on live, are open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which also holds each role's exact grant.
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -249,7 +250,7 @@ No credential the runtime holds can delete a version, or change any of these fou
 
 #### What the bucket's policy refuses, and to whom
 
-The bucket's policy makes the seven refusals in this table.
+The bucket's policy makes the eight refusals in this table.
 
 **Table:** What the bucket's policy refuses, by the principal it refuses
 
@@ -261,6 +262,7 @@ The bucket's policy makes the seven refusals in this table.
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
+| Every principal but those who may clear the switch | Any delete of an account's switch, `accounts/<account>/switch.json`. On the live bucket that leaves the owner, and the approved drill role for a delete with `If-Match` on its own create's tag |
 | All but the owner | Changes to the policy itself |
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.

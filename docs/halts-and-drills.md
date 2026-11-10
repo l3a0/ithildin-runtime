@@ -403,7 +403,7 @@ A drill here proves a grant, a fence, an alert route, a scale-out path, a rollba
 | An absent switch | Read an absent switch with the list right on the switch's prefix on live, expecting "no such blob" | live |
 | An absent partition | Read an absent partition with the data worker's grant on marketlake's bucket in each of shadow and paper, expecting "no such blob" | paper |
 | An absent partition | Read an absent partition with live's data worker's grant on marketlake's bucket, expecting "no such blob" | live |
-| The approved drill role | Under the role on live, try to delete a switch it did not create, write a fired loss stop, write a strategy's off switch and read the broker key's path, expecting each refused. Start a drill while the switch is already set, expecting the drill to refuse | live |
+| The approved drill role | Under the role on live, try to delete a switch it did not create, write a fired loss stop, write a strategy's off switch and read the broker key's path, expecting each refused. Start a drill while the switch is already set, expecting the drill to refuse. Run a drill that pulls and clears the switch, expecting its pull and its clear each journaled, and a journal write at a number already taken refused | live |
 | The drill on the metadata fence | From inside each container, send a token request and a tokenless request to the metadata service, each expected to fail, and try a read of another container's mounts, in each of shadow and paper | paper |
 | The drill on the metadata fence | The same steps as the row above, on live | live |
 | Scale-out 1 | Terminate a VM mid-decision, expecting the other two to finish the decision and the group to replace the VM | Before anything relies on the cluster |

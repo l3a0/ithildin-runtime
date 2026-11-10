@@ -107,7 +107,7 @@ Two credentials keep duties apart only if a different principal holds each. So a
 | Pull the kill switch | The owner or the operator | The owner or the operator |
 | Switch a strategy off | Any person's credential | Any person's credential |
 | Switch a strategy back on | The owner, and whether the operator may too is undecided | The owner |
-| Clear a halt, a fired loss stop or the kill switch | The owner or the operator | The owner |
+| Clear a halt, a fired loss stop or the kill switch | The owner or the operator | The owner, apart from the kill switch pull a live drill the owner approved makes and clears |
 | Clear an account's lease | The owner or the operator | The owner |
 | Write an override | The owner or the operator | The owner |
 | Change the hard caps | The owner | The owner |
