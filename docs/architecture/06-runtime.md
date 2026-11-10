@@ -439,7 +439,7 @@ flowchart TB
 
 This phase is the only one that touches the broker with an order, so it has the most checks. It has three parts: prepare once, send each order, and finish once.
 
-The figure below is a component-level flowchart of the send stage's steps inside execution.
+The figure below is a flowchart of the send stage's steps inside execution.
 
 ```mermaid
 flowchart TB
@@ -517,7 +517,7 @@ A cancel the plan asks for takes the same shape, as the sequence diagram above s
 
 Once every decision has a result, the day ends in three steps, which this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-1. Execution reconciles the day, in four parts.
+1. Execution checks the day against the broker, in four parts.
 
    1. It reads the day's fills and the broker's positions, open orders, cash and records.
    2. It sorts what it finds, as design.md's `Sorting what the broker reports` says.

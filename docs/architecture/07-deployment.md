@@ -51,7 +51,7 @@ flowchart TB
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer -->|"starts the supervisor before the session"| sup
         pathu -->|"starts the workers once the supervisor<br/>has read the run's plan"| ctrs
-        timer -->|"stops all of them after the close"| ctrs
+        timer -->|"stops every container after the close"| ctrs
         docker --> ctrs
         wd -.->|"kills a container whose heartbeat stops"| ctrs
         wd -. "kernel file change events" .-> creds
@@ -663,7 +663,7 @@ A session refuses to start unless AWS reports no instance refresh on its group, 
 
 A refusal gives the reason "session refused: instance refresh open", and the refusal alarms.
 
-The check catches two refreshes, because AWS's status shows every refresh that has started.
+The check catches two kinds of refresh, because AWS's status shows every refresh that has started.
 
 1. A refresh that outruns the bound.
 2. One started by a job's runner that still acts after GitHub has marked the job ended.

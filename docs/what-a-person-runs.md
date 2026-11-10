@@ -1,6 +1,6 @@
 # What a person runs
 
-This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, and how a person goes from an alarm to the command that answers it. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
+This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, how a person goes from an alarm to the command that answers it, and the steps the owner takes once per account. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
 
 ## Contents
 
@@ -360,8 +360,8 @@ The price has four parts.
 
 #### Confirm an alarm email subscription
 
-An alarm's email subscription sends nothing until it is confirmed. The owner confirms it by hand, once per account, in place of clicking the emailed link. [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says which accounts send the email, and why the command replaces the link.
+An alarm's email subscription sends nothing until it is confirmed. The owner confirms it by hand, once per account, in place of clicking the emailed link. [Which accounts send the email](architecture/07-deployment.md#which-accounts-send-the-email) says which accounts need it, and [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says why the command replaces the link.
 
 1. Take the token from the emailed link without opening the link.
 2. Run `aws sns confirm-subscription --authenticate-on-unsubscribe true` with that token.
-3. If the subscription was confirmed by the link instead, remove it, subscribe again and confirm the new one with the command.
+3. If the subscription was confirmed by the link instead, remove it and subscribe it again.
