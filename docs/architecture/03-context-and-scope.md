@@ -43,11 +43,19 @@ flowchart LR
     loop -->|"pings after each decision"| heartbeat
     heartbeat -->|"alarms when a ping is late"| alerts
     alerts --> owner
-    owner -->|"controls the live environment, its pin and the hard caps,<br/>and through ithildin uses the kill switch,<br/>clears halts and writes overrides"| loop
-    operator -->|"through ithildin pulls any account's kill switch,<br/>and on paper and shadow clears halts<br/>and writes overrides"| loop
+    owner -->|"controls the live environment and its pin"| loop
+    owner -->|"controls the hard caps"| loop
+    owner -->|"uses the kill switch through ithildin"| loop
+    owner -->|"clears halts through ithildin"| loop
+    owner -->|"writes overrides through ithildin"| loop
+    operator -->|"pulls any account's kill switch through ithildin"| loop
+    operator -->|"clears halts on paper and shadow through ithildin"| loop
+    operator -->|"writes overrides on paper and shadow through ithildin"| loop
     owner -->|"merges, which deploys to shadow, then paper"| github
     github -->|"pinned release"| loop
 ```
+
+`ithildin` is the one command line tool a person acts through, as [Where the tool runs](../what-a-person-runs.md#where-the-tool-runs) says.
 
 ### Where bars come from
 
