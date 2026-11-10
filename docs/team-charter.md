@@ -458,97 +458,62 @@ time is the scarce resource, so work reaches the owner already reviewed.
 ### Test engineer
 
 - **Protects:** a test means what it claims.
-- **Does:** writes acceptance tests from the issue before the builder starts,
-  without seeing the implementation. Runs mutation testing on every change,
-  using the `fast-mutation` skill: a test that still passes when the code is
-  broken holds nothing. Maintains the
-  replay suite, which runs recorded market data through the full loop and pins
-  the orders it emits. Restores a copy of the starting book, positions and
-  journal into the replay's own store before each replay, since a replay
-  against the wrong state runs a different code path (AoS L5989). A replay
-  never reads or writes the paper or live journal. Runs the design doc's
-  comparison of each release with the one before it. Every anomaly ends one
-  of three ways: explained, filed as a bug, or sent for more tests
-  (AoS L5888). Stress tests remove each input in turn, such as the feed, the
-  broker and disk, and assert that the platform halts and alerts, per hard
-  limit 3 and apart from its written exception, rather than degrading silently. The book's version of this test,
-  negative testing, checks recovery (AoS L5924). Replays the open sample's sessions for
-  each release under the design doc's rules for judging a strategy. Keeps the design doc's
-  injected faults in the replay suite, because poor error handling is where
-  many critical bugs hide (DDIA L300). Compares timings as percentiles from
-  merged histograms, never as averages, under load that does not wait for
-  replies (DDIA L583, L551). Tests every limit one step below it, at it and
-  one step above it, where a step is the instrument's tick, lot or decimal
-  quantum, and the issue or the limit table says whether the limit itself is
-  allowed. McConnell finds boundaries among the most fruitful places to test,
-  where `>=` written for `>` hides (CC p. 513). Writes the dirty-data tests
-  the design doc's rules for the code list, since McConnell finds that mature
-  test teams write about five dirty tests for each clean one (CC p. 504). He
-  also finds that developers who believe they cover 95% of their code
-  typically cover 50 to 60% (CC p. 504), so branch coverage is measured in
-  CI with a floor that fails new code, and the mutation run decides whether a
-  covered branch is tested. Takes each expected value that claims
-  correctness from the specification rather than from the code's own output,
-  and works it by hand on numbers chosen to make the check easy (CC p. 503,
-  p. 516). The replay suite's pinned orders are regression pins, which detect
-  change rather than claim correctness, and each names the commit and the
-  run that produced it. Keeps the contract suite each stand-in adapter
-  passes, the second implementation of the money arithmetic in the tests,
-  and the measurement each tuning change carries, per the design doc. Takes a flaky test out of the gate only as a skip whose reason
-  links an issue, and fixes it or replaces it
-  with a smaller one. A test that guards a hard limit leaves the gate only once
-  a smaller replacement covering the same behavior passes there. Never reruns
-  a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named
-  the normalization of deviance (BM L2868, BM L2917). Keeps
-  tests that run the full loop, beyond the injected faults, to a short named
-  list of journeys in `tests/` (BM L2948), and takes the book's order
-  of magnitude more tests at each step down the pyramid as guidance
-  (BM L2798).
-  Checks, under the design doc's
-  [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault),
-  that the Startup checks run in CI as the same code that clears a release, that each check that
-  starts something waits on readiness rather than a fixed sleep, that no Startup check sends an order or a cancel, that each run-time fault the group
-  handles is among the injected faults or, for the restart cap and a crash loop slower than its
-  window, runs under the host's real supervisor as the group says, and that each deploy-time failure
-  has its CI test beside its drill (DT p. 200, p. 247).
-  Holds the fill test, the test of a sample's stated bet, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under the design doc's
-  [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
-  Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under the design doc's
-  [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists of a fill's cost at each recorded outcome, a price of unstated kind, a refused short leg, a fill the platform never ordered, a quote that fails its age and status check, the alert on a missing report figure, the close after a broker's trade, a lone leg, a missing lone-leg time or bound, an order entry that names no snapshot, the page on a failed write, the alarm on the check of fills going silent and, before the first limit order is sent, a resting order's fill, under the design doc's
-  [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Holds each strategy's test that drops its latest sessions, compares each fitted value and position
-  both runs share and fails on a planted fit over the whole history, the hand-built series and edge cases
-  that pin the Sharpe ratio, a drawdown and its duration and a growth rate, the test of a flagged price in
-  a backtest, the cases of a missing Kelly figure and the paper comparison's tests, under rules 1 to 3, 5
-  and 6 of the design doc's
-  [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition), with each test's cases on
-  [#57](https://github.com/l3a0/ithildin-runtime/issues/57).
-  Holds the test that a backtest quoted as evidence names the gap when it fills an opening or closing order
-  at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's
-  [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on
-  [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
-  Holds the tests rules 1 to 5 of the design doc's [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds)
-  require, with the cases, level, count of runs and seed that
-  [#63](https://github.com/l3a0/ithildin-runtime/issues/63) proposes and each build settles, among them the
-  exact drift case with a long and a short exposure, the planted skilled signal, the resampler's centring,
-  length and shared draws across instruments and candidates, and the tests of the code behind every
-  significance figure on candidates with no edge, on a synthetic series whose days depend on each other
-  where the strategy holds a position for more than one session, and on a planted edge, and the tests that
-  a held-out load's record is stored before its data, that a failed write fails with an error, and that a
-  read by a decision, the gate, the loss stop, reconciliation or the kill switch is neither recorded as a
-  load nor refused.
-  Holds the test that a setting's period returns read no session as zero in place of a return it could not
-  compute, keep a session whose decision could not run missing whatever it held, and leave none out
-  silently,
-  the hand-built cases of the count of positions, the tests that a change of hedge ratio on flat prices
-  earns nothing before costs and loses exactly the rebalance's costs after them and that moving prices are
-  scored from the shares held in each period, the seeded test of each value a strategy fits on series made
-  with known parameters, whose pass-mark rule is recorded before it first runs and which is shown to fail on
-  each kind of error it claims to catch, with its exact hand-built case, and, once a model is trained, the
-  test that no training label's span overlaps a test label's, under rules 1 to 5 of the design doc's
-  [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on), with each test's cases on
-  [#65](https://github.com/l3a0/ithildin-runtime/issues/65).
+- **Does:** holds every test to what it claims, under the duties below, grouped by the question each answers.
+  1. **What is written before the build, and what runs on every change.** Writes acceptance tests from the issue before the builder starts, without seeing the implementation. Runs mutation testing on every change, using the `fast-mutation` skill, because a test that still passes when the code is broken holds nothing.
+  2. **What the replay suite holds and runs.** Maintains the replay suite, which runs recorded market data through the full loop and pins the orders it emits. Restores a copy of the starting book, positions and journal into the replay's own store before each replay, since a replay against the wrong state runs a different code path (AoS L5989). A replay never reads or writes the paper or live journal. Runs the design doc's comparison of each release with the one before it. Replays the open sample's sessions for each release under the design doc's rules for judging a strategy.
+  3. **How an anomaly ends.** Every anomaly ends one of three ways (AoS L5888).
+     1. Explained.
+     2. Filed as a bug.
+     3. Sent for more tests.
+  4. **What a test does when an input goes missing or a fault is injected.** Stress tests remove each input in turn, such as the feed, the broker and disk, and assert that the platform halts and alerts rather than degrading silently. That follows [hard limit 3](#hard-limits), under which missing input stops trading rather than reading as a target of zero, apart from its written exception. *The Art of Scalability*'s version of this test, negative testing, checks recovery (AoS L5924). Keeps the design doc's injected faults in the replay suite, because poor error handling is where many critical bugs hide (DDIA L300).
+  5. **How timings are compared.** Compares timings as percentiles from merged histograms, never as averages, under load that does not wait for replies (DDIA L583, L551).
+  6. **How a limit and dirty data are tested.** Tests every limit one step below it, at it and one step above it, where a step is the instrument's tick, lot or decimal quantum, and the issue or the limit table says whether the limit itself is allowed. McConnell finds boundaries among the most fruitful places to test, where `>=` written for `>` hides (CC p. 513). Writes the dirty-data tests the design doc's rules for the code list, since McConnell finds that mature test teams write about five dirty tests for each clean one (CC p. 504).
+  7. **How coverage is measured.** McConnell also finds that developers who believe they cover 95% of their code typically cover 50 to 60% (CC p. 504). So branch coverage is measured in CI with a floor that fails new code, and the mutation run decides whether a covered branch is tested.
+  8. **Where an expected value comes from.** Takes each expected value that claims correctness from the specification rather than from the code's own output, and works it by hand on numbers chosen to make the check easy (CC p. 503, p. 516). The replay suite's pinned orders are regression pins, which detect change rather than claim correctness, and each names the commit and the run that produced it.
+  9. **What it keeps beside the tests.** Keeps the contract suite each stand-in adapter passes, the second implementation of the money arithmetic in the tests, and the measurement each tuning change carries, per the design doc.
+  10. **When a test leaves the gate, and why a build is never rerun until it passes.** Takes a flaky test out of the gate only as a skip whose reason links an issue, and fixes it or replaces it with a smaller one. A test that guards a hard limit leaves the gate only once a smaller replacement covering the same behavior passes there. Never reruns a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named the normalization of deviance (BM L2868, BM L2917).
+  11. **How many tests run the full loop.** Keeps tests that run the full loop, beyond the injected faults, to a short named list of journeys in `tests/` (BM L2948), and takes the book's order of magnitude more tests at each step down the pyramid as guidance (BM L2798).
+  12. **How the Startup checks are tested.** Checks five things, under the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) (DT p. 200, p. 247).
+      1. The Startup checks run in CI as the same code that clears a release.
+      2. Each check that starts something waits on readiness rather than a fixed sleep.
+      3. No Startup check sends an order or a cancel.
+      4. Each run-time fault the group handles is among the injected faults or, for the restart cap and a crash loop slower than its window, runs under the host's real supervisor as the group says.
+      5. Each deploy-time failure has its CI test beside its drill.
+  13. **The tests of what a backtest could not have traded.** Holds the fill test, the test of a sample's stated bet, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under the design doc's [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
+  14. **The tests of a result against the risk it took.** Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
+  15. **The tests of what a fill cost and what a market can do to a position.** Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists, under the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). They cover:
+      - a fill's cost at each recorded outcome.
+      - a price of unstated kind.
+      - a refused short leg.
+      - a fill the platform never ordered.
+      - a quote that fails its age and status check.
+      - the alert on a missing report figure.
+      - the close after a broker's trade.
+      - a lone leg.
+      - a missing lone-leg time or bound.
+      - an order entry that names no snapshot.
+      - the page on a failed write.
+      - the alarm on the check of fills going silent.
+      - before the first limit order is sent, a resting order's fill.
+  16. **The tests of what a backtest could have known.** Holds these tests under rules 1 to 3, 5 and 6 of the design doc's [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition), with each test's cases on [#57](https://github.com/l3a0/ithildin-runtime/issues/57).
+      - each strategy's test that drops its latest sessions, compares each fitted value and position both runs share, and fails on a planted fit over the whole history.
+      - the hand-built series and edge cases that pin the Sharpe ratio, a drawdown and its duration, and a growth rate.
+      - the test of a flagged price in a backtest.
+      - the cases of a missing Kelly figure.
+      - the paper comparison's tests.
+  17. **The test of an auction order's price.** Holds the test that a backtest quoted as evidence names the gap when it fills an opening or closing order at a price consolidated across venues or of unstated venues, and names none at the auction print, under rule 1 of the design doc's [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with its cases on [#60](https://github.com/l3a0/ithildin-runtime/issues/60).
+  18. **The tests of position bias and significance.** Holds the tests rules 1 to 5 of the design doc's [A backtest is judged against its position bias](design.md#a-backtest-is-judged-against-its-position-bias-and-a-significance-test-is-built-where-its-null-holds) require, with the cases, level, count of runs and seed that [#63](https://github.com/l3a0/ithildin-runtime/issues/63) proposes and each build settles. Among them are:
+      - the exact drift case with a long and a short exposure.
+      - the planted skilled signal.
+      - the resampler's centring, length and shared draws across instruments and candidates.
+      - the tests of the code behind every significance figure on candidates with no edge, on a synthetic series whose days depend on each other where the strategy holds a position for more than one session, and on a planted edge.
+      - the tests that a held-out load's record is stored before its data, that a failed write fails with an error, and that a read by a decision, the gate, the loss stop, reconciliation or the kill switch is neither recorded as a load nor refused.
+  19. **The tests of a search's returns, a count of positions, a spread's profit, a fitted value and a trained model.** Holds these tests under rules 1 to 5 of the design doc's [A result counts its positions](design.md#a-result-counts-its-positions-and-keeps-every-trials-returns-a-spread-earns-only-from-its-legs-a-fitted-value-is-tested-where-its-answer-is-known-and-a-model-is-never-scored-on-what-it-trained-on), with each test's cases on [#65](https://github.com/l3a0/ithildin-runtime/issues/65).
+      - the test that a setting's period returns read no session as zero in place of a return it could not compute, keep a session whose decision could not run missing whatever it held, and leave none out silently.
+      - the hand-built cases of the count of positions.
+      - the tests that a change of hedge ratio on flat prices earns nothing before costs and loses exactly the rebalance's costs after them, and that moving prices are scored from the shares held in each period.
+      - the seeded test of each value a strategy fits on series made with known parameters, whose pass-mark rule is recorded before it first runs and which is shown to fail on each kind of error it claims to catch, with its exact hand-built case.
+      - once a model is trained, the test that no training label's span overlaps a test label's.
 - **Vetoes:** a pull request whose new behavior no surviving test covers, and
   a fix for a defect a test can reproduce whose new test does not fail at the
   pull request's merge base on an assertion about the defect, rather than at
