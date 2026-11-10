@@ -1851,23 +1851,27 @@ Five rules keep a day of decisions safe.
       leg would never refuse anything, and on a day the loss stop is crossed
       the gate refuses the order that would repair a stranded leg, leaving
       that cap the only bound.
-      1. **A stress move sets the cap.** The stress move is the largest two-session move, in either direction, across a strategy's legs, measured over
-         a recorded data vintage with a fixed start date and the longest history available, by a calculation anyone can rerun. Two sessions meet the need for at least a weekend's hold. The owner reads every alert before the next trading day's decision, about 24 hours on a trading day and never longer than a weekend, which is the hold this window covers, and the two sessions also cover one missed reading of the alerts, with no multiplier nobody could rerun. The largest move in a window that only grows can never fall, so with a fixed start date a refresh can raise the value and only a data correction can lower it. A short vintage understates the move, which raises `max_net`, so that error runs toward the larger position, and the longest history guards against it. The price is a smaller position wherever the cap binds. The owner writes the value into the hard caps by hand. `max_net` is sized so one leg's loss under
-         that move fits the share of the loss limit the owner sets. The loss limit is the account's portfolio
-         value, so the cap follows the account rather than a fixed figure.
-         `max_net` is s × V ÷ m, where s is the share, V the portfolio value
-         and m the stress move as a fraction. An account with several strategies sets `max_net` from the largest m of its strategies. The price is that a calm strategy gets a tighter cap than it needs. The share s is 1%,
-         so one stranded leg's loss under the stress move is 1% of
-         the portfolio, and a hundred such losses in a row would exhaust it. The hard caps blob stores s and m, with the hash
-         of the vintage m came from, and the gate computes the cap at each
-         decision. V is the account's valuation at the prior session's
-         official closes, which the loss stop already stores, so the cap
-         shrinks after a loss and grows after a gain with no one acting. The capital limit the owner sets by hand under hard
-         limit 1, which keeps raising a capital limit for the owner, is therefore s and m, and only a write of
-         the hard caps changes either. V comes from the book the journal
-         replays, valued at official closes, never from the broker's equity
-         figure, so a broker's reporting error cannot raise the cap. A
-         missing valuation halts, as any missing input does. This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10), where V's parts live. The book's cash comes from the journal, from each fill's amount and from outside entries for deposits, fees and dividends, and reconciliation compares it with the broker's reported cash as it compares positions. For [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the broker's account activities read, Alpaca's `GET /v2/account/activities`, supplies each fee, dividend and deposit record, and each is journaled as an outside entry under the broker's own record id. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record the broker posts late is still fetched, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns how. A closed list of the broker's record types says which may explain a cash difference. It holds broker fees, debit interest and dividends, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) writes the types with a range for each amount. An entry of a listed type explains its cash difference with no halt and no switch-off, on every account, because it comes from the broker's own record and changes no position. Its amount still passes the sane-range check of [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) against that type's range. Four cases halt.
+      1. **A stress move sets the cap.** `max_net` is sized so one leg's loss under the stress move fits the share of the loss limit the owner sets. The loss limit is the account's portfolio value, so the cap follows the account rather than a fixed figure.
+
+         **What the stress move is.** The stress move is the largest two-session move, in either direction, across a strategy's legs, measured over a recorded data vintage with a fixed start date and the longest history available, by a calculation anyone can rerun. The owner writes the value into the hard caps by hand.
+
+         **Why two sessions.** Two sessions meet the need for at least a weekend's hold. The owner reads every alert before the next trading day's decision, about 24 hours on a trading day and never longer than a weekend, which is the hold this window covers. The two sessions also cover one missed reading of the alerts, with no multiplier nobody could rerun.
+
+         **Why the value can only rise.** The largest move in a window that only grows can never fall, so with a fixed start date a refresh can raise the value and only a data correction can lower it. A short vintage understates the move, which raises `max_net`, so that error runs toward the larger position, and the longest history guards against it. The price is a smaller position wherever the cap binds.
+
+         **How the gate computes the cap.** `max_net` is s × V ÷ m, and the gate computes the cap at each decision from three inputs.
+
+         1. **s, the share.** The share s is 1%, so one stranded leg's loss under the stress move is 1% of the portfolio, and a hundred such losses in a row would exhaust it. The hard caps blob stores s.
+         2. **m, the stress move as a fraction.** The hard caps blob stores m, with the hash of the vintage m came from. An account with several strategies sets `max_net` from the largest m of its strategies. The price is that a calm strategy gets a tighter cap than it needs.
+         3. **V, the portfolio value.** V is the account's valuation at the prior session's official closes, which the loss stop already stores, so the cap shrinks after a loss and grows after a gain with no one acting.
+
+         **Who can change the cap.** The capital limit the owner sets by hand under hard limit 1, which keeps raising a capital limit for the owner, is therefore s and m, and only a write of the hard caps changes either.
+
+         **Where V comes from.** V comes from the book the journal replays, valued at official closes, never from the broker's equity figure, so a broker's reporting error cannot raise the cap. A missing valuation halts, as any missing input does.
+
+         **Where V's parts live.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10), where V's parts live. A `Valuation` holds V, its cash, its marks and the journal entry it replayed through, as an output file of the day's first recover stage, at the key architecture/08-crosscutting-concepts.md's `### File formats and keys` gives. The book's cash comes from the journal, from each fill's amount and from outside entries for deposits, fees and dividends, and reconciliation compares it with the broker's reported cash as it compares positions. For [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the broker's account activities read, Alpaca's `GET /v2/account/activities`, supplies each fee, dividend and deposit record, and each is journaled as an outside entry under the broker's own record id. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record the broker posts late is still fetched, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns how.
+
+         **Which broker records explain a cash difference.** A closed list of the broker's record types says which may explain a cash difference. It holds broker fees, debit interest and dividends, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) writes the types with a range for each amount. An entry of a listed type explains its cash difference with no halt and no switch-off, on every account, because it comes from the broker's own record and changes no position. Its amount still passes the sane-range check of [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) against that type's range. Four cases halt.
 
          1. A type off the list.
          2. A record that leaves a difference unexplained.
@@ -1876,7 +1880,7 @@ Five rules keep a day of decisions safe.
 
          This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record that halts under case 1, 3 or 4 enters no book's cash until a person's clear or `ithildin override` brings it in, as replay leaves an unmatched order out.
 
-         A deposit or a withdrawal still halts, so moving money always reaches a person. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that the daily report names each entry. The price is a list and its ranges to keep current, and a wrong fee inside its range reaches the book unquestioned. A `Valuation` holds V, its cash, its marks and the journal entry it replayed through, as an output file of the day's first recover stage, at the key architecture/08-crosscutting-concepts.md's `### File formats and keys` gives.
+         A deposit or a withdrawal still halts, so moving money always reaches a person. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that the daily report names each entry. The price is a list and its ranges to keep current, and a wrong fee inside its range reaches the book unquestioned.
       2. **A tally after each close.** Monitoring's report records every
          stranded leg, its overnight profit or loss, and how many sessions it
          stayed open, so the decision to go live rests on measured numbers.
