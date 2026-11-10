@@ -350,7 +350,8 @@ sequenceDiagram
     end
     loop each order the order manager plans,<br/>a replacement only if its old order settled
         X->>F: takes the account's lease
-        X->>X: is the kill switch blob absent,<br/>and is it before the cutoff?
+        X->>F: is the kill switch blob absent?
+        X->>X: is it before the cutoff?
         X->>J: journals the intent
         X->>J: replays the book
         X->>X: runs the risk gate check

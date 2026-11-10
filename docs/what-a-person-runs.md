@@ -362,9 +362,10 @@ The price has four parts.
 
 An alarm's email subscription sends nothing until it is confirmed. The owner confirms it by hand, once per account, in place of clicking the emailed link. [Which accounts send the email](architecture/07-deployment.md#which-accounts-send-the-email) says which accounts need it, and [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says why the command replaces the link.
 
-The owner first writes the subscription by hand, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says, so the address enters no tracked file.
+The owner first writes the subscription by hand, so the address enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
 
-1. Take the token from the emailed link without opening the link. The link's `Token` value is the token, and its `TopicArn` value names the topic.
-2. Run `aws sns confirm-subscription --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`.
-3. Check that `aws sns get-subscription-attributes --subscription-arn <subscription ARN>` reports `ConfirmationWasAuthenticated` as `true`. The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) check the same.
-4. If the subscription was confirmed by the link instead, remove it, subscribe it again, and repeat steps 1 to 3.
+1. Take the token from the emailed link without opening the link.
+2. Run `aws sns confirm-subscription --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
+3. If the subscription was confirmed by the link instead, remove it, subscribe it again, and repeat steps 1 and 2.
+
+The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.
