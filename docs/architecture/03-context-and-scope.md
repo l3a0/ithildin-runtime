@@ -49,6 +49,7 @@ flowchart LR
     owner -->|"clears halts through ithildin"| loop
     owner -->|"writes overrides through ithildin"| loop
     operator -->|"pulls any account's kill switch through ithildin"| loop
+    operator -->|"switches a live strategy off through ithildin"| loop
     operator -->|"clears halts on paper and shadow through ithildin"| loop
     operator -->|"writes overrides on paper and shadow through ithildin"| loop
     owner -->|"merges, which deploys to shadow, then paper"| github

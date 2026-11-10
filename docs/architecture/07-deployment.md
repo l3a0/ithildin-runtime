@@ -22,7 +22,7 @@ This page is section 7 of [the architecture](00-README.md), in the order of the 
 
 Losing a VM costs the platform nothing it must keep. The VM keeps no state that matters, and the storage is S3, so everything the platform must keep sits in the runtime's bucket. An Auto Scaling group replaces a lost VM by starting a new one on the release the run uses, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
 
-The deployment diagram below shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live. Each of those has one VM in slice 1, scaling out to a cluster of three, and a bucket and roles of its own, as `### Four environments` says.
+The deployment diagram below shows which machine each piece runs on and what crosses the machine's edge. It draws one environment, shadow, paper or live. Shadow and paper each have one VM in slice 1, and live gets one once it is built. Each scales out to a cluster of three and has a bucket and roles of its own, as `### Four environments` says.
 
 The figure below is a C4 deployment diagram.
 
@@ -141,13 +141,13 @@ Inside each environment's account four controls hold.
 
 1. **Only the execution user reads the key.** A grant of `ssm:GetParameter` on the key's parameter goes to the execution user's credential alone.
 
-   - Every other role in the account, the other workers', the operator's and the deploy roles, refuses `ssm:GetParameter`, `ssm:GetParameters` and `ssm:GetParameterHistory` on the broker path, `/ithildin/<environment>/broker/`.
+   - Every other role in the account, the other workers', the owner's, the operator's and the deploy roles, refuses `ssm:GetParameter`, `ssm:GetParameters` and `ssm:GetParameterHistory` on the broker path, `/ithildin/<environment>/broker/`.
    - Those roles also refuse `ssm:GetParametersByPath` on every path, because a recursive read of a parent path returns every parameter below it.
    - On every path under `/ithildin/`, every principal but the owner refuses `ssm:PutParameter`, `ssm:DeleteParameter`, `ssm:DeleteParameters`, `ssm:LabelParameterVersion`, `ssm:UnlabelParameterVersion`, `ssm:AddTagsToResource` and `ssm:RemoveTagsFromResource`, because a rewritten ping address silences a dead-man check and a rewritten alias points execution at another broker account.
 2. **Service control policies bind each runtime account.** The accounts are members of one AWS organization, under a management account that holds nothing else, so a service control policy binds every principal in a runtime account, its root user included, as AWS's [service control policies page](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html) says.
 
-   - It refuses, to all but the owner's role, deleting a journal or run version and changing a runtime bucket's policy, versioning, Object Lock or notifications.
-   - It refuses reading the broker path to all but the owner's role and that environment's execution role, each named by its full ARN, path included, because execution has to read its own key.
+   - It refuses, to all but the owner's role, deleting a journal or run version and changing a runtime bucket's policy, versioning, Object Lock or notifications. The bucket's own policy refuses those deletes to the owner too, so a delete there needs the owner to change that policy first, which CloudTrail records.
+   - It refuses reading the broker path to all but that environment's execution role, named by its full ARN, path included, because execution has to read its own key. The owner rotates the key with `ssm:PutParameter`, which needs no read.
    - It refuses every IAM write on every role with a path to the broker key or to deploying or applying, and on the GitHub OIDC provider, to every principal but the owner's role, because rewriting a role's trust or policy would hand its reach to someone else, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
    - It refuses leaving the organization.
 
@@ -195,7 +195,7 @@ Pulling the switch needs no deploy.
 | Blob | Who may create it | Who may delete it |
 | --- | --- | --- |
 | A fired loss stop's blob, which takes the same grants as the switch | Execution's role, which may never delete it | The principals who may clear the switch, the owner alone on live, never the approved drill role, and the operator too on shadow and paper |
-| A strategy's off switch, which sits beside a fired loss stop's blob | Any person's credential | The principals who may clear the switch, the owner alone on live, never the approved drill role, and the operator too on shadow and paper, the last being this doc's reading of the rule for the kill switch and a fired loss stop |
+| A strategy's off switch, which sits beside a fired loss stop's blob | Any person's credential | The principals who may clear the switch, the owner alone on live, never the approved drill role, and, as this doc proposes from the rule for the kill switch and a fired loss stop, the operator too on shadow and paper, which waits on a ruling in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) |
 
 #### Who may write the hard caps and the releases
 
@@ -214,7 +214,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | The switch and a fired loss stop, `accounts/<account>/switch.json` and `accounts/<account>/stop.json` | Create and read, never delete |
 | The apply and VM change credentials, the approved drill role and live's drill job's role | A run's plan and stop under `runs/`, and `leases/accounts/` | Read, for the window's check |
 | The VM change credential on paper and live, and the apply credential on shadow, in a rollback the owner overrides for an emergency | Each account's switch in its environment, `accounts/<account>/switch.json` | Write, which pulls it, as a new version each time, never delete |
-| The same credentials, in that rollback | `journal/` | Read, and create the pull's own entry, only with `If-None-Match` at the next number |
+| The same credentials, in that rollback | `journal/` | Read, and create the journal entry of the kill switch pull that rollback makes, only with `If-None-Match` at the next number |
 | The approved drill role, on live, in a drill that pulls the switch | The live account's switch, `accounts/<account>/switch.json` | Create, only with `If-None-Match`, and delete, only with `If-Match` on the tag its own create returned. A drill refuses to start while the switch is already set. The role holds nothing else in the bucket beyond the window's reads |
 | The runtime's credential | The hard caps, the overrides and `accounts/<account>/releases/` | Read. No runtime role writes `accounts/<account>/releases/` |
 | Execution's and monitoring's roles | `accounts/<account>/strategies/` and `accounts/<account>/halts/` | Read and list |
@@ -224,10 +224,13 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | Execution's role alone among the runtime's roles | `leases/accounts/` | Rewrite, only with `If-Match`, a take on the tag it read and a renewal or a release on the tag its own last write returned. Create with `If-None-Match`, only where an absent lease allows it, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). No principal deletes a lease |
 | The owner's role alone, on every account | The owner's records, under a prefix [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names | Create. No role deletes one |
 | Execution's and monitoring's roles | The owner's records | Read |
-| The owner's and the operator's credentials | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
+| The owner's credential on every account, and the operator's on paper and shadow | `leases/accounts/` | Clear an account's lease off the VM, a rewrite with `If-Match` on the tag it read, as [What a person runs](../what-a-person-runs.md#what-a-person-runs) says |
 | The supervisor's role alone | `leases/plans/` | Create a plan's lease with `If-None-Match` and rewrite it with `If-Match` on its tag. No role deletes it |
 | Every other role | `leases/` | Read at most |
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
+| The owner's credential on every account, and the operator's on paper and shadow, by this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | `journal/` | Create, only with `If-None-Match` at the next number |
+
+"The runtime's credential" stands for each component's own role, and each role holds only the rows its component's writes need. Under `runs/` a stage's role creates only its own stage's blobs, and the supervisor's alone creates a run's plan, its halt and its stop, and the halt it writes at a failed worker's result key. Among the runtime's roles, only execution's, monitoring's and the supervisor's create entries under `journal/`, and only execution's creates under `sim/`. So a worker other than execution, monitoring and the supervisor, such as data, cannot write a journal entry or another stage's result. People and the rollback's credentials create journal entries too, under the rows that name them. S3 cannot limit what an entry says, so which kinds of entry each person's credential and the rollback's credentials may create, and what journals an operator's pull or switch-off on live, are open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which also holds each role's exact grant.
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -246,13 +249,14 @@ No credential the runtime holds can delete a version, or change any of these fou
 
 #### What the bucket's policy refuses, and to whom
 
-The bucket's policy, whose refusals name the runtime's principals, makes the six refusals in this table.
+The bucket's policy makes the seven refusals in this table.
 
 **Table:** What the bucket's policy refuses, by the principal it refuses
 
 | Refused to | What the policy refuses |
 | --- | --- |
 | The runtime's principals | Any write on the prefixes the table of what each role may do lists that lacks the refuse-if-it-exists condition, and any delete, while a lease may be rewritten with `If-Match` on its current tag, which takes, renews or releases it, or takes it over once expired |
+| Every principal, the owner's and the operator's included | Any write on `runs/`, `journal/` and `sim/` that lacks the refuse-if-it-exists condition, and any delete there |
 | Every principal | Any delete under `leases/` |
 | The owner's and the operator's principals | Any write under `leases/accounts/` that lacks `If-Match` |
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
@@ -267,7 +271,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session. A switch pulled for the rollback stays set, so that session trades nothing until `ithildin switch clear` runs, by the owner, or on shadow and paper by the operator.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -358,7 +362,7 @@ covers the segments' prefix too.
 
 #### Which other marketlake files the mirror holds
 
-The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. The snapshot records each ledger's SHA-256.
+The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. The snapshot records each ledger's SHA-256. marketlake keeps a replaced version of `quarantine.jsonl` and of the `actions/` ledger for 30 days, as [its README](https://github.com/l3a0/marketlake#readme) publishes, so after that the bytes behind a recorded SHA-256 may be gone. The split records a snapshot applied are recorded data, as rule 1 of [Data has a cost](../design.md#data-has-a-cost-except-the-data-that-cannot-be-recaptured) says, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds where they are stored. The snapshot's own bars and quotes are what a replay reads. Whether a snapshot also keeps the quarantine and reference rows it applied is [#5](https://github.com/l3a0/ithildin-runtime/issues/5)'s to settle.
 
 #### What stops a decision that reads the lake
 
@@ -568,6 +572,8 @@ So a replacement needs no person to start, though mid-session its execution come
 A VM that started on another release stops its units and starts them again on the plan's, and writes the reason "release differs from plan" to the restart record and to the host's direct alarm route.
 
 #### Item 3: when a VM counts as gone, and when a VM fences itself
+
+This doc proposes both rules of this item for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as its row in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) says.
 
 **A VM counts as gone when its supervisors go quiet.** Each supervisor instance's heartbeat blob names its VM. Another VM counts a VM as gone once no supervisor instance on it has written a heartbeat within a limit longer than a supervisor's restart, or once the group reports it terminated. Only then does an instance take over a send stage that VM's handler was running.
 
@@ -853,7 +859,7 @@ flowchart TB
     rollback["ithildin pin set<br/>writes an earlier digest, and a block record<br/>for the digest it replaced"] -. "the block record it reads" .-> promote
 ```
 
-The diagram shows a digest's path from a merge to paper, so look for the rollback's block record, which is why the next promotion cannot undo a rollback.
+The diagram shows a digest's path from a merge to paper, so look for the rollback's block record, which stops a promotion from putting the rolled-back digest back. It does not stop a newer digest from a later merge, as the rule on pins below says.
 
 #### The rules that keep the environments apart
 
@@ -905,7 +911,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
 3. **A digest has run in an environment** when a run there recorded it in its plan, and that run's decisions finished without a "release changed" or restart-limit halt.
 
-4. **A pin is a bare digest, read once a session, and a rollback holds.** Each pin is a blob in its own environment's bucket holding only a `sha256:` digest in its `digest` field, and the VM builds `ghcr.io/l3a0/ithildin-runtime@` and the digest itself, refusing anything else.
+4. **A pin is a bare digest, read once a session, and a rollback blocks the digest it replaced.** Each pin is a blob in its own environment's bucket holding only a `sha256:` digest in its `digest` field, and the VM builds `ghcr.io/l3a0/ithildin-runtime@` and the digest itself, refusing anything else.
 
    Before every container start, whatever named the digest, a pin, a run's plan or a restart, the VM makes two checks on it.
 
@@ -916,7 +922,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    The VM then resolves the pin once into a release file in memory-backed storage, beside the bundle it verified, and every unit start and restart that session uses them, so a restart on the same VM reaches no outside service. A replacement VM that starts mid-session runs the release the run's plan names, so a pin moved since the session started waits for the next session, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says. A VM that finds its pin missing or unreadable fails its unit with "release pin missing or unreadable", which the host's `OnFailure` handler sends.
 
-   A rollback is `ithildin pin set`, which writes an earlier digest the environment has run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So the next promotion cannot undo a rollback of either environment.
+   A rollback is `ithildin pin set`, which writes an earlier digest the environment has run, and a block record for the digest it replaced, both in the bucket of the environment it rolls back. The promotion job reads the block records in shadow's bucket and in paper's, and refuses a digest blocked in either. A block read that fails refuses the promotion and alarms, rather than reading as no block. So no promotion puts the rolled-back digest back in either environment. A block covers that one digest only. The owner's next merge builds a new digest, which can carry the same faulty code, and once shadow is healthy on it, after one session in slice 1, the promotion job promotes it to paper that night. The promotion skips paper while paper is not clear, meaning an open halt, a set switch, a pending override or a held lease. So the one hold a person can choose today is paper's kill switch kept set, which also stops paper trading, and it lasts only while the switch stays set. A hold that outlasts the next merge is open on [#32](https://github.com/l3a0/ithildin-runtime/issues/32).
 
    The owner or the operator runs `ithildin pin set` on shadow and paper, and only the owner on live.
 
@@ -924,7 +930,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    A deploy role may only put its own environment's pin, create its deploy record under `release/deploys/` and read `release/blocked/`.
 
-   The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. On the live bucket the operator may pull the switch. It may also create a strategy's off switch and read, which is this doc's proposal, since both only stop trading.
+   The operator may put shadow's and paper's pin, and create-only block records and pin changes, and none of live's. Those are plain S3 writes, so the operator could write a pin without `ithildin pin set`, which is why the VM and the promotion job check every pin themselves. On the live bucket the operator may pull the switch, create a strategy's off switch, and read the log and state stores, as hard limit 1's one exception allows, and nothing else.
 
    The promotion role may only do three things.
 
@@ -976,7 +982,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
 ##### How many heartbeat checks there are
 
-Test needs no check, because a failed CI run is its alarm. Slice 1 runs one deployment in each of shadow, paper and live, so that is one check each, and each portfolio added on the way to 10x adds a check, a change of configuration.
+Test needs no check, because a failed CI run is its alarm. Slice 1 runs one deployment in each of shadow and paper, and live runs one once it is built at the live gate, so that is one check each, and each portfolio added on the way to 10x adds a check, a change of configuration.
 
 ##### Who can pause a heartbeat check
 

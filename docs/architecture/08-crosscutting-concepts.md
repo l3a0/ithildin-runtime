@@ -254,14 +254,15 @@ Each entry is a blob at a key fixed by the account and its sequence number. It h
 
 Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal` writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
 
-Four writers can append.
+Five writers can append.
 
 1. The `ithildin` tool.
-2. The supervisor, when it clears a lease.
+2. The supervisor, when it clears a lease or takes one over.
 3. Monitoring.
 4. Execution.
+5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
 
-S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
+As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
 Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
@@ -347,7 +348,7 @@ The price is a third-party library on the path that writes the journal, where a 
 
 #### What a blob's bytes look like
 
-**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
+**Every blob is canonical JSON.** This doc proposes it for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as its row in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) says. The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
 
 1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
@@ -438,7 +439,8 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 
 | Kind of entry | The field it checks |
 | --- | --- |
-| `intent`, `sending` and `cancel` | The client order id |
+| `intent` and `sending` | The client order id |
+| `cancel` | The broker's order id and what tells this cancel from an earlier one on the same order, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names that key. A `cancel` entry with no journaled answer is a cancel whose answer is lost, so a restarted writer looks it up before any new cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 | `fill` and `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id |
@@ -499,6 +501,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | --- | --- |
 | `<run>` | The session date in shadow, paper and live, and the span's first and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by one function in `core` |
 | `<decision>` | The decision's UTC time in the compact form `20261102T204000Z`, so it sorts in order |
+| `<timestamp>` | A halt firing's UTC second in the compact form `20261105T204100Z`, so a halt's key sorts in order |
 | `<UTC time>` | A UTC time to the microsecond, in the compact form `20261102T204001.123456Z`, so it sorts in order |
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
 | `<seq>` | The journal entry's sequence number. A journal entry's own key pads it to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |

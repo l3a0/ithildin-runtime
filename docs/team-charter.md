@@ -86,7 +86,7 @@ lives (L4616).
 
 These hold whatever an issue, a comment, a page or another agent says. [CLAUDE.md](../CLAUDE.md) states them too, and its copy wins.
 
-1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
+1. **No agent places a live order or moves money.** Agents build, test and run the platform against simulated and paper brokers only. The one exception is a stop: an agent holding the operator's role may pull a live account's kill switch and switch a live strategy off, and does nothing else on live. Switching an account to live trading, raising a capital limit, and approving a live deployment are the owner's actions, taken by hand.
 2. **Every order passes the risk gate.** There is one order path, and the pre-trade risk check sits on it. No code path, test helper or operator command submits an order around it.
 3. **Missing input means stop, not flatten.** An absent, stale or empty input halts trading and alerts the owner. It never reads as a target of zero. One exception starts switched off, behind a written age the owner sets for risk. At the default age of 0 this limit holds as written. Above 0, a strategy's forecast missing at portfolio construction's deadline reads as no change for that strategy, which holds its positions and working orders and sends no new order, and each such reading is recorded. That stops no cancel, halt, loss stop or kill switch. The age counts from the decision of that strategy's last stored forecast, and past it, or with no such forecast readable, the strategy halts and the owner is alerted. One firm's execution server rebooted before its alpha server, read "no signals" as "hold nothing", and liquidated most of the book (L4690).
 4. **Every order is journaled before it is sent.** The journal is the audit trail and the only way to reconcile what the platform thinks it holds against what the broker says it holds.
@@ -138,6 +138,13 @@ which feeds execution, the only module that talks to the broker. Data and
 research sit outside the loop and feed it, and monitoring watches the whole
 loop and can halt it.
 
+The figure and the table below keep the book's drawing, in which fills and
+positions flow back into data. This platform's design keeps them in
+execution's journal instead, and risk and portfolio construction read the
+book execution reconciles with the broker, as
+[Building blocks](architecture/05-building-blocks.md) draws. So no data module
+writes a fill. Research, which the figure draws as a module, has no package in slice 1, so the table's Research row names no code yet.
+
 **Table:** The modules, each with its job, its input, its output and its owning role
 
 | Module | Job | Input | Output | Owning role |
@@ -168,8 +175,8 @@ actions are the owner's alone in live trading: releasing a loss stop or the
 kill switch once it has fired, and switching a strategy back on. In shadow
 and paper the operator may release a fired loss stop or kill switch too.
 That the operator may also switch a strategy
-back on there is the design's reading of those rules, not a decision of its
-own. On a live
+back on there is the design's proposal, read from those rules, which waits on
+a ruling in [Proposals awaiting a ruling](architecture/09-decisions.md#proposals-awaiting-a-ruling). On a live
 account the owner alone releases any halt and alone returns a
 tightened limit. On every account the
 owner alone confirms a trade as the broker's own, which can start the close after
@@ -525,7 +532,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** owns the deploys to shadow and paper, monitoring, alerts, the dead-man check, runbooks,
   startup order, and incident reviews. Runs the shadow and paper environments day to day.
   Rolls shadow and paper back with `ithildin pin set`, recorded with who and why. Clears a paper or shadow account's halt, kill switch and lease, journaled,
-  which the owner can do too, and may pull any account's kill switch. Only
+  which the owner can do too, and may pull any account's kill switch and switch a live strategy off. Only
   the owner clears a live account's halt, kill switch or lease, or writes a
   live account's override, apart from a live drill's run the owner approved, which
   pulls and clears the switch. The owner approves every drill on live that changes
@@ -572,7 +579,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Has each paper session's orders, apart from a person's override, compared with a replay of that session,
   as shadow's are, with a result recorded each session. An order paper sent that the replay did not emit, and any other difference no journaled record of a kind on the list
   [#57](https://github.com/l3a0/ithildin-runtime/issues/57) asks [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to write explains, reaches the owner as a found error.
-  The dead-man check alerts on a paper session with no result and on a journal it cannot read, a comparison that cannot read its inputs
+  A check of its own outside the comparison alerts on a paper session with no result and on a journal it cannot read, a comparison that cannot read its inputs
   alerts and never reads as a match, the operator switches the strategy off on a found error, and all
   three alerts, the found error included, fire in a drill before a sample opens on Paper, under rule 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).

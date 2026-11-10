@@ -98,7 +98,7 @@ flowchart LR
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3
     exec -->|"9.4 lease taken, taken over and released"| d5
-    exec -->|"10 approved orders"| brokerx
+    exec -->|"10 approved orders, and cancels"| brokerx
     brokerx -->|"11 answers and fills"| exec
     exec -->|"12 send outcome"| d1
     d1 -->|"13.1 results, halts"| mon
@@ -128,7 +128,7 @@ Flows outside one decision, such as pin writes and a failure's direct alarm rout
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
-| 10 orders | Execution to Alpaca | An order is sent twice, or around the gate | One order path through the gate, each step journaled before the send, and a client order id on every order |
+| 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
 
@@ -257,9 +257,8 @@ keeps every worker running, the supervisor's plan starts the decision, and a
 `par` block marks workers working at the same time. Each dashed arrow from
 the blob store to a worker is S3's event for a blob, arriving on that worker's queue.
 
-Alpaca rejects a market-on-close order "submitted after 3:50pm but before
-7:00pm ET", so every order goes out by close−12, 15:48 on a full day, a
-cutoff the owner's hard caps hold, as design.md's `### Strategies, schedules and decisions` says. That rule
+Alpaca [rejects a market-on-close order](https://docs.alpaca.markets/docs/orders-at-alpaca) "submitted after 3:50pm but before
+7:00pm ET", so every market-on-close order on paper goes out by the cutoff in the paper account's hard caps. This doc proposes close−12 for it, 15:48 New York time on a full day, which waits on a ruling in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). A simulated account's cutoff is the close itself, as design.md's `### Strategies, schedules and decisions` says. That rule
 also checks the cutoff again just before each broker call, and keeps a pair
 whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening. Monitoring then reports how far the decision's price and the fills sat from it.
 
@@ -297,8 +296,8 @@ sequenceDiagram
     D->>F: stores the snapshot, naming each bar read,<br/>and data's decision result
     F-->>X: sends an event for data's result
     X->>B: asks about orders in doubt,<br/>reads fills since the last decision
-    B-->>X: returns fills since the last decision
-    X->>J: journals each fill
+    B-->>X: returns each lookup's answer<br/>and fills since the last decision
+    X->>J: journals each lookup's answer and each fill
     X->>B: reads positions, open orders, cash<br/>and the broker's records
     B-->>X: returns positions, open orders, cash<br/>and the broker's records
     X->>J: journals each record as an outside entry
@@ -373,16 +372,21 @@ sequenceDiagram
     alt a leg rejected or unsent while another is accepted,<br/>or a leg's plan cancel stopped<br/>after its partner's was confirmed
         X->>F: takes the account's lease
         X->>J: journals each cancel
-        X->>F: is the lease tag unchanged?
-        X->>B: cancels the accepted legs
+        loop each accepted leg
+            X->>F: is the lease tag unchanged?
+            X->>B: cancels the leg
+            X->>J: journals its answer or its doubt
+        end
         X->>F: releases the account's lease
         loop a cancel's answer lost, inside the send stage's<br/>deadline, under design.md's rule<br/>for a cancel whose answer is lost
             X->>F: takes the account's lease
             X->>B: looks up by the broker's order id
             X->>J: journals the answer, and a new cancel<br/>when the rule for a cancel<br/>whose answer is lost allows one
-            X->>F: is the lease tag unchanged?
-            X->>B: sends the new cancel
-            X->>J: journals its answer or its doubt
+            opt a new cancel was journaled
+                X->>F: is the lease tag unchanged?
+                X->>B: sends the new cancel
+                X->>J: journals its answer or its doubt
+            end
             X->>F: releases the account's lease
         end
     end
@@ -474,7 +478,7 @@ The steps run in this order.
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test and the price spike flag's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that both run with no order needed, so a decision that plans no order still runs them, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
-4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements. One stored entry holds the target, the planned orders, cancels and replacements, each with its client order id, the journal entry it synced through, a hash of the broker state it fetched, and the instance running the send stage. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out. A strategy that is off when this step reads it gets no planned orders, cancels or replacements, so its resting orders are left to the sort, and the entry names it as off. A strategy is off when its off switch is set or, by this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased, the same two things the check before each send reads. That never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements. One stored entry holds the target, the planned orders, cancels and replacements, each with its client order id, the journal entry it synced through, a hash of the broker state it fetched, and the instance running the send stage. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out. A strategy that is off when this step reads it gets no planned orders, cancels or replacements, so its resting orders are left to the sort, and the entry names it as off. A strategy is off when its off switch is set or, by this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased, the same two things the check before each send reads. That never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says. A strategy whose late forecast reads as no change, where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision, also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
 5. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
 6. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
 
@@ -639,7 +643,7 @@ old. Data applies that rule.
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
 than reading the silence as a target of zero. A flat position is a forecast
-with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets, which starts at 0 and which [a decision of 2026-11-06](../design.md#2026-11-06) sets out.
+with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets and which starts at 0, as the [2026-11-06](../design.md#2026-11-06) entries in design.md record.
 
 ### A restart before the data is ready
 
@@ -871,6 +875,7 @@ sequenceDiagram
     P->>K: pulls the kill switch
     K->>F: writes a new version of the kill switch blob
     K->>J: journals the halt, reason "kill switch"
+    Note over K,J: An operator's pull on live writes no entry here,<br/>which issue 11 settles
     K->>A: raises the alarm
     par
         F-->>X: sends the blob's event
@@ -881,15 +886,25 @@ sequenceDiagram
     end
     X->>X: stops sending
     X->>F: takes the account's lease
-    X->>J: settles orders in doubt
-    X->>J: journals each cancel
-    X->>B: cancels
-    X->>J: journals any failed cancel
-    X->>J: journals that the cancels are done, naming the switch version it read
+    loop until a successful read lists no open orders
+        X->>B: reads the account's open orders
+        X->>J: journals the read as received
+        loop each order the journal holds open or the read lists,<br/>with no cancel pending or in doubt
+            X->>J: journals its cancel
+            X->>F: is the lease tag unchanged?
+            X->>B: cancels it by the broker's order id
+            X->>J: journals its answer or its doubt
+        end
+    end
+    Note over X,J: A cancel whose answer is lost is looked up first, and repeated only<br/>when the order is still working with no cancel pending,<br/>at most a written number of times
+    Note over X,J: The done entry also waits until a lookup has settled<br/>each journal order the broker no longer lists
+    X->>J: journals that the cancels are done,<br/>naming the switch version it read
     X->>F: releases the account's lease
     M->>A: raises the alarm if any cancel failed
     M->>J: are the cancels done within the deadline of the pull?
     M->>A: raises a second alarm if not,<br/>naming the broker's own console
+    K->>J: reads once at its own deadline<br/>for the cancels-done entry
+    K->>P: if it is missing or cannot be read,<br/>names the broker's own console
     Note over F,X: Every worker checks the switch when it starts and whenever an event wakes it,<br/>and execution right before every broker call
 
     Note over H,A: A decision that never finishes
@@ -919,13 +934,18 @@ The kill switch is a command, not a running process. It creates a blob at one ke
 
 1. The blob's S3 event reaches the queues of execution, the supervisor and monitoring.
 2. Whichever execution instance receives that event takes the account's lease. The lease is free after at most one order in flight, or on the lease's release.
-3. That instance cancels every resting order in the account through the order path, stamped or not, so each cancel is journaled like any other step.
+3. That instance cancels every resting order in the account, stamped or not, through the order path and by the broker's order id: the union of the orders the journal holds open and the orders the broker lists, so an empty or failed answer never reads as nothing to cancel. Each cancel is journaled before it is sent and checks the lease's tag just before its broker call. A cancel whose answer is lost is looked up first, and repeated only when the lookup shows the order still working and no cancel pending, at most a written number of times, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says. An order in doubt is cancelled once a row or a lookup gives its broker id. It reads the broker again, and cancels each order a later read lists that has no cancel pending or in doubt, until a successful read lists no open orders. It journals that the cancels are done only once that read lists none and a lookup has settled each journal order the broker no longer lists, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) says. If that entry is not journaled by the pull's deadline, monitoring raises its second alarm.
+4. `ithildin switch pull` reads the journal once at a deadline before the cancel cutoff, and names the broker's own console when the done entry is not there or cannot be read.
 
 Monitoring's report says the switch is set.
 
+##### What happens when the journal cannot be read or take a write
+
+A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
+
 ##### What happens when execution is down at the pull
 
-A starting execution instance checks the switch as soon as its digest and journal checks pass. If it finds the switch set, it takes the account's lease and cancels every resting order. So a switch pulled while execution is down still cancels once the host restarts it.
+A starting execution instance checks the switch as soon as its digest and journal checks pass. If it finds the switch set, it takes the account's lease and cancels by the steps under [What happens after a pull](#what-happens-after-a-pull). So a switch pulled while execution is down still cancels once the host restarts it.
 
 ##### What happens when the switch cannot be read
 
@@ -933,7 +953,7 @@ A switch that cannot be read halts with the reason "kill switch unreadable" and 
 
 ##### Why a pull also cancels market-on-close orders
 
-Market-on-close orders rest at the broker from when they are sent, between close−20 and close−12, until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
+Market-on-close orders are sent between close−20 and the cutoff, which this doc proposes as close−12, and rest at the broker until the close. So a switch pulled in that window stops nothing already sent unless it also cancels them, which is why it does.
 
 Cancelling an unfilled order sells nothing, so the pull is still a stop and not a flatten.
 
@@ -1117,14 +1137,14 @@ The supervisor holds none of these states in memory. It reads them from storage:
 
 A halt and a failure differ in what they stop.
 
-- A halt stops one decision, and in every mode the run goes on to the next decision.
+- A halt stops one decision, and in every mode the run goes on to the next decision. A later decision halts too while the journal holds an open halt whose cause holds the account: on live every cause, and on shadow and paper the causes the account's hard caps name, as [Rule 7: a halt is final for its decision](../design.md#rule-7-a-halt-is-final-for-its-decision) says.
 - A failure stops the whole run.
 
 Both pass through `Reporting`, so a halted or failed decision still writes its report and its journal entry, and monitoring sends the alarm with its reason to the environment's push topic, which delivers each one. If monitoring itself is what failed, no ping arrives, and the dead-man check raises the alarm.
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set or the cause is still there.
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and a spike flag. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
 
 ### When the run stops
 

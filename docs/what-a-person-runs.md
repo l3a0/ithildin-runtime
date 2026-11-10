@@ -59,7 +59,7 @@ Two credentials hold what the VM's credential deliberately cannot.
 1. **The owner's**, which may do everything below on any account.
 2. **The operator's**, which acts on paper and shadow accounts only, plus pulling a live account's switch and switching a live strategy off, since each can only stop trading. It cannot clear a live account's halt, switch or lease, or write a live account's override.
 
-Only the owner resumes live trading. The charter makes the operator an agent role, and hard limit 1 keeps agents to simulated and paper brokers.
+Only the owner resumes live trading. The charter makes the operator an agent role, and hard limit 1 keeps agents to simulated and paper brokers, apart from its one exception, a live pull and a live switch-off.
 
 #### The owner's credential
 
@@ -180,17 +180,17 @@ These two take a default reason and ask for no confirmation, because stopping sh
 
 This is one command with a default reason, because stopping should never be slow.
 
-1. The tool writes the kill switch blob, as a new version even where the switch is already set, journals the pull and raises the alarm.
+1. The tool writes the kill switch blob, as a new version even where the switch is already set, journals the pull and raises the alarm. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that on live the operator's credential creates no journal entry, so what journals an operator's pull there is open on that issue.
 2. The blob's own event wakes execution.
 3. Execution reads the switch itself and cancels every resting order in the account, stamped or not, as [The kill switch is a blob](design.md#rule-10-the-kill-switch-is-a-blob) says.
 4. The tool reads the journal once, at a deadline set before the [cancel cutoff](architecture/06-runtime.md#the-cancel-cutoff), for execution's entry saying the cancels are done, which names the switch version the pull wrote, so an entry left by an earlier pull never counts.
-5. If that entry is not there, the tool tells the person to cancel at the broker's own console.
+5. If that entry is not there or cannot be read, the tool tells the person to cancel at the broker's own console.
 
 A pull past that deadline names the console at once.
 
 ###### `ithildin strategy off --account <a> --strategy <s>`
 
-This creates the strategy's off switch with a default reason and journals it, because stopping should never be slow.
+This creates the strategy's off switch with a default reason and journals it, because stopping should never be slow. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that on live the operator's credential creates no journal entry, so what journals an operator's switch-off there is open on that issue.
 
 A decision that finds the off switch already set plans no orders for the strategy, as [Prepare, once per decision](architecture/06-runtime.md#prepare-once-per-decision) says. For a switch set later, execution reads the off switch right before each of that strategy's orders, abandons them, and keeps sending the account's other strategies' orders. It never reads as a target of zero, so nothing is flattened. The strategy's cancels still go out.
 
@@ -250,6 +250,8 @@ These run from the narrowest reach to the widest in the usual case: one halt, on
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
 
+A halt raised because S3 would not store a capture refuses the clear while any capture its blob names is neither stored nor journaled as lost, as [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says.
+
 On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
 
 This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
@@ -258,12 +260,13 @@ This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issue
 
 ###### `ithildin strategy on --account <a> --strategy <s>`
 
-This deletes the strategy's off switch and journals it. It refuses two kinds of strategy.
+This deletes the strategy's off switch and journals it. It refuses three kinds of strategy.
 
 1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin halt clear <haltid>` releases each firing, which ends its sort.
 2. A strategy retired under design.md's sample rules that has no new registration.
+3. A strategy whose close after a broker's trade is still under way, while any leg has no outcome, its order is unsettled or still working, or an entry is owed, as [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) says.
 
-On a live account only the owner may. On shadow and paper the operator may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather than a rule of its own.
+On a live account only the owner may. On shadow and paper this doc proposes that the operator may too, read from the rule for a fired loss stop and the kill switch. It waits on a ruling in [Proposals awaiting a ruling](architecture/09-decisions.md#proposals-awaiting-a-ruling).
 
 ###### `ithildin stop clear --account <a>`
 
@@ -339,8 +342,9 @@ Most alarms on shadow and paper need no writing command at all. A missing bar, a
 The writing commands are for the cases the platform cannot resolve alone:
 
 - a book that disagrees with the broker
-- an order the platform did not send
+- the causes that hold a shadow or paper account, which [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) names: an order the platform did not send, a snapshot that cannot be stored or confirmed, and a spike flag
 - a kill switch
+- a halt of all trading that waits for a person, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says
 - any halt on live
 
 #### What to do away from a computer
