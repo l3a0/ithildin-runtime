@@ -99,6 +99,9 @@ flowchart TB
     clock -. "Clock" .-> data
     timer -. "Timer, for deadlines" .-> sup
     timer -. "Timer, for deadlines" .-> mon_report
+    timer -. "Timer, for deadlines" .-> exec_recover
+    timer -. "Timer, for deadlines" .-> exec_send
+    timer -. "Timer, for a late forecast" .-> pc
     clock -. "Clock, for the cutoff" .-> exec_send
     clock -. "Clock, for the simulator" .-> broker
     broker -. "Broker" .-> exec_recover
@@ -115,7 +118,7 @@ reads. When a worker writes its decision result, S3's event for it reaches the q
 worker reads the plan, which the diagram draws only into the two that start
 the day, and monitoring reads every component's results, which the diagram
 leaves out to stay legible. Each dotted arrow from an adapter is a port,
-labelled with its name, and each mode is one choice of adapter for each port.
+labelled with its name, and each mode is one choice of adapter for each port. The diagram leaves out two kinds of port read to stay legible: each worker's heartbeat, and the `Clock` read that stamps a record's own time, such as a journal entry's `built_at`, which every writer makes.
 Execution and monitoring each appear twice because each has two stages in one
 process, and each stage writes its own decision result. Execution recovers first and then, once the target portfolio
 exists, sends. Execution's recover stage reconciles the book with the broker, and monitoring reconciles again with nothing waiting on it and reports last.
@@ -646,7 +649,9 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 
-`vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
+A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5), and [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with them.
+
+`vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
 ##### Which bars a snapshot returns
 
@@ -735,7 +740,7 @@ Alpaca's trading API [allows 200 requests a minute](https://alpaca.markets/suppo
 | The reserve | A quarter, 50 a minute | 16 a minute, rounded down | Cancels, and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included |
 | Orders and lookups | The rest | 50 a minute | New orders and other lookups, which never draw on the reserve |
 
-Slice 1's one VM runs two execution instances, so each takes half of each share, and their shares together reach the limit. The table and the first sketch count the cluster's three. Each instance takes the count of execution instances from the release's table for its environment.
+Slice 1's one VM runs two execution instances, so each takes half of each share, 25 a minute of the reserve and 75 of the rest, and their shares together reach the limit. The table and the first sketch count the cluster's three. Each instance takes the count of execution instances from the release's table for its environment.
 
 The first sketch draws that table to scale, for three instances.
 
@@ -761,7 +766,7 @@ The third sketch draws both on one instance's share.
 | The call | What the 429 means | What follows |
 | --- | --- | --- |
 | A submit | The order is left in doubt | A lookup settles it like any other order in doubt |
-| A cancel | A definite answer, which the contract suite proves | Because the answer is definite, an alarm, and execution retries the cancel inside the reserve |
+| A cancel | A refused cancel, where that account's latest scheduled contract-suite run shows a 429 on a cancel is definite. Otherwise the answer counts as lost | An alarm. Where the 429 is definite, execution journals a new cancel first and sends it under the lease, inside the reserve, and each such cancel counts toward rule 6's written number and its clock, which runs from the first cancel's entry. Where it counts as lost, the rule for a cancel whose answer is lost applies. In either case no stage resends a plan's own cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 
 #### The risk gate holds no state of its own
 
@@ -781,6 +786,7 @@ flowchart LR
     constraints["The run's Constraints"]
     stop["The stop blob"]
     owner["The owner's record"]
+    now["now, the send stage's Clock reading"]
     inputs["GateInputs: the share, the stress move, the vintage hash,<br/>the portfolio value, the stop blob's state, and a close's entry"]
     gate["The risk gate's check"]
     verdict["The Verdict, which names<br/>any term the gate could not compute"]
@@ -796,20 +802,22 @@ flowchart LR
     snapshot --> gate
     constraints --> gate
     inputs --> gate
+    now --> gate
     gate --> verdict
 ```
 
 ##### What the gate is handed
 
-`check` takes five things.
+`check` takes six things.
 
 1. The order.
 2. The book.
 3. The snapshot.
 4. The run's `Constraints`.
 5. A `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value, the stop blob's state and, for a close, its close entry.
+6. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
 
-`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape.
+`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape. The figure draws the owner's confirmation straight into the gate because no field of `GateInputs` holds it yet, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) places that field.
 
 ##### How the gate values the book
 
@@ -964,9 +972,11 @@ An arrow means "may import". The diagram draws four rules.
 2. **Only `runtime` imports the modules together.**
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
    - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
-   - The supervisor starts no worker. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover:
+   - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover, apart from that file:
+     - the local release file, in memory-backed storage on its VM;
      - the plan's lease, whose conditional writes carry the run's status;
      - the plan;
+     - the journal entry for each lease it clears or takes over;
      - its heartbeat;
      - the halts of workers that failed;
      - a halt of the run, with a halt for every decision left in the plan;
@@ -989,11 +999,14 @@ An arrow means "may import". The diagram draws four rules.
 
 ### How tests hold the rule
 
-A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw. A second test runs a day under the supervisor against a fake broker that fails on three things.
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw. A second test runs a day under the supervisor against a fake broker that fails on four things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received.
+4. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included.
+
+The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fourth check. The fake broker applies the fourth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
 
 Together they turn acceptance test 3's claim that no order reaches the broker adapter without passing the gate into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
 
