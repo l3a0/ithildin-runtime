@@ -332,7 +332,8 @@ sequenceDiagram
     X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed,<br/>and creates stop.json from the result
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
-    X->>X: does the clock agree with the broker's,<br/>and is it before the cutoff?
+    X->>X: does the clock agree with the broker's?
+    X->>X: is it before the cutoff?
     opt a resting order the plan cancels or replaces
         X->>F: takes the account's lease
         X->>J: journals the cancel

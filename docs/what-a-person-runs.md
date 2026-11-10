@@ -365,7 +365,7 @@ An alarm's email subscription sends nothing until it is confirmed. The owner con
 The owner first writes the subscription by hand, so the address enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
 
 1. Take the token from the emailed link without opening the link.
-2. Run `aws sns confirm-subscription --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
-3. If the subscription was confirmed by the link instead, remove it, subscribe it again, and repeat steps 1 and 2.
+2. Run `aws sns confirm-subscription --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, where `<topic ARN>` is the account's alarm topic, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
+3. If the subscription's `ConfirmationWasAuthenticated` attribute does not read `true`, it was confirmed by the link instead, so remove it, subscribe it again, and repeat steps 1 and 2.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.

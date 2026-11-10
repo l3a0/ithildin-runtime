@@ -184,7 +184,7 @@ The grants below say who pulls the switch and who clears it.
 - **The operator's credential** may also clear a paper or shadow account's switch.
 - **The approved drill role**, inside a live drill, pulls it and clears only the pull its own run made. Only a job behind live's reviewer can assume that role.
 
-None of the credentials that clear the switch sits on the VM. Each environment's bucket policy refuses deletes on the switch's key, and exempts from that refusal only those principals its own rule allows. On the live bucket that is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag.
+None of these credentials, apart from the runtime's, sits on the VM. Each environment's bucket policy refuses deletes on the switch's key, and exempts from that refusal only those principals its own rule allows. On the live bucket that is the owner, and the approved drill role for a delete with `If-Match` on its own create's tag.
 
 Pulling the switch needs no deploy.
 
