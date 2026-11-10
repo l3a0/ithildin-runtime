@@ -956,24 +956,34 @@ rerun from doubling anything.
 1. Execution journals each fill under the broker's own fill id and correction
    identifier. It compares a repeat's content with the journaled fill, skips
    only an identical repeat, and journals a differing one and halts.
-2. At the start of its send stage, before it plans, execution fetches the
-   broker's positions, open orders, cash and fills again, a fresh read on every
-   attempt rather than a capture that the first one wins. It stores that read and journals its hash before it compares, as architecture/05-building-blocks.md's `### The interfaces` says. It settles each
-   order in doubt by lookup, journals any fill that arrived
-   since its recover stage, and compares the result with the book it
-   replays from the journal. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a comparison of cash follows a read of the broker's records, so a listed record posted between stages explains its difference rather than halting, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the calls. An open order at the broker that matches a
-   `sending` entry the journal does not hold as `Lost`, and a fill within that order's quantity, are the platform's own and bring the book up to date, apart from a late order under an older lease.  So is an order the journal
-   holds as open that the broker no longer lists, once a lookup by the
-   broker's order id finds it `Expired`, `Rejected` or cancelled at the close
-   as its time in force allows, or cancelled after a journaled cancel of
-   the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's. Execution journals each such outcome, in its recover stage and in this sync. An order or fill the journal did not send, including an open order or a fill on an order the journal holds as `Lost` or `Abandoned`, and a late order under an older lease, is journaled as received as unmatched and halts, as `### Orders the platform did not send` says. That late order, and a lookup answer that disagrees with its `sending` entry, are the explicit exceptions to settling an order by lookup. An instance that takes over the account's lease after it expired, or, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), after a person cleared it, stores the broker order list it read, as a capture named by a journaled takeover entry, before it acts. A late order is one whose `sending` entry precedes that takeover entry and that is absent from that stored list. A lookup that finds such an order halts before it moves to `Acknowledged`. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. A list read, a capture write or a takeover entry's journal write that fails halts new orders and serves every cancel whose own journal entry stores, apart from a plan's own, a store that stays down falls under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) with no cancel sent, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the comparison then fails closed. Whatever ends that halt, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed. Any other difference
-   halts the decision for a person, because the broker moved in a way the
-   platform did not ask for. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the
-   whole target portfolio, along with the journal entry it synced through
-   and a hash and the time of the broker state it fetched, before its first
-   send. A rerun in the same decision never plans again, so an order's
-   id never shifts between attempts, and sends nothing more, as [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
-   says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in that list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
+2. At the start of its send stage, before it plans, execution syncs with the broker in six steps.
+
+   1. It fetches the broker's positions, open orders, cash and fills again, a fresh read on every attempt rather than a capture that the first one wins.
+   2. It stores that read and journals its hash before it compares, as architecture/05-building-blocks.md's `### The interfaces` says.
+   3. It settles each order in doubt by lookup.
+   4. It journals any fill that arrived since its recover stage.
+   5. It compares the result with the book it replays from the journal. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a comparison of cash follows a read of the broker's records, so a listed record posted between stages explains its difference rather than halting, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the calls.
+   6. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the whole target portfolio, along with the journal entry it synced through and a hash and the time of the broker state it fetched, before its first send.
+
+   **What the comparison accepts and what halts it.** The table below says what the comparison in step 5 does with each thing the broker shows.
+
+   **Table:** What the send stage's comparison does with what the broker shows
+
+   | What the broker shows | What the comparison does |
+   | --- | --- |
+   | An open order that matches a `sending` entry the journal does not hold as `Lost`, and a fill within that order's quantity, apart from a late order under an older lease | Takes them as the platform's own, and they bring the book up to date |
+   | An order the journal holds as open that the broker no longer lists, once a lookup by the broker's order id finds it `Expired`, `Rejected` or cancelled at the close as its time in force allows, or cancelled after a journaled cancel of the platform's own, such as the kill switch's, the one that keeps a pair whole, or a later plan's | Takes it as the platform's own, and it brings the book up to date. Execution journals each such outcome, in its recover stage and in this sync |
+   | An order or fill the journal did not send, including an open order or a fill on an order the journal holds as `Lost` or `Abandoned` | Journals it as received as unmatched, and halts, as `### Orders the platform did not send` says |
+   | A late order under an older lease | Journals it as received as unmatched, and halts, as `### Orders the platform did not send` says |
+   | Any other difference | Halts the decision for a person, because the broker moved in a way the platform did not ask for |
+
+   The late order under an older lease, and a lookup answer that disagrees with its `sending` entry, are the explicit exceptions to settling an order by lookup.
+
+   **How a late order is told apart.** An instance that takes over the account's lease after it expired, or, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), after a person cleared it, stores the broker order list it read, as a capture named by a journaled takeover entry, before it acts. A late order is one whose `sending` entry precedes that takeover entry and that is absent from that stored list. A lookup that finds such an order halts before it moves to `Acknowledged`. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
+
+   **When the takeover's own reads or writes fail.** A list read, a capture write or a takeover entry's journal write that fails halts new orders, and still serves every cancel whose own journal entry stores, apart from a plan's own. A store that stays down falls under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) with no cancel sent, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the comparison then fails closed. Whatever ends that halt, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed.
+
+   **Why an order's id never shifts.** A rerun in the same decision never plans again, so an order's id never shifts between attempts, and sends nothing more, as [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in the planned list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
 3. Its account file names the journal entry it replayed through, and the
    send stage's sync names the entry it synced through. Before it plans,
    execution halts if an entry that changes the book, and that neither its
