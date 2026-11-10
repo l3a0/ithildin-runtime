@@ -1049,9 +1049,7 @@ Four things hold for the email.
 3. The owner writes each email subscription by hand, so the address enters no tracked file and no OpenTofu state.
 4. A subscription [sends nothing until it is confirmed](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html).
 
-   The owner confirms it with `aws sns confirm-subscription --authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click. So [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html), and a stray click or a mail scanner cannot end the route through the link in an alert.
-
-   The command takes the token from the emailed link without opening it, and a subscription confirmed by the link is removed and subscribed again.
+   The owner confirms it with the AWS command line, passing `--authenticate-on-unsubscribe true`, once per account, in place of the emailed link's click, by the steps in [Confirm an alarm email subscription](../what-a-person-runs.md#confirm-an-alarm-email-subscription). So [cancelling it needs an AWS sign-in](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html), and a stray click or a mail scanner cannot end the route through the link in an alert.
 
    A [drill](../halts-and-drills.md#drills-with-no-alarm) confirms that it was confirmed that way and that an email arrives.
 

@@ -8,6 +8,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [One command line tool, run off the VM](#one-command-line-tool-run-off-the-vm)
   - [The commands](#the-commands)
   - [From an alarm to a command](#from-an-alarm-to-a-command)
+  - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
 
 ## What a person runs
 
@@ -354,3 +355,13 @@ The price has four parts.
 2. A drill for each writing command on a paper account before the paper gate, which the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) adds to [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill).
 3. CloudTrail's data events on eleven prefixes.
 4. Two credentials outside the VM, the owner's behind a hardware key and the operator's a short-lived principal of its own, neither with a long-lived secret in a file.
+
+### Steps the owner takes once per account
+
+#### Confirm an alarm email subscription
+
+An alarm's email subscription sends nothing until it is confirmed. The owner confirms it by hand, once per account, in place of clicking the emailed link. [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says which accounts send the email, and why the command replaces the link.
+
+1. Take the token from the emailed link without opening the link.
+2. Run `aws sns confirm-subscription --authenticate-on-unsubscribe true` with that token.
+3. If the subscription was confirmed by the link instead, remove it, subscribe again and confirm the new one with the command.
