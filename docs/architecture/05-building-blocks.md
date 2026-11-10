@@ -961,7 +961,7 @@ flowchart TB
     runtime["runtime<br/>worker entry points, modes"]
     loop["runtime.loop<br/>the receive loop"]
     supervisor["runtime.supervisor<br/>the supervisor"]
-    tool["the ithildin tool<br/>a module in runtime that #22 names"]
+    tool["the ithildin tool<br/>a module in runtime, whose name #22 picks"]
 
     data --> core
     alpha --> core
@@ -1023,7 +1023,7 @@ An arrow means "may import". The diagram draws four rules.
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
-   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
+   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports nothing from `ithildinruntime` but `core`, so the supervisor reaches no worker module through it.
    - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract and queue and the `journal` package cover, apart from that file:
      - the local release file, in memory-backed storage on its VM;
      - the plan's lease, whose conditional writes carry the run's status;

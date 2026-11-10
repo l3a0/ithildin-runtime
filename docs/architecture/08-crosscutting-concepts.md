@@ -263,7 +263,7 @@ Six writers can append.
 5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
 6. In a live drill the owner approved, the approved drill role, for the journal entries of its own kill switch pull and its own clear.
 
-Only execution, monitoring, the supervisor and the `ithildin` tool may import the `journal` package, so the rollback and the live drill job may write their entries only by running one of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles which, and how the drill's pull carries its run id and its clear stays bound to the tag of its own pull, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) requires.
+Only execution, monitoring, the supervisor and the `ithildin` tool may import the `journal` package, so the rollback's credential and the approved drill role may write their entries only by running one of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles which, and how the drill's pull carries its run id and its clear stays bound to the tag of its own pull, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) requires.
 
 As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
@@ -402,7 +402,7 @@ Five rules hold the table.
 
 1. A session missing from the table halts.
 2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
-3. The table names the range it covers, and a date outside it halts.
+3. The table names the range it covers, and a date outside it halts, since a missing input stops trading (hard limit 3).
 4. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
 5. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).
 
