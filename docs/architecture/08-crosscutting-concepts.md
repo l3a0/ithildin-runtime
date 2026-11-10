@@ -263,7 +263,7 @@ Six writers can append.
 5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
 6. In a live drill the owner approved, the approved drill role, for the journal entries of its own kill switch pull and its own clear.
 
-Only the code of the first four holds the journal's writer, in the `journal` package. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
+Only execution, monitoring, the supervisor and the `ithildin` tool may import the `journal` package, so the rollback and the live drill job may write their entries only by running one of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles which, and how the drill's pull carries its run id and its clear stays bound to the tag of its own pull, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) requires.
 
 As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
@@ -398,12 +398,13 @@ A rule written in UTC would move by an hour against the close each time the cloc
 
 **The calendar function takes the trading sessions as data.** `core` imports no calendar library, because the usual one, `exchange_calendars` 4.13.2, would pull pandas and numpy into every worker. The table of sessions and their closes is a committed data file, checked by its SHA-256, which a script regenerates from `exchange_calendars` at a pinned version. An early close is the case that matters: on 2026-11-27 the close is 18:00 UTC, three hours before a normal day's, so close−20 falls at 17:40 UTC that day and at 20:40 UTC on 2026-11-30.
 
-Four rules hold the table.
+Five rules hold the table.
 
 1. A session missing from the table halts.
 2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
-3. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
-4. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).
+3. The table names the range it covers, and a date outside it halts.
+4. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
+5. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).
 
 A time stated as minutes before the close resolves through the same function from that session's close. Two such times are a strategy's close−20 decision and the market-on-close cutoff, which is close−12 in the hard caps this doc recommends, under Alpaca's close−10. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
 

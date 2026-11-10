@@ -683,7 +683,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 
-A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names, and [#50](https://github.com/l3a0/ithildin-runtime/issues/50) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) add the rest, since an issue that fills a shared type may add the fields it needs.
+A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names. [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names those fields and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) adds them.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -891,7 +891,7 @@ A constraints file can tighten a limit and never loosen it. This is a proposal f
 
 #### The book comes from the journal
 
-`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool are the only code that may import it, so they are the only code that holds the journal's writer. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
+`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool are the only code that may import it. [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal.
 
 #### The cost model writes a schedule rather than answering calls
 
@@ -958,10 +958,10 @@ flowchart TB
     execution["execution<br/>order manager, order path"]
     brokers["execution.brokers<br/>simulated, Alpaca through its SDK"]
     monitoring["monitoring"]
-    runtime["runtime<br/>worker entry points, modes, CLI"]
+    runtime["runtime<br/>worker entry points, modes"]
     loop["runtime.loop<br/>the receive loop"]
     supervisor["runtime.supervisor<br/>the supervisor"]
-    tool["the ithildin tool, in runtime<br/>the command line tool a person runs"]
+    tool["the ithildin tool<br/>a module in runtime that #22 names"]
 
     data --> core
     alpha --> core
@@ -997,13 +997,13 @@ flowchart TB
     tool --> journal
 ```
 
-An arrow means "may import". Which code builds the `Journal` that `OrderPath` and `Monitoring` hold is [#80](https://github.com/l3a0/ithildin-runtime/issues/80)'s to settle, inside the four importers. The diagram draws four rules.
+An arrow means "may import". The diagram draws four rules.
 
 1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
    1. `core`, which every module may import.
-   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, so they are the only code that holds the journal's writer. The rollback's credential and the approved drill role append by running that code. Their pulls go through `ithildin switch pull`, which design.md calls the one supported way to pull, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's clear, whose delete is bound to its own tag, reaches the journal.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Which code builds the `Journal` that `OrderPath` and `Monitoring` hold is [#80](https://github.com/l3a0/ithildin-runtime/issues/80)'s to settle, inside the four importers.
 
-   `adapters`, `execution.brokers` and `runtime.loop` import only `core`.
+   `adapters`, `execution.brokers` and `runtime.loop` import nothing from `ithildinruntime` but `core`.
 
    These live in `core`:
 

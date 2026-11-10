@@ -250,7 +250,7 @@ These run from the narrowest reach to the widest in the usual case: one halt, on
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
 
-A halt raised because S3 would not store a capture refuses the clear while any capture its blob names is neither stored nor journaled as lost, as [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says.
+A halt raised because S3 would not store a capture refuses the clear until the condition in [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) holds.
 
 On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
 
