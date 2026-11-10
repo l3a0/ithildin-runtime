@@ -32,7 +32,7 @@ flowchart TB
         timer["Scheduler<br/>a systemd timer starts the supervisor before the session,<br/>a path unit starts the workers once it has read the run's plan,<br/>the timer stops all after the close"]
         docker["Docker daemon<br/>pulls the pinned image"]
         guard["Host watchdog and OnFailure handler<br/>kill a container whose heartbeat stops,<br/>alarm when a unit gives up"]
-        subgraph ctrs["Three containers per component and three supervisors per deployment, on the one VM or spread across three,<br/>each its own unit and its own user"]
+        subgraph ctrs["Two containers per component and two supervisors per deployment on the one VM,<br/>or three of each spread across three VMs,<br/>each its own unit and its own user"]
             sup["Supervisor<br/>writes the plan, sets deadlines"]
             data["Data"]
             alpha["Alpha model"]
@@ -253,7 +253,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 #### Which units systemd runs
 
-Each supervisor instance and each worker instance, three of each per deployment, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`.
+Each supervisor instance and each worker instance, two of each per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`.
 
 #### What limits a unit's restarts
 
@@ -523,7 +523,7 @@ adapter stays SQS, as it already is on the VM.
 
 #### How slice 1 runs on one VM
 
-Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component.
+Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, two of each component and of the supervisor, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component, so each component then runs three instances.
 
 #### Which items hold for slice 1's one VM
 
@@ -690,10 +690,10 @@ An app release never rolls out this way, because two releases in one run write d
 
 | VM | Containers it runs | Machine | Price |
 | --- | --- | --- | --- |
-| Slice 1's one VM | 24, about 2.4 GB at an estimated 100 MB each | At the estimate, the sizing above means an 8 GB machine such as `t4g.large` | Roughly 7 cents an hour on demand, a figure to confirm against AWS's price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| Slice 1's one VM | 16, about 1.6 GB at an estimated 100 MB each | At the estimate, the sizing above means a 4 GB machine such as `t4g.medium` | Roughly 3 cents an hour on demand, a figure to confirm against AWS's price list on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | Each of the cluster's three VMs | 8 | A 2 GB machine such as `t4g.small` | Roughly 2 cents an hour |
 
-Both machines the table names are burstable: each earns CPU credits and spends them to run above a baseline, which [AWS's baseline table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html) puts at 30% of each vCPU for `t4g.large` and 20% for `t4g.small`. So the measure of load counts CPU beside memory, shadow shows whether the named machine holds, and the machine stays as named.
+Both machines the table names are burstable: each earns CPU credits and spends them to run above a baseline, which [AWS's baseline table](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html) puts at 20% of each vCPU for both `t4g.medium` and `t4g.small`. So the measure of load counts CPU beside memory, shadow shows whether the named machine holds, and the machine stays as named.
 
 #### What one VM risks until the cluster
 
@@ -1131,7 +1131,7 @@ The first price is the VMs, which grow in three stages.
 
 | When | VMs |
 | --- | --- |
-| Slice 1 | One per running environment, one for shadow and one for paper, each running three instances of each component and of the supervisor |
+| Slice 1 | One per running environment, one for shadow and one for paper, each running two instances of each component and of the supervisor |
 | Once live exists | A third |
 | Once load calls for the cluster of [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) | Three VMs per environment |
 

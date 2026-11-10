@@ -111,17 +111,18 @@ allows. Each environment runs on one VM, in an Auto Scaling group of one so
 a lost VM is still replaced without a person, and the cluster of three VMs
 across three availability zones ([An environment scales out to a cluster of three
 VMs](architecture/07-deployment.md#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms)) is the scale-out path for 10x. The cluster buys survival
-of a lost VM or zone, and the mapping below buys capacity. The three
+of a lost VM or zone, and the mapping below buys capacity. Two
 instances of each component run on that
-one VM, where they cover a process that crashes or hangs.
+one VM, where they cover a process that crashes or hangs, and the cluster
+runs three, one on each VM.
 
 A VM group also has a written limit of deployments, which this doc
 proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11). It
 is the most deployments whose containers fit in 75% of one VM's memory at
 the size per process measured on paper. At the estimate of 100 MB a
-process, one deployment's 24 containers take about 2.4 GB, so slice 1's
-8 GB VM holds two deployments under that limit, a figure the measurement
-replaces. The next split past the limit is configuration rather than
+process, one deployment's 16 containers on one VM take about 1.6 GB, so
+slice 1's 4 GB VM holds one deployment under that limit, a figure the
+measurement replaces. The next split past the limit is configuration rather than
 code: a mapping from account to VM group, with one Auto Scaling group per
 set of accounts. The release's table carries the mapping beside each
 environment's deployments, and the provisioning step tells a VM its group
@@ -133,8 +134,10 @@ uses for partitions. A table test generates routes
 and units for two deployments, and a drill runs a second deployment in
 shadow before anything relies on the mapping.
 
-At the same estimate, ten portfolios' 240 containers take five such VMs per
-environment in groups of one, or six 8 GB VMs in two groups of three. A
+At the same estimate, ten portfolios in groups of one run 160 containers,
+which take ten of slice 1's 4 GB VMs or four 8 GB VMs per environment. In
+the cluster, which runs three instances of each component, their 240
+containers take six 8 GB VMs in two groups of three. A
 group of three of the cluster's 2 GB machines holds one deployment, so on those
 machines raising a group to three adds survival and no deployments.
 
@@ -217,7 +220,7 @@ finished. Each quality has a home in these two docs.
 1. **Scalability.** Every part is designed for 10 times its first load,
    with the rewrite planned before 100 times, and built at that first load,
    as the section above says.
-2. **Availability.** Three instances of each component, an Auto Scaling
+2. **Availability.** Two instances of each component on slice 1's one VM and three across the cluster, an Auto Scaling
    group that replaces a lost VM, and leases that fail over on their own,
    as [Who takes over a lease](#rule-9-who-takes-over-a-lease) and architecture/07-deployment.md's [An environment scales out to a cluster of three VMs](architecture/07-deployment.md#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) say.
 3. **Security.** No agent places a live order or moves money, a broker key
@@ -695,7 +698,7 @@ from storage, which [a worker resumes by reading what exists](#rule-3-a-worker-r
 unhealthy when its heartbeat, judged by the time in its key, stops for longer than the limit set on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above the delivery delay measured on paper, when it restarts more often in one run than the
 host's limit allows, or when it exits before it has a result for every
 decision, which execution does not count while a session is open, because its units restart on any exit. An unhealthy instance raises an alarm naming the instance and
-is restarted or replaced, while the component's other two instances
+is restarted or replaced, while the component's other instances
 carry on. A worker, meaning the component, has failed only when its
 stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
 input appears, so waiting on a slow upstream worker never counts against
@@ -1350,14 +1353,15 @@ stalled firewall, looks exactly like a quiet queue, so a bounded wait, with the 
 as a NAT gateway, also drop connections idle for minutes, which a short
 renewal stays under. Each renewal is a billable request. Workers run only
 during the session, about seven hours a day, so each makes about 1,260
-requests a trading day and about 26,000 a month. Three instances of each
-of seven components and of the supervisor make 24 containers in each of
-shadow and paper, about 1.2 million requests a month, and live's 24 bring
-the organization to about 1.9 million. Consolidated billing shares SQS's
+requests a trading day and about 26,000 a month. Two instances of each
+of seven components and of the supervisor make 16 containers on each of
+shadow's and paper's VMs, about 0.8 million requests a month, and live's 16 bring
+the organization to about 1.2 million. The cluster's three instances make 24
+containers an environment, about 1.9 million requests across the three. Consolidated billing shares SQS's
 free tier across the organization's accounts, so its first million
 requests a month are free once for the whole organization, and each further million costs 0.40 US dollars, as its
 [pricing page](https://aws.amazon.com/sqs/pricing/) says, so the waiting
-costs about 35 cents a month once live runs.
+costs about 10 cents a month once live runs, and about 35 cents on the cluster.
 
 **A queue that pushes buys no speed.** Five AWS services do push to a process, weighed here in four groups.
 
@@ -1567,7 +1571,7 @@ The price is six things.
    queue for each component, in each environment, generated from the
    routes, and drills that delete a rule, deny a queue's policy and turn off
    the bucket's EventBridge delivery, each expecting its alarm.
-2. Long polling's requests, about three a minute for each waiting worker, which pass SQS's free million a month at this scale, at about 35 cents a month once live runs.
+2. Long polling's requests, about three a minute for each waiting worker, which pass SQS's free million a month once live runs, at about 10 cents a month, and about 35 cents on the cluster.
 3. S3's delivery delay added to each step of a decision. A decision passes
    through about five steps, so a slow day that delays each by two minutes
    can push the close−20 decision past the close−12 cutoff, where execution
@@ -1919,24 +1923,24 @@ buy failover rather than throughput, because sends still go one at a time,
 and throughput comes from more portfolios, each sending on its own
 account.
 
-Slice 1 runs three instances of each
-component, for high availability, and the supervisor
+Slice 1 runs two instances of each
+component on its one VM, for high availability, and the supervisor
 runs several instances too, which the rule above that every component may run as several instances carries, and they take a plan's lease
 to change the run, as [Who changes a run](#rule-9-who-changes-a-run-the-plans-lease)
-says. So a deployment runs 21 worker containers and
-three supervisor containers, and shadow and paper together run 48. Each environment can run as a
+says. So a deployment on one VM runs 14 worker containers and
+two supervisor containers, and shadow and paper together run 32. Each environment can run as a
 cluster of three VMs, one in each of three availability zones, and this
 cluster is the scale-out path, for a design load of 10 times slice 1's, while slice 1 starts on
 one VM per environment, as
 [Design for 10x, plan the rewrite before 100x, build at 1x](#design-for-10x-plan-the-rewrite-before-100x-build-at-1x) says. So in
-slice 1 one VM runs all 24 of its deployment's containers, and the cluster
-would spread them 8 to a VM. Shadow runs on machines of its own rather
+slice 1 one VM runs all 16 of its deployment's containers, and the cluster
+would run three instances of each, 24 containers spread 8 to a VM. Shadow runs on machines of its own rather
 than sharing paper's. The supervisor's instances compete for its queue
 like any component's, and each of its writes, the plan, a worker's halt,
 a halt of the run and the run's stop, is create-only and made under the
 plan's lease, so one instance changes the run at a time and a frozen one
 cannot change it after a takeover. In slice 1, losing a process leaves
-the other two instances of its component running, and losing the VM or its
+the other instance of its component running, and losing the VM or its
 zone stops the environment until its Auto Scaling group of one starts a
 replacement. The cluster would let the other two VMs carry on, as
 [An environment scales out to a cluster of three VMs](architecture/07-deployment.md#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
@@ -1953,18 +1957,19 @@ not.
 2. **One cause raises one alarm, or rarely two.** Monitoring writes the file naming
    the halt it is handling before it alarms, as [Monitoring tells the owner once](#rule-7-monitoring-tells-the-owner-once) says,
    and that write is create-only. Only the instance whose write lands sends
-   the alarm, and an instance whose write S3 refuses sends nothing, so three
-   instances that all see one cause raise one alarm. The sent record that
+   the alarm, and an instance whose write S3 refuses sends nothing, so all the
+   instances that see one cause raise one alarm. The sent record that
    follows the push lets another instance push again for a claim whose writer died before
    pushing, as [Monitoring tells the owner once](#rule-7-monitoring-tells-the-owner-once) says, so a cause can alarm twice
    and never not at all. A missed deadline's alarm goes through
    the same kind of file, named for the deadline and its decision.
 
-The price is three times the containers, about 1.2 million long polling
-requests a month on shadow and paper together and about 1.9 million once
-live runs, past SQS's free million, and in slice 1 one VM per
-environment with memory for 24 Python processes. At roughly 100 MB each, an
-estimate to measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that is about 2.4 GB, and
+The price is twice the containers on slice 1's one VM and three times on
+the cluster. Long polling makes about 0.8 million requests a month on shadow
+and paper together, inside SQS's free million, and about 1.2 million once
+live runs. In slice 1 each environment's one VM needs memory for 16 Python
+processes. At roughly 100 MB each, an
+estimate to measure on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that is about 1.6 GB, and
 about 0.8 GB on each VM of the cluster once load calls for it.
 
 Shadow needs no broker account. Its simulated account lives in the shadow
@@ -3042,6 +3047,7 @@ This section lists every decision made on the project, oldest first, one heading
 10. The owner ruled that a merge's apply that touches execution, its roles and grants, its queue, the host's restart settings and switch, or the stores of the journal, the halt state or the lease starts only inside the same window between sessions as a refresh, and otherwise changes nothing, alarms and waits for the next window. A review of entry 9 found that such an apply waited only for the session to end, so it kept the one-sided check the refresh marker was first added to close: an apply could check that no session was open and start just as one began. The owner's words were "Yes, same window", answering "Give execution applies the same window between sessions?" The apply checks the window at its start and again just before its first change, its job times out below the bound, and one that runs past the bound pages. The price is that a merge near the next session's start waits past that session, a drill of the refusal, and a runner that still acts after GitHub has marked its job ended, which only that page catches, since no outside status shows the apply the way AWS's shows a refresh. The owner's override for an incident stays. Governs: `### A release is checked where it runs, and nothing heals by hiding a fault` in design.md, `##### When a refresh may run` and `##### What a refused apply does` in architecture/07-deployment.md, and `### Alarms on deployment and release` in halts-and-drills.md.
 
 11. The owner ruled that the owner may override the window between sessions for the revert commit that rolls a VM image back, in an emergency, and that the overridden rollback pulls the kill switch of every account in its environment before it starts the refresh. The owner's words were "should be able to bypass and refresh during session hours in case of emergency." and "pull kill switch then start refresh", of the rule that a rollback waits for the window. The rollback starts the refresh only once the pull's own check finds execution's entry saying the cancels are done, and starts none where that check misses its deadline, which fires the pull's alarm. Each new VM's execution comes up halted, as a VM that starts mid-session does, and the switch stays pulled until the principals who may clear it do. The override is the owner's alone, recorded with its reason, as the incident override of an apply that touches execution is, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it is given. The price is that an open session runs on two VM images while the refresh replaces them, made safe by the pulled switch, and that the rollback's credential, the VM change credential on paper and live and the apply credential on shadow, gains a create on each account's switch and no delete. A review then found that the rollback could not run the pull's check and that the check took any entry saying the cancels are done, so an entry left by an earlier pull could start the refresh while orders rest. So the rollback's credential reads the journal and creates its pull's own entry, every pull, by the rollback or by the `ithildin` tool, writes a new version of the switch blob even where it is already set, execution's entry names the switch version it acted on, and the rollback reads the accounts from the release's environment table and waits for an entry naming each one's new version. Governs: `#### Who pulls and clears the kill switch`, `### Rule 5: the runtime's credential does only what the rules need`, `#### Item 6: how a new VM image rolls out` and `##### What rolls back a VM image that fails after its refresh` in architecture/07-deployment.md, the kill switch's sequence in architecture/06-runtime.md, `### The commands` in what-a-person-runs.md, and `### Alarms on deployment and release` in halts-and-drills.md.
+12. The owner ruled that two instances of each component suffice on slice 1's one VM, in place of the three the 2026-11-01 entry set for slice 1. The owner's words were "for 1 vm, 2 instances per component is sufficient.", after a comparison of what one VM and the cluster cost at the estimated size per process. The supervisor, which the platform counts beside the components, runs two as well, and the cluster still runs three of each, one on each VM. So a deployment on one VM runs 16 containers, about 1.6 GB at the estimate of 100 MB a process, which the sizing that keeps measured use at or under half a machine's memory fits on a 4 GB machine. The price is that a second crash of one component while the host restarts its first instance leaves that component with no running instance until a restart lands. This changes the 2026-11-01 entry that runs three instances in slice 1. [#11](https://github.com/l3a0/ithildin-runtime/issues/11#issuecomment-6755380309) Governs: `## Design for 10x, plan the rewrite before 100x, build at 1x`, `## Every design weighs the whole lifecycle`, `### How a component learns of a change` and `### Strategies, schedules and decisions` in design.md, `### Rule 11: an environment scales out to a cluster of three VMs`, `#### How big each VM is`, `#### Which units systemd runs` and `#### The price of four environments` in architecture/07-deployment.md, `##### How the broker's rate limit is shared` in architecture/05-building-blocks.md, the runtime level of architecture/10-quality.md, the queue row of architecture/09-decisions.md, and the clean exit's drill in halts-and-drills.md.
 
 ## Considered and rejected
 
@@ -3086,7 +3092,8 @@ once rather than re-argued.
 | One process per action, such as the order manager and the order path each in its own | The owner ruled on 2026-10-29 that this was too granular, and narrowed the ruling to one process per component. A component is the unit the charter gives an interface and an owning role |
 | More than one execution process sending on one broker account at a time | The risk gate checks limits across every order and position in the account's journal, so two gates at once could each approve orders that together breach one. A restarted supervisor beside a still-running order path sent every order twice in a review's simulation, which is why rule 9 takes a lease. Several execution processes may run, as the owner ruled on 2026-11-01, and the account's lease lets one of them send at a time |
 | Each worker handling one message at a time | The owner ruled on 2026-11-01 for a receive loop that hands each item to a pool of handlers. A pull's cancels then need not wait behind a plan in the same execution instance, and a backtest's independent stages run decisions side by side |
-| One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability, and on 2026-11-02 kept all three on slice 1's single VM, where they cover a process that crashes or hangs while the host restarts it. The price is three times the containers on that one VM, 24 of them and about 2.4 GB, and a long polling bill past SQS's free million |
+| One instance of each component in slice 1 | The owner ruled on 2026-11-01 for three instances of each component, for high availability, and on 2026-11-02 kept all three on slice 1's single VM, where they cover a process that crashes or hangs while the host restarts it. On 2026-11-09 the owner ruled that two suffice on the one VM. The price is twice the containers on that one VM, 16 of them and about 1.6 GB, and a long polling bill past SQS's free million once live runs |
+| Three instances of each component on slice 1's one VM | The owner ruled on 2026-11-09 that two suffice there. On one VM a third instance covers only a second crash of the same component while the host restarts the first, which takes seconds, and losing the VM takes all three at once. The price of keeping two is that such a second crash leaves the component with no running instance until the host restarts one. The cluster keeps three, one on each VM, because there each instance covers the loss of a VM |
 | One supervisor beside several instances of each worker | The owner ruled on 2026-11-01 that the supervisor runs several instances, and on 2026-11-02 that they take the plan's lease to change the run. The price is a record that the plan's event arrived, and a lease blob kept for each run whose conditional writes carry the run's status |
 | A deployment's lease, renewed for the whole session | Once the cluster ran every VM at once, the lease guarded only facts that never change during a session, the run and its release, and the check that keeps a drill and a session apart. The owner ruled on 2026-11-01 that no lease covers the deployment or the session. The price is that no expiry signals that every supervisor has gone quiet, which monitoring's supervisor-heartbeat alarm reports |
 | A session record written once per run, naming the run and its release | The owner ruled on 2026-11-01, after it was briefly written in, that no session record is needed. The run's plan is already written once per run and already names its release, and the plan and the run's stop say whether a session is open. The comparison's result at a session's start holds a check's result rather than a session's identity, so it stands beside this row, under the owner's 2026-11-04 ruling on [#32](https://github.com/l3a0/ithildin-runtime/issues/32) |
