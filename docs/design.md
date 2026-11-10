@@ -2386,7 +2386,7 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
 
    **How the running platform checks the match.** The running platform checks both directions at a set interval, and shows under the halt-state monitor how many it checked. A request counts as unmatched only once a written time has passed since the strategy published it, shorter than the time to the strategy's next decision. Until then it is in flight, and an order in doubt stays pending under the clock of [Every fact has one writer](#every-fact-has-one-writer). [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holds the outcome records, the running match and their tests, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-   **What a failed match halts.** The table below says what each one halts.
+   **What a failed match halts.** The table below says what each kind of failed match halts.
 
    **Table:** What a request that does not match, and an order that traces to nothing, each halt
 
