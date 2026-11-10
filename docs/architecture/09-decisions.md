@@ -4,7 +4,40 @@ This page is section 9 of [the architecture](00-README.md), in the order of the 
 
 ## Contents
 
+- [The market-on-close cutoff proposal](#the-market-on-close-cutoff-proposal)
+  - [What earlier rulings settled](#what-earlier-rulings-settled)
+  - [What Alpaca's documentation says about the cutoff](#what-alpacas-documentation-says-about-the-cutoff)
+  - [What a missing input and a pair with one leg accepted do](#what-a-missing-input-and-a-pair-with-one-leg-accepted-do)
+  - [How each mode fills a market-on-close order](#how-each-mode-fills-a-market-on-close-order)
 - [Proposals awaiting a ruling](#proposals-awaiting-a-ruling)
+
+## The market-on-close cutoff proposal
+
+One row of the table under [Proposals awaiting a ruling](#proposals-awaiting-a-ruling) proposes a cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. What the row rests on runs too long for a table cell, so it sits here.
+
+### What earlier rulings settled
+
+[The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close.
+
+### What Alpaca's documentation says about the cutoff
+
+Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so close−12 on such a day stays unconfirmed until the broker contract suite or Alpaca confirms it.
+
+### What a missing input and a pair with one leg accepted do
+
+- A missing input on a day halts that decision rather than switching to another time.
+- A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone.
+
+### How each mode fills a market-on-close order
+
+One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says.
+
+Alpaca's paper account accepts market-on-close orders. Two sources describe how it fills them.
+
+1. Its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time".
+2. [Alpaca staff on its forum](https://forum.alpaca.markets/t/opening-and-closing-market-prices-in-paper-trading/11664) say paper does not tell a market-on-close order from a market order.
+
+So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole.
 
 ## Proposals awaiting a ruling
 
@@ -28,7 +61,7 @@ in [design.md](../design.md)'s `## Decisions`.
 | What [An environment scales out to a cluster of three VMs](07-deployment.md#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) adds to each environment's EC2 Auto Scaling group: the test across VMs of whether a runner is gone, a VM's stop of its own units, the subnets and the route for the group's events. [The 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-02 entries](../design.md#2026-11-02) settled the group and its one VM | None named | Subnets in three zones, a test across VMs of whether a runner is gone, and drills that terminate a VM and take a zone down | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | How a VM image's instance refresh runs: one VM at a time behind a lifecycle hook that runs the VM's own checks, with automatic rollback. [The 2026-11-09 entry](../design.md#2026-11-09) settled the window between sessions, a session's check of AWS's refresh status, the new version as the refresh's desired configuration, a refused apply's wait for the next window, and one concurrency group per environment for the applies | AWS CodeDeploy | A window between sessions with a written bound, a read of Auto Scaling's refresh status for the runtime's role, a hook the VM's role may complete, an alarm on a failed or refused refresh, and a drill | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The delay on work put back on the queue while an account's lease is held, and the limit on how many times it goes back | None named | An SQS redelivery as the fallback for a lost event | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| A cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. [The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close. Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so close−12 on such a day stays unconfirmed until the broker contract suite or Alpaca confirms it. A missing input on a day halts that decision rather than switching to another time. A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone. One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says. Alpaca's paper account accepts market-on-close orders, but its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time", and [Alpaca staff on its forum](https://forum.alpaca.markets/t/opening-and-closing-market-prices-in-paper-trading/11664) say paper does not tell a market-on-close order from a market order. So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole | None named | Execution reads the clock for the cutoff, a pair whose second leg can be rejected after the first is accepted, which execution then cancels while the exchange still takes cancels, and a kill switch that cannot stop a closing-auction fill after the exchange's cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| A cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. [What the proposal rests on](#the-market-on-close-cutoff-proposal) | None named | Execution reads the clock for the cutoff, a pair whose second leg can be rejected after the first is accepted, which execution then cancels while the exchange still takes cancels, and a kill switch that cannot stop a closing-auction fill after the exchange's cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through `core` and checked against CloudTrail | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, the owner's behind a hardware key and the operator's a short-lived principal of its own, neither with a long-lived secret in a file | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The receive loop's design: an `asyncio` event loop in `runtime` with a pool of handler threads, in which stages that read the journal keep the plan's order | One message at a time per worker, or a loop of each component's own | A thread pool in every worker, a progress report at every step, an order rule for the stages that read the journal, and a backtest run at two pool sizes in CI | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
