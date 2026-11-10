@@ -251,15 +251,41 @@ seal needs none of this.
 
 #### What is compared after the seal
 
-The snapshot names each segment it read
-by key, S3 version and SHA-256, and marks the read provisional. Once marketlake
-seals the day, monitoring compares each quote the snapshot used with the sealed
-row of the same ticker and minute, by bid, ask and last as received, because a
-segment and the partition built from it never share bytes. The stored snapshot
-holds every `Quote` field and each bar's `vintage_id`, as `Snapshot` does in memory, so
-monitoring reads the used quote from the snapshot. A segment that is gone
-changes nothing, and the comparison holds for as long as the snapshot does.
-The data worker's role, in the next session's run, reads the sealed row and stores it, so data stays the one reader of marketlake, and monitoring's role compares, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Each provisional snapshot gets a stored comparison result within a written bound after the close. A missing result, or a sealed day that never arrives, pages and stops no decision. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that the comparison also takes the newest sealed row at or before the decision time, so a row whose segment landed after the decision shows as a difference.
+Once marketlake seals the day, monitoring checks each quote the decision used
+against the sealed day, after the decision has already acted.
+
+##### Who reads and who compares after the seal
+
+Two roles share the work, so data stays the one reader of marketlake, as
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold. Three steps
+follow the seal.
+
+1. The data worker's role, in the next session's run, reads the sealed row and
+   stores it.
+2. Monitoring's role compares each quote the snapshot used with the sealed row
+   of the same ticker and minute, by bid, ask and last as received.
+3. Monitoring stores the result. Each provisional snapshot gets a stored
+   comparison result within a written bound after the close.
+
+A missing result, or a sealed day that never arrives, pages and stops no
+decision.
+
+This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5),
+that the comparison also takes the newest sealed row at or before the decision
+time, so a row whose segment landed after the decision shows as a difference.
+
+##### What the comparison reads
+
+The snapshot names each segment it read by key, S3 version and SHA-256, and
+marks the read provisional. The stored snapshot holds every `Quote` field and
+each bar's `vintage_id`, as `Snapshot` does in memory, so monitoring reads the
+used quote from the snapshot. The comparison goes by bid, ask and last because
+a segment and the partition built from it never share bytes. A segment that is
+gone changes nothing, and the comparison holds for as long as the snapshot
+does.
+
+##### What monitoring does with each finding
 
 **Table:** What monitoring does with each thing it finds after the seal
 
