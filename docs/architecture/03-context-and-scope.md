@@ -205,7 +205,7 @@ The diagram shows one segment becoming quote rows. Look for which steps are
 the runtime's. The SHA-256 match is the data worker's own, and the reader
 comes from marketlake's package.
 
-##### What happens when a segment is late, absent or wrong
+##### What happens when a segment is late, absent or does not match
 
 marketlake's publication lag, from a cycle's capture to its segment in the
 bucket, is a published input, and shadow measures the lag.
@@ -214,9 +214,9 @@ bucket, is a published input, and shadow measures the lag.
 
 | Case | What happens |
 | --- | --- |
-| A segment does not match the object's stored SHA-256 and metadata | The decision halts |
+| A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
 | marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
-| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets, which halts it, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how |
 
 #### What is checked before deciding
 
