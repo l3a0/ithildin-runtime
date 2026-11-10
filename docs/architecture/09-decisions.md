@@ -5,7 +5,6 @@ This page is section 9 of [the architecture](00-README.md), in the order of the 
 ## Contents
 
 - [The market-on-close cutoff proposal](#the-market-on-close-cutoff-proposal)
-  - [What earlier rulings settled](#what-earlier-rulings-settled)
   - [What Alpaca's documentation says about the cutoff](#what-alpacas-documentation-says-about-the-cutoff)
   - [What a missing input and a pair with one leg accepted do](#what-a-missing-input-and-a-pair-with-one-leg-accepted-do)
   - [How each mode fills a market-on-close order](#how-each-mode-fills-a-market-on-close-order)
@@ -13,11 +12,7 @@ This page is section 9 of [the architecture](00-README.md), in the order of the 
 
 ## The market-on-close cutoff proposal
 
-One row of the table under [Proposals awaiting a ruling](#proposals-awaiting-a-ruling) proposes a cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. What the row rests on runs too long for a table cell, so it sits here.
-
-### What earlier rulings settled
-
-[The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close.
+One row of the table under [Proposals awaiting a ruling](#proposals-awaiting-a-ruling) proposes a cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. What the row rests on runs too long for a table cell, so it sits here. [The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close.
 
 ### What Alpaca's documentation says about the cutoff
 

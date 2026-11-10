@@ -473,7 +473,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   9. **What it keeps beside the tests.** Keeps the contract suite each stand-in adapter passes, the second implementation of the money arithmetic in the tests, and the measurement each tuning change carries, per the design doc.
   10. **When a test leaves the gate, and why a build is never rerun until it passes.** Takes a flaky test out of the gate only as a skip whose reason links an issue, and fixes it or replaces it with a smaller one. A test that guards a hard limit leaves the gate only once a smaller replacement covering the same behavior passes there. Never reruns a build until it passes, since a team that does learns to accept failure, the drift Diane Vaughan named the normalization of deviance (BM L2868, BM L2917).
   11. **How many tests run the full loop.** Keeps tests that run the full loop, beyond the injected faults, to a short named list of journeys in `tests/` (BM L2948), and takes the book's order of magnitude more tests at each step down the pyramid as guidance (BM L2798).
-  12. **How the Startup checks are tested.** Checks five things, under the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) (DT p. 200, p. 247).
+  12. **How a release is checked where it runs.** Checks five things, under the design doc's [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) (DT p. 200, p. 247).
       1. The Startup checks run in CI as the same code that clears a release.
       2. Each check that starts something waits on readiness rather than a fixed sleep.
       3. No Startup check sends an order or a cancel.
@@ -481,7 +481,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
       5. Each deploy-time failure has its CI test beside its drill.
   13. **The tests of what a backtest could not have traded.** Holds the fill test, the test of a sample's stated bet, the trace of a fill, the wrong-price test, the split test and the test of each side of an order, under the design doc's [A backtest names what it could not have traded, and each model states how it fails](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
   14. **The tests of a result against the risk it took.** Holds the rebuild of a position's initial risk and R multiple from the record, the gap fixture and the test that a paper or live start cannot run random entries, under the design doc's [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  15. **The tests of what a fill cost and what a market can do to a position.** Holds the tests [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists, under the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). They cover:
+  15. **The tests of what a fill cost and what a market can do to a position.** Holds these tests, which [#50](https://github.com/l3a0/ithildin-runtime/issues/50) lists, under the design doc's [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). They cover:
       - a fill's cost at each recorded outcome.
       - a price of unstated kind.
       - a refused short leg.

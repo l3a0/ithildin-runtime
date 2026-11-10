@@ -216,13 +216,18 @@ bucket, is a published input, and shadow measures the lag.
 | --- | --- |
 | A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
 | marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
-| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how the decision does so |
 
 #### What is checked before deciding
 
-The data worker runs its own minimum
-checks before anything decides. A missing or stale quote at the decision time
-halts the decision, a segment whose SHA-256 does not match its manifest entry halts it too, and a price spike is flagged in the snapshot, and the send stage's flag test halts the decision when the instrument is traded or held. This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
+The data worker runs its own minimum checks before anything decides, and the send stage then tests the flags. Four checks halt or flag a decision.
+
+1. A missing or stale quote at the decision time halts the decision.
+2. A segment whose SHA-256 does not match its manifest entry halts it too.
+3. A price spike is flagged in the snapshot.
+4. The send stage's flag test halts the decision when the instrument is traded or held.
+
+This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
 
 #### Which read a decision uses
 

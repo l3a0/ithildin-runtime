@@ -179,7 +179,8 @@ The grants below say who pulls the switch and who clears it.
 
 - **The runtime's credential** can create the switch, which pulls it, and can never delete it.
 - **The rollback's credential**, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
-- Only **the owner's credential** clears a live account's switch.
+- **The owner's and the operator's credentials** pull any account's switch through `ithildin`.
+- Apart from the drill role's own pull, below, only **the owner's credential** clears a live account's switch.
 - **The operator's credential** may also clear a paper or shadow account's switch.
 - **The approved drill role**, inside a live drill, pulls it and clears only the pull its own run made. Only a job behind live's reviewer can assume that role.
 

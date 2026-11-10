@@ -508,7 +508,7 @@ storage port hands both back.
 
 ### Rule 1: what the bucket's policy refuses
 
-The bucket's policy makes S3 enforce the rule that every write is a blob created once, and it binds the owner and the operator as well as the runtime. Each row of the table below is one request it refuses. "The condition" is the one [Every write is a blob, created once](#rule-1-every-write-is-a-blob-created-once) gives, which makes S3 refuse a write whose key exists.
+The bucket's policy makes S3 enforce, on the prefixes below, the rule that every write is a blob created once, with the exceptions the table names, and it binds the owner and the operator as well as the runtime. Each row of the table below is one request it refuses. "The condition" is the one [Every write is a blob, created once](#rule-1-every-write-is-a-blob-created-once) gives, which makes S3 refuse a write whose key exists.
 
 **Table:** What the bucket's policy refuses
 
@@ -519,7 +519,7 @@ The bucket's policy makes S3 enforce the rule that every write is a blob created
 | Every principal | Any delete, so no lease is ever deleted | `leases/` | None |
 | The owner's and the operator's principals | Any write that lacks `If-Match`, so a person cannot create a lease or overwrite one without its current tag | `leases/accounts/` | None |
 | The runtime's principals | Any write that lacks the condition | The leases' and the switch's prefixes | A lease may also be rewritten with `If-Match` on its current tag, which is how it is taken, renewed, released and taken over |
-| The runtime's principals | Any delete | The leases' and the switch's prefixes | The switch keeps the delete rules of [the kill switch is a blob](#rule-10-the-kill-switch-is-a-blob), under which the runtime's credential can create the switch but never delete it, and only the owner's or the operator's command clears it, on a live account only the owner's |
+| The runtime's principals | Any delete | The leases' and the switch's prefixes | The switch keeps the delete rules of [the kill switch is a blob](#rule-10-the-kill-switch-is-a-blob), under which the runtime's credential can create the switch but never delete it, and only the owner's or the operator's command clears it, on a live account only the owner's, and inside a live drill the approved drill role clears only its own pull, as [Who pulls and clears the kill switch](architecture/07-deployment.md#who-pulls-and-clears-the-kill-switch) says |
 
 The bucket keeps every version, so the rule holds even against a bug in the runtime's own code or a person's mistake.
 
@@ -963,7 +963,7 @@ rerun from doubling anything.
    3. It settles each order in doubt by lookup.
    4. It journals any fill that arrived since its recover stage.
    5. It compares the result with the book it replays from the journal. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a comparison of cash follows a read of the broker's records, so a listed record posted between stages explains its difference rather than halting, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the calls.
-   6. Only then does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the whole target portfolio, along with the journal entry it synced through and a hash and the time of the broker state it fetched, before its first send.
+   6. Only then, once nothing in the table below halts the comparison, does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the whole target portfolio, along with the journal entry it synced through and a hash and the time of the broker state it fetched, before its first send.
 
    **What the comparison accepts and what halts it.** The table below says what the comparison in step 5 does with each thing the broker shows.
 
@@ -1857,7 +1857,7 @@ Five rules keep a day of decisions safe.
 
          **Why two sessions.** Two sessions meet the need for at least a weekend's hold. The owner reads every alert before the next trading day's decision, about 24 hours on a trading day and never longer than a weekend, which is the hold this window covers. The two sessions also cover one missed reading of the alerts, with no multiplier nobody could rerun.
 
-         **Why the value can only rise.** The largest move in a window that only grows can never fall, so with a fixed start date a refresh can raise the value and only a data correction can lower it. A short vintage understates the move, which raises `max_net`, so that error runs toward the larger position, and the longest history guards against it. The price is a smaller position wherever the cap binds.
+         **Why a refresh can only raise the value.** The largest move in a window that only grows can never fall, so with a fixed start date a refresh can raise the value and only a data correction can lower it. A short vintage understates the move, which raises `max_net`, so that error runs toward the larger position, and the longest history guards against it. The price is a smaller position wherever the cap binds.
 
          **How the gate computes the cap.** `max_net` is s × V ÷ m, and the gate computes the cap at each decision from three inputs.
 
@@ -2150,7 +2150,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
    2. Fills against positions.
    3. The vendor's sequence numbers against what capture recorded.
 
-   #### How reconciliation tells a timing gap from a real difference
+   **How reconciliation tells a timing gap from a real difference.**
 
    A check that sees two moments reports a gap that is only timing, and a platform that halts on its own timing learns to ignore the alarm (DDIA L7218, L7227). The journal and the broker share no snapshot, so reconciliation takes three steps.
 
@@ -2160,9 +2160,9 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
    Any other difference halts at once, with no tolerance on quantity and no count of repeats. An order, fill or holding change at the broker with no journal entry, such as the owner's own trade, a split or an assignment, is journaled as received, naming its source, and halts trading, as [Orders the platform did not send](#orders-the-platform-did-not-send) says.
 
-   #### Which working orders a halt on a difference cancels
+   **Which working orders a halt on a difference cancels.**
 
-   A halt on a difference from the broker reads every working and in-doubt order against the position the broker reports. An order whose fill would move that position away from its decision's target, or past it, no longer serves that decision, so the halt cancels it, journaled first and handled as [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production) and the rule for a cancel whose answer is lost, below, say. Under that rule a cancel whose answer is lost is looked up before any new cancel goes out. A sell sent to close a long the broker has since closed is the plain case, because its fill would open a short no decision asked for. Each decision's target is journaled before its first order, so this read has a record to use.
+   A halt on a difference from the broker reads every working and in-doubt order against the position the broker reports. An order whose fill would move that position away from its decision's target, or past it, no longer serves that decision, so the halt cancels it, journaled first and handled as [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production) and the rule for a cancel whose answer is lost, below, say. A sell sent to close a long the broker has since closed is the plain case, because its fill would open a short no decision asked for. Each decision's target is journaled before its first order, so this read has a record to use.
 
    An order this test cannot judge stays, and a missing target never reads as zero. Five cases cover it.
 
@@ -2187,7 +2187,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
    Once a close entry under [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) sets a leg's target to flat, flat is the target this test reads, for the close's own order too. Where the halt on an order that traces to nothing also fires on the same event, its cancel of adding orders applies as well, and an order either rule cancels is cancelled.
 
-   #### How a split is restated before the halt can release
+   **How a split is restated before the halt can release.**
 
    Once the split's two records agree, execution takes four steps.
 
@@ -2198,7 +2198,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
    The halt cannot be released until that is done, and where any of it cannot finish, the halt stays and the page says why.
 
-   #### What the halt's page names, and what the halt costs
+   **What the halt's page names, and what the halt costs.**
 
    The page names each order the halt cancelled, each it kept and why, and each position left off its target. [#50](https://github.com/l3a0/ithildin-runtime/issues/50) asks [#10](https://github.com/l3a0/ithildin-runtime/issues/10) how the read counts later fills and several working orders.
 
@@ -2207,11 +2207,11 @@ The **order path** runs from the target portfolio through the risk gate and the 
    1. A cancel lands only before the broker's cutoff, so a difference seen after it leaves the order working.
    2. A position left off its target stays there until a person acts, because this halt sends no new order, apart from the close after a broker's trade under [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 
-   #### Who reconciles and who only compares
+   **Who reconciles and who only compares.**
 
    Execution reconciles, because reconciling changes the book. Monitoring compares too, and never changes the book.
 
-   #### Which broker records execution may journal as outside entries
+   **Which broker records execution may journal as outside entries.**
 
    **Table:** What execution does with each kind of broker record it did not send
 
@@ -2227,7 +2227,7 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
    A trade the broker made leaves its strategy off under [A strategy is judged over a sample](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it), because the next decision would otherwise buy the change back, and that entry can start the close of what the broker left, under [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 
-   #### When an outside entry releases the halt
+   **When an outside entry releases the halt.**
 
    In shadow and on paper an outside entry for a split or for a trade the broker made releases the halt once three things hold.
 
@@ -2235,13 +2235,13 @@ The **order path** runs from the target portfolio through the risk gate and the 
    2. Any close entry the close after a broker's trade needs exists.
    3. Every leg has its outcome and its recorded page, with its order settled and stopped working.
 
-   For a split, [A backtest names what it could not have traded, and each model states how it fails](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) also requires the two records to agree. In live trading only the owner clears it.
+   For a split, [A backtest names what it could not have traded, and each model states how it fails](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) also requires the two records to agree. In live trading only the owner clears the halt.
 
-   #### What waits for the owner to confirm
+   **What waits for the owner to confirm.**
 
    Anything else that the table above does not let execution journal on its own waits for the owner to confirm its source and its strategy, since nothing the platform holds separates a person's trade from a second sender's. An entry the owner confirms this way leaves its strategy switched off until a person switches it back on, under [A strategy is judged over a sample](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it). One the owner confirms as the broker's own trade can also start that close, because a person has then said what the record does not.
 
-   #### Which share of the broker's rate limit queries use
+   **Which share of the broker's rate limit queries use.**
 
    Queries to the broker draw on the general share of its rate limit, never on the share reserved for cancels. The exception is every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, which the reserve carries.
 3. **Every recorded record carries a checksum, and every read verifies it.** The checksums built into network protocols catch corruption on the wire, but not a bug at either end or corruption on disk, so DDIA calls for checksums from end to end (DDIA L16445, L9376). A crash can also leave a half-written record at the end of an append-only file, and a checksum is how a reader tells it from a whole one (DDIA L2471). DDIA's example detects such a record and ignores it. The journal's store writes each entry whole, as an object either exists or does not, so a torn journal entry cannot occur there. A local file can tear. A torn tail on a capture file is sealed and flagged, its bytes are moved aside and kept, and capture starts a new segment, which never halts capture. A record that fails its checksum anywhere else is corruption, and the reader halts and alerts. DDIA warns that data checked only when read can rot unseen on a disk the system manages (DDIA L5489, L\~16792). Here every recorded blob lives in S3, which runs periodic integrity checks of all data at rest and repairs corruption from its redundant copies, and which refuses an upload whose bytes do not match the checksum sent with it ([Data protection in Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DataDurability.html), [the S3 FAQ](https://aws.amazon.com/s3/faqs/), [Checking object integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)). So every write sends its checksum, and the platform runs no scheduled read-back of its own. Before live, the copy in a second account alarms when a recorded blob is not found in it within a written bound. Every recorded blob this platform writes lives in S3, and in slice 1 no disk it manages holds recorded data. Once this platform runs capture, its open segments and its spill to local disk would take a read-back. marketlake protects its own volume and bucket under its contract. A dead-man check running off the machine watches the heartbeat, so a dead VM or a dead monitoring process pages. A ping says only that a decision finished, so at each decision and ping-only entry monitoring reads the age of the jobs that run apart from a decision, and pages through the alert channel when one passes its written bound. Those jobs are the restore drill's last passing run, the newest off-machine copy, each strategy's outcome match and retiring check, the daily report, the check of orders back to their causes, the synthetic event's last result, the scheduled drift check's last result, and each paper session the journal records that has no comparison with its replay, a journal it cannot read alerting rather than reading as no sessions. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that a last-run record that is absent, unreadable or past its read's timeout counts as past its bound. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each record and the first-run case, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds where the drift result lands. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that each job pages once per cause at a written interval, not at every decision. Monitoring never withholds a ping for one of them, because a check left down stays silent about a dead VM the next day. The price is a page up to a day late, or on Monday for a job that stopped on Friday.
@@ -2367,7 +2367,7 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
    A strategy may run on Paper with no sample open, including past the end of a sample, because the walking skeleton's paper run tests the platform rather than the strategy. That run's numbers are labelled exploratory, and none of its decisions counts toward a sample, even one registered later. Leaving Paper still takes a registered sample that runs to its end and passes, and the step to Live still takes a registration. A run no registration has reached has no retiring result, so only the caps and the loss stop bound it. Past a sample's end on Paper the retiring check its registration named stays on. A registration absent or unreadable once the journal shows its sample opened, or on a live account, is missing input under hard limit 3. Every halt and page this section adds has fired in a drill before a sample opens on Paper, from input the drill injects under its own journal entry, so the drill spends no registration. The price is that those sessions count toward no promotion, so a strategy's registered evidence starts later. [#41](https://github.com/l3a0/ithildin-runtime/issues/41) holds the registration and its report.
 3. **The strategy runs unchanged through its sample, every change it asks for is accounted for, and a change to its decision path closes its sample.** Douglas's exercise trades the system exactly as designed for every occurrence of the edge in the sample, with no outside input (TZ L3232), because taking every edge is what lets the sample show the edge's odds (TZ L1860, L3235). He asks for rules that are rigid and expectations that are flexible (TZ L2026). Here the strategy's **decision path** stays fixed through a sample, by version.
 
-   #### Which changes close a sample, and which keep it open
+   **Which changes close a sample, and which keep it open.**
 
    Some changes close the sample and others keep it open as inputs, and the report judges results per unit of risk.
 
@@ -2386,9 +2386,9 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
 
    A fix to the gate or a halt, and a rollback, are never held back to keep a sample whole.
 
-   #### What every order and cancel must trace to
+   **What every order and cancel must trace to.**
 
-   A request lost without a record changes the sample with nobody deciding to, which is the same failure as reading no signals as hold nothing. So every change the strategy asks of its target ends in one recorded outcome per order, or one for the request where no order followed.
+   A request lost without a record changes the sample with nobody deciding to, which is the same failure as reading no signals as hold nothing. Every change the strategy asks of its target ends in one recorded outcome per order, or one for the request where no order followed.
 
    **Table:** What each order and cancel traces to
 
@@ -2398,17 +2398,17 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
    | A cancel | A request, a human override, a halt, a switch-off, the kill switch or a contract-suite run |
    | A repeat of a lost cancel | The cancel it repeats |
 
-   Three of those causes count only under a condition.
+   Three things count as traced only under a condition.
 
    1. A contract-suite run counts only on the paper account, and only outside a session, until the owner rules how one may run on a live account.
    2. A close order counts as traced only when its close entry passes the close entry's check in [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
    3. An outside entry counts as traced only as [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) allows, which, apart from a split or an assignment, takes the broker's own record of a trade it made or the owner's confirmation for an order or a cancel.
 
-   #### How the running platform checks the match
+   **How the running platform checks the match.**
 
    The running platform checks both directions at a set interval, and shows under the halt-state monitor how many it checked. A request counts as unmatched only once a written time has passed since the strategy published it, shorter than the time to the strategy's next decision. Until then it is in flight, and an order in doubt stays pending under the clock of [Every fact has one writer](#every-fact-has-one-writer). [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holds the outcome records, the running match and their tests, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-   #### What a failed match halts
+   **What a failed match halts.**
 
    **Table:** What a request that does not match, and an order that traces to nothing, each halt
 
@@ -2419,11 +2419,11 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
 
    The sort that halt starts cancels an untraced order once the journal read succeeds, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says.
 
-   #### What a skip may answer
+   **What a skip may answer.**
 
    A skip comes from a closed list in the strategy's specification and never answers an absent, stale or invalid input, which halts under hard limit 3, that missing input means stop, not flatten.
 
-   #### What pauses a sample
+   **What pauses a sample.**
 
    A pause does three things.
 
@@ -2442,7 +2442,7 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
 
    Rule 4 below scores a stop by replaying the decision path at recorded prices and keeping that score in the sample as the strategy's own.
 
-   #### Which orders these halts cancel
+   **Which orders these halts cancel.**
 
    The hard limits win over the book's "no matter what".
 
@@ -2450,7 +2450,7 @@ Mark Douglas's book *Trading in the Zone* (Prentice Hall Press, 2000) supplies t
 
    | Halt | Orders that add to a position | Orders that reduce one |
    | --- | --- | --- |
-   | Each halt on the retiring check, a stale check, a mismatched request or an untraced order or cancel | Cancelled, journaled first and handled as [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production) and [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) say | Kept, a pair staying whole as [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) says, so where one leg would be cancelled and the other kept, the kept leg is cancelled too |
+   | Each halt on the retiring check, a stale check, a mismatched request or an untraced order or cancel | Cancelled, journaled first and handled as [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production) and [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) say | Kept, a pair staying whole as [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) says |
    | A lost registration's halt, like the halt on an invalid stress move | Kept, since it cancels nothing | Kept, since it keeps every working order |
 
 4. **A human act that departs from the strategy is journaled with its reason, and the decisions it touched stay in the sample, scored as the strategy's own.** Douglas calls trading without a plan random, because it cannot show what works and what does not (TZ L559). He lists the ways a trader shields himself from a losing position, such as making a case for staying in it (TZ L867). The charter already journals a human override like an order. Overrides can be expected to cluster on decisions that look bad at the time, so dropping the decisions they touched would leave a selected subset. The project's answer is to score each such decision as the strategy's own would have played out, by a replay of the decision path at recorded prices, and keep that score in the sample, with the override's own effect reported apart. A person's switch-off or kill switch counts the same way for every decision while the strategy is off, since capture runs outside every halt and the prices exist, and so does a decision refused because a person tightened a limit. Past the registered most overrides, the sample ends without a verdict and still counts in the batch. A switch-off, the kill switch, a cancel or a cut in size never counts toward that most, and no count on a sample delays or refuses one. Each decision scored by replay still counts toward the registered share, so the price of a long stop is that the sample can end without a verdict, and the project accepts that price. A person's change to a position through an override, or any change at the broker the owner confirms, leaves that strategy switched off until a person switches it back on, because execution trades the difference between target and position and would otherwise buy the change back at the next decision. Every decision while it stays off is scored as a person's switch-off is. That switch-off is durable no later than the journal entry recording the change, and no decision runs between them. It sorts orders as any switch-off does with the override's own order counted as working, and it neither cancels nor holds that order. A trade the broker made that execution journals switches its strategy off the same way and for the same reason, and it counts toward no most. Neither does the close after a broker's trade that follows it, whose fills count in that position's result like any other fills. Switching it back on accepts that the next decision trades the difference, and in live trading that switch stays the owner's. Switching a strategy off stays anyone's to do, and it takes effect at once. It is acknowledged to whoever made it only once its journal entry, with who made it and why, is durable. As this project's own rule, after a stop that leaves no instance of the environment running and no clean-shutdown record, every strategy stays off under a halt that waits for a person, with the reason where the halt-state monitor reads it. Its adding orders are cancelled as rule 3 says and its reducing orders kept, a pair staying whole, through the order path after Startup's checks, since Startup sends nothing, and the platform pages the owner, naming each open position, until the owner confirms, or on shadow and paper the operator does. A lease taken by a running instance is no such stop, and neither is one component's supervised restart. The price is that a lost machine is replaced without a person, while trading resumes only on a confirmation. On shadow and paper a session holding the operator's role counts as a person under this section, because no money is at stake there. The price is that paper does not rehearse the human step, so the owner gives this confirmation in one drill before Live. [#33](https://github.com/l3a0/ithildin-runtime/issues/33) holds the mechanism, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to take up.

@@ -150,7 +150,7 @@ An order sent from anywhere else would escape the gate. So only execution talks 
 
 Every order carries the platform's stamp, a client order id naming its strategy and decision, or for a close its close entry. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
 
-The figure below is a flowchart of execution's check on each fill or order the broker reports.
+The figure below is a component-level flowchart of execution's check on each fill or order the broker reports.
 
 ```mermaid
 flowchart TD
@@ -177,7 +177,7 @@ The broker's positions, open orders and cash are used in these places only:
 8. A read of the broker's order list that gives an order in doubt its broker id. It supplies an id, checks each row against the order's `sending` entry, and never replaces the book.
 9. The read of a leg's position and open orders just before each send of a close after a broker's trade, under [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 
-The figure below is a flowchart of the comparison between the book and the broker.
+The figure below is a component-level flowchart of the comparison between the book and the broker.
 
 ```mermaid
 flowchart LR
@@ -339,7 +339,7 @@ sequenceDiagram
         X->>F: is no run or account halt stored<br/>or on the plan's lease?
         X->>F: is its own send result empty?
         X->>F: is the lease tag unchanged?
-        X->>F: is it before the cancel cutoff?
+        X->>X: is it before the cancel cutoff?
         X->>B: cancels by the broker's order id<br/>that the journaled answer holds
         B-->>X: answers cancelled, filled first or accepted,<br/>or gives no answer
         opt accepted, or no answer
@@ -361,7 +361,7 @@ sequenceDiagram
         X->>F: is no run or account halt stored<br/>or on the plan's lease?
         X->>F: is its own send result empty?
         X->>F: is the lease tag unchanged?
-        X->>F: is it before the cutoff?
+        X->>X: is it before the cutoff?
         X->>B: sends the order, with its client order id
         B-->>X: answers
         X->>J: journals the broker's answer
@@ -439,7 +439,7 @@ flowchart TB
 
 This phase is the only one that touches the broker with an order, so it has the most checks. It has three parts: prepare once, send each order, and finish once.
 
-The figure below is a flowchart of the send stage's steps inside execution.
+The figure below is a component-level flowchart of the send stage's steps inside execution.
 
 ```mermaid
 flowchart TB
@@ -556,7 +556,7 @@ sequenceDiagram
 
 A client order id is an id the platform chooses and sends with the order. The broker gives the order an id of its own, and the journal maps one to the other on each ack. Every lookup goes by the broker's order id, because not every broker can find an order by a client order id.
 
-An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`. The adapter's answer holds three things.
+An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`. Beside the broker's raw bytes, the adapter's answer holds three things.
 
 1. The broker's id, not found, or more than one.
 2. Whether its list was whole.

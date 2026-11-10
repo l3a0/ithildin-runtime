@@ -143,6 +143,7 @@ erDiagram
         datetime received_at
     }
     PLAN {
+        string deployment
         string run
         string mode
         string release
@@ -324,7 +325,7 @@ Both fail if the same values can be written two ways, such as a different key or
 
 The figure draws both paths in order.
 
-The figure below is a C4 dynamic diagram.
+The figure below is a component-level flowchart of the codec's two paths.
 
 ```mermaid
 flowchart TB

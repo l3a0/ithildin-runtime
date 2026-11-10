@@ -516,6 +516,8 @@ classDiagram
     DecisionResult o-- BlobHeader
     DecisionResult o-- HaltRecord
     HaltRecord o-- BlobRef
+    HaltRecord o-- RestartRecord
+    FoundOrder o-- BrokerOrder
 ```
 
 ### The interfaces
