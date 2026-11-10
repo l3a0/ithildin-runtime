@@ -683,7 +683,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 
-A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5), and [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with them.
+A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names, and [#50](https://github.com/l3a0/ithildin-runtime/issues/50) and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) add the rest, since a module issue may change its own module's type.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -891,7 +891,7 @@ A constraints file can tighten a limit and never loosen it. This is a proposal f
 
 #### The book comes from the journal
 
-`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` itself lives in `core`, because execution, monitoring, the supervisor and the `ithildin` tool all append to it.
+`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool all append to it, and they are the only code that may import it, so no other module holds a writer of the journal.
 
 #### The cost model writes a schedule rather than answering calls
 
@@ -935,11 +935,11 @@ The supervisor writes the same record for a worker that failed, naming its resta
 | A renewal | The one its holder's own last write returned |
 | A release | The one its holder's own last write returned |
 
-No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the journal has no storage port of its own.
+No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.
 
 ## Package layout and the import rule
 
-Every module outside `runtime` may import only `core`, and only `runtime` puts the modules together, so no module can reach a sibling's code or choose its own mode.
+No worker module imports another worker module. Each imports only the shared code below it, `core` and, for the modules that write the journal, `journal`, and only `runtime` puts the modules together, so no module can reach a sibling's code or choose its own mode.
 
 ### Which module may import which
 
@@ -948,6 +948,7 @@ The figure below is a C4 component diagram.
 ```mermaid
 flowchart TB
     core["ithildinruntime.core<br/>the code every module shares"]
+    journal["ithildinruntime.journal<br/>the journal's writer and reader"]
     adapters["adapters<br/>S3, memory-backed folder, SQS, named pipe"]
     data["data"]
     alpha["alpha"]
@@ -970,7 +971,11 @@ flowchart TB
     monitoring --> core
     brokers --> core
     adapters --> core
+    journal --> core
+    execution --> journal
+    monitoring --> journal
     runtime --> adapters
+    runtime --> journal
     runtime --> data
     runtime --> alpha
     runtime --> risk
@@ -983,17 +988,22 @@ flowchart TB
     runtime --> supervisor
     loop --> core
     supervisor --> core
+    supervisor --> journal
     supervisor --> adapters
     supervisor --> loop
 ```
 
-An arrow means "may import". The diagram draws four rules.
+An arrow means "may import". The arrow from `runtime` to `journal` is the `ithildin` tool's. The diagram draws four rules.
 
-1. **Every module imports `core` and none of its siblings.** For that reason these live in `core`:
+1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
+   1. `core`, which every module may import.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, because they are the four that append to the journal, so no other module holds a writer of it.
+
+   These live in `core`:
+
    - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
    - the `Halt` exception;
    - every `Protocol`, including `RiskGate`;
-   - `Journal`, which execution, monitoring, the supervisor and the `ithildin` tool append to;
    - the storage contract every worker uses:
      - the `BlobStore` port, writing a blob S3 refuses to replace;
      - the blob header;
@@ -1001,17 +1011,19 @@ An arrow means "may import". The diagram draws four rules.
      - the plan;
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
+   - the calendar function and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
-   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
-   - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract, queue and `Journal` cover, apart from that file:
+   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports only `core`, so the supervisor reaches no worker module through it.
+   - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract and queue and the `journal` package cover, apart from that file:
      - the local release file, in memory-backed storage on its VM;
      - the plan's lease, whose conditional writes carry the run's status;
      - the plan;
      - the journal entry for each lease it clears or takes over;
+     - the journal entry for each capture lost when a worker's process died holding it, which names each capture the failed stage owed for that decision and that is absent at its key, read from the stage's declared outputs rather than from the halt's blob, because a process that died while S3 was down may never have stored that blob;
      - its heartbeat;
      - the halts of workers that failed;
      - a halt of the run, with a halt for every decision left in the plan;
@@ -1030,11 +1042,11 @@ An arrow means "may import". The diagram draws four rules.
    | marketlake's package | `data` |
    | Alpaca's SDK | `execution.brokers` |
 
-   The `ithildin` tool, which lives in `runtime`, imports only `core` and `adapters`. The supervisor imports those two and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
+   The `ithildin` tool, which lives in `runtime`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
 
 ### How tests hold the rule
 
-A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw. A second test runs a day under the supervisor against a fake broker that fails on four things.
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A second test runs a day under the supervisor against a fake broker that fails on four things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.

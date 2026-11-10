@@ -28,7 +28,7 @@ A person acts through one command line tool, `ithildin`. It runs from the owner'
 
 #### How a person's write is checked
 
-Its writes go through the same journal and storage contract in `core` that the workers use. So a person's entry is checked, chained and refused on a stale number exactly as a worker's is. The tool fetches the journal's end before it writes, since every step fetches and syncs before changing state, as design.md's `## Processes and files` says.
+Its writes go through the same journal, in the `journal` package, and the same storage contract, in `core`, that the workers use. So a person's entry is checked, chained and refused on a stale number exactly as a worker's is. The tool fetches the journal's end before it writes, since every step fetches and syncs before changing state, as design.md's `## Processes and files` says.
 
 #### How a false name in an entry is caught
 

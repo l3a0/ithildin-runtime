@@ -252,12 +252,12 @@ Each entry is a blob at a key fixed by the account and its sequence number. It h
 - Its body.
 - The hash of the entry before it.
 
-Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal` writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
+Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-formats-and-keys) says. `Journal`, in the `journal` package, writes through `BlobStore` for the account the broker adapter names. `ORDER` and `FILL` are read from journal entries rather than kept as records of their own. Each entry is stored before the step it records happens.
 
 Six writers can append.
 
 1. The `ithildin` tool.
-2. The supervisor, when it clears a lease or takes one over.
+2. The supervisor, when it clears a lease or takes one over, and when it journals as lost a capture whose worker's process died holding it.
 3. Monitoring.
 4. Execution.
 5. In a VM image rollback the owner overrides for an emergency, the rollback's credential, for the journal entry of the kill switch pull that rollback makes.
@@ -317,7 +317,7 @@ Two rules lean on exact bytes.
 1. A deterministic stage that is run again must write the same bytes, because S3 refuses the second write and the worker then compares SHA-256s, alarming on a difference.
 2. The journal chains each entry to the hash of the one before it.
 
-Both fail if the same values can be written two ways, such as a different key order, a float printed with one more digit, or a time in another zone. This subsection is this doc's proposal for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), where `core` defines the file form of every type.
+Both fail if the same values can be written two ways, such as a different key order, a float printed with one more digit, or a time in another zone. So `core` defines the file form of every type, which [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds as this subsection describes.
 
 #### Who writes and reads a blob
 
@@ -349,7 +349,7 @@ The price is a third-party library on the path that writes the journal, where a 
 
 #### What a blob's bytes look like
 
-**Every blob is canonical JSON.** This doc proposes it for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as its row in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) says. The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
+**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
 
 1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
@@ -378,7 +378,12 @@ The journal and the snapshot are the only records of what the broker and the mar
 
 marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
 
-This doc proposes, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), that a received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. [#22](https://github.com/l3a0/ithildin-runtime/issues/22) holds that form, and a body that cannot be stored halts.
+A received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. It is kept as exact bytes in one of two forms, with a field naming which.
+
+1. A body that is valid UTF-8 is stored as text, which canonical JSON returns byte for byte.
+2. Any other body is stored as base64.
+
+A body that cannot be stored halts.
 
 #### Which clock a schedule follows, and how it becomes UTC
 
@@ -388,6 +393,13 @@ This doc proposes, for [#22](https://github.com/l3a0/ithildin-runtime/issues/22)
 2. The heartbeat check's cron expression.
 
 A rule written in UTC would move by an hour against the close each time the clocks change. So each is written as the exchange's local time, and one calendar function in `core` turns it into a UTC instant for each session.
+
+**The calendar function takes the trading sessions as data.** `core` imports no calendar library, because the usual one, `exchange_calendars` 4.13.2, would pull pandas and numpy into every worker. The table of sessions and their closes is a committed data file, checked by its SHA-256, which a script regenerates from `exchange_calendars` at a pinned version. An early close is the case that matters: on 2026-11-27 the close is 18:00 UTC, three hours before a normal day's, so close−20 falls at 17:40 UTC that day and at 20:40 UTC on 2026-11-30.
+
+1. A session missing from the table halts.
+2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
+3. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
+4. A closure announced after the table was cut reads as a session with no data, which halts under hard limit 3.
 
 A time stated as minutes before the close resolves through the same function from that session's close. Two such times are a strategy's close−20 decision and the market-on-close cutoff, which is close−12 in the hard caps this doc recommends, under Alpaca's close−10. The plan, every key, every timestamp the platform writes and every comparison hold only that instant.
 
@@ -475,8 +487,8 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | The order list that maps an order in doubt | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the key |
 | A send stage's claim, naming the handler running it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
-| A journal checkpoint | `journal/<account>/checkpoints/<seq>.json` |
-| A book snapshot, derived | `accounts/<account>/books/<seq>.json` |
+| A journal checkpoint | `journal/<account>/checkpoints/<seq>.json`, with `seq` padded to twelve digits |
+| A book snapshot, derived | `accounts/<account>/books/<seq>.json`, with `seq` padded to twelve digits |
 | The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
 | The plan's lease, holding the run's status | `leases/plans/<deployment>/<run>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
@@ -505,6 +517,6 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | `<timestamp>` | A halt firing's UTC second in the compact form `20261105T204100Z`, so a halt's key sorts in order |
 | `<UTC time>` | A UTC time to the microsecond, in the compact form `20261102T204001.123456Z`, so it sorts in order |
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
-| `<seq>` | The journal entry's sequence number. A journal entry's own key pads it to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
+| `<seq>` | The journal entry's sequence number. Every key that carries it pads it to twelve digits, the journal entry's own key, a checkpoint's and a book snapshot's, so a listing sorts them in order. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
 
 A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. The prefixes are the ones the grants of [The runtime's credential does only what the rules need](07-deployment.md#rule-5-the-runtimes-credential-does-only-what-the-rules-need) and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as [Four environments](07-deployment.md#four-environments) says.
