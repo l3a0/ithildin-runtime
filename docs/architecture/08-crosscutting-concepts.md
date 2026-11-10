@@ -251,7 +251,7 @@ Its own hash is the SHA-256 of those bytes, as [File formats and keys](#file-for
 Four writers can append.
 
 1. The `ithildin` tool.
-2. The supervisor, when it clears a lease.
+2. The supervisor, when it clears a lease or takes one over.
 3. Monitoring.
 4. Execution.
 
@@ -435,7 +435,7 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | Kind of entry | The field it checks |
 | --- | --- |
 | `intent` and `sending` | The client order id |
-| `cancel` | The broker's order id with the cancel's attempt number, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the exact key |
+| `cancel` | The broker's order id and what tells this cancel from an earlier one on the same order, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names that key. A `cancel` entry with no journaled answer is a cancel whose answer is lost, so a restarted writer looks it up before any new cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 | `fill` and `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id |

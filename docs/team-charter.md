@@ -177,7 +177,7 @@ positions flow back into data. This platform's design keeps them in
 execution's journal instead, and risk and portfolio construction read the
 book execution reconciles with the broker, as
 [Building blocks](architecture/05-building-blocks.md) draws. So no data module
-writes a fill. Research has no package in slice 1.
+writes a fill. Research, which the figure draws as a module, has no package in slice 1, so the table's Research row names no code yet.
 
 **Table:** The modules, each with its job, its input, its output and its owning role
 

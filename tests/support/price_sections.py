@@ -3,7 +3,7 @@
 `docs/architecture/11-risks.md` promises to list each section that holds a
 sentence starting "The price", so a reader can review every price the design
 accepts in one place. A list kept by hand drifts as soon as a section gains a
-price, and on 2026-11-10 a review found seven sections missing from it. This
+price, and on 2026-11-10 a review found four sections missing from it. This
 module finds the sections, and `tests/test_risks_page.py` holds the list to
 them.
 
