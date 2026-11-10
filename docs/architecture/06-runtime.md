@@ -42,7 +42,7 @@ A data flow diagram shows the components, the order they talk in, and each point
 
 The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
 
-The figure below is a C4 container diagram.
+The figure below is a C4 deployment diagram. It places each component and store inside the VM or the AWS account that holds it, and draws the other systems outside.
 
 ```mermaid
 flowchart LR
@@ -150,7 +150,7 @@ An order sent from anywhere else would escape the gate. So only execution talks 
 
 Every order carries the platform's stamp, a client order id naming its strategy and decision, or for a close its close entry. The journal maps the broker's order id to it on each ack, as design.md's `### Orders the platform did not send` says.
 
-The figure below is a C4 dynamic diagram.
+The figure below is a flowchart of execution's check on each fill or order the broker reports.
 
 ```mermaid
 flowchart TD
@@ -177,7 +177,7 @@ The broker's positions, open orders and cash are used in these places only:
 8. A read of the broker's order list that gives an order in doubt its broker id. It supplies an id, checks each row against the order's `sending` entry, and never replaces the book.
 9. The read of a leg's position and open orders just before each send of a close after a broker's trade, under [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 
-The figure below is a C4 dynamic diagram.
+The figure below is a flowchart of the comparison between the book and the broker.
 
 ```mermaid
 flowchart LR
@@ -336,7 +336,10 @@ sequenceDiagram
     opt a resting order the plan cancels or replaces
         X->>F: takes the account's lease
         X->>J: journals the cancel
-        X->>F: is no run or account halt stored or on the plan's lease,<br/>is its own send result empty, is the lease tag unchanged,<br/>and is it before the cancel cutoff?
+        X->>F: is no run or account halt stored<br/>or on the plan's lease?
+        X->>F: is its own send result empty?
+        X->>F: is the lease tag unchanged?
+        X->>F: is it before the cancel cutoff?
         X->>B: cancels by the broker's order id<br/>that the journaled answer holds
         B-->>X: answers cancelled, filled first or accepted,<br/>or gives no answer
         opt accepted, or no answer
@@ -353,7 +356,12 @@ sequenceDiagram
         X->>X: runs the risk gate check
         X->>J: journals the approval
         X->>J: journals the sending entry
-        X->>F: is the switch absent, the strategy not off,<br/>no run or account halt stored or on the plan's lease,<br/>its own send result empty, the lease tag unchanged,<br/>and is it before the cutoff?
+        X->>F: is the switch absent?
+        X->>F: is the strategy not off?
+        X->>F: is no run or account halt stored<br/>or on the plan's lease?
+        X->>F: is its own send result empty?
+        X->>F: is the lease tag unchanged?
+        X->>F: is it before the cutoff?
         X->>B: sends the order, with its client order id
         B-->>X: answers
         X->>J: journals the broker's answer
@@ -431,7 +439,7 @@ flowchart TB
 
 This phase is the only one that touches the broker with an order, so it has the most checks. It has three parts: prepare once, send each order, and finish once.
 
-The figure below is a C4 dynamic diagram.
+The figure below is a component-level flowchart of the send stage's steps inside execution.
 
 ```mermaid
 flowchart TB
@@ -509,7 +517,15 @@ A cancel the plan asks for takes the same shape, as the sequence diagram above s
 
 Once every decision has a result, the day ends in three steps, which this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
-1. Execution reads the day's fills and the broker's positions, open orders, cash and records, sorts what it finds as design.md's `Sorting what the broker reports` says, journals the fills and each record as an outside entry, and reconciles. A difference halts and pages with its reason. Execution journals the open halt the holding-halt check reads, and neither that write nor the page waits on the result or the stop. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold whether those are still stored after it.
+1. Execution reconciles the day, in four parts.
+
+   1. It reads the day's fills and the broker's positions, open orders, cash and records.
+   2. It sorts what it finds, as design.md's `Sorting what the broker reports` says.
+   3. It journals the fills, and each record as an outside entry.
+   4. It reconciles.
+
+   A difference halts and pages with its reason. Execution journals the open halt the holding-halt check reads, and neither that write nor the page waits on the result or the stop. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold whether those are still stored after it.
+
 2. Execution stores a result naming each order the journal holds as open as settled or still open.
 3. The supervisor reads that result, and only then stores the run's stop.
 
@@ -540,7 +556,15 @@ sequenceDiagram
 
 A client order id is an id the platform chooses and sends with the order. The broker gives the order an id of its own, and the journal maps one to the other on each ack. Every lookup goes by the broker's order id, because not every broker can find an order by a client order id.
 
-An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`, and the adapter answers with the broker's id, not found, or more than one. It also says whether its list was whole and gives each paired row it read, converted at the adapter to the platform's `BrokerOrder`, so `OrderPath` runs the match and the halts in one place. How it finds the order is the adapter's own, so a new broker changes no line of `OrderPath`. Three steps make Alpaca's lookup go by the broker's id too, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
+An order in doubt has no ack, so the journal holds no broker id for it. `OrderPath` hands the adapter the order's intent through `find_order`. The adapter's answer holds three things.
+
+1. The broker's id, not found, or more than one.
+2. Whether its list was whole.
+3. Each paired row it read, converted at the adapter to the platform's `BrokerOrder`.
+
+So `OrderPath` runs the match and the halts in one place. How the adapter finds the order is its own, so a new broker changes no line of `OrderPath`.
+
+Three steps make Alpaca's lookup go by the broker's id too, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
 
 1. The adapter reads the broker's order list, open and closed orders alike, from the earliest `sending` entry in doubt, less a written overlap larger than the clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets.
 2. It returns the broker's order id from the row that carries the order's client order id.
@@ -941,7 +965,14 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails. A failed check on<br/>the switch, a run or account halt, its own result key,<br/>the lease tag or the cutoff also halts. A switched-off strategy<br/>abandons without halting. A close reads them<br/>as design.md's checks before a broker call say
+    Sending --> Abandoned: a check before the broker call fails
+    note left of Abandoned
+        A failed check on the switch, a run or account halt,
+        its own result key, the lease tag or the cutoff also halts.
+        A switched-off strategy abandons without halting.
+        A close reads the checks as design.md's
+        checks before a broker call say.
+    end note
     Acknowledged --> Expired: a day or market-on-close order<br/>stays unfilled at the close
     PartlyFilled --> Expired: the rest stay unfilled at the close
     Sending --> Rejected: the broker refuses the submit, other than<br/>a refusal saying it already holds the id
@@ -1026,11 +1057,33 @@ stateDiagram-v2
     [*] --> Starting
     Starting --> Halted: the kill switch is set, or a worker on another release<br/>halts with "release changed"
     Starting --> Preparing: workers wait on the decision's inputs
-    Preparing --> Halted: data missing, stale or not ready, an unknown stamped fill,<br/>an unstamped order, a fill with no stamp, an order<br/>the broker placed itself, or book and broker disagree
+    Preparing --> Halted: on any cause the note beside Preparing lists
+    note left of Preparing
+        Preparing halts when it finds
+        data missing, stale or not ready,
+        an unknown stamped fill,
+        an unstamped order,
+        a fill with no stamp,
+        an order the broker placed itself,
+        or book and broker that disagree.
+    end note
     Preparing --> Deciding: data writes the snapshot, execution reconciles the book
     Deciding --> Halted: a worker halts
     Deciding --> Sending: portfolio construction writes the target portfolio
-    Sending --> Halted: the risk gate refuses, the kill switch is set,<br/>the run or account halts, the lease is lost,<br/>the cutoff passes, clocks disagree, a price is flagged,<br/>a loss cannot be computed with positions held,<br/>an order is in doubt, or a restart comes mid-send
+    Sending --> Halted: on any cause the note beside Sending lists
+    note right of Sending
+        Sending halts when
+        the risk gate refuses,
+        the kill switch is set,
+        the run or account halts,
+        the lease is lost,
+        the cutoff passes,
+        clocks disagree,
+        a price is flagged,
+        a loss cannot be computed with positions held,
+        an order is in doubt,
+        or a restart comes mid-send.
+    end note
     Sending --> Reporting: the journal holds every order and its answer
     Halted --> Reporting: a halt lands as a result, then monitoring<br/>journals it and raises the alarm
     Reporting --> Done: monitoring writes the report and pings the heartbeat
