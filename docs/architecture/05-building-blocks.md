@@ -31,8 +31,24 @@ processes pass everything through files, and the platform is an
 event pipeline. [design.md](../design.md#processes-and-files)'s
 `## Processes and files` gives the reasoning and the rules. So each module
 here runs as one worker, a process of its own that the host keeps running.
-The supervisor writes the run's plan, whose event reaches every worker, and each one listens on its own queue. An event there wakes the worker for a blob it reads, such as an input's decision result, the plan, the run's halt or stop, or the kill switch, and the worker then checks the keys it builds from the plan, reads the output files that result lists, writes its own output files, and
-writes its own decision result last. A worker's entry point builds the
+
+The supervisor writes the run's plan, whose event reaches every worker, and
+each one listens on its own queue. An event there wakes the worker for a blob
+it reads, such as one of these.
+
+- An input's decision result.
+- The plan.
+- The run's halt or stop.
+- The kill switch.
+
+Once woken, the worker takes four steps in order.
+
+1. It checks the keys it builds from the plan.
+2. It reads the output files that the input's decision result lists.
+3. It writes its own output files.
+4. It writes its own decision result last.
+
+A worker's entry point builds the
 adapters for the mode it is given and hands them to the module, so the module
 never learns which mode it is in.
 
@@ -111,7 +127,15 @@ flowchart TB
 Each cylinder is one component's output files for a decision, and the decision
 result that lists them, each a blob written once at a key fixed by the run,
 the stage and the decision. A solid arrow into a worker is an output it
-reads. When a worker writes its decision result, S3's event for it reaches the queue of each worker that reads it, which wakes that worker's receive loop, and the loop hands the work to a free handler in the worker's pool. Every
+reads.
+
+A decision result reaches the workers that read it in three steps.
+
+1. A worker writes its decision result.
+2. S3's event for that result reaches the queue of each worker that reads it.
+3. The event wakes that worker's receive loop, and the loop hands the work to a free handler in the worker's pool.
+
+Every
 worker reads the plan, which the diagram draws only into the two that start
 the day, and monitoring reads every component's results, which the diagram
 leaves out to stay legible. Each dotted arrow from an adapter is a port,
