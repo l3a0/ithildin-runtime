@@ -35,7 +35,7 @@ This doc proposes how execution carries that out, for [#10](https://github.com/l
    2. A strategy halt.
    3. A halt of all trading that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) names.
 
-   The parts of this rule below say where each halt is stored, how each firing is named and written, and what releases it.
+   The parts of this rule below say where each halt is stored, how each firing is named and written, what releases it, and which halts start a sort.
 
    - **Where a strategy halt is stored.** A strategy halt is created at `accounts/<account>/strategies/<strategy>/halts/<component>-<cause>-<timestamp>-<count>.json` by the component that raises it, which gains that one grant, and execution reads it beside the off switch, so a strategy with either is off. The blob stays, and a journaled release names its id and ends that firing alone.
    - **What happens when a halt fires again.** A named halt that fires again after a release writes a new blob, so a new event fires, and each `sort` and `sort_done` entry keys on the firing's id, so an earlier `sort_done` never answers a later firing.
