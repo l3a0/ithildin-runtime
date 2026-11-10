@@ -172,6 +172,13 @@ which feeds execution, the only module that talks to the broker. Data and
 research sit outside the loop and feed it, and monitoring watches the whole
 loop and can halt it.
 
+The figure and the table below keep the book's drawing, in which fills and
+positions flow back into data. This platform's design keeps them in
+execution's journal instead, and risk and portfolio construction read the
+book execution reconciles with the broker, as
+[Building blocks](architecture/05-building-blocks.md) draws. So no data module
+writes a fill. Research has no package in slice 1.
+
 **Table:** The modules, each with its job, its input, its output and its owning role
 
 | Module | Job | Input | Output | Owning role |
@@ -202,8 +209,8 @@ actions are the owner's alone in live trading: releasing a loss stop or the
 kill switch once it has fired, and switching a strategy back on. In shadow
 and paper the operator may release a fired loss stop or kill switch too.
 That the operator may also switch a strategy
-back on there is the design's reading of those rules, not a decision of its
-own. On a live
+back on there is the design's proposal, read from those rules, which waits on
+a ruling in [Proposals awaiting a ruling](architecture/09-decisions.md#proposals-awaiting-a-ruling). On a live
 account the owner alone releases any halt and alone returns a
 tightened limit. On every account the
 owner alone confirms a trade as the broker's own, which can start the close after
@@ -685,7 +692,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Has each paper session's orders, apart from a person's override, compared with a replay of that session,
   as shadow's are, with a result recorded each session. An order paper sent that the replay did not emit, and any other difference no journaled record of a kind on the list
   [#57](https://github.com/l3a0/ithildin-runtime/issues/57) asks [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) to write explains, reaches the owner as a found error.
-  The dead-man check alerts on a paper session with no result and on a journal it cannot read, a comparison that cannot read its inputs
+  A check of its own outside the comparison alerts on a paper session with no result and on a journal it cannot read, a comparison that cannot read its inputs
   alerts and never reads as a match, the operator switches the strategy off on a found error, and all
   three alerts, the found error included, fire in a drill before a sample opens on Paper, under rule 6 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).

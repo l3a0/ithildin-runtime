@@ -2,7 +2,7 @@
 
 This page is section 11 of [the architecture](00-README.md), in the order of the arc42 template. It answers which prices the design accepts, so a reader can review them together.
 
-Every choice that carries a cost names it where the choice is made, as a sentence that starts "The price". This page lists each section that holds one, by page, and states none of them again, so the price is read where it is decided. [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) also gives the price of each open proposal in its own column.
+Every choice that carries a cost names it where the choice is made, as a sentence that starts "The price". This page lists each section that holds one, by page, and states none of them again, so the price is read where it is decided. `tests/test_risks_page.py` fails when a section of an architecture page, design.md, what-a-person-runs.md or halts-and-drills.md holds such a sentence and is not listed here. [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) also gives the price of each open proposal in its own column.
 
 ## Prices in Building blocks
 
@@ -12,6 +12,8 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [What the separate accounts cost](07-deployment.md#what-the-separate-accounts-cost)
 - [What the containers cost](07-deployment.md#what-the-containers-cost)
+- [What rolls back a VM image that fails after its refresh](07-deployment.md#what-rolls-back-a-vm-image-that-fails-after-its-refresh)
+- [The price of four environments](07-deployment.md#the-price-of-four-environments)
 
 ## Prices in Crosscutting concepts
 
@@ -36,6 +38,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [Design for 10x, plan the rewrite before 100x, build at 1x](../design.md#design-for-10x-plan-the-rewrite-before-100x-build-at-1x)
 - [One runtime](../design.md#one-runtime)
+- [Rule 7: how a run stops](../design.md#rule-7-how-a-run-stops)
 - [Rule 9: what a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held)
 - [Rule 9: who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease)
 - [Rule 9: who takes over a lease](../design.md#rule-9-who-takes-over-a-lease)
@@ -49,6 +52,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [A strategy is judged over a sample, and runs unchanged through it](../design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)
 - [A backtest names what it could not have traded, and each model states how it fails](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
 - [A fill is measured from the decision, and a position depends on a market it does not control](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
+- [A result is measured against the risk it took, and size answers to what the owner can bear](../design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear)
 - [Data has a cost, except the data that cannot be recaptured](../design.md#data-has-a-cost-except-the-data-that-cannot-be-recaptured)
 - [Buy what does not set the venture apart](../design.md#buy-what-does-not-set-the-venture-apart)
 - [2026-10-28](../design.md#2026-10-28)
@@ -61,4 +65,5 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [2026-11-06](../design.md#2026-11-06)
 - [2026-11-07](../design.md#2026-11-07)
 - [2026-11-09](../design.md#2026-11-09)
+- [2026-11-10](../design.md#2026-11-10)
 - [Considered and rejected](../design.md#considered-and-rejected)

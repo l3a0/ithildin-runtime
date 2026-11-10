@@ -257,12 +257,13 @@ This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issue
 
 ###### `ithildin strategy on --account <a> --strategy <s>`
 
-This deletes the strategy's off switch and journals it. It refuses two kinds of strategy.
+This deletes the strategy's off switch and journals it. It refuses three kinds of strategy.
 
 1. A strategy with an unreleased firing of a strategy halt, naming each id. `ithildin halt clear <haltid>` releases each firing, which ends its sort.
 2. A strategy retired under design.md's sample rules that has no new registration.
+3. A strategy whose close after a broker's trade is still under way, while any leg has no outcome, its order is unsettled or still working, or an entry is owed, as [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) says.
 
-On a live account only the owner may. On shadow and paper the operator may too, which is this doc's reading of the rule for a fired loss stop and the kill switch rather than a rule of its own.
+On a live account only the owner may. On shadow and paper this doc proposes that the operator may too, read from the rule for a fired loss stop and the kill switch. It waits on a ruling in [Proposals awaiting a ruling](architecture/09-decisions.md#proposals-awaiting-a-ruling).
 
 ###### `ithildin stop clear --account <a>`
 

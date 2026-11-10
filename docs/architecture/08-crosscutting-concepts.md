@@ -255,7 +255,7 @@ Four writers can append.
 3. Monitoring.
 4. Execution.
 
-S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
+As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), S3's refusal of an existing key is what keeps two of them from taking one number: the writer that is refused reads the new entries, decides its step again, and takes the next number.
 
 Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
@@ -343,7 +343,7 @@ The price is a third-party library on the path that writes the journal, where a 
 
 #### What a blob's bytes look like
 
-**Every blob is canonical JSON.** The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
+**Every blob is canonical JSON.** This doc proposes it for [#22](https://github.com/l3a0/ithildin-runtime/issues/22), as its row in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) says. The encoding follows RFC 8785, the JSON Canonicalization Scheme, for encoding, whitespace and key order, and adds rules of its own for numbers, times and empty fields.
 
 1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
@@ -434,7 +434,8 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 
 | Kind of entry | The field it checks |
 | --- | --- |
-| `intent`, `sending` and `cancel` | The client order id |
+| `intent` and `sending` | The client order id |
+| `cancel` | The broker's order id with the cancel's attempt number, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the exact key |
 | `fill` and `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id |
@@ -495,6 +496,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | --- | --- |
 | `<run>` | The session date in shadow, paper and live, and the span's first and last session dates, as `2006-04-26_2012-04-09`, in a backtest, built by one function in `core` |
 | `<decision>` | The decision's UTC time in the compact form `20261102T204000Z`, so it sorts in order |
+| `<timestamp>` | A halt firing's UTC second in the compact form `20261105T204100Z`, so a halt's key sorts in order |
 | `<UTC time>` | A UTC time to the microsecond, in the compact form `20261102T204001.123456Z`, so it sorts in order |
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
 | `<seq>` | The journal entry's sequence number. A journal entry's own key pads it to twelve digits. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
