@@ -216,7 +216,7 @@ def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: dict, re
     assert raised.value.reason == reason
 
 
-@pytest.mark.parametrize("needed", ["USO", [USO], None])
+@pytest.mark.parametrize("needed", ["USO", [USO], None, {USO: "1d"}])
 def test_require_fresh_takes_a_mapping_of_what_is_needed(needed: object) -> None:
     snapshot = _snapshot({USO: _daily(USO)}, {USO: BarStatus.FRESH})
     with pytest.raises(TypeError):
@@ -298,3 +298,8 @@ def test_a_session_date_and_a_mapping_type_are_what_the_diagram_names() -> None:
 def test_every_type_stored_at_a_key_of_its_own_names_its_format(kind: type) -> None:
     """A later release reads an older blob by its format, so each type stored alone carries one."""
     assert get_type_hints(kind)["format"] is int
+
+
+def test_a_gate_reads_a_close_from_its_journal_entry() -> None:
+    hints = get_type_hints(core.GateInputs)
+    assert hints["close_entry"] == core.JournalEntry | None

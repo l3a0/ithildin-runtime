@@ -200,7 +200,7 @@ class Snapshot(_Record):
         reads it. An empty snapshot, or a caller that names nothing it needs,
         halts, because an empty input counts as a missing one (hard limit 3).
         """
-        if not isinstance(needed, Mapping):
+        if not isinstance(needed, Mapping) or any(isinstance(v, str) for v in needed.values()):
             raise TypeError("require_fresh takes a mapping of instruments to the intervals needed")
         if not needed or not all(needed.values()):
             raise Halt("the caller names no bar it needs from the snapshot")
