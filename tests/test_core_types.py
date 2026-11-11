@@ -186,12 +186,24 @@ def test_require_fresh_returns_when_every_bar_is_fresh() -> None:
             [],
             "the caller names no instrument it needs from the snapshot",
         ),
+        (
+            {USO: {"1m": (_bar(USO),), "1d": ()}},
+            {USO: BarStatus.FRESH},
+            [USO],
+            "USO is fresh and has no bar",
+        ),
     ],
 )
 def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: list, reason: str) -> None:
     with pytest.raises(Halt) as raised:
         _snapshot(bars, status).require_fresh(needed)
     assert raised.value.reason == reason
+
+
+def test_require_fresh_refuses_one_string_for_its_list() -> None:
+    snapshot = _snapshot({USO: _daily(USO)}, {USO: BarStatus.FRESH})
+    with pytest.raises(TypeError):
+        snapshot.require_fresh("USO")  # type: ignore[arg-type]
 
 
 def test_halt_is_a_plain_exception_caught_inside_a_context_manager() -> None:
@@ -251,3 +263,13 @@ def test_a_session_date_and_a_mapping_type_are_what_the_diagram_names() -> None:
     assert types.MappingProxyType is type(sample(Snapshot).bars)
     instrument_bars = get_args(snapshot_hints["bars"])[1]
     assert get_origin(instrument_bars) is Mapping
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [core.Plan, core.Lease, core.RestartRecord, core.Heartbeat, core.JournalEntry],
+    ids=lambda k: k.__name__,
+)
+def test_every_type_stored_at_a_key_of_its_own_names_its_format(kind: type) -> None:
+    """A later release reads an older blob by its format, so each type stored alone carries one."""
+    assert get_type_hints(kind)["format"] is int

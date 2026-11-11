@@ -182,12 +182,15 @@ class Snapshot(_Record):
         minute bars of one instrument sit side by side. The caller names the
         instruments it needs, so an instrument Data left out of the snapshot
         halts rather than reading as nothing to trade. Every other instrument
-        the snapshot holds must be fresh too.
+        the snapshot holds must be fresh too, and every interval it holds for
+        an instrument must hold a bar.
 
         It judges no age. Data fills `status` under #7's rule, and this only
         reads it. An empty snapshot, or an empty list of what is needed,
         halts, because an empty input counts as a missing one (hard limit 3).
         """
+        if isinstance(needed, str):
+            raise TypeError("require_fresh takes a collection of instruments, not one string")
         wanted = set(needed)
         if not wanted:
             raise Halt("the caller names no instrument it needs from the snapshot")
@@ -201,7 +204,8 @@ class Snapshot(_Record):
                 raise Halt(f"{instrument} has a bar and no status")
             if status != BarStatus.FRESH:
                 raise Halt(f"{instrument} {status} for the session")
-            if not any(self.bars.get(instrument, {}).values()):
+            by_interval = self.bars.get(instrument, {})
+            if not by_interval or not all(by_interval.values()):
                 raise Halt(f"{instrument} is fresh and has no bar")
 
 

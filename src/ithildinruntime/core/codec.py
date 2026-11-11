@@ -430,11 +430,17 @@ def _scalar_from_plain(value: object, hint: Any, where: str) -> object:
     if hint is datetime:
         if not isinstance(value, str) or not _TIME.fullmatch(value):
             raise CodecError(f"{where} is {value!r}, not a UTC time")
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+        try:
+            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+        except ValueError as error:
+            raise CodecError(f"{where} is {value!r}, no real time") from error
     if hint is date:
         if not isinstance(value, str) or not _DATE.fullmatch(value):
             raise CodecError(f"{where} is {value!r}, not a session date")
-        return date.fromisoformat(value)
+        try:
+            return date.fromisoformat(value)
+        except ValueError as error:
+            raise CodecError(f"{where} is {value!r}, no real date") from error
     if hint is bytes:
         return _read_body(value, where)
     raise CodecError(f"{where} has a type the codec does not read: {hint}")

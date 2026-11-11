@@ -233,6 +233,7 @@ def test_a_received_value_survives_the_converter_unchanged(received: object, exp
         "1E+99999999",
         "1e-99999999",
         "1" * 39,
+        "0." + "1" * 39,
         1e300,
     ],
 )
@@ -353,6 +354,16 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
             core.Valuation,
             "a session date in another form",
         ),
+        (
+            b'{"cash":"1","marks":{},"replayed_through":1,"session":"2026-02-30","value":"1"}',
+            core.Valuation,
+            "a session date no calendar holds",
+        ),
+        (
+            b'{"at":"2026-19-02T20:40:00.000000Z","format":1,"writer":"w"}',
+            core.Heartbeat,
+            "a time no clock holds",
+        ),
         (b'{"raw":{"data":"YQ"},"value":null}', core.BrokerRead, "a body with no encoding"),
         (b'{"raw":{"data":1,"encoding":"utf-8"},"value":null}', core.BrokerRead, "no text"),
         (
@@ -374,5 +385,6 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
     ids=lambda v: v if isinstance(v, str) else None,
 )
 def test_decode_refuses_dirty_bytes(data: bytes, kind: type, defect: str) -> None:
-    with pytest.raises(CodecError):
+    with pytest.raises(CodecError) as raised:
         decode(data, kind)
+    assert type(raised.value) is CodecError

@@ -161,6 +161,12 @@ def test_each_spelling_of_a_sibling_import_fails(
     assert reasons and all("from `data` to `alpha`" in r for r in reasons), reasons
 
 
+def test_a_method_named_eval_is_no_run_time_import(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _plant(root, "alpha.model", "def score(m, frame):\n    m.eval()\n    return frame.eval('a')\n")
+    assert _reasons(root) == []
+
+
 def test_a_relative_import_inside_a_box_passes(tmp_path: Path) -> None:
     root = _tree(tmp_path)
     _plant(root, "data.reader", "from . import bars\nfrom .bars import Bar\n")
@@ -249,6 +255,8 @@ def test_runtimes_init_may_import_core(tmp_path: Path) -> None:
         "eval('1')\n",
         "import runpy\n",
         "from runpy import run_module as go\n",
+        "from runpy import _run_module_as_main\n",
+        "import builtins\nbuiltins.eval('1')\n",
     ],
 )
 def test_a_run_time_import_fails(tmp_path: Path, source: str) -> None:
@@ -417,6 +425,12 @@ def test_the_supervisor_may_import_its_own_submodules(tmp_path: Path) -> None:
             "monitoring.__init__",
             "if True:\n    from ithildinruntime import journal\n",
             "from ithildinruntime.monitoring import journal\n",
+        ),
+        (
+            "monitoring.__init__",
+            "try:\n    import json\nexcept ImportError:\n"
+            "    from ithildinruntime.journal import Journal\n",
+            "from ithildinruntime.monitoring import Journal\n",
         ),
     ],
 )

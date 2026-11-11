@@ -98,7 +98,11 @@ LIBRARIES: dict[str, str] = {
 # `core` imports nothing outside the standard library but these.
 CORE_LIBRARIES = frozenset({"rfc8785"})
 
-DYNAMIC = frozenset({"import_module", "__import__", "exec", "eval", "run_module", "run_path"})
+# Names that import by a string. The first two are refused under any spelling,
+# because no other code uses them. `exec` and `eval` are refused as the
+# builtins and as attributes of `builtins`, so a model's own `.eval()` passes.
+DYNAMIC = frozenset({"import_module", "__import__", "run_module", "run_path"})
+BUILTINS = frozenset({"exec", "eval"})
 # Modules whose names, fetched with `getattr`, can import around the checker.
 DYNAMIC_SOURCES = frozenset({"importlib", "builtins", "__builtins__", "runpy"})
 RUN_TIME = "imports at run time, which the import test cannot follow"
@@ -177,8 +181,7 @@ class _Checker:
         where = module.path.relative_to(self.root.parent).as_posix()
         for stmt in ast.walk(module.tree):
             if isinstance(stmt, ast.Name | ast.Attribute):
-                name = stmt.id if isinstance(stmt, ast.Name) else stmt.attr
-                if name in DYNAMIC:
+                if _imports_by_a_string(stmt):
                     yield Violation(where, stmt.lineno, ast.unparse(stmt), RUN_TIME)
                 continue
             if isinstance(stmt, ast.Call) and _fetches_an_importer(stmt):
@@ -191,7 +194,7 @@ class _Checker:
                 if stmt.module == "runpy":
                     yield Violation(where, stmt.lineno, text, RUN_TIME)
                 for alias in stmt.names:
-                    if alias.name in DYNAMIC:
+                    if alias.name in DYNAMIC | BUILTINS:
                         yield Violation(where, stmt.lineno, text, RUN_TIME)
             else:
                 if any(alias.name.split(".")[0] == "runpy" for alias in stmt.names):
@@ -349,6 +352,18 @@ class _Checker:
                     else:
                         bindings[bound] = ("name", origin, alias.name)
         return bindings
+
+
+def _imports_by_a_string(node: ast.Name | ast.Attribute) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in DYNAMIC | BUILTINS
+    if node.attr in DYNAMIC:
+        return True
+    return (
+        node.attr in BUILTINS
+        and isinstance(node.value, ast.Name)
+        and node.value.id in DYNAMIC_SOURCES
+    )
 
 
 def _fetches_an_importer(call: ast.Call) -> bool:

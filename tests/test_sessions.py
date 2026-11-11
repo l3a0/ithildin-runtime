@@ -237,3 +237,13 @@ def test_a_clock_time_after_the_regular_close_halts_even_on_an_early_close() -> 
 
 def test_a_plan_records_its_format() -> None:
     assert _plan([CLOSE_20]).plan.format == core.PLAN_FORMAT == 1
+
+
+def test_the_regular_close_on_an_early_close_is_dropped() -> None:
+    assert _plan([ExchangeTime(time(16, 0))], day=date(2026, 11, 27)).plan.decisions == ()
+
+
+def test_a_table_with_no_sessions_halts_the_plan() -> None:
+    empty = _table("range,2026-11-25,2026-12-01\nsession,open_utc,close_utc,utc_offset_minutes\n")
+    with pytest.raises(Halt):
+        empty.regular_close()

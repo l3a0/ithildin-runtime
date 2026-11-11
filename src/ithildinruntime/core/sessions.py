@@ -105,6 +105,8 @@ class SessionTable:
 
     def regular_close(self) -> time:
         """The latest close on the exchange's clock the table holds, 16:00 in New York."""
+        if not self.sessions:
+            raise Halt("the session table holds no session")
         return max((s.close + s.utc_offset).time() for s in self.sessions.values())
 
     def sessions_after(self, day: date) -> int:
