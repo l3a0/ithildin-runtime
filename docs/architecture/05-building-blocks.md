@@ -821,7 +821,16 @@ flowchart LR
     stop["The stop blob"]
     owner["The owner's record"]
     now["now, the send stage's Clock reading"]
-    inputs["GateInputs: the share, the stress move, the vintage hash,<br/>the portfolio value, the stop blob's state, and a close's entry"]
+    subgraph inputs["GateInputs"]
+        direction TB
+        share["The share"]
+        stress["The stress move"]
+        vintage["The vintage hash"]
+        value["The portfolio value"]
+        stopstate["The stop blob's state"]
+        closeentry["A close's entry"]
+        share ~~~ stress ~~~ vintage ~~~ value ~~~ stopstate ~~~ closeentry
+    end
     gate["The risk gate's check"]
     verdict["The Verdict, which names<br/>any term the gate could not compute"]
     journal -->|"send replays it just before each check"| book

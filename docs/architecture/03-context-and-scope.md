@@ -304,15 +304,26 @@ does.
 
 #### What this rests on
 
-marketlake publishes a window: each segment stays
-readable for seven days after upload, with old versions kept about 90 days
-more, as [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records, and nothing in the runtime knows when one goes. A read before sealing is the
-only read that needs a segment, because a replay reads partitions and the
-comparison reads the snapshot. Only the uploader refuses an overwrite so far, and
-[l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
-keeps naming each segment it read, as the record of what the decision read,
-though after the window those names point at nothing. The window reads age alone, so a day whose sealed partition never reached the bucket ends with marketlake's VM volume as its only copy, and [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the page that rests on. The provisional read
-is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
+The provisional read is proposed for
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#16](https://github.com/l3a0/ithildin-runtime/issues/16). It rests on five
+things about marketlake's segments.
+
+1. **marketlake publishes a window.** Each segment stays readable for seven days
+   after upload, with old versions kept about 90 days more, as
+   [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records.
+   Nothing in the runtime knows when one goes.
+2. **A read before sealing is the only read that needs a segment,** because a
+   replay reads partitions and the comparison reads the snapshot.
+3. **Only the uploader refuses an overwrite so far.**
+   [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds
+   making S3 itself refuse one.
+4. **A snapshot keeps naming each segment it read,** as the record of what the
+   decision read. After the window those names point at nothing.
+5. **The window reads age alone.** So a day whose sealed partition never reached
+   the bucket ends with marketlake's VM volume as its only copy, and
+   [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the
+   page that rests on.
 
 ### The previous session's daily bar
 
