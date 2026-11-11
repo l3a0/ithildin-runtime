@@ -754,7 +754,7 @@ sequenceDiagram
     E->>F: Proposed: stores a result saying whether each open order is settled or still open
     S->>F: Proposed: reads that result
     S->>F: stores the run's stop
-    F-->>W: the stop's event reaches each worker
+    F-->>W: the stop's event reaches every other worker
     F-->>E: the stop's event reaches execution
     F-->>O: the stop's event reaches every other instance
     W->>W: exits cleanly
@@ -2410,7 +2410,7 @@ No stage resends a plan's cancel yet, as `A plan changes or cancels its own unfi
 
 A run of the contract suite counts only for the account it ran against, so paper and live stay independent. Until a run exists for a live account, every lost cancel there that no lookup or answer settles ends in the halt that [When an unsettled cancel halts new orders](#timeouts-and-breakers-when-an-unsettled-cancel-halts-new-orders) describes. The kill switch alone needs no run. Its repeat keeps the lookup and the written number, at paper and at live.
 
-The table's last row covers four cases.
+The table's last row, any other outcome, covers four cases.
 
 1. A lookup that cannot answer or shows a cancel pending.
 2. A written number already used up.
@@ -2605,7 +2605,7 @@ Neither the code nor any role that applies it can do any of these.
 - Grant read of one to any principal but the one the Configuration table names.
 - Change who can act as that principal or who can assume the owner's role.
 
-The one exception is the VM change credential on paper and live, which may change the launch template and the VM's role alone, and every other refusal still binds it. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval.
+The one exception is the VM change credential on paper and live, which may change the launch template and pass the VM's role, and, in a rollback the owner overrides for an emergency, pull each account's switch and journal that pull, as [Rule 5](architecture/07-deployment.md#rule-5-the-runtimes-credential-does-only-what-the-rules-need) grants. Every other refusal still binds it. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval.
 
 On shadow the apply credential makes these changes, and shadow's journal holds simulated fills only, which is the accepted price.
 
@@ -2665,7 +2665,7 @@ An execution restart that cannot confirm its digest serves nothing and pages the
 
 #### Automatic restarts: how restarts are counted
 
-One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which, apart from capture and execution, which [Automatic restarts: the two components that keep on past their cap](#automatic-restarts-the-two-components-that-keep-on-past-their-cap) covers.
+One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) chooses that implementation for every component but capture and execution, which [Automatic restarts: the two components that keep on past their cap](#automatic-restarts-the-two-components-that-keep-on-past-their-cap) covers.
 
 1. The count runs across a component's instances.
 2. One instance past its own limit, execution's and capture's apart, is taken out and alarms while the others carry on.

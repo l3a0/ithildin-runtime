@@ -314,7 +314,7 @@ The owner rolls back, or on shadow and paper the operator, in three steps. [A ro
 
 1. Pull the kill switch of every account the environment holds, one `ithildin switch pull --account <a>` per account as `ithildin status` lists them, or wait until the cancel cutoff has passed, so nothing is left half sent.
 2. Run `ithildin pin set --environment <e> --digest <d>` with the earlier digest. The session keeps its own digest, and the earlier release takes the next session.
-3. A switch pulled for the rollback stays set. Clearing it during the session restarts trading on the release being rolled back, because the session keeps its digest. `ithildin status` shows each environment's pin. Clear each switch with `ithildin switch clear --account <a>`, by the owner, or on shadow and paper by the operator.
+3. A switch pulled for the rollback stays set, and that session trades nothing until it is cleared. To keep the release being rolled back from trading again, clear after the session ends, because the session keeps its digest. Clear each switch with `ithildin switch clear --account <a>`, by the owner, or on shadow and paper by the operator. Once the next session runs, check that the digest each recent run used, which `ithildin status` shows, is the earlier one.
 
 ###### `ithildin pin unblock --environment <e> --digest <d>`
 
@@ -381,6 +381,6 @@ Every command below runs under the owner's credential, signed in to the account 
 3. Run `aws sns confirm-subscription --region <region> --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
 4. Run `aws sns get-subscription-attributes --region <region> --subscription-arn <subscription ARN>` and check that `ConfirmationWasAuthenticated` reads `true`. If it does not, the subscription was confirmed by the link instead. Remove it with `aws sns unsubscribe --region <region> --subscription-arn <subscription ARN>` and start again at step 1.
 
-To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first, then remove the old subscription with `aws sns unsubscribe`, so the topic always has one confirmed subscription.
+To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first. Then find the old subscription's ARN with `aws sns list-subscriptions-by-topic --region <region> --topic-arn <topic ARN>` and remove it with `aws sns unsubscribe`, so the topic always has at least one confirmed subscription. Last, run the drill row for an email subscription on that account. The same `aws sns unsubscribe` command ends a subscription on purpose.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.

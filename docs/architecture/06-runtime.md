@@ -459,8 +459,10 @@ sequenceDiagram
     X->>F: stores the send outcome<br/>and execution's send result
     F-->>M: sends an event for execution's result
     M->>F: stores the decision's report<br/>and monitoring's report result
-    M->>F: reads the age of the jobs that run apart from a decision
-    M->>L: pages on any job past its bound
+    M->>F: reads each job's last-run record
+    opt a job that runs apart from a decision is past its bound
+        M->>L: pages on it
+    end
     M->>H: pings the heartbeat service
     Note over V,J: After the close, once every decision has a result
     X->>B: reads the day's fills, positions, open orders,<br/>cash and the broker's records
@@ -550,7 +552,7 @@ The steps run in this order.
      1. The target.
      2. The planned orders, cancels and replacements, each with its client order id.
      3. The journal entry it synced through.
-     4. A hash of the broker state it fetched.
+     4. A hash and the time of the broker state it fetched.
      5. The instance running the send stage.
      6. Each strategy that is off.
      7. Each strategy whose late forecast reads as no change.
@@ -741,7 +743,7 @@ sequenceDiagram
     participant F as Blob store
     participant M as Monitoring
     participant L as Alert channel
-    participant ML as marketlake
+    participant ML as marketlake's bucket
 
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
     V->>F: is the kill switch blob absent?
