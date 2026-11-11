@@ -11,10 +11,17 @@ The table runs from 2006-01-01, before the first session of the span the
 first strategy's backtest reads, through the end of the next calendar year.
 Move `LAST` forward a year, and `FIRST` back for an older backtest, then run:
 
-    uv run --no-project --python 3.12 --with exchange_calendars==4.13.2 \\
-        python scripts/regenerate_sessions.py
+    uv run --no-project --python 3.12 --exclude-newer 2026-11-10 \\
+        --with exchange_calendars==4.13.2 python scripts/regenerate_sessions.py
+
+`--exclude-newer` holds `exchange_calendars`' own dependencies, which it
+leaves open-ended, to the releases of a stated day, so a run installs nothing
+published since. Move the date forward with `LAST`, and read what changed.
 
 It rewrites the table and the SHA-256 that `core/sessions.py` checks it by.
+That SHA-256 catches a table that drifts after the run. It cannot catch a run
+that went wrong, because the same run writes both, so read the table's diff
+before committing it.
 """
 
 from __future__ import annotations

@@ -30,7 +30,7 @@ The owner's part in reviewing this doc is one page, [Proposals awaiting a ruling
 turned down, the price and the issue it goes on. Object to a row there. Settled choices sit in [design.md](../design.md)'s `## Decisions`, ordered by when they were decided.
 
 The diagrams are Mermaid, which GitHub draws in place. Each one is followed by
-what it shows and what to look for. Nothing here is built yet. A clock time written with no zone, such as 15:40, is New York time, the exchange's own, and the platform writes each one as its UTC instant.
+what it shows and what to look for. Only `core`, the types and shared code every module imports, is built so far. A clock time written with no zone, such as 15:40, is New York time, the exchange's own, and the platform writes each one as its UTC instant.
 
 One decision, end to end, is the picture to hold before the detail:
 

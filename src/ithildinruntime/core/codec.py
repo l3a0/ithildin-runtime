@@ -48,6 +48,12 @@ __all__ = [
 ]
 
 _INT_LIMIT = 2**53
+# A decimal the codec writes has at most this many digits, and its leading
+# digit sits within this many places of the decimal point, so a hostile
+# received value such as 1E+99999999 cannot make a writer allocate gigabytes.
+_MAX_DIGITS = 38
+_MAX_MAGNITUDE = 30
+_RECEIVED = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
 _DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -111,13 +117,16 @@ def to_decimal(value: float | int | Decimal, n: int) -> Decimal:
 def from_received(value: float | int | str | Decimal) -> Decimal:
     """Keep a value received from outside exactly as it arrived, never rounded.
 
-    A string is read as the decimal it writes, trailing zeros kept. A float,
-    which is how marketlake stores a price, is read as its shortest round-trip
-    text, `Decimal(repr(x))`. `to_decimal` is for computed values only.
+    A string is read as the decimal it writes, trailing zeros kept, and only
+    in ASCII digits with an optional minus, fraction and exponent, so a form
+    Python would rewrite, such as `1_000` or `+5`, is refused rather than
+    changed. A float, which is how marketlake stores a price, is read as its
+    shortest round-trip text, `Decimal(repr(x))`. `to_decimal` is for computed
+    values only.
     """
     if isinstance(value, str):
-        if value != value.strip():
-            raise CodecError(f"received decimal {value!r} carries spaces")
+        if not _RECEIVED.fullmatch(value):
+            raise CodecError(f"received value {value!r} is not a decimal in ASCII digits")
         try:
             parsed = Decimal(value)
         except InvalidOperation as error:
@@ -130,18 +139,30 @@ def _finite(value: object) -> Decimal:
     if isinstance(value, bool):
         raise CodecError("a bool is not a decimal")
     if isinstance(value, float):
-        value = Decimal(repr(value))
+        value = Decimal(float.__repr__(value))
     elif isinstance(value, int):
         value = Decimal(value)
     if not isinstance(value, Decimal):
         raise CodecError(f"{type(value).__name__} is not a decimal")
+    return _bounded(value, "the value")
+
+
+def _bounded(value: Decimal, where: str) -> Decimal:
     if not value.is_finite():
-        raise CodecError(f"{value} is not finite")
+        raise CodecError(f"{where} is {value}, which is not finite")
+    digits = value.as_tuple().digits
+    if len(digits) > _MAX_DIGITS or abs(value.adjusted()) > _MAX_MAGNITUDE:
+        raise CodecError(
+            f"{where} has {len(digits)} digits at magnitude {value.adjusted()}, "
+            f"past the codec's {_MAX_DIGITS} digits and magnitude {_MAX_MAGNITUDE}"
+        )
     return value
 
 
 def encode(value: object) -> bytes:
-    """Write a value as canonical JSON bytes."""
+    """Write a record, or a plain JSON value, as canonical JSON bytes."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return rfc8785.dumps(_fields_to_plain(value, type(value).__name__))
     return rfc8785.dumps(_to_plain(value, object, "value"))
 
 
@@ -155,7 +176,7 @@ def decode[T](data: bytes, kind: type[T]) -> T:
             parse_float=_refuse_float,
             parse_constant=_refuse_constant,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
         raise CodecError(f"not JSON: {error}") from error
     value = _from_plain(parsed, kind, kind.__name__)
     if encode(value) != data:
@@ -285,34 +306,29 @@ def _scalar_to_plain(value: object, hint: Any, where: str) -> object:
 
 
 def _plain_by_value(value: object, where: str) -> object:
-    """Write a field typed `object`, whose value names its own type."""
+    """Write a field typed `object`, which holds plain JSON values only.
+
+    `decode` hands such a field back as the JSON it parsed, so a decimal, a
+    time, bytes or a record written here could not be read back as what it
+    was. The codec refuses them, and the field's owner gives it a type instead.
+    """
     if value is None or isinstance(value, bool):
         return value
     if isinstance(value, Enum):
-        return value.value
+        raise CodecError(f"{where} is an enum, which a field typed object cannot read back")
     if isinstance(value, int):
         return _int(value, where)
     if isinstance(value, str):
         return str.__str__(value)
-    if isinstance(value, float):
-        raise CodecError(f"{where} is a float, which no type in core holds")
-    if isinstance(value, Decimal):
-        return _decimal(value, where)
-    if isinstance(value, datetime):
-        return _time(value, where)
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, bytes):
-        return _body(value)
     if isinstance(value, Mapping):
         return {
             _key(k, str, where): _plain_by_value(v, f"{where}[{k!r}]") for k, v in value.items()
         }
     if isinstance(value, tuple | list):
         return [_plain_by_value(x, f"{where}[{i}]") for i, x in enumerate(value)]
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _fields_to_plain(value, where)
-    raise CodecError(f"{where} is a {type(value).__name__}, which the codec does not write")
+    raise CodecError(
+        f"{where} is a {type(value).__name__}, which a field typed object cannot read back"
+    )
 
 
 def _int(value: int, where: str) -> int:
@@ -322,9 +338,7 @@ def _int(value: int, where: str) -> int:
 
 
 def _decimal(value: Decimal, where: str) -> str:
-    if not value.is_finite():
-        raise CodecError(f"{where} is {value}, which is not finite")
-    return format(value, "f")
+    return format(_bounded(value, where), "f")
 
 
 def _time(value: datetime, where: str) -> str:

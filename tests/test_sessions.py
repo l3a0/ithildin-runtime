@@ -180,3 +180,60 @@ def test_the_committed_table_reports_the_sessions_it_has_left() -> None:
     )
     assert built.sessions_left == 1
     assert core.decode(core.encode(built.plan), core.Plan) == built.plan
+
+
+@pytest.mark.parametrize("minutes", [True, 20.5, -30, "20"])
+def test_minutes_before_the_close_are_a_whole_number_not_below_zero(minutes: object) -> None:
+    with pytest.raises(ValueError):
+        to_utc(date(2026, 11, 30), BeforeClose(minutes))  # type: ignore[arg-type]
+    assert to_utc(date(2026, 11, 30), BeforeClose(0)) == datetime(2026, 11, 30, 21, 0, tzinfo=UTC)
+
+
+def test_a_table_whose_close_equals_its_open_halts() -> None:
+    with pytest.raises(Halt):
+        _table(SMALL.replace("2026-11-27,14:30,18:00", "2026-11-27,14:30,14:30"))
+
+
+def _plan(times: list, day: date = date(2026, 11, 30)) -> core.BuiltPlan:
+    return core.build_plan(
+        deployment="paper",
+        mode=Mode.PAPER,
+        release="r1",
+        schedules={"s": times},
+        first=day,
+        last=day,
+        table=_table(SMALL),
+    )
+
+
+@pytest.mark.parametrize(
+    "when",
+    [
+        ExchangeTime(time(16, 30)),
+        ExchangeTime(time(9, 0)),
+        ExchangeTime(time(3, 0)),
+        BeforeClose(600),
+    ],
+    ids=["after a regular close", "before the open", "at night", "close minus 600"],
+)
+def test_a_decision_outside_a_regular_session_halts(when: object) -> None:
+    with pytest.raises(Halt) as raised:
+        _plan([when])
+    assert "outside that session's 14:30 to 21:00 UTC" in raised.value.reason
+
+
+def test_the_bounds_of_a_session_are_inside_it() -> None:
+    built = _plan([ExchangeTime(time(9, 30)), ExchangeTime(time(16, 0)), BeforeClose(0)])
+    assert [d.at for d in built.plan.decisions] == [
+        datetime(2026, 11, 30, 14, 30, tzinfo=UTC),
+        datetime(2026, 11, 30, 21, 0, tzinfo=UTC),
+    ]
+
+
+def test_a_clock_time_after_the_regular_close_halts_even_on_an_early_close() -> None:
+    with pytest.raises(Halt):
+        _plan([ExchangeTime(time(16, 30))], day=date(2026, 11, 27))
+
+
+def test_a_plan_records_its_format() -> None:
+    assert _plan([CLOSE_20]).plan.format == core.PLAN_FORMAT == 1

@@ -127,7 +127,7 @@ def test_encode_refuses_a_value_of_the_wrong_type_for_its_field() -> None:
     with pytest.raises(CodecError):
         encode(core.Verdict(approved=1, limit=None, value=None, missing_term=None))  # type: ignore[arg-type]
     with pytest.raises(CodecError):
-        encode(core.Heartbeat(writer="w", at=None))  # type: ignore[arg-type]
+        encode(core.Heartbeat(format=1, writer="w", at=None))  # type: ignore[arg-type]
 
 
 def test_an_integer_just_below_two_to_the_fifty_third_is_written() -> None:
@@ -177,7 +177,7 @@ def test_decode_refuses_a_decimal_not_in_plain_notation(price: str) -> None:
 )
 def test_decode_refuses_a_time_in_another_form(at: str) -> None:
     with pytest.raises(CodecError):
-        decode(('{"at":' + at + ',"writer":"w"}').encode(), core.Heartbeat)
+        decode(('{"at":' + at + ',"format":1,"writer":"w"}').encode(), core.Heartbeat)
 
 
 def test_a_received_body_is_kept_as_text_or_as_base64() -> None:
@@ -213,10 +213,29 @@ def test_a_received_value_survives_the_converter_unchanged(received: object, exp
     value = core.from_received(received)  # type: ignore[arg-type]
     assert format(value, "f") == expected
     assert core.exceeds_places(core.from_received(0.00004), 4)
+    assert not core.exceeds_places(core.from_received("1.2345"), 4)
     assert not core.exceeds_places(core.from_received("1.10"), 4)
 
 
-@pytest.mark.parametrize("received", [float("nan"), "Infinity", "1.0 ", "abc", True, None])
+@pytest.mark.parametrize(
+    "received",
+    [
+        float("nan"),
+        "Infinity",
+        "1.0 ",
+        "abc",
+        True,
+        None,
+        "1_000",
+        "+5",
+        "\u0663.5",
+        ".5",
+        "1E+99999999",
+        "1e-99999999",
+        "1" * 39,
+        1e300,
+    ],
+)
 def test_the_converter_refuses_what_is_not_a_finite_decimal(received: object) -> None:
     with pytest.raises(CodecError):
         core.from_received(received)  # type: ignore[arg-type]
@@ -245,3 +264,115 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
     back = decode(encode(value), core.Snapshot)
     assert back == value
     assert back.status[InstrumentId("USO")] is core.BarStatus.STALE
+
+
+class _Float(float):
+    """A float whose repr is not its value, as numpy 2 prints `np.float64(1.5)`."""
+
+    def __repr__(self) -> str:
+        return f"np.float64({float.__repr__(self)})"
+
+
+def test_a_float_subclass_is_read_as_its_value() -> None:
+    assert core.from_received(_Float(123.45)) == Decimal("123.45")
+    assert core.to_decimal(_Float(0.125), 2) == Decimal("0.12")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        Decimal("1.5"),
+        datetime(2026, 11, 2, tzinfo=UTC),
+        b"raw",
+        core.BarStatus.FRESH,
+        core.JournalAck(seq=1, entry_hash="a"),
+    ],
+    ids=["decimal", "time", "bytes", "enum", "record"],
+)
+def test_a_field_typed_object_takes_only_what_reads_back_unchanged(value: object) -> None:
+    entry = core.JournalEntry(
+        seq=1, format=1, built_at=AT, body={"kind": "fill", "x": value}, prev_hash="0" * 64
+    )
+    with pytest.raises(CodecError):
+        encode(entry)
+    with pytest.raises(CodecError):
+        encode(core.BrokerRead(raw=b"", value=[value]))
+
+
+def test_a_decimal_too_large_to_write_is_refused() -> None:
+    with pytest.raises(CodecError):
+        encode(
+            core.TargetPortfolio(
+                decision_at=AT, strategy="s", shares={InstrumentId("GLD"): Decimal("1E+50")}
+            )
+        )
+    assert (
+        encode(
+            core.TargetPortfolio(
+                decision_at=AT, strategy="s", shares={InstrumentId("GLD"): Decimal("1E+29")}
+            )
+        ).count(b"1" + b"0" * 29 + b'"')
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("data", "kind", "defect"),
+    [
+        (b"[" * 100_000 + b"]" * 100_000, core.JournalAck, "nested past the parser's depth"),
+        (b'{"entry_hash":"a","seq":' + b"9" * 5000 + b"}", core.JournalAck, "a huge integer"),
+        (b'{"entry_hash":"a","seq":null}', core.JournalAck, "null where a value is required"),
+        (b'{"entry_hash":1,"seq":1}', core.JournalAck, "a number where a string is"),
+        (b'{"entry_hash":"a","seq":"1"}', core.JournalAck, "a string where an int is"),
+        (b"[]", core.JournalAck, "a list where a record is"),
+        (
+            b'{"approved":"yes","limit":null,"missing_term":null,"value":null}',
+            core.Verdict,
+            "a string where a bool is",
+        ),
+        (
+            b'{"decision_at":"2026-11-02T20:40:00.000000Z","segments":{},"bars":{},'
+            b'"flags":{},"ledgers":{},"provisional":true,"quotes":{},"status":{}}',
+            core.Snapshot,
+            "an object where a list is",
+        ),
+        (
+            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","flags":{},"ledgers":{},'
+            b'"provisional":true,"quotes":{},"segments":[],"status":{"USO":"rotten"}}',
+            core.Snapshot,
+            "a status no BarStatus names",
+        ),
+        (
+            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","flags":{},"ledgers":[],'
+            b'"provisional":true,"quotes":{},"segments":[],"status":{}}',
+            core.Snapshot,
+            "a list where a mapping is",
+        ),
+        (
+            b'{"cash":"1","marks":{},"replayed_through":1,"session":"20261102","value":"1"}',
+            core.Valuation,
+            "a session date in another form",
+        ),
+        (b'{"raw":{"data":"YQ"},"value":null}', core.BrokerRead, "a body with no encoding"),
+        (b'{"raw":{"data":1,"encoding":"utf-8"},"value":null}', core.BrokerRead, "no text"),
+        (
+            b'{"raw":{"data":"*","encoding":"base64"},"value":null}',
+            core.BrokerRead,
+            "invalid base64",
+        ),
+        (
+            b'{"raw":{"data":"a","encoding":"latin-1"},"value":null}',
+            core.BrokerRead,
+            "an encoding the codec does not know",
+        ),
+        (
+            b'{"decision_at":"2026-11-02T20:40:00.000000Z","shares":{"GLD":"1E+5"},"strategy":"s"}',
+            core.TargetPortfolio,
+            "a decimal in exponent form",
+        ),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_decode_refuses_dirty_bytes(data: bytes, kind: type, defect: str) -> None:
+    with pytest.raises(CodecError):
+        decode(data, kind)

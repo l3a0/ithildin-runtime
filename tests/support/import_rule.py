@@ -15,13 +15,16 @@ arrows alone would miss.
 
 1. An import inside a function body, which a reader of the top level misses.
    The checker reads every import in the file.
-2. A call to `importlib.import_module` or `__import__`, which `ast` cannot
-   follow.
+2. An import `ast` cannot follow: `importlib.import_module`, `__import__`,
+   `exec`, `eval`, `runpy`, or a name fetched from `importlib` or `builtins`
+   with `getattr`.
 3. An import of a package the diagram does not name, so a new `common`
    package cannot become a route between workers.
 4. An import in a package's `__init__.py` that a box beneath it may not
    make. Importing `runtime.loop` runs `runtime/__init__.py`, so that file is
-   held to the loop's rule as well as its own.
+   held to the loop's rule as well as its own. For the same reason
+   `execution/__init__.py` keeps `execution.brokers`' rule, and may import
+   only `core`.
 5. A name re-exported from one module and imported through it, such as
    `journal` imported from `execution`. The checker follows the name back to
    the module that defines it.
@@ -87,12 +90,18 @@ LIBRARIES: dict[str, str] = {
     "botocore": "adapters",
     "lake": "data",
     "alpaca": "brokers",
+    "alpaca_trade_api": "brokers",
+    # The one codec writes every blob, so only `core` writes canonical JSON.
+    "rfc8785": "core",
 }
 
 # `core` imports nothing outside the standard library but these.
 CORE_LIBRARIES = frozenset({"rfc8785"})
 
-DYNAMIC = frozenset({"import_module", "__import__"})
+DYNAMIC = frozenset({"import_module", "__import__", "exec", "eval", "run_module", "run_path"})
+# Modules whose names, fetched with `getattr`, can import around the checker.
+DYNAMIC_SOURCES = frozenset({"importlib", "builtins", "__builtins__", "runpy"})
+RUN_TIME = "imports at run time, which the import test cannot follow"
 
 
 @dataclass(frozen=True)
@@ -170,39 +179,45 @@ class _Checker:
             if isinstance(stmt, ast.Name | ast.Attribute):
                 name = stmt.id if isinstance(stmt, ast.Name) else stmt.attr
                 if name in DYNAMIC:
-                    yield Violation(
-                        where,
-                        stmt.lineno,
-                        ast.unparse(stmt),
-                        "imports at run time, which the import test cannot follow",
-                    )
+                    yield Violation(where, stmt.lineno, ast.unparse(stmt), RUN_TIME)
+                continue
+            if isinstance(stmt, ast.Call) and _fetches_an_importer(stmt):
+                yield Violation(where, stmt.lineno, ast.unparse(stmt), RUN_TIME)
                 continue
             if not isinstance(stmt, ast.Import | ast.ImportFrom):
                 continue
             text = ast.unparse(stmt)
             if isinstance(stmt, ast.ImportFrom):
+                if stmt.module == "runpy":
+                    yield Violation(where, stmt.lineno, text, RUN_TIME)
                 for alias in stmt.names:
                     if alias.name in DYNAMIC:
-                        yield Violation(
-                            where,
-                            stmt.lineno,
-                            text,
-                            "imports at run time, which the import test cannot follow",
-                        )
+                        yield Violation(where, stmt.lineno, text, RUN_TIME)
+            else:
+                if any(alias.name.split(".")[0] == "runpy" for alias in stmt.names):
+                    yield Violation(where, stmt.lineno, text, RUN_TIME)
             try:
                 internal, outside = self._targets(module, stmt)
             except _Unresolved as error:
                 yield Violation(where, stmt.lineno, text, str(error))
                 continue
+            own = importers[0]
             for importer in importers:
+                inherited = (
+                    ""
+                    if importer == own
+                    else f", and this file runs whenever `{NODES[importer]}` is imported"
+                    if importer is not None
+                    else ""
+                )
                 for target in internal:
                     reason = self._refuse(importer, target)
                     if reason:
-                        yield Violation(where, stmt.lineno, text, reason)
+                        yield Violation(where, stmt.lineno, text, reason + inherited)
                 for library in outside:
                     reason = self._refuse_library(importer, library)
                     if reason:
-                        yield Violation(where, stmt.lineno, text, reason)
+                        yield Violation(where, stmt.lineno, text, reason + inherited)
 
     def _refuse(self, importer: str | None, target: str) -> str | None:
         box = node_of(target)
@@ -334,6 +349,17 @@ class _Checker:
                     else:
                         bindings[bound] = ("name", origin, alias.name)
         return bindings
+
+
+def _fetches_an_importer(call: ast.Call) -> bool:
+    """A `getattr` on `importlib`, `builtins` or `runpy`, which reaches an importer by a string."""
+    return (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "getattr"
+        and bool(call.args)
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id in DYNAMIC_SOURCES
+    )
 
 
 class _Unresolved(Exception):

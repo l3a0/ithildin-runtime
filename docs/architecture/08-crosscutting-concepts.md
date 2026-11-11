@@ -439,7 +439,7 @@ flowchart LR
     e1 --> e2 --> e3
 ```
 
-A blob cannot hold its own hash, so `JournalEntry.hash()` computes it from the bytes S3 returns, never from a re-encoding of the parsed fields. A reader also checks three things, and halts otherwise.
+A blob cannot hold its own hash, so `JournalEntry.hash()` computes it as the SHA-256 of the entry's canonical encoding, and it is the one function that does. A reader trusts that hash only because `core.decode` refuses bytes that are not the canonical encoding of what it parsed, so the hash of a decoded entry is the hash of the bytes S3 returned. A reader also checks three things, and halts otherwise.
 
 1. That those bytes are the canonical encoding of what it parsed.
 2. That each key's number equals the `seq` inside it.

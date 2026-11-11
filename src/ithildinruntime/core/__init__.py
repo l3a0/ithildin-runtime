@@ -19,7 +19,7 @@ from .codec import (
 from .halt import Halt
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
-from .plan import BuiltPlan, build_plan
+from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
 from .ports import __all__ as _ports
 from .records import *  # noqa: F403
@@ -36,6 +36,7 @@ from .sessions import (
 )
 
 __all__ = [
+    "PLAN_FORMAT",
     "BeforeClose",
     "BuiltPlan",
     "CodecError",

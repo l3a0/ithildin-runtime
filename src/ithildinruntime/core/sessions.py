@@ -103,6 +103,10 @@ class SessionTable:
         self.session(last)
         return tuple(self.sessions[d] for d in sorted(self.sessions) if first <= d <= last)
 
+    def regular_close(self) -> time:
+        """The latest close on the exchange's clock the table holds, 16:00 in New York."""
+        return max((s.close + s.utc_offset).time() for s in self.sessions.values())
+
     def sessions_after(self, day: date) -> int:
         """How many sessions the table holds after `day`."""
         return sum(1 for d in self.sessions if d > day)
@@ -158,8 +162,9 @@ def to_utc(day: date, when: ScheduleTime, table: SessionTable | None = None) -> 
     """
     session = (table or load_sessions()).session(day)
     if isinstance(when, BeforeClose):
-        if isinstance(when.minutes, bool) or not isinstance(when.minutes, int):
-            raise ValueError(f"{when!r} counts minutes in a whole number")
+        minutes = when.minutes
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0:
+            raise ValueError(f"{when!r} counts minutes before the close in a whole number")
         return session.close - timedelta(minutes=when.minutes)
     if isinstance(when, ExchangeTime):
         local = datetime.combine(day, when.local)

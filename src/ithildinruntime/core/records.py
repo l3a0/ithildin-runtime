@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -73,8 +73,13 @@ __all__ = [
 
 InstrumentId = NewType("InstrumentId", str)
 
-# The places each kind of decimal declares. A quantity carries nine, because
-# Alpaca takes fractional shares to nine places.
+# The places each kind of decimal declares, which never shrink in a later
+# release. tests/test_core_types.py pins each one.
+# - A price carries four, the finest tick US equities quote below a dollar.
+# - A quantity carries nine, because Alpaca takes fractional shares to nine.
+# - An amount of money carries four, so a sub-cent fee survives.
+# - A per-share rate and a statistic carry eight, for a hedge ratio or a fee
+#   rate finer than a cent.
 Price = Annotated[Decimal, Places(4)]
 Quantity = Annotated[Decimal, Places(9)]
 Money = Annotated[Decimal, Places(4)]
@@ -162,7 +167,7 @@ class Snapshot(_Record):
     """The bars and quotes one decision read, with each instrument's status."""
 
     decision_at: datetime
-    bars: Mapping[InstrumentId, tuple[Bar, ...]]
+    bars: Mapping[InstrumentId, Mapping[str, tuple[Bar, ...]]]
     quotes: Mapping[InstrumentId, Quote]
     status: Mapping[InstrumentId, BarStatus]
     provisional: bool
@@ -170,23 +175,33 @@ class Snapshot(_Record):
     segments: tuple[str, ...]
     ledgers: Mapping[str, str]
 
-    def require_fresh(self) -> None:
-        """Raise `Halt` unless every instrument's bar is present and fresh.
+    def require_fresh(self, needed: Iterable[InstrumentId]) -> None:
+        """Raise `Halt` unless every bar the caller needs is present and fresh.
+
+        `bars` maps each instrument to its bars by interval, so a daily bar and
+        minute bars of one instrument sit side by side. The caller names the
+        instruments it needs, so an instrument Data left out of the snapshot
+        halts rather than reading as nothing to trade. Every other instrument
+        the snapshot holds must be fresh too.
 
         It judges no age. Data fills `status` under #7's rule, and this only
-        reads it. An empty snapshot halts, because an empty input counts as a
-        missing one (hard limit 3).
+        reads it. An empty snapshot, or an empty list of what is needed,
+        halts, because an empty input counts as a missing one (hard limit 3).
         """
-        instruments = sorted(set(self.status) | set(self.bars))
-        if not instruments:
+        wanted = set(needed)
+        if not wanted:
+            raise Halt("the caller names no instrument it needs from the snapshot")
+        if not self.status and not self.bars:
             raise Halt(f"the snapshot for {self.decision_at.isoformat()} is empty")
-        for instrument in instruments:
+        for instrument in sorted(wanted | set(self.status) | set(self.bars)):
             status = self.status.get(instrument)
+            if status is None and instrument not in self.bars:
+                raise Halt(f"{instrument} missing for the session")
             if status is None:
                 raise Halt(f"{instrument} has a bar and no status")
             if status != BarStatus.FRESH:
                 raise Halt(f"{instrument} {status} for the session")
-            if not self.bars.get(instrument):
+            if not any(self.bars.get(instrument, {}).values()):
                 raise Halt(f"{instrument} is fresh and has no bar")
 
 
@@ -315,7 +330,11 @@ class CostSchedule(_Record):
     fixed: Mapping[InstrumentId, Money]
 
     def estimate(self, instrument: InstrumentId, qty: Decimal) -> Decimal:
-        """The cost of trading `qty` shares, unrounded. A missing instrument halts."""
+        """The cost of trading `qty` shares, unrounded. A missing instrument halts.
+
+        The formula, a fixed cost plus a per-share cost, follows 05's proposal
+        for #8, which owns it and may change it.
+        """
         if instrument not in self.per_share or instrument not in self.fixed:
             raise Halt(f"{instrument} has no cost in the schedule")
         return self.fixed[instrument] + self.per_share[instrument] * abs(qty)
@@ -385,6 +404,7 @@ class BlobHeader(_Record):
 
 @dataclass(frozen=True)
 class RestartRecord(_Record):
+    format: int
     worker: str
     restart_count: int
     exit_status: int | None
@@ -409,6 +429,7 @@ class DecisionResult(_Record):
 
 @dataclass(frozen=True)
 class Heartbeat(_Record):
+    format: int
     writer: str
     at: datetime
 
@@ -421,6 +442,7 @@ class Lease(_Record):
     only on a plan's lease, where it holds the run's status.
     """
 
+    format: int
     vm: str | None
     boot: str | None
     container: str | None
@@ -443,6 +465,7 @@ class PlanDecision(_Record):
 
 @dataclass(frozen=True)
 class Plan(_Record):
+    format: int
     deployment: str
     run: str
     mode: Mode
@@ -454,7 +477,9 @@ class Plan(_Record):
 class JournalEntry(_Record):
     """The one numbered record, chained to the entry before it.
 
-    `body` holds a `kind` and that kind's fields, as plain JSON values.
+    `body` holds a `kind` and that kind's fields, as plain JSON values: the
+    codec refuses a decimal, a time or a record there, because it could not
+    read one back as what it was.
     """
 
     seq: int
@@ -466,8 +491,8 @@ class JournalEntry(_Record):
     def hash(self) -> str:
         """The SHA-256 of the entry's canonical bytes, which the next entry carries.
 
-        `decode` refuses bytes that are not the canonical encoding of what it
-        parsed, so for an entry read back this equals the SHA-256 of the bytes
-        S3 returned. #80's reader hashes those stored bytes themselves.
+        This is the one place the entry's hash is computed. `decode` refuses
+        bytes that are not the canonical encoding of what it parsed, so for an
+        entry read back this equals the SHA-256 of the bytes S3 returned.
         """
         return hashlib.sha256(encode(self)).hexdigest()

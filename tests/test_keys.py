@@ -153,3 +153,28 @@ def test_the_time_parts_are_utc_and_sort_in_order() -> None:
 def test_a_part_that_would_break_a_key_is_refused(build) -> None:
     with pytest.raises(ValueError):
         build()
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: core.output_key("paper", RUN, AT, "data", "snapshot.attempt-2"),
+        lambda: core.output_key("paper", RUN, AT, "data", "result"),
+        lambda: core.output_key("paper", RUN, AT, "execution/send", "claim"),
+        lambda: core.output_key("paper", RUN, AT, "execution/send", "broker-read-1"),
+        lambda: core.attempt_key("paper", RUN, AT, "data", "snap.x", 2),
+        lambda: core.account_halt_key("paper1", "data-worker", "stale", FIRED, 1),
+        lambda: core.account_halt_key("paper1", "data", "worker-stale", FIRED, 1),
+        lambda: core.strategy_halt_key("paper1", "s", "risk", "loss-stop", FIRED, 1),
+        lambda: core.load_claim_key("a-b", "c"),
+        lambda: core.load_sent_key("a", "b-c"),
+    ],
+)
+def test_a_name_that_would_spell_another_rows_key_is_refused(build) -> None:
+    with pytest.raises(ValueError):
+        build()
+
+
+def test_an_output_name_may_hold_a_dash() -> None:
+    key = core.output_key("paper", RUN, AT, "alpha/bollinger", "signal-records")
+    assert key == "runs/paper/2026-11-02/20261102T204000Z/alpha/bollinger/signal-records.json"

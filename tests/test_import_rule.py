@@ -31,6 +31,8 @@ def _diagram() -> tuple[dict[str, str], set[tuple[str, str]]]:
     block = section.split("```mermaid", 1)[1].split("```", 1)[0]
     labels = dict(re.findall(r'^\s*(\w+)\["([^"]*)"\]\s*$', block, flags=re.MULTILINE))
     arrows = set(re.findall(r"^\s*(\w+)\s*-->\s*(\w+)\s*$", block, flags=re.MULTILINE))
+    # An arrow written any other way, such as with a label, would be missed.
+    assert block.count("-->") == len(arrows), "the diagram holds an arrow the parser cannot read"
     return labels, arrows
 
 
@@ -189,20 +191,42 @@ def test_a_package_the_diagram_does_not_name_fails(tmp_path: Path) -> None:
 
 # Case 5: an import in the package root's __init__.py or in runtime's.
 @pytest.mark.parametrize(
-    ("module", "statement"),
+    ("module", "statement", "reason"),
     [
-        ("__init__", "from ithildinruntime import core\n"),
-        ("__init__", "from . import data\n"),
-        ("runtime.__init__", "from ithildinruntime import data\n"),
-        ("runtime.__init__", "from ithildinruntime import journal\n"),
+        (
+            "__init__",
+            "from ithildinruntime import core\n",
+            "from a module no box of the diagram holds",
+        ),
+        ("__init__", "from . import data\n", "from a module no box of the diagram holds"),
+        (
+            "runtime.__init__",
+            "from ithildinruntime import data\n",
+            "from `loop` to `data`, which the diagram does not draw, and this file runs "
+            "whenever `ithildinruntime.runtime.loop` is imported",
+        ),
+        (
+            "runtime.__init__",
+            "from ithildinruntime import journal\n",
+            "from `runtime` to `journal`, which the diagram does not draw",
+        ),
+        (
+            "execution.__init__",
+            "from ithildinruntime import journal\n",
+            "from `brokers` to `journal`, which the diagram does not draw, and this file "
+            "runs whenever `ithildinruntime.execution.brokers` is imported",
+        ),
     ],
 )
 def test_an_import_in_a_parent_packages_init_fails(
-    tmp_path: Path, module: str, statement: str
+    tmp_path: Path, module: str, statement: str, reason: str
 ) -> None:
     root = _tree(tmp_path)
     _plant(root, module, statement)
-    assert _reasons(root), "the checker passed an import every box beneath must refuse"
+    path = module.replace(".", "/")
+    reasons = _reasons(root)
+    assert any(r.startswith(f"{PACKAGE}/{path}.py:1: `{statement.strip()}`") for r in reasons)
+    assert any(reason in r for r in reasons), reasons
 
 
 def test_runtimes_init_may_import_core(tmp_path: Path) -> None:
@@ -220,6 +244,11 @@ def test_runtimes_init_may_import_core(tmp_path: Path) -> None:
         "from importlib import import_module as load\nload('ithildinruntime.alpha')\n",
         "m = __import__('ithildinruntime.alpha')\n",
         "import builtins\nm = builtins.__import__('os')\n",
+        "import importlib\nm = getattr(importlib, 'import_' + 'module')('x')\n",
+        "exec('import ithildinruntime.alpha')\n",
+        "eval('1')\n",
+        "import runpy\n",
+        "from runpy import run_module as go\n",
     ],
 )
 def test_a_run_time_import_fails(tmp_path: Path, source: str) -> None:
@@ -267,6 +296,8 @@ def test_a_worker_from_the_loop_or_the_supervisor_fails(tmp_path: Path, importer
         ("from botocore.exceptions import ClientError\n", "adapters", "runtime.workers"),
         ("import lake.read\n", "data", "alpha.model"),
         ("from alpaca.trading.client import TradingClient\n", "brokers", "execution.order_path"),
+        ("import alpaca_trade_api\n", "brokers", "runtime.ithildin.main"),
+        ("import rfc8785\n", "core", "alpha.model"),
     ],
 )
 def test_an_outside_library_elsewhere_fails(
@@ -375,6 +406,17 @@ def test_the_supervisor_may_import_its_own_submodules(tmp_path: Path) -> None:
             "monitoring.__init__",
             "from .chain import *\n",
             "from ithildinruntime.monitoring import *\n",
+        ),
+        (
+            "monitoring.__init__",
+            "try:\n    from ithildinruntime.journal import Journal\n"
+            "except ImportError:\n    pass\n",
+            "from ithildinruntime.monitoring import Journal\n",
+        ),
+        (
+            "monitoring.__init__",
+            "if True:\n    from ithildinruntime import journal\n",
+            "from ithildinruntime.monitoring import journal\n",
         ),
     ],
 )

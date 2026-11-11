@@ -57,6 +57,13 @@ __all__ = [
 ]
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# A part that sits beside another inside one segment, joined by `-`, holds no
+# `-` of its own, so two different parts cannot write the same key.
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._]*")
+# An output's name holds no `.`, so it cannot spell an attempt key, and these
+# names belong to the key table's own rows.
+_OUTPUT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_RESERVED = re.compile(r"result|claim|broker-read-[0-9]+")
 _DIGEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _RUN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{4}-[0-9]{2}-[0-9]{2})?")
@@ -65,6 +72,18 @@ _RUN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{4}-[0-9]{2}-[0-9]{2})?")
 def _name(value: str, what: str) -> str:
     if not isinstance(value, str) or not _NAME.fullmatch(value) or ".." in value:
         raise ValueError(f"{what} {value!r} cannot be part of a key")
+    return value
+
+
+def _word(value: str, what: str) -> str:
+    if not isinstance(value, str) or not _WORD.fullmatch(value) or ".." in value:
+        raise ValueError(f"{what} {value!r} cannot be part of a key")
+    return value
+
+
+def _output(value: str) -> str:
+    if not isinstance(value, str) or not _OUTPUT.fullmatch(value) or _RESERVED.fullmatch(value):
+        raise ValueError(f"output name {value!r} cannot be part of a key")
     return value
 
 
@@ -172,7 +191,7 @@ def result_key(deployment: str, run: str, decision_at: datetime, stage: str) -> 
 
 
 def output_key(deployment: str, run: str, decision_at: datetime, stage: str, name: str) -> str:
-    stem = _name(name, "output name")
+    stem = _output(name)
     return f"{_stage_prefix(deployment, run, decision_at, stage)}/{stem}.json"
 
 
@@ -189,7 +208,7 @@ def attempt_key(
     deployment: str, run: str, decision_at: datetime, stage: str, name: str, attempt: int
 ) -> str:
     """A capturing stage's later capture that differs from its first, counting from 2."""
-    stem = _name(name, "output name")
+    stem = _output(name)
     n = _count(attempt, "attempt", first=2)
     return f"{_stage_prefix(deployment, run, decision_at, stage)}/{stem}.attempt-{n}.json"
 
@@ -237,7 +256,7 @@ def loss_stop_key(account: str) -> str:
 
 def _halt_name(component: str, cause: str, at: datetime, count: int) -> str:
     return (
-        f"{_name(component, 'component')}-{_name(cause, 'cause')}-"
+        f"{_word(component, 'component')}-{_word(cause, 'cause')}-"
         f"{timestamp_part(at)}-{_count(count, 'count')}.json"
     )
 
@@ -270,11 +289,11 @@ def release_key(account: str, sha256: str) -> str:
 
 
 def load_claim_key(parameter: str, level: str) -> str:
-    return f"load/{_name(parameter, 'parameter')}-{_name(level, 'level')}/claim.json"
+    return f"load/{_word(parameter, 'parameter')}-{_word(level, 'level')}/claim.json"
 
 
 def load_sent_key(parameter: str, level: str) -> str:
-    return f"load/{_name(parameter, 'parameter')}-{_name(level, 'level')}/sent.json"
+    return f"load/{_word(parameter, 'parameter')}-{_word(level, 'level')}/sent.json"
 
 
 def heartbeat_key(deployment: str, writer: str, at: datetime) -> str:

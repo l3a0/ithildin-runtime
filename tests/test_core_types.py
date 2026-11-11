@@ -86,6 +86,18 @@ def test_a_records_mappings_and_lists_cannot_be_changed() -> None:
     portfolio = core.TargetPortfolio(decision_at=AT, strategy="bollinger", shares=held)
     held[GLD] = Decimal("9")
     assert portfolio.shares[GLD] == Decimal("1.0")
+    inner = {USO: Decimal("1")}
+    book = core.Book(
+        positions_by_strategy={"bollinger": inner},
+        open_orders_by_strategy={},
+        cash=Decimal("0"),
+        platform_realised_pnl=Decimal("0"),
+        replayed_through=0,
+    )
+    inner[USO] = Decimal("5")
+    assert book.positions_by_strategy["bollinger"][USO] == Decimal("1")
+    with pytest.raises(TypeError):
+        book.positions_by_strategy["bollinger"][USO] = Decimal("5")  # type: ignore[index]
 
 
 def test_instrument_id_is_a_new_type_over_str() -> None:
@@ -93,10 +105,23 @@ def test_instrument_id_is_a_new_type_over_str() -> None:
     assert InstrumentId.__supertype__ is str
 
 
-def test_places_reads_a_fields_declared_places() -> None:
-    assert core.places(core.Bar, "close") == 4
-    assert core.places(core.TargetPortfolio, "shares") == 9
-    assert core.places(core.Verdict, "value") == 9
+@pytest.mark.parametrize(
+    ("kind", "field", "n"),
+    [
+        (core.Bar, "close", 4),
+        (core.TargetPortfolio, "shares", 9),
+        (core.Book, "cash", 4),
+        (core.CostSchedule, "per_share", 8),
+        (core.Forecast, "confidence", 8),
+        (core.Verdict, "value", 9),
+    ],
+)
+def test_each_kind_of_decimal_declares_places_that_never_shrink(kind, field, n) -> None:
+    """A price 4, a quantity 9, money 4, a rate 8 and a statistic 8, as records.py says."""
+    assert core.places(kind, field) == n
+
+
+def test_places_refuses_a_field_that_is_no_decimal() -> None:
     with pytest.raises(core.CodecError):
         core.places(core.Bar, "volume")
 
@@ -121,32 +146,51 @@ def _snapshot(bars: dict, status: dict) -> Snapshot:
     )
 
 
+def _daily(instrument: InstrumentId) -> dict:
+    return {"1d": (_bar(instrument),)}
+
+
 def test_require_fresh_returns_when_every_bar_is_fresh() -> None:
     snapshot = _snapshot(
-        {USO: (_bar(USO),), GLD: (_bar(GLD),)}, {USO: BarStatus.FRESH, GLD: BarStatus.FRESH}
+        {USO: _daily(USO), GLD: _daily(GLD)}, {USO: BarStatus.FRESH, GLD: BarStatus.FRESH}
     )
-    assert snapshot.require_fresh() is None
+    assert snapshot.require_fresh([USO, GLD]) is None
+    assert snapshot.require_fresh([USO]) is None
 
 
 @pytest.mark.parametrize(
-    ("bars", "status", "reason"),
+    ("bars", "status", "needed", "reason"),
     [
-        ({}, {USO: BarStatus.MISSING}, "USO missing for the session"),
-        ({USO: (_bar(USO),)}, {USO: BarStatus.STALE}, "USO stale for the session"),
-        ({}, {}, "the snapshot for 2026-11-02T20:40:00+00:00 is empty"),
-        ({}, {USO: BarStatus.FRESH}, "USO is fresh and has no bar"),
-        ({USO: ()}, {USO: BarStatus.FRESH}, "USO is fresh and has no bar"),
-        ({USO: (_bar(USO),)}, {}, "USO has a bar and no status"),
+        ({}, {USO: BarStatus.MISSING}, [USO], "USO missing for the session"),
+        ({USO: _daily(USO)}, {USO: BarStatus.STALE}, [USO], "USO stale for the session"),
+        ({}, {}, [USO], "the snapshot for 2026-11-02T20:40:00+00:00 is empty"),
+        ({}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
+        ({USO: {}}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
+        ({USO: {"1d": ()}}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
+        ({USO: _daily(USO)}, {}, [USO], "USO has a bar and no status"),
         (
-            {USO: (_bar(USO),), GLD: (_bar(GLD),)},
+            {USO: _daily(USO), GLD: _daily(GLD)},
             {USO: BarStatus.FRESH, GLD: BarStatus.MISSING},
+            [USO],
             "GLD missing for the session",
+        ),
+        (
+            {USO: _daily(USO)},
+            {USO: BarStatus.FRESH},
+            [USO, GLD],
+            "GLD missing for the session",
+        ),
+        (
+            {USO: _daily(USO)},
+            {USO: BarStatus.FRESH},
+            [],
+            "the caller names no instrument it needs from the snapshot",
         ),
     ],
 )
-def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, reason: str) -> None:
+def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: list, reason: str) -> None:
     with pytest.raises(Halt) as raised:
-        _snapshot(bars, status).require_fresh()
+        _snapshot(bars, status).require_fresh(needed)
     assert raised.value.reason == reason
 
 
@@ -170,6 +214,10 @@ def test_a_cost_schedule_estimates_a_trade_and_halts_on_a_missing_instrument() -
     assert schedule.estimate(USO, Decimal("-200")) == Decimal("1.7000")
     with pytest.raises(Halt):
         schedule.estimate(GLD, Decimal("1"))
+    one_sided = core.CostSchedule(per_share={GLD: Decimal("0.01")}, fixed={USO: Decimal("1")})
+    for instrument in (GLD, USO):
+        with pytest.raises(Halt):
+            one_sided.estimate(instrument, Decimal("1"))
 
 
 def test_a_journal_entrys_hash_is_the_sha256_of_its_bytes() -> None:
@@ -201,3 +249,5 @@ def test_a_session_date_and_a_mapping_type_are_what_the_diagram_names() -> None:
     snapshot_hints = get_type_hints(Snapshot)
     assert get_origin(snapshot_hints["bars"]) is Mapping
     assert types.MappingProxyType is type(sample(Snapshot).bars)
+    instrument_bars = get_args(snapshot_hints["bars"])[1]
+    assert get_origin(instrument_bars) is Mapping
