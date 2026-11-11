@@ -6,6 +6,7 @@ gives the rules, and #22's acceptance 4 to 6 the checks below.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
@@ -309,6 +310,10 @@ def test_a_field_typed_object_takes_only_what_reads_back_unchanged(value: object
         ("1E+31", False),
         ("1E-31", False),
         ("0." + "1" * 39, False),
+        ("0." + "0" * 31, True),
+        ("0." + "0" * 38, True),
+        ("0." + "0" * 39, False),
+        ("0E-99999999", False),
     ],
 )
 def test_the_codecs_size_limits_sit_at_38_digits_and_magnitude_30(
@@ -409,4 +414,16 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
 def test_decode_refuses_dirty_bytes(data: bytes, kind: type, defect: str) -> None:
     with pytest.raises(CodecError) as raised:
         decode(data, kind)
+    assert type(raised.value) is CodecError
+
+
+def test_decoding_a_snapshot_with_a_bar_under_another_key_is_a_codec_error() -> None:
+    bar = dataclasses.replace(sample(core.Bar), instrument=InstrumentId("USO"), interval="1d")
+    snapshot = dataclasses.replace(
+        sample(core.Snapshot), bars={InstrumentId("USO"): {"1d": (bar,)}}, quotes={}
+    )
+    data = encode(snapshot).replace(b'"bars":{"USO"', b'"bars":{"GLD"', 1)
+    assert data != encode(snapshot)
+    with pytest.raises(CodecError) as raised:
+        decode(data, core.Snapshot)
     assert type(raised.value) is CodecError

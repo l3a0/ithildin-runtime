@@ -77,6 +77,8 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             # A snapshot files each bar under its own instrument and interval.
             bar = sample(core.Bar, depth=depth + 1)
             fields["bars"] = {bar.instrument: {bar.interval: (bar, bar)}}
+            quote = sample(core.Quote, depth=depth + 1)
+            fields["quotes"] = {quote.instrument: quote}
         return hint(**fields)
     if isinstance(hint, type) and issubclass(hint, Enum):
         return list(hint)[-1]

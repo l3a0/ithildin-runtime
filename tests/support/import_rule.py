@@ -19,8 +19,11 @@ arrows alone would miss.
    import by a string, `importlib`, `pkgutil`, `runpy` and `builtins`, under
    any name they are imported as. It also refuses the names `__import__`,
    `import_module` and `__builtins__`, the builtins `exec` and `eval`, and
-   `sys.modules` spelled that way. A route that needs none of these, such as code built from a
-   string some other way, is out of its reach.
+   `sys.modules` spelled that way. `importlib.resources` and `importlib.metadata`
+   are refused with the rest of `importlib`, so package data is read through
+   `Path(__file__)`, as `core/sessions.py` reads its table. A route that needs
+   none of these, such as code built from a string some other way, is out of
+   its reach.
 3. An import of a package the diagram does not name, so a new `common`
    package cannot become a route between workers.
 4. An import in a package's `__init__.py` that a box beneath it may not

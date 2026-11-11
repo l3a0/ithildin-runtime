@@ -150,8 +150,13 @@ def _finite(value: object) -> Decimal:
 def _bounded(value: Decimal, where: str) -> Decimal:
     if not value.is_finite():
         raise CodecError(f"{where} is {value}, which is not finite")
-    digits = value.as_tuple().digits
-    if len(digits) > _MAX_DIGITS or abs(value.adjusted()) > _MAX_MAGNITUDE:
+    digits, exponent = value.as_tuple().digits, value.as_tuple().exponent
+    if value.is_zero():
+        # A zero has one digit, so its places bound what it writes instead.
+        too_big = not isinstance(exponent, int) or not -_MAX_DIGITS <= exponent <= _MAX_MAGNITUDE
+    else:
+        too_big = len(digits) > _MAX_DIGITS or abs(value.adjusted()) > _MAX_MAGNITUDE
+    if too_big:
         raise CodecError(
             f"{where} has {len(digits)} digits at magnitude {value.adjusted()}, "
             f"past the codec's {_MAX_DIGITS} digits and magnitude {_MAX_MAGNITUDE}"
@@ -390,7 +395,11 @@ def _from_plain(value: object, hint: Any, where: str) -> Any:
         names = [f.name for f in dataclasses.fields(hint)]
         if sorted(value) != sorted(names):
             raise CodecError(f"{where} holds fields {sorted(value)}, not {sorted(names)}")
-        return hint(**{n: _from_plain(value[n], hints[n], f"{where}.{n}") for n in names})
+        fields = {n: _from_plain(value[n], hints[n], f"{where}.{n}") for n in names}
+        try:
+            return hint(**fields)
+        except ValueError as error:
+            raise CodecError(f"{where} holds a {hint.__name__} it refuses: {error}") from error
     return _scalar_from_plain(value, hint, where)
 
 

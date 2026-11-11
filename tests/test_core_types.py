@@ -216,7 +216,7 @@ def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: dict, re
     assert raised.value.reason == reason
 
 
-@pytest.mark.parametrize("needed", ["USO", [USO], None, {USO: "1d"}])
+@pytest.mark.parametrize("needed", ["USO", [USO], None, {USO: "1d"}, {USO: iter([])}])
 def test_require_fresh_takes_a_mapping_of_what_is_needed(needed: object) -> None:
     snapshot = _snapshot({USO: _daily(USO)}, {USO: BarStatus.FRESH})
     with pytest.raises(TypeError):
@@ -227,8 +227,23 @@ def test_require_fresh_takes_a_mapping_of_what_is_needed(needed: object) -> None
     ("instrument", "interval"), [(GLD, "1d"), (USO, "1m")], ids=["instrument", "interval"]
 )
 def test_a_bar_filed_under_another_key_is_refused(instrument: InstrumentId, interval: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="is filed under"):
         _snapshot({USO: {"1d": (_bar(instrument, interval),)}}, {USO: BarStatus.FRESH})
+
+
+def test_a_quote_filed_under_another_instrument_is_refused() -> None:
+    quote = sample(core.Quote)
+    with pytest.raises(ValueError, match="quote is filed under"):
+        Snapshot(
+            decision_at=AT,
+            bars={},
+            quotes={GLD: quote},
+            status={},
+            provisional=False,
+            flags={},
+            segments=(),
+            ledgers={},
+        )
 
 
 def test_halt_is_a_plain_exception_caught_inside_a_context_manager() -> None:

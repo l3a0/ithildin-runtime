@@ -1042,9 +1042,9 @@ An arrow means "may import". The diagram draws four rules.
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
    - Only the entry points read the plan's mode, and a module is handed only the decisions.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
-4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of these three outside libraries is imported in one module.
+4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of the outside libraries in the table below is imported in one module.
 
-   **Table:** The one module that imports each of three outside libraries
+   **Table:** The one module that imports each of four outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
