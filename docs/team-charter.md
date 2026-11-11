@@ -158,6 +158,8 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
 | Monitoring | Watch exposure, P&L, execution and systems (L4973) | Everything above | Alerts, a halt | Operator |
 
+Two packages under `src/ithildinruntime` are shared code rather than modules, so the table leaves them out. `core` holds the types, the interfaces, the one codec, the key builders and the calendar that every module imports. `journal`, which [#80](https://github.com/l3a0/ithildin-runtime/issues/80) builds, holds the journal's writer and reader, and only execution, monitoring, the supervisor and the `ithildin` tool may import it. [Package layout and the import rule](architecture/05-building-blocks.md#package-layout-and-the-import-rule) draws both.
+
 Narang's build-or-buy advice sets what the team writes itself. Adequate
 off-the-shelf solutions exist for data, risk models, portfolio construction and
 execution algorithms, and a standard cost model is easy to build (L7044). The

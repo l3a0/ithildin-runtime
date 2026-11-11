@@ -304,7 +304,7 @@ classDiagram
         +dict flags
         +list segments
         +dict ledgers
-        +require_fresh()
+        +require_fresh(needed)
     }
     class Quote {
         +InstrumentId instrument
@@ -426,7 +426,7 @@ classDiagram
         +str vintage_hash
         +Decimal value
         +str stop_state
-        +object close_entry
+        +JournalEntry close_entry
     }
     class SendOutcome {
         +datetime decision_at
@@ -465,6 +465,7 @@ classDiagram
         +list found_outputs
     }
     class RestartRecord {
+        +int format
         +str worker
         +int restart_count
         +int exit_status
@@ -472,10 +473,12 @@ classDiagram
         +str error_tail
     }
     class Heartbeat {
+        +int format
         +str writer
         +datetime at
     }
     class Lease {
+        +int format
         +str vm
         +str boot
         +str container
@@ -488,6 +491,7 @@ classDiagram
         +str status
     }
     class Plan {
+        +int format
         +str deployment
         +str run
         +str mode
@@ -705,7 +709,7 @@ A snapshot's `flags` hold a spike flag with both prices per instrument, so the s
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 
-A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh()` before reading, and it raises `Halt` when any bar it needs is missing or stale. So the default when something is absent is to stop.
+A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh(needed)` before reading, naming each instrument it needs and the intervals it reads of it, such as the daily bar. It raises `Halt` when any of them is absent from the snapshot or missing or stale. It also halts when any other instrument the snapshot holds is not fresh or holds no bar. So the default when something is absent is to stop, even when Data left an instrument or an interval out rather than marking it missing.
 
 #### Only `OrderPath` holds a `Broker`
 
@@ -961,7 +965,7 @@ flowchart TB
     runtime["runtime<br/>worker entry points, modes"]
     loop["runtime.loop<br/>the receive loop"]
     supervisor["runtime.supervisor<br/>the supervisor"]
-    tool["the ithildin tool<br/>a module in runtime, whose name #22 picks"]
+    tool["runtime.ithildin<br/>the ithildin tool"]
 
     data --> core
     alpha --> core
@@ -1038,21 +1042,22 @@ An arrow means "may import". The diagram draws four rules.
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
    - Only the entry points read the plan's mode, and a module is handed only the decisions.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
-4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of these three outside libraries is imported in one module.
+4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of the outside libraries in the table below is imported in one module.
 
-   **Table:** The one module that imports each of three outside libraries
+   **Table:** The one module that imports each of four outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
    | boto3 | `adapters` |
    | marketlake's package | `data` |
    | Alpaca's SDK | `execution.brokers` |
+   | rfc8785, the one codec's canonical JSON | `core` |
 
-   The `ithildin` tool, which lives in `runtime`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
+   The `ithildin` tool, which lives in `runtime.ithildin`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
 
 ### How tests hold the rule
 
-A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A second test runs a day under the supervisor against a fake broker that fails on four things.
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A package's `__init__.py` runs whenever a module beneath it is imported, so the test holds it to the rule of every box beneath it too, and `runtime/__init__.py` and `execution/__init__.py` may import only `core`. A second test runs a day under the supervisor against a fake broker that fails on four things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.

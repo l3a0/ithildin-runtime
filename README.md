@@ -6,7 +6,7 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Nothing is built yet. The first milestone is a walking skeleton that runs in
+Only `core`, the types and shared code every module imports, is built so far. The first milestone is a walking skeleton that runs in
 shadow mode and trades on Alpaca's paper account, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 
