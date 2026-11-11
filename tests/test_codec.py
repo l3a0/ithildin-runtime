@@ -314,6 +314,8 @@ def test_a_field_typed_object_takes_only_what_reads_back_unchanged(value: object
         ("0." + "0" * 38, True),
         ("0." + "0" * 39, False),
         ("0E-99999999", False),
+        ("0E+30", True),
+        ("0E+31", False),
     ],
 )
 def test_the_codecs_size_limits_sit_at_38_digits_and_magnitude_30(
