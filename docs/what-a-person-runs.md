@@ -308,6 +308,14 @@ This rolls an environment back.
 
 The owner or the operator runs it on shadow and paper, and only the owner on live.
 
+###### Roll a release back during a session
+
+The owner rolls back, or on shadow and paper the operator, in three steps. [A rollback is a pin to an earlier digest](architecture/07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) says why.
+
+1. Pull the kill switch of every account the environment holds, one `ithildin switch pull --account <a>` per account as `ithildin status` lists them, or wait until the cancel cutoff has passed, so nothing is left half sent.
+2. Run `ithildin pin set --environment <e> --digest <d>` with the earlier digest. The session keeps its own digest, and the earlier release takes the next session.
+3. A switch pulled for the rollback stays set, so no session trades until it is cleared. A clear during the rolled-back session restarts trading on the release being rolled back, because that session keeps its digest, and on paper a set switch also keeps the promotion job from moving paper's pin. Leave each switch set until `ithildin status` shows the earlier digest as the digest the next session's first run used. Then clear each with `ithildin switch clear --account <a>`, by the owner, or on shadow and paper by the operator.
+
 ###### `ithildin pin unblock --environment <e> --digest <d>`
 
 This removes a block record, so a digest blocked by mistake can be promoted again. Only the owner runs it. Until then a stray block holds paper on its current digest, which keeps trading, and stalls promotion.
@@ -366,10 +374,13 @@ The price has four parts.
 
 An alarm's email subscription sends nothing until it is confirmed. The owner confirms it by hand, once per account, in place of clicking the emailed link. [Which accounts send the email](architecture/07-deployment.md#which-accounts-send-the-email) says which accounts need it, and [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says why the command replaces the link.
 
-The owner first writes the subscription by hand, so the address enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
+Every command below runs under the owner's credential, signed in to the account that holds the topic. `<region>` is the region the topic's ARN names. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
 
-1. Take the token from the emailed link without opening the link.
-2. Run `aws sns confirm-subscription --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, where `<topic ARN>` is the account's alarm topic, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
-3. If the subscription's `ConfirmationWasAuthenticated` attribute does not read `true`, it was confirmed by the link instead, so remove it, subscribe it again, and repeat steps 1 and 2.
+1. Subscribe the address with `aws sns subscribe --region <region> --topic-arn <topic ARN> --protocol email --notification-endpoint <address>`, where `<topic ARN>` is the account's alarm topic. It prints `pending confirmation` in place of the subscription's ARN, and SNS emails the address a confirmation link.
+2. Copy the emailed link's address without following it, and take the value of its `Token` parameter. AWS's [Subscribe](https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html) page says a token is valid for two days, and the [email notifications](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html) page says SNS deletes a subscription still unconfirmed after 48 hours, so a token older than that means starting again at step 1.
+3. Run `aws sns confirm-subscription --region <region> --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
+4. Run `aws sns get-subscription-attributes --region <region> --subscription-arn <subscription ARN>` and check that `ConfirmationWasAuthenticated` reads `true`. If it does not, the subscription was confirmed by the link instead. Remove it with `aws sns unsubscribe --region <region> --subscription-arn <subscription ARN>` and start again at step 1.
+
+To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first. Then find the old subscription's ARN with `aws sns list-subscriptions-by-topic --region <region> --topic-arn <topic ARN>` and remove it with `aws sns unsubscribe`, so the topic always has at least one confirmed subscription. Last, run the drill row for an email subscription on that account. The same `aws sns unsubscribe` command ends a subscription on purpose.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.

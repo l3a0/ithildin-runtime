@@ -195,7 +195,7 @@ erDiagram
 
 ### Where each entity is kept
 
-The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. Five of them are the cylinders in the diagram under [Data flow](06-runtime.md#data-flow), by the same names.
+The entities live in eight stores, one of them kept by marketlake, and each keeps its own rule. Five of them are the cylinders in both diagrams under [Data flow](06-runtime.md#data-flow), by the same names.
 
 1. [marketlake](#marketlake-holds-vintage-and-bar) holds `VINTAGE` and `BAR`.
 2. [Run records](#run-records) hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`.

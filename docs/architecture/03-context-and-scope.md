@@ -304,15 +304,26 @@ does.
 
 #### What this rests on
 
-marketlake publishes a window: each segment stays
-readable for seven days after upload, with old versions kept about 90 days
-more, as [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records, and nothing in the runtime knows when one goes. A read before sealing is the
-only read that needs a segment, because a replay reads partitions and the
-comparison reads the snapshot. Only the uploader refuses an overwrite so far, and
-[l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds making S3 itself refuse one. A snapshot
-keeps naming each segment it read, as the record of what the decision read,
-though after the window those names point at nothing. The window reads age alone, so a day whose sealed partition never reached the bucket ends with marketlake's VM volume as its only copy, and [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the page that rests on. The provisional read
-is proposed for [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16).
+The provisional read is proposed for
+[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#16](https://github.com/l3a0/ithildin-runtime/issues/16). It rests on five
+things about marketlake's segments.
+
+1. **marketlake publishes a window.** Each segment stays readable for seven days
+   after upload, with old versions kept about 90 days more, as
+   [l3a0/marketlake#995](https://github.com/l3a0/marketlake/issues/995) records.
+   Nothing in the runtime knows when one goes.
+2. **A read before sealing is the only read that needs a segment,** because a
+   replay reads partitions and the comparison reads the snapshot.
+3. **Only the uploader refuses an overwrite so far.**
+   [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) holds
+   making S3 itself refuse one.
+4. **A snapshot keeps naming each segment it read,** as the record of what the
+   decision read. After the window those names point at nothing.
+5. **The window reads age alone.** So a day whose sealed partition never reached
+   the bucket ends with marketlake's VM volume as its only copy, and
+   [l3a0/marketlake#996](https://github.com/l3a0/marketlake/issues/996) is the
+   page that rests on.
 
 ### The previous session's daily bar
 
@@ -354,6 +365,6 @@ The alert channel is how an alarm reaches the owner, and it has three routes.
 
 1. **healthchecks.io's ntfy push and email integrations** carry the dead-man checks' alarms. No runtime VM holds an address for them.
 2. **The push topic** is an ntfy topic of an environment's own. Shadow, paper and live each hold one, separate from marketlake's and from each other's, on the same phone. Every push an environment's VM or AWS account sends straight to ntfy goes to that environment's topic. An environment's VM, parameters and EventBridge route hold only that environment's address, and no runtime VM, parameter or EventBridge route holds marketlake's topic address. [An ntfy topic's name is its only password](https://docs.ntfy.sh/publish/), so that separation holds only while no address can be guessed or derived from another environment's. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that each topic's name is a long random value.
-3. **Email through an SNS topic** goes with two alarms, the promotion check and the live drill check, which say that a scheduled job stopped running. [Email on two checks](07-deployment.md#rule-9-email-on-two-checks) says how.
+3. **Email through an SNS topic** goes with two alarms, the promotion check and the live drill check, which say that a scheduled job stopped running. [Email on two checks](07-deployment.md#environment-rule-9-email-on-two-checks) says how.
 
 A ping says only that a decision finished. The jobs [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) lists, such as the daily report, run apart from a decision and get no check of their own. Monitoring reads each job's age and pages through the alert channel, as that section says.

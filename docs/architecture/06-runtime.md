@@ -40,9 +40,68 @@ This page is section 6 of [the architecture](00-README.md), in the order of the 
 
 A data flow diagram shows the components, the order they talk in, and each point where a call crosses a trust boundary. A trust boundary is a line where what a caller may do changes, such as the edge of execution, the only component that holds the broker key. Threat modeling starts from these crossings, because that is where data can be read, changed or forged, so each one needs a stated protection.
 
-The dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform. The numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
+Two figures follow. The first shows where each component runs, and the second the order they talk in. In both, the dashed boxes are trust boundaries, the cylinders are stores, and the rounded boxes are things outside the platform.
 
-The figure below is a C4 deployment diagram. It places each component and store inside the VM or the AWS account that holds it, and draws the other systems outside.
+The figure below is a C4 deployment diagram. It places each component and store inside the VM or the AWS account that holds it, and draws the other systems outside. It draws no flows.
+
+```mermaid
+flowchart TB
+    subgraph tb_person["Trust boundary: a person's machine"]
+        person(["Owner or operator,<br/>with the ithildin tool"])
+    end
+    subgraph tb_github["Trust boundary: GitHub"]
+        registry(["Signed release image"])
+    end
+    subgraph tb_marketlake["Trust boundary: marketlake's AWS account"]
+        lake[("Sealed partitions,<br/>segments and ledgers")]
+    end
+    subgraph tb_broker["Trust boundary: Alpaca"]
+        brokerx(["Broker"])
+    end
+    subgraph tb_alert["Trust boundary: alert vendors"]
+        alert(["Heartbeat and push"])
+    end
+    subgraph tb_account["Trust boundary: the environment's AWS account"]
+        subgraph tb_vm["Trust boundary: the VM"]
+            sup["Supervisor"]
+            data["Data"]
+            models["Alpha, risk, cost and<br/>portfolio construction"]
+            mon["Monitoring"]
+            d2[("Security master,<br/>in the release image")]
+            subgraph tb_exec["Trust boundary: execution, the only role with the broker key"]
+                exec["Execution"]
+            end
+        end
+        queue["Queues"]
+        secret[("Secret store")]
+        d1[("Run records")]
+        d3[("Journal")]
+        d4[("Decision reports")]
+        d5[("Account controls")]
+    end
+
+    sup ~~~ mon
+    data ~~~ d2
+    models ~~~ tb_exec
+    tb_vm ~~~ queue
+    tb_vm ~~~ secret
+    tb_vm ~~~ d1
+    queue ~~~ d3
+    secret ~~~ d4
+    d1 ~~~ d5
+    tb_person ~~~ tb_account
+    tb_github ~~~ tb_account
+    tb_marketlake ~~~ tb_account
+    tb_broker ~~~ tb_account
+    tb_alert ~~~ tb_account
+
+    classDef boundary fill:none,stroke-dasharray:6 4
+    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
+```
+
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
+
+The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 
 ```mermaid
 flowchart LR
@@ -114,6 +173,8 @@ flowchart LR
 ```
 
 Flows outside one decision, such as pin writes and a failure's direct alarm route, are drawn in [Where it runs](07-deployment.md#where-it-runs).
+
+The table below names each flow of the dynamic diagram that crosses a trust boundary, by its number there.
 
 **Table:** Each flow that crosses a trust boundary
 
@@ -279,9 +340,11 @@ sequenceDiagram
     participant K as Risk model
     participant C as Cost model
     participant P as Portfolio construction
+    participant H as Heartbeat service
+    participant L as Alert channel
 
         S->>S: starts the supervisor instances' units
-    V->>V: is the kill switch blob absent?
+    V->>F: is the kill switch blob absent?
     V->>F: writes the run's plan once under the plan's lease,<br/>naming its release
     V->>S: writes the local release file,<br/>so its path unit starts each worker's unit
     F-->>D: sends an event for the plan
@@ -328,10 +391,13 @@ sequenceDiagram
     X->>J: journals its hash
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
-    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed,<br/>and creates stop.json from the result
+    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed
+    X->>F: creates stop.json from the stop test's result
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
-    X->>X: does the clock agree with the broker's?
+    X->>B: asks the broker for its clock
+    B-->>X: returns the broker's time
+    X->>X: does the VM's clock agree with the broker's?
     X->>X: is it before the cutoff?
     opt a resting order the plan cancels or replaces
         X->>F: takes the account's lease
@@ -393,8 +459,11 @@ sequenceDiagram
     X->>F: stores the send outcome<br/>and execution's send result
     F-->>M: sends an event for execution's result
     M->>F: stores the decision's report<br/>and monitoring's report result
-    M->>M: reads the age of the jobs that run apart from a decision,<br/>and pages on one past its bound
-    M->>M: pings the heartbeat service
+    M->>F: reads each job's last-run record
+    opt a job that runs apart from a decision is past its bound
+        M->>L: pages on it
+    end
+    M->>H: pings the heartbeat service
     Note over V,J: After the close, once every decision has a result
     X->>B: reads the day's fills, positions, open orders,<br/>cash and the broker's records
     B-->>X: returns the day's fills, positions, open orders,<br/>cash and the broker's records
@@ -478,7 +547,22 @@ The steps run in this order.
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test and the price spike flag's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that both run with no order needed, so a decision that plans no order still runs them, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
-4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements. One stored entry holds the target, the planned orders, cancels and replacements, each with its client order id, the journal entry it synced through, a hash of the broker state it fetched, and the instance running the send stage. A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero, and execution halts on one that leaves an instrument out. A strategy that is off when this step reads it gets no planned orders, cancels or replacements, so its resting orders are left to the sort, and the entry names it as off. A strategy is off when its off switch is set or, by this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased, the same two things the check before each send reads. That never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says. A strategy whose late forecast reads as no change, where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision, also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
+4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
+   - **What the stored entry holds.** One stored entry holds seven things.
+     1. The target.
+     2. The planned orders, cancels and replacements, each with its client order id.
+     3. The journal entry it synced through.
+     4. A hash and the time of the broker state it fetched.
+     5. The instance running the send stage.
+     6. Each strategy that is off.
+     7. Each strategy whose late forecast reads as no change.
+   - **What the target must name.** A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero. Execution halts on one that leaves an instrument out.
+   - **What a strategy that is off gets.** A strategy that is off when this step reads it gets no planned orders, cancels or replacements. So its resting orders are left to the sort, and the entry names it as off. A strategy is off when either of two things holds, the same two things the check before each send reads.
+     1. Its off switch is set.
+     2. By this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased.
+
+     Being off never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+   - **What a strategy whose late forecast reads as no change gets.** It also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. A late forecast reads as no change where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
 5. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
 6. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
 
@@ -659,9 +743,10 @@ sequenceDiagram
     participant F as Blob store
     participant M as Monitoring
     participant L as Alert channel
+    participant ML as marketlake's bucket
 
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
-    V->>V: is the kill switch blob absent?
+    V->>F: is the kill switch blob absent?
     V->>F: writes the run's plan once
     F-->>X: sends an event for the plan
     F-->>D: sends an event for the plan
@@ -680,7 +765,8 @@ sequenceDiagram
         X->>F: stores a halt as that decision's send result,<br/>if none is stored
         X->>F: releases the account's lease
     and
-        D->>D: are the segments up to the decision time<br/>in marketlake?
+        D->>ML: are the segments up to the decision time<br/>in marketlake?
+        ML-->>D: answers that they are not there yet
         D->>F: stores a halt as data's result, reason "data not ready"
     end
     F-->>X: sends an event: data's result is a halt

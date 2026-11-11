@@ -163,7 +163,7 @@ The price is these accounts.
 
 - Four runtime accounts, test, shadow, paper and live.
 - The organization's management account.
-- A log-archive account for the organization trail, which no existing account can hold, as [Each environment has an AWS account of its own](#rule-11-each-environment-has-an-aws-account-of-its-own) says.
+- A log-archive account for the organization trail, which no existing account can hold, as [Each environment has an AWS account of its own](#environment-rule-11-each-environment-has-an-aws-account-of-its-own) says.
 
 Each is set up once, with GitHub's deploy roles recreated in each and a read grant from marketlake's account for each environment's data role, as [The runtime has a VM of its own](#rule-8-the-runtime-has-a-vm-of-its-own) says.
 
@@ -178,7 +178,7 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 The grants below say who pulls the switch and who clears it.
 
 - **The runtime's credential** can create the switch, which pulls it, and can never delete it.
-- **The rollback's credential**, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
+- **The rollback's credential**, which is the VM change credential on paper and live and the apply credential on shadow, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
 - **The owner's and the operator's credentials** pull any account's switch.
 - Apart from the drill role clearing its own pull, below, only **the owner's credential** clears a live account's switch.
 - **The operator's credential** may also clear a paper or shadow account's switch.
@@ -250,7 +250,7 @@ No credential the runtime holds can delete a version, or change any of these fou
 
 #### What the bucket's policy refuses, and to whom
 
-The bucket's policy makes the eight refusals in this table.
+The bucket's policy makes the nine refusals in this table.
 
 **Table:** What the bucket's policy refuses, by the principal it refuses
 
@@ -263,6 +263,7 @@ The bucket's policy makes the eight refusals in this table.
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
 | Every principal but those who may clear the switch | Any delete of an account's switch, `accounts/<account>/switch.json`. On the shadow and paper buckets that leaves the owner and the operator. On the live bucket it leaves the owner, and the approved drill role for a delete that carries `If-Match` and names no version. The policy cannot test which tag the header names, so the drill job's code holds it to the role's own create's tag |
+| Every principal but those who may delete a fired loss stop or a strategy's off switch | Any delete of an account's fired loss stop, `accounts/<account>/stop.json`, and of a strategy's off switch, `accounts/<account>/strategies/<strategy>/off.json`. On the live bucket that leaves the owner alone, never the approved drill role. On the shadow and paper buckets it leaves the owner and the operator for a fired loss stop, and the owner alone for an off switch until the owner rules on the proposal that the operator may delete one too, listed in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) |
 | All but the owner | Changes to the policy itself |
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
@@ -273,7 +274,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. Mid-session, the person rolling back, the owner or on shadow and paper the operator, first pulls the kill switch or waits past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session. A switch pulled for the rollback stays set, so that session trades nothing until `ithildin switch clear` runs, by the owner, or on shadow and paper by the operator.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -792,7 +793,7 @@ Hard limit 6, in CLAUDE.md and in the charter, matches: merging to `main` is the
 
 What this section says an agent cannot reach, it says of the design. Until agents move off the owner's admin login, a move deferred on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), those statements are rules agents follow, as [A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says.
 
-The owner's and the operator's credentials still span environments by design. One read-only grant lets the promotion job judge shadow. [Each environment has an AWS account of its own](#rule-11-each-environment-has-an-aws-account-of-its-own) says which AWS account each environment lives in.
+The owner's and the operator's credentials still span environments by design. One read-only grant lets the promotion job judge shadow. [Each environment has an AWS account of its own](#environment-rule-11-each-environment-has-an-aws-account-of-its-own) says which AWS account each environment lives in.
 
 #### Why each mode gets an environment of its own
 
@@ -865,7 +866,7 @@ The diagram shows a digest's path from a merge to paper, so look for the rollbac
 
 #### The rules that keep the environments apart
 
-Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rules 9, 10 and 11 follow it under headings of their own.
+Eleven environment rules keep the environments apart. Environment rules 1 to 8 follow as a list, and environment rules 9, 10 and 11 follow it under headings of their own. They are numbered apart from this page's Rule 1 to Rule 11, so environment rule 9 and Rule 9 above are different rules.
 
 1. **A merge deploys to shadow, and a healthy shadow promotes to paper.** CI runs the tests on every pull request, with no AWS credential.
 
@@ -978,7 +979,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
 8. **The `ithildin` tool finds the environment from the account.** It looks the account up in the same table, and a halt's id carries its deployment, so a command reaches the bucket that account lives in. It refuses an account the table does not name. So a switch pull for a live account cannot land in the paper bucket, and the pull stays one command.
 
-#### Rule 9: every running environment has its own heartbeat check
+#### Environment rule 9: every running environment has its own heartbeat check
 
 **Every running environment has its own heartbeat check, and the pipeline has a CloudWatch alarm.** Each deployment gets a check on healthchecks.io named after its environment and deployment, whose description carries the first command to run, its runbook row and the broker's console, so the push on a phone says what to do. The promotion job reports each run to a CloudWatch alarm of its own, so a dropped schedule alarms.
 
@@ -998,7 +999,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 Each environment also gets a session-ready check in CloudWatch, due at the session timer plus a margin. The supervisor reports to it once it has written or read the plan and has heard the plan's own event. So a VM that never booted, or an event path dead since the open, alarms in the morning rather than after the cutoff.
 
-#### Rule 9: how each check reaches the owner
+#### Environment rule 9: how each check reaches the owner
 
 The deployment checks stay on healthchecks.io, outside AWS, because they must still page during an AWS outage. The session-ready checks, the promotion check and the live drill check are [CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) that treat missing data as a failure and reach their environment's push topic by the EventBridge route. That keeps marketlake's shared healthchecks.io project at 12 checks, marketlake's nine and the three deployment checks, of the free plan's 20, under the 75% limit of 15. The count is the shared project's, so a check either repository adds moves it.
 
@@ -1041,7 +1042,7 @@ flowchart LR
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) confirms that a push arrives on each environment's push topic, because the phone subscribes to each of the three by hand and a dead subscription looks like silence.
 
-#### Rule 9: email on two checks
+#### Environment rule 9: email on two checks
 
 The promotion check and the live drill check each have a second alarm action, an email through an SNS topic.
 
@@ -1072,7 +1073,7 @@ Keeping checks on two services and adding email by hand has five prices.
 4. The phone's three subscriptions and each email subscription's confirmation are hand steps that a drill has to watch. The email itself costs nothing at this volume, since [SNS's FAQ](https://aws.amazon.com/sns/faqs/) states no charge for the first 1,000 email notifications each month.
 5. A subscription lost after a drill, to a signed removal, a replaced topic or a change on the phone, sends nothing until that drill's next run finds it, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds that drill's turn on shadow and paper.
 
-#### Rule 9: what each CloudWatch check guarantees
+#### Environment rule 9: what each CloudWatch check guarantees
 
 This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what each CloudWatch check guarantees, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how.
 
@@ -1097,7 +1098,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
    For every other page on the push route, [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the owner learns of it, including when monitoring is down or the topic refuses monitoring's own push.
 5. Each SNS topic's policy admits only its own account's alarm of the two.
 
-#### Rule 10: what the drills check
+#### Environment rule 10: what the drills check
 
 **Every drill that depends on an environment's own resources runs in each environment that has them.** These are:
 
@@ -1118,7 +1119,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 [Drills with no alarm](../halts-and-drills.md#drills-with-no-alarm) lists the drill that grows with each environment.
 
-#### Rule 10: when drills run
+#### Environment rule 10: when drills run
 
 ##### When each environment runs its drills
 
@@ -1145,13 +1146,13 @@ A session is open here when a run's plan exists, its stop does not and its close
 
 Each drill records when it last ran, and the job raises one overdue through the live drill check, where [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how the drill's name reaches the page.
 
-#### Rule 10: who runs them
+#### Environment rule 10: who runs them
 
 A live drill's job runs unattended only the read-only checks, which change nothing, under a role that can assume no other. It reminds the owner when a drill that changes live's state is due. That drill runs as a job behind live's reviewer under the approved drill role, so the owner approves it rather than running it. Live's drills are paper's drill code, chosen by the environment table, and their scheduled job reports to a CloudWatch alarm of its own.
 
 The owner approves every live drill that changes live's state, and only a run the owner approved pulls and clears the live switch in one. Such a drill reads back its own pull's and its own clear's journal entries before it ends, and without both it counts as not clean, which refuses the next session. No agent session starts or approves a drill on live. The one exception is the check of the operator's credential, which must run under the operator's role, so the owner runs it by hand, as [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store) and the drills page say.
 
-#### Rule 10: how an environment's infrastructure is applied
+#### Environment rule 10: how an environment's infrastructure is applied
 
 Each environment's infrastructure is applied by a plan of its own. A bad apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
 
@@ -1171,7 +1172,7 @@ With detail this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime
 2. **The apply credential** is assumed only by the apply job on `main`, in that environment's GitHub environment, once the owner's merge reaches `main`, and on live once the owner approves.
 
    On paper and live it holds no write on the launch template or the VM's role.
-3. **The VM change credential**, on paper and live, is assumed only by a job in the `paper-vm` or `live-vm` GitHub environment, behind the owner's approval. It can change the launch template and pass the VM's role.
+3. **The VM change credential**, on paper and live, is assumed only by a job in the `paper-vm` or `live-vm` GitHub environment, behind the owner's approval. It can change the launch template and pass the VM's role, and, in a rollback the owner overrides for an emergency, pull each account's switch, never clear it, and journal that pull, as [Rule 5](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) grants.
 
    Reach to the VM counts as reach to that environment's broker key. That is why it stays behind that approval, and why it is the one exception to the refusals that bind every principal ([A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)). Among those refusals, no role that applies the code may change who can act as the principal that may read a broker credential.
 
@@ -1181,9 +1182,9 @@ With detail this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime
 
 Shadow's and paper's applies follow the owner's merge with no second approval, a paper VM change apart, and live's is approved by the owner alone.
 
-#### Rule 11: each environment has an AWS account of its own
+#### Environment rule 11: each environment has an AWS account of its own
 
-**Each environment has an AWS account of its own.** Test, shadow, paper and live each run in an AWS account of their own, members of one organization, so an IAM mistake in one environment's account cannot reach another's, and the drill in [What the drills check](#rule-10-what-the-drills-check) checks that every such try fails at the account's edge.
+**Each environment has an AWS account of its own.** Test, shadow, paper and live each run in an AWS account of their own, members of one organization, so an IAM mistake in one environment's account cannot reach another's, and the drill in [What the drills check](#environment-rule-10-what-the-drills-check) checks that every such try fails at the account's edge.
 
 ##### How the owner, the operator and the promotion job reach each account
 
