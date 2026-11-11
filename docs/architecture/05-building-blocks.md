@@ -804,7 +804,7 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. The diagram draws only the sources this section names, so four of the values in `GateInputs` have no arrow.
+The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. The diagram draws only the sources this section names. The stop blob's arrow and the journal's arrow reach the `GateInputs` box, for the stop blob's state and a close's entry, so the other four values have no arrow.
 
 The figure below is a C4 component diagram.
 

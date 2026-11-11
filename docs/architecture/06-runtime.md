@@ -340,6 +340,8 @@ sequenceDiagram
     participant K as Risk model
     participant C as Cost model
     participant P as Portfolio construction
+    participant H as Heartbeat service
+    participant L as Alert channel
 
         S->>S: starts the supervisor instances' units
     V->>F: is the kill switch blob absent?
@@ -457,8 +459,9 @@ sequenceDiagram
     X->>F: stores the send outcome<br/>and execution's send result
     F-->>M: sends an event for execution's result
     M->>F: stores the decision's report<br/>and monitoring's report result
-    M->>M: reads the age of the jobs that run apart from a decision,<br/>and pages on one past its bound
-    M->>M: pings the heartbeat service
+    M->>F: reads the age of the jobs that run apart from a decision
+    M->>L: pages on any job past its bound
+    M->>H: pings the heartbeat service
     Note over V,J: After the close, once every decision has a result
     X->>B: reads the day's fills, positions, open orders,<br/>cash and the broker's records
     B-->>X: returns the day's fills, positions, open orders,<br/>cash and the broker's records
@@ -543,18 +546,20 @@ The steps run in this order.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test and the price spike flag's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that both run with no order needed, so a decision that plans no order still runs them, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
-   - **What the stored entry holds.** One stored entry holds five things.
+   - **What the stored entry holds.** One stored entry holds seven things.
      1. The target.
      2. The planned orders, cancels and replacements, each with its client order id.
      3. The journal entry it synced through.
      4. A hash of the broker state it fetched.
      5. The instance running the send stage.
+     6. Each strategy that is off.
+     7. Each strategy whose late forecast reads as no change.
    - **What the target must name.** A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero. Execution halts on one that leaves an instrument out.
    - **What a strategy that is off gets.** A strategy that is off when this step reads it gets no planned orders, cancels or replacements. So its resting orders are left to the sort, and the entry names it as off. A strategy is off when either of two things holds, the same two things the check before each send reads.
      1. Its off switch is set.
      2. By this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased.
 
-     That never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+     Being off never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
    - **What a strategy whose late forecast reads as no change gets.** It also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. A late forecast reads as no change where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
 5. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
 6. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
@@ -736,6 +741,7 @@ sequenceDiagram
     participant F as Blob store
     participant M as Monitoring
     participant L as Alert channel
+    participant ML as marketlake
 
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
     V->>F: is the kill switch blob absent?
@@ -757,7 +763,8 @@ sequenceDiagram
         X->>F: stores a halt as that decision's send result,<br/>if none is stored
         X->>F: releases the account's lease
     and
-        D->>D: are the segments up to the decision time<br/>in marketlake?
+        D->>ML: are the segments up to the decision time<br/>in marketlake?
+        ML-->>D: answers that they are not there yet
         D->>F: stores a halt as data's result, reason "data not ready"
     end
     F-->>X: sends an event: data's result is a halt

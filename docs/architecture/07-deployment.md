@@ -263,7 +263,7 @@ The bucket's policy makes the nine refusals in this table.
 | Any principal that is not one of that environment's own runtime, deploy, promotion, plan, apply or VM change roles, the owner's or the operator's, or on live the drill job's role and the approved drill role, matched on `aws:PrincipalArn` | Every S3 action on the bucket |
 | The operator | Any version delete |
 | Every principal but those who may clear the switch | Any delete of an account's switch, `accounts/<account>/switch.json`. On the shadow and paper buckets that leaves the owner and the operator. On the live bucket it leaves the owner, and the approved drill role for a delete that carries `If-Match` and names no version. The policy cannot test which tag the header names, so the drill job's code holds it to the role's own create's tag |
-| Every principal but those who may delete a fired loss stop or a strategy's off switch | Any delete of an account's fired loss stop, `accounts/<account>/stop.json`, and of a strategy's off switch, `accounts/<account>/strategies/<strategy>/off.json`. On the live bucket that leaves the owner alone, never the approved drill role. On the shadow and paper buckets it leaves the owner and the operator, and the operator's delete of an off switch waits on the ruling that [Who may create and delete a fired loss stop or a strategy's off switch](#who-may-create-and-delete-a-fired-loss-stop-or-a-strategys-off-switch) names |
+| Every principal but those who may delete a fired loss stop or a strategy's off switch | Any delete of an account's fired loss stop, `accounts/<account>/stop.json`, and of a strategy's off switch, `accounts/<account>/strategies/<strategy>/off.json`. On the live bucket that leaves the owner alone, never the approved drill role. On the shadow and paper buckets it leaves the owner and the operator for a fired loss stop, and the owner alone for an off switch until the owner rules on the proposal, which [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) names, that the operator may delete one too |
 | All but the owner | Changes to the policy itself |
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
@@ -274,7 +274,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. `ithildin pin set` writes the earlier digest, as `### Four environments` says. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM, and the earlier release takes the next session. So a rollback during a session first stops sending, by a kill switch pull or by waiting past the cancel cutoff, so nothing is left half sent. A switch pulled for the rollback stays set, so that session trades nothing until it is cleared. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The VM keeps the session's digest until the session ends, so nobody needs to reach the VM. So a rollback during a session first stops sending, by a kill switch pull or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so that session trades nothing until it is cleared. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -866,7 +866,7 @@ The diagram shows a digest's path from a merge to paper, so look for the rollbac
 
 #### The rules that keep the environments apart
 
-Eleven environment rules keep the environments apart. Environment rules 1 to 8 follow as a list, and environment rules 9, 10 and 11 follow it under headings of their own. They are numbered apart from the rules under [Where it runs](#where-it-runs), so environment rule 9 and rule 9 there are different rules.
+Eleven environment rules keep the environments apart. Environment rules 1 to 8 follow as a list, and environment rules 9, 10 and 11 follow it under headings of their own. They are numbered apart from this page's Rule 1 to Rule 11, so environment rule 9 and Rule 9 above are different rules.
 
 1. **A merge deploys to shadow, and a healthy shadow promotes to paper.** CI runs the tests on every pull request, with no AWS credential.
 

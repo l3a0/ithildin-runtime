@@ -737,25 +737,28 @@ The figure below is a C4 dynamic diagram of a clean stop in shadow, paper and li
 
 ```mermaid
 sequenceDiagram
-    participant W as Every worker
+    participant W as Every other worker
     participant E as Execution
     participant B as Broker
+    participant J as Journal
     participant F as Blob store
     participant S as One supervisor instance
     participant O as Every other supervisor instance
     participant T as The host's timer
-    W->>W: finishes its decision loop once every decision has a result
+    Note over W,E: every worker, execution included, finishes its decision loop<br/>once every decision has a result
     Note over E,B: The market's close passes
     E->>B: Proposed: reads the day's fills and the broker's positions, open orders, cash and records
     E->>E: Proposed: sorts what it finds
-    E->>F: Proposed: journals the fills and each record as an outside entry
+    E->>J: Proposed: journals the fills and each record as an outside entry
     E->>E: Proposed: reconciles
     E->>F: Proposed: stores a result saying whether each open order is settled or still open
     S->>F: Proposed: reads that result
     S->>F: stores the run's stop
     F-->>W: the stop's event reaches each worker
+    F-->>E: the stop's event reaches execution
     F-->>O: the stop's event reaches every other instance
     W->>W: exits cleanly
+    E->>E: exits cleanly
     O->>O: exits cleanly
     Note over W,O: The stop ends the run
     T->>T: stops every unit later still, in case a stop is lost
@@ -2403,14 +2406,16 @@ A cancel whose answer is lost is looked up first. What the lookup shows decides 
 | The order cancelled, filled or expired | The lookup settles the cancel and is journaled as received |
 | Any other outcome | The cancel stays in doubt |
 
-Every other outcome leaves the cancel in doubt. That last row covers four cases.
+No stage resends a plan's cancel yet, as `A plan changes or cancels its own unfilled orders` says.
+
+A run of the contract suite counts only for the account it ran against, so paper and live stay independent. Until a run exists for a live account, every lost cancel there that no lookup or answer settles ends in the halt that [When an unsettled cancel halts new orders](#timeouts-and-breakers-when-an-unsettled-cancel-halts-new-orders) describes. The kill switch alone needs no run. Its repeat keeps the lookup and the written number, at paper and at live.
+
+The table's last row covers four cases.
 
 1. A lookup that cannot answer or shows a cancel pending.
 2. A written number already used up.
 3. A contract case that account's run cannot provoke.
 4. A scheduled run that is missing, stale or failed.
-
-No stage resends a plan's cancel yet, as `A plan changes or cancels its own unfilled orders` says.
 
 A resend does not end the doubt until a lookup or an answer shows the order cancelled, filled or expired, so a broker's acceptance of a cancel leaves it in doubt. An answer such as "already filled" is journaled as received.
 
@@ -2424,8 +2429,6 @@ The clock runs from the first cancel's journal entry, so a resend never resets i
 4. Its page names the owner's step in the broker's own interface.
 
 A halt still stops no cancel except a plan's own, as [What a cancel checks](#rule-9-fourth-item-what-a-cancel-checks) says.
-
-A run of the contract suite counts only for the account it ran against, so paper and live stay independent. Until a run exists for a live account, every lost cancel there that no lookup or answer settles ends in that halt. The kill switch alone needs no run. Its repeat keeps the lookup and the written number, at paper and at live.
 
 #### Timeouts and breakers: an order in doubt, and a store that is down
 
@@ -2602,7 +2605,7 @@ Neither the code nor any role that applies it can do any of these.
 - Grant read of one to any principal but the one the Configuration table names.
 - Change who can act as that principal or who can assume the owner's role.
 
-The one exception covers the launch template and the VM's role alone, on paper and live, and every other refusal still binds that credential. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval.
+The one exception is the VM change credential on paper and live, which may change the launch template and the VM's role alone, and every other refusal still binds it. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval.
 
 On shadow the apply credential makes these changes, and shadow's journal holds simulated fills only, which is the accepted price.
 
@@ -2662,7 +2665,7 @@ An execution restart that cannot confirm its digest serves nothing and pages the
 
 #### Automatic restarts: how restarts are counted
 
-One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which, apart from the two named below.
+One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which, apart from capture and execution, which [Automatic restarts: the two components that keep on past their cap](#automatic-restarts-the-two-components-that-keep-on-past-their-cap) covers.
 
 1. The count runs across a component's instances.
 2. One instance past its own limit, execution's and capture's apart, is taken out and alarms while the others carry on.
