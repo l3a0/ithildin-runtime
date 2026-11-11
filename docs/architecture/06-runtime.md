@@ -281,7 +281,7 @@ sequenceDiagram
     participant P as Portfolio construction
 
         S->>S: starts the supervisor instances' units
-    V->>V: is the kill switch blob absent?
+    V->>F: is the kill switch blob absent?
     V->>F: writes the run's plan once under the plan's lease,<br/>naming its release
     V->>S: writes the local release file,<br/>so its path unit starts each worker's unit
     F-->>D: sends an event for the plan
@@ -328,10 +328,13 @@ sequenceDiagram
     X->>J: journals its hash
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
-    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed,<br/>and creates stop.json from the result
+    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed
+    X->>F: creates stop.json from the stop test's result
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
-    X->>X: does the clock agree with the broker's?
+    X->>B: asks the broker for its clock
+    B-->>X: returns the broker's time
+    X->>X: does the VM's clock agree with the broker's?
     X->>X: is it before the cutoff?
     opt a resting order the plan cancels or replaces
         X->>F: takes the account's lease
@@ -661,7 +664,7 @@ sequenceDiagram
     participant L as Alert channel
 
     Note over V: The machine rebooted. Yesterday's execution worker died<br/>after it journaled the sending entry<br/>and before the broker answered.
-    V->>V: is the kill switch blob absent?
+    V->>F: is the kill switch blob absent?
     V->>F: writes the run's plan once
     F-->>X: sends an event for the plan
     F-->>D: sends an event for the plan
