@@ -961,7 +961,7 @@ flowchart TB
     runtime["runtime<br/>worker entry points, modes"]
     loop["runtime.loop<br/>the receive loop"]
     supervisor["runtime.supervisor<br/>the supervisor"]
-    tool["the ithildin tool<br/>a module in runtime, whose name #22 picks"]
+    tool["runtime.ithildin<br/>the ithildin tool"]
 
     data --> core
     alpha --> core
@@ -1048,7 +1048,7 @@ An arrow means "may import". The diagram draws four rules.
    | marketlake's package | `data` |
    | Alpaca's SDK | `execution.brokers` |
 
-   The `ithildin` tool, which lives in `runtime`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
+   The `ithildin` tool, which lives in `runtime.ithildin`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
 
 ### How tests hold the rule
 
