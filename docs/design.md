@@ -1752,7 +1752,7 @@ calendar into a list of decisions, each with its time and the strategies
 deciding at it. The supervisor calls it for one day, and a backtest calls it
 for the whole span, so both build their plans the same way. A decision time
 stated as minutes before the close moves with an early close, and one stated
-as a clock time after an early close is dropped. Any other decision time outside its session, such as a clock time after the regular close or a time that falls before the open, halts the plan, because the schedule that names it is wrong and an order sent then would trade at a price the decision never read. One strategy's wrong time halts the whole plan. The host starts every unit of the run
+as a clock time after an early close is dropped. Any other decision time outside its session halts the plan, such as a clock time after the regular close, a time that falls before the open, or minutes before an early close that reach back before the open, because the schedule that names it is wrong and an order sent then would trade at a price the decision never read. One strategy's wrong time halts the whole plan, which for a backtest is its whole span. The host starts every unit of the run
 before the first decision time. The workers stay up all day and work through the
 decisions as they work through a backtest's span, and the data worker writes
 each decision's snapshot once the wall clock reaches its time. A worker's
@@ -3432,7 +3432,7 @@ This section lists every decision made on the project, oldest first, one heading
 
 ### 2026-11-11
 
-1. The owner ruled that a decision time outside its session halts the whole plan. Two cases are not outside it: a time stated as minutes before the close moves with an early close, and a clock time after an early close is dropped. Any other, such as a clock time after the regular close or a time before the open, halts. The owner said "Okay." to the recommendation to keep the halt. Turned down: skipping that decision, which would leave a strategy silently never trading. The price is that one strategy's wrong time stops every strategy that day, until its schedule is fixed. Relayed from the owner's chat of 2026-11-11, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22#issuecomment-6785743198). Governs: `### Strategies, schedules and decisions` in design.md.
+1. The owner ruled that a decision time outside its session halts the whole plan, which for a backtest is its whole span. A time stated as minutes before the close moves with an early close, and a clock time after an early close is dropped. Any other time outside its session halts, such as a clock time after the regular close, a time before the open, or minutes before an early close that reach back before the open. The owner said "Okay." to the recommendation to keep the halt. Turned down: skipping that decision, which would leave a strategy silently never trading. The price is that one strategy's wrong time stops every strategy that day, or a backtest's whole span, until its schedule is fixed. Relayed from the owner's chat of 2026-11-11, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22#issuecomment-6785743198). Governs: `### Strategies, schedules and decisions` in design.md.
 
 ## Considered and rejected
 

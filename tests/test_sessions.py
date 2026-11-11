@@ -222,6 +222,36 @@ def test_a_decision_outside_a_regular_session_halts(when: object) -> None:
     assert "outside that session's 14:30 to 21:00 UTC" in raised.value.reason
 
 
+@pytest.mark.parametrize(
+    ("mode", "first", "last"),
+    [
+        (Mode.PAPER, date(2026, 11, 30), date(2026, 11, 30)),
+        (Mode.PAPER, date(2026, 11, 27), date(2026, 11, 27)),
+        (Mode.BACKTEST, date(2026, 11, 25), date(2026, 11, 30)),
+    ],
+)
+def test_minutes_before_an_early_close_that_fall_before_the_open_halt_the_whole_plan(
+    mode: Mode, first: date, last: date
+) -> None:
+    def build() -> core.BuiltPlan:
+        return core.build_plan(
+            deployment="paper",
+            mode=mode,
+            release="r1",
+            schedules={"bollinger": [CLOSE_20], "early": [BeforeClose(240)]},
+            first=first,
+            last=last,
+            table=_table(SMALL),
+        )
+
+    if first == date(2026, 11, 30):
+        assert len(build().plan.decisions) == 2
+        return
+    with pytest.raises(Halt) as raised:
+        build()
+    assert "early decides at BeforeClose(minutes=240) on 2026-11-27" in raised.value.reason
+
+
 def test_the_bounds_of_a_session_are_inside_it() -> None:
     built = _plan([ExchangeTime(time(9, 30)), ExchangeTime(time(16, 0)), BeforeClose(0)])
     assert [d.at for d in built.plan.decisions] == [
