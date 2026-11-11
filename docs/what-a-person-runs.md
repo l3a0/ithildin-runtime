@@ -314,7 +314,7 @@ The owner rolls back, or on shadow and paper the operator, in three steps. [A ro
 
 1. Pull the kill switch of every account the environment holds, one `ithildin switch pull --account <a>` per account as `ithildin status` lists them, or wait until the cancel cutoff has passed, so nothing is left half sent.
 2. Run `ithildin pin set --environment <e> --digest <d>` with the earlier digest. The session keeps its own digest, and the earlier release takes the next session.
-3. A switch pulled for the rollback stays set, and that session trades nothing until it is cleared. To keep the release being rolled back from trading again, clear after the session ends, because the session keeps its digest. Clear each switch with `ithildin switch clear --account <a>`, by the owner, or on shadow and paper by the operator. Once the next session runs, check that the digest each recent run used, which `ithildin status` shows, is the earlier one.
+3. A switch pulled for the rollback stays set, so no session trades until it is cleared. A clear during the rolled-back session restarts trading on the release being rolled back, because that session keeps its digest, and on paper a set switch also keeps the promotion job from moving paper's pin. Leave each switch set until `ithildin status` shows the earlier digest as the digest the next session's first run used. Then clear each with `ithildin switch clear --account <a>`, by the owner, or on shadow and paper by the operator.
 
 ###### `ithildin pin unblock --environment <e> --digest <d>`
 

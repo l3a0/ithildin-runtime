@@ -1172,7 +1172,7 @@ With detail this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime
 2. **The apply credential** is assumed only by the apply job on `main`, in that environment's GitHub environment, once the owner's merge reaches `main`, and on live once the owner approves.
 
    On paper and live it holds no write on the launch template or the VM's role.
-3. **The VM change credential**, on paper and live, is assumed only by a job in the `paper-vm` or `live-vm` GitHub environment, behind the owner's approval. It can change the launch template and pass the VM's role.
+3. **The VM change credential**, on paper and live, is assumed only by a job in the `paper-vm` or `live-vm` GitHub environment, behind the owner's approval. It can change the launch template and pass the VM's role, and, in a rollback the owner overrides for an emergency, pull each account's switch, never clear it, and journal that pull, as [Rule 5](#rule-5-the-runtimes-credential-does-only-what-the-rules-need) grants.
 
    Reach to the VM counts as reach to that environment's broker key. That is why it stays behind that approval, and why it is the one exception to the refusals that bind every principal ([A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)). Among those refusals, no role that applies the code may change who can act as the principal that may read a broker credential.
 

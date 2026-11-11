@@ -2665,7 +2665,7 @@ An execution restart that cannot confirm its digest serves nothing and pages the
 
 #### Automatic restarts: how restarts are counted
 
-One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) chooses that implementation for every component but capture and execution, which [Automatic restarts: the two components that keep on past their cap](#automatic-restarts-the-two-components-that-keep-on-past-their-cap) covers.
+One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which implementation it is, for every component but capture and execution, which [Automatic restarts: the two components that keep on past their cap](#automatic-restarts-the-two-components-that-keep-on-past-their-cap) covers.
 
 1. The count runs across a component's instances.
 2. One instance past its own limit, execution's and capture's apart, is taken out and alarms while the others carry on.
