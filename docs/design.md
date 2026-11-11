@@ -724,7 +724,7 @@ That timing lets execution serve a pull until the last moment a cancel could lan
 This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that after the close execution takes five steps.
 
 1. It reads the day's fills and the broker's positions, open orders, cash and records.
-2. It sorts what it finds as `Sorting what the broker reports`, under [Orders the platform did not send](#orders-the-platform-did-not-send), says.
+2. It sorts what it finds, as `Sorting what the broker reports` under [Orders the platform did not send](#orders-the-platform-did-not-send) says.
 3. It journals the fills and each record as an outside entry.
 4. It reconciles.
 5. It stores a result naming each order the journal holds as open as settled or still open.
@@ -739,20 +739,22 @@ The figure below is a C4 dynamic diagram of a clean stop in shadow, paper and li
 sequenceDiagram
     participant W as Every worker
     participant E as Execution
+    participant B as Broker
+    participant F as Blob store
     participant S as One supervisor instance
     participant O as Every other supervisor instance
     participant T as The host's timer
     W->>W: finishes its decision loop once every decision has a result
-    Note over E: The market's close passes
-    E->>E: Proposed: reads the day's fills and the broker's positions, open orders, cash and records
+    Note over E,B: The market's close passes
+    E->>B: Proposed: reads the day's fills and the broker's positions, open orders, cash and records
     E->>E: Proposed: sorts what it finds
-    E->>E: Proposed: journals the fills and each record as an outside entry
+    E->>F: Proposed: journals the fills and each record as an outside entry
     E->>E: Proposed: reconciles
-    E->>E: Proposed: stores a result saying whether each open order is settled or still open
-    S->>S: Proposed: reads that result
-    S->>S: stores the run's stop
-    S-->>W: the stop's event reaches each worker
-    S-->>O: the stop's event reaches every other instance
+    E->>F: Proposed: stores a result saying whether each open order is settled or still open
+    S->>F: Proposed: reads that result
+    S->>F: stores the run's stop
+    F-->>W: the stop's event reaches each worker
+    F-->>O: the stop's event reaches every other instance
     W->>W: exits cleanly
     O->>O: exits cleanly
     Note over W,O: The stop ends the run
