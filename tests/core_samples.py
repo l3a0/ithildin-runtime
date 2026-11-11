@@ -69,12 +69,15 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
         return {k: sample(item, depth=depth + 1) for k in keys}
     if dataclasses.is_dataclass(hint):
         hints = get_type_hints(hint, include_extras=True)
-        return hint(
-            **{
-                f.name: sample(hints[f.name], empty=empty, depth=depth + 1)
-                for f in dataclasses.fields(hint)
-            }
-        )
+        fields = {
+            f.name: sample(hints[f.name], empty=empty, depth=depth + 1)
+            for f in dataclasses.fields(hint)
+        }
+        if hint is core.Snapshot and not empty:
+            # A snapshot files each bar under its own instrument and interval.
+            bar = sample(core.Bar, depth=depth + 1)
+            fields["bars"] = {bar.instrument: {bar.interval: (bar, bar)}}
+        return hint(**fields)
     if isinstance(hint, type) and issubclass(hint, Enum):
         return list(hint)[-1]
     if hint is bool:

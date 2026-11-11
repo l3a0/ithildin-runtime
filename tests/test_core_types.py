@@ -126,10 +126,11 @@ def test_places_refuses_a_field_that_is_no_decimal() -> None:
         core.places(core.Bar, "volume")
 
 
-def _bar(instrument: InstrumentId) -> Bar:
+def _bar(instrument: InstrumentId, interval: str = "1d") -> Bar:
     hints = get_type_hints(Bar, include_extras=True)
     fields = {f.name: sample(hints[f.name]) for f in dataclasses.fields(Bar)}
     fields["instrument"] = instrument
+    fields["interval"] = interval
     return Bar(**fields)
 
 
@@ -150,60 +151,84 @@ def _daily(instrument: InstrumentId) -> dict:
     return {"1d": (_bar(instrument),)}
 
 
+DAILY = ["1d"]
+
+
 def test_require_fresh_returns_when_every_bar_is_fresh() -> None:
     snapshot = _snapshot(
         {USO: _daily(USO), GLD: _daily(GLD)}, {USO: BarStatus.FRESH, GLD: BarStatus.FRESH}
     )
-    assert snapshot.require_fresh([USO, GLD]) is None
-    assert snapshot.require_fresh([USO]) is None
+    assert snapshot.require_fresh({USO: DAILY, GLD: DAILY}) is None
+    assert snapshot.require_fresh({USO: DAILY}) is None
 
 
 @pytest.mark.parametrize(
     ("bars", "status", "needed", "reason"),
     [
-        ({}, {USO: BarStatus.MISSING}, [USO], "USO missing for the session"),
-        ({USO: _daily(USO)}, {USO: BarStatus.STALE}, [USO], "USO stale for the session"),
-        ({}, {}, [USO], "the snapshot for 2026-11-02T20:40:00+00:00 is empty"),
-        ({}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
-        ({USO: {}}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
-        ({USO: {"1d": ()}}, {USO: BarStatus.FRESH}, [USO], "USO is fresh and has no bar"),
-        ({USO: _daily(USO)}, {}, [USO], "USO has a bar and no status"),
+        ({}, {USO: BarStatus.MISSING}, {USO: DAILY}, "USO missing for the session"),
+        ({USO: _daily(USO)}, {USO: BarStatus.STALE}, {USO: DAILY}, "USO stale for the session"),
+        ({}, {}, {USO: DAILY}, "the snapshot for 2026-11-02T20:40:00+00:00 is empty"),
+        ({}, {USO: BarStatus.FRESH}, {USO: DAILY}, "USO is fresh and has no bar"),
+        ({USO: {}}, {USO: BarStatus.FRESH}, {USO: DAILY}, "USO is fresh and has no bar"),
+        ({USO: {"1d": ()}}, {USO: BarStatus.FRESH}, {USO: DAILY}, "USO is fresh and has no bar"),
+        ({USO: _daily(USO)}, {}, {USO: DAILY}, "USO has a bar and no status"),
         (
             {USO: _daily(USO), GLD: _daily(GLD)},
             {USO: BarStatus.FRESH, GLD: BarStatus.MISSING},
-            [USO],
+            {USO: DAILY},
             "GLD missing for the session",
         ),
         (
             {USO: _daily(USO)},
             {USO: BarStatus.FRESH},
-            [USO, GLD],
+            {USO: DAILY, GLD: DAILY},
             "GLD missing for the session",
         ),
         (
             {USO: _daily(USO)},
             {USO: BarStatus.FRESH},
-            [],
-            "the caller names no instrument it needs from the snapshot",
+            {},
+            "the caller names no bar it needs from the snapshot",
         ),
         (
-            {USO: {"1m": (_bar(USO),), "1d": ()}},
+            {USO: _daily(USO)},
             {USO: BarStatus.FRESH},
-            [USO],
-            "USO is fresh and has no bar",
+            {USO: []},
+            "the caller names no bar it needs from the snapshot",
+        ),
+        (
+            {USO: {"1m": (_bar(USO, "1m"),)}},
+            {USO: BarStatus.FRESH},
+            {USO: DAILY},
+            "USO has no 1d bar for the session",
+        ),
+        (
+            {USO: {"1m": (_bar(USO, "1m"),), "1d": ()}},
+            {USO: BarStatus.FRESH},
+            {USO: ["1m", "1d"]},
+            "USO has no 1d bar for the session",
         ),
     ],
 )
-def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: list, reason: str) -> None:
+def test_require_fresh_halts_on_a_gap(bars: dict, status: dict, needed: dict, reason: str) -> None:
     with pytest.raises(Halt) as raised:
         _snapshot(bars, status).require_fresh(needed)
     assert raised.value.reason == reason
 
 
-def test_require_fresh_refuses_one_string_for_its_list() -> None:
+@pytest.mark.parametrize("needed", ["USO", [USO], None])
+def test_require_fresh_takes_a_mapping_of_what_is_needed(needed: object) -> None:
     snapshot = _snapshot({USO: _daily(USO)}, {USO: BarStatus.FRESH})
     with pytest.raises(TypeError):
-        snapshot.require_fresh("USO")  # type: ignore[arg-type]
+        snapshot.require_fresh(needed)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("instrument", "interval"), [(GLD, "1d"), (USO, "1m")], ids=["instrument", "interval"]
+)
+def test_a_bar_filed_under_another_key_is_refused(instrument: InstrumentId, interval: str) -> None:
+    with pytest.raises(ValueError):
+        _snapshot({USO: {"1d": (_bar(instrument, interval),)}}, {USO: BarStatus.FRESH})
 
 
 def test_halt_is_a_plain_exception_caught_inside_a_context_manager() -> None:

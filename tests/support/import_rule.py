@@ -15,9 +15,12 @@ arrows alone would miss.
 
 1. An import inside a function body, which a reader of the top level misses.
    The checker reads every import in the file.
-2. An import `ast` cannot follow: `importlib.import_module`, `__import__`,
-   `exec`, `eval`, `runpy`, or a name fetched from `importlib` or `builtins`
-   with `getattr`.
+2. An import `ast` cannot follow. The checker refuses the modules that
+   import by a string, `importlib`, `pkgutil`, `runpy` and `builtins`, under
+   any name they are imported as. It also refuses the names `__import__`,
+   `import_module` and `__builtins__`, the builtins `exec` and `eval`, and
+   `sys.modules`. A route that needs none of these, such as code built from a
+   string some other way, is out of its reach.
 3. An import of a package the diagram does not name, so a new `common`
    package cannot become a route between workers.
 4. An import in a package's `__init__.py` that a box beneath it may not
@@ -98,13 +101,12 @@ LIBRARIES: dict[str, str] = {
 # `core` imports nothing outside the standard library but these.
 CORE_LIBRARIES = frozenset({"rfc8785"})
 
-# Names that import by a string. The first two are refused under any spelling,
-# because no other code uses them. `exec` and `eval` are refused as the
-# builtins and as attributes of `builtins`, so a model's own `.eval()` passes.
-DYNAMIC = frozenset({"import_module", "__import__", "run_module", "run_path"})
+# Modules that import by a string, refused anywhere in the package.
+IMPORTERS = frozenset({"importlib", "pkgutil", "runpy", "builtins"})
+# Names that import by a string. `exec` and `eval` count only as the bare
+# builtins, so a model's own `.eval()` passes.
+DYNAMIC = frozenset({"import_module", "__import__", "__builtins__"})
 BUILTINS = frozenset({"exec", "eval"})
-# Modules whose names, fetched with `getattr`, can import around the checker.
-DYNAMIC_SOURCES = frozenset({"importlib", "builtins", "__builtins__", "runpy"})
 RUN_TIME = "imports at run time, which the import test cannot follow"
 
 
@@ -184,21 +186,17 @@ class _Checker:
                 if _imports_by_a_string(stmt):
                     yield Violation(where, stmt.lineno, ast.unparse(stmt), RUN_TIME)
                 continue
-            if isinstance(stmt, ast.Call) and _fetches_an_importer(stmt):
-                yield Violation(where, stmt.lineno, ast.unparse(stmt), RUN_TIME)
-                continue
             if not isinstance(stmt, ast.Import | ast.ImportFrom):
                 continue
             text = ast.unparse(stmt)
             if isinstance(stmt, ast.ImportFrom):
-                if stmt.module == "runpy":
+                named = [stmt.module or ""] if not stmt.level else []
+                if any(alias.name in DYNAMIC | BUILTINS for alias in stmt.names):
                     yield Violation(where, stmt.lineno, text, RUN_TIME)
-                for alias in stmt.names:
-                    if alias.name in DYNAMIC | BUILTINS:
-                        yield Violation(where, stmt.lineno, text, RUN_TIME)
             else:
-                if any(alias.name.split(".")[0] == "runpy" for alias in stmt.names):
-                    yield Violation(where, stmt.lineno, text, RUN_TIME)
+                named = [alias.name for alias in stmt.names]
+            if any(name.split(".")[0] in IMPORTERS for name in named):
+                yield Violation(where, stmt.lineno, text, RUN_TIME)
             try:
                 internal, outside = self._targets(module, stmt)
             except _Unresolved as error:
@@ -359,22 +357,7 @@ def _imports_by_a_string(node: ast.Name | ast.Attribute) -> bool:
         return node.id in DYNAMIC | BUILTINS
     if node.attr in DYNAMIC:
         return True
-    return (
-        node.attr in BUILTINS
-        and isinstance(node.value, ast.Name)
-        and node.value.id in DYNAMIC_SOURCES
-    )
-
-
-def _fetches_an_importer(call: ast.Call) -> bool:
-    """A `getattr` on `importlib`, `builtins` or `runpy`, which reaches an importer by a string."""
-    return (
-        isinstance(call.func, ast.Name)
-        and call.func.id == "getattr"
-        and bool(call.args)
-        and isinstance(call.args[0], ast.Name)
-        and call.args[0].id in DYNAMIC_SOURCES
-    )
+    return node.attr == "modules" and isinstance(node.value, ast.Name) and node.value.id == "sys"
 
 
 class _Unresolved(Exception):

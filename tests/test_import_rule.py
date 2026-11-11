@@ -251,6 +251,12 @@ def test_runtimes_init_may_import_core(tmp_path: Path) -> None:
         "m = __import__('ithildinruntime.alpha')\n",
         "import builtins\nm = builtins.__import__('os')\n",
         "import importlib\nm = getattr(importlib, 'import_' + 'module')('x')\n",
+        "import importlib as il\nm = getattr(il, 'import_module')('x')\n",
+        "import importlib.util\n",
+        "from importlib import util\n",
+        "import pkgutil\npkgutil.resolve_name('ithildinruntime.alpha')\n",
+        "import sys\nm = sys.modules['ithildinruntime.alpha']\n",
+        "f = __builtins__['exec']\n",
         "exec('import ithildinruntime.alpha')\n",
         "eval('1')\n",
         "import runpy\n",
@@ -478,3 +484,13 @@ def test_a_chain_fails_at_its_first_missing_arrow(tmp_path: Path) -> None:
     (reason,) = _reasons(root)
     assert reason.startswith(f"{PACKAGE}/runtime/loop/run.py:1:")
     assert "from `loop` to `runtime`" in reason
+
+
+def test_a_name_that_only_sounds_like_an_importer_passes(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    _plant(
+        root,
+        "runtime.supervisor.paths",
+        "class Run:\n    run_path: str\n\n\ndef run_module(r):\n    return r.modules\n",
+    )
+    assert _reasons(root) == []

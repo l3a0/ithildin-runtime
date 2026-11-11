@@ -426,7 +426,7 @@ classDiagram
         +str vintage_hash
         +Decimal value
         +str stop_state
-        +object close_entry
+        +JournalEntry close_entry
     }
     class SendOutcome {
         +datetime decision_at
@@ -709,7 +709,7 @@ A snapshot's `flags` hold a spike flag with both prices per instrument, so the s
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 
-A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh(needed)` before reading, naming the instruments it needs, and it raises `Halt` when any of them is absent from the snapshot or its bar is missing or stale. So the default when something is absent is to stop, even when Data left an instrument out rather than marking it missing.
+A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh(needed)` before reading, naming each instrument it needs and the intervals it reads of it, such as the daily bar. It raises `Halt` when any of them is absent from the snapshot or missing or stale. It also halts when any other instrument the snapshot holds is not fresh or holds no bar. So the default when something is absent is to stop, even when Data left an instrument or an interval out rather than marking it missing.
 
 #### Only `OrderPath` holds a `Broker`
 
@@ -1051,6 +1051,7 @@ An arrow means "may import". The diagram draws four rules.
    | boto3 | `adapters` |
    | marketlake's package | `data` |
    | Alpaca's SDK | `execution.brokers` |
+   | rfc8785, the one codec's canonical JSON | `core` |
 
    The `ithildin` tool, which lives in `runtime.ithildin`, imports only `core`, `adapters` and `journal`. The supervisor imports those three and `runtime.loop`, as rule 2 says. The import test gives each of them that narrower arrow of its own and allows nothing more.
 

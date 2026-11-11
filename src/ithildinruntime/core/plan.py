@@ -8,7 +8,8 @@ on the exchange's clock that falls after an early close is dropped. The
 builder halts on a decision that falls outside its session in any other way,
 such as a clock time after the regular close or a time before the open,
 because a schedule that names one is wrong, and an order sent then would
-trade at a later price than the decision read. The builder also reports
+trade at a later price than the decision read. One strategy's wrong time
+halts the whole plan, so every strategy waits until it is fixed. The builder also reports
 how many sessions the table holds after the plan's last, so an alarm can fire
 before a run meets the table's end. #11 sets that bound and builds the alarm.
 """

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -175,28 +175,38 @@ class Snapshot(_Record):
     segments: tuple[str, ...]
     ledgers: Mapping[str, str]
 
-    def require_fresh(self, needed: Iterable[InstrumentId]) -> None:
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        for instrument, by_interval in self.bars.items():
+            for interval, bars in by_interval.items():
+                for bar in bars:
+                    if bar.instrument != instrument or bar.interval != interval:
+                        raise ValueError(
+                            f"a {bar.instrument} {bar.interval} bar is filed under "
+                            f"{instrument} {interval}"
+                        )
+
+    def require_fresh(self, needed: Mapping[InstrumentId, Collection[str]]) -> None:
         """Raise `Halt` unless every bar the caller needs is present and fresh.
 
         `bars` maps each instrument to its bars by interval, so a daily bar and
-        minute bars of one instrument sit side by side. The caller names the
-        instruments it needs, so an instrument Data left out of the snapshot
-        halts rather than reading as nothing to trade. Every other instrument
-        the snapshot holds must be fresh too, and every interval it holds for
-        an instrument must hold a bar.
+        minute bars of one instrument sit side by side. The caller names each
+        instrument it needs and the intervals it reads of it, such as
+        `{USO: ["1d"]}`. A needed instrument or interval Data left out of the
+        snapshot halts, rather than reading as nothing to trade. Every other
+        instrument the snapshot holds must be fresh and hold a bar too.
 
         It judges no age. Data fills `status` under #7's rule, and this only
-        reads it. An empty snapshot, or an empty list of what is needed,
+        reads it. An empty snapshot, or a caller that names nothing it needs,
         halts, because an empty input counts as a missing one (hard limit 3).
         """
-        if isinstance(needed, str):
-            raise TypeError("require_fresh takes a collection of instruments, not one string")
-        wanted = set(needed)
-        if not wanted:
-            raise Halt("the caller names no instrument it needs from the snapshot")
+        if not isinstance(needed, Mapping):
+            raise TypeError("require_fresh takes a mapping of instruments to the intervals needed")
+        if not needed or not all(needed.values()):
+            raise Halt("the caller names no bar it needs from the snapshot")
         if not self.status and not self.bars:
             raise Halt(f"the snapshot for {self.decision_at.isoformat()} is empty")
-        for instrument in sorted(wanted | set(self.status) | set(self.bars)):
+        for instrument in sorted(set(needed) | set(self.status) | set(self.bars)):
             status = self.status.get(instrument)
             if status is None and instrument not in self.bars:
                 raise Halt(f"{instrument} missing for the session")
@@ -205,8 +215,11 @@ class Snapshot(_Record):
             if status != BarStatus.FRESH:
                 raise Halt(f"{instrument} {status} for the session")
             by_interval = self.bars.get(instrument, {})
-            if not by_interval or not all(by_interval.values()):
+            if not any(by_interval.values()):
                 raise Halt(f"{instrument} is fresh and has no bar")
+            for interval in sorted(needed.get(instrument, ())):
+                if not by_interval.get(interval):
+                    raise Halt(f"{instrument} has no {interval} bar for the session")
 
 
 @dataclass(frozen=True)
@@ -306,7 +319,13 @@ class FoundOrder(_Record):
 
 @dataclass(frozen=True)
 class BrokerRead(_Record):
-    """A broker read's received bytes, kept apart from the value converted from them."""
+    """A broker read's received bytes, kept apart from the value converted from them.
+
+    `value` is typed `object` until #10 gives each call's converted value a
+    type. Until then the codec writes only plain JSON values there, so a read
+    whose converted value is a record or a decimal is stored by its `raw`
+    bytes alone.
+    """
 
     raw: bytes
     value: object
@@ -368,7 +387,7 @@ class GateInputs(_Record):
     vintage_hash: str
     value: Money
     stop_state: str
-    close_entry: object
+    close_entry: JournalEntry | None
 
 
 @dataclass(frozen=True)

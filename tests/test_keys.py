@@ -168,6 +168,7 @@ def test_a_part_that_would_break_a_key_is_refused(build) -> None:
         lambda: core.strategy_halt_key("paper1", "s", "risk", "loss-stop", FIRED, 1),
         lambda: core.load_claim_key("a-b", "c"),
         lambda: core.load_sent_key("a", "b-c"),
+        lambda: core.account_halt_key("paper1", "a..b", "c", FIRED, 1),
     ],
 )
 def test_a_name_that_would_spell_another_rows_key_is_refused(build) -> None:

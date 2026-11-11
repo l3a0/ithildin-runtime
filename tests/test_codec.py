@@ -300,6 +300,28 @@ def test_a_field_typed_object_takes_only_what_reads_back_unchanged(value: object
         encode(core.BrokerRead(raw=b"", value=[value]))
 
 
+@pytest.mark.parametrize(
+    ("received", "kept"),
+    [
+        ("1E+30", True),
+        ("1E-30", True),
+        ("0." + "1" * 38, True),
+        ("1E+31", False),
+        ("1E-31", False),
+        ("0." + "1" * 39, False),
+    ],
+)
+def test_the_codecs_size_limits_sit_at_38_digits_and_magnitude_30(
+    received: str, kept: bool
+) -> None:
+    """Records written under these limits must stay readable, so a release only raises them."""
+    if kept:
+        assert format(core.from_received(received), "f") == format(Decimal(received), "f")
+    else:
+        with pytest.raises(CodecError):
+            core.from_received(received)
+
+
 def test_a_decimal_too_large_to_write_is_refused() -> None:
     with pytest.raises(CodecError):
         encode(

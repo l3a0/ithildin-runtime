@@ -143,6 +143,7 @@ erDiagram
         datetime received_at
     }
     PLAN {
+        int format
         string deployment
         string run
         string mode
@@ -150,10 +151,12 @@ erDiagram
         string decisions
     }
     HEARTBEAT {
+        int format
         string writer
         datetime at
     }
     RESTART_RECORD {
+        int format
         string worker
         int restart_count
         int exit_status
@@ -161,6 +164,7 @@ erDiagram
         string error_tail
     }
     LEASE {
+        int format
         string key
         string holder "VM, boot, container, restart count and handler"
         string release
@@ -378,7 +382,7 @@ The price is a third-party library on the path that writes the journal, where a 
 
 The journal and the snapshot are the only records of what the broker and the market said, so a rounded copy would lose a value that cannot be recaptured: at four places, a leftover position of `0.00004` would record as zero, and the book replayed from rounded fills would drift from the broker's. A received value with more places than its field declares is flagged in the record, never rounded.
 
-marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
+marketlake stores prices as 64-bit floats, so for its values "as sent" means the float's shortest round-trip text, `Decimal(repr(x))`, through one converter in `core` that never rounds. The converter refuses, rather than rewrites, a string in any form but ASCII digits with an optional minus, fraction and exponent, and the codec refuses a decimal past a size limit a test pins, so a hostile value cannot make a writer allocate gigabytes. A refused value halts its read, and the raw bytes beside it keep what arrived. `core.to_decimal` below is for computed values only, and a test pins that a five-place price and `0.00004` survive the round trip.
 
 A received body is stored whole and unchanged, in a form canonical JSON can hold, a body that is not valid UTF-8 included. It is kept as exact bytes in one of two forms, with a field naming which.
 
@@ -423,7 +427,7 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 #### What an output file holds
 
-**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The header's `format` is a number per kind, raised when that kind's fields change. [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
+**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The header's `format` is a number per kind, raised when that kind's fields change. A blob stored at a key of its own rather than as a stage's output file, such as a plan, a lease, a heartbeat, a restart record or a journal entry, carries a `format` field of its own instead, so every blob a later release reads names its format. [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
 
 #### How a journal entry is hashed and checked
 
@@ -523,5 +527,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | `<UTC time>` | A UTC time to the microsecond, in the compact form `20261102T204001.123456Z`, so it sorts in order |
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
 | `<seq>` | The journal entry's sequence number. Every key that carries it pads it to twelve digits, the journal entry's own key, a checkpoint's and a book snapshot's, so a listing sorts them in order. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
+
+`core`'s key builders refuse a part that would make two rows' keys the same, such as a `-` inside a halt key's component or cause, or an output named `result`, `claim` or like an attempt.
 
 A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. The prefixes are the ones the grants of [The runtime's credential does only what the rules need](07-deployment.md#rule-5-the-runtimes-credential-does-only-what-the-rules-need) and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as [Four environments](07-deployment.md#four-environments) says.
