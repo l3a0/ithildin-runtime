@@ -51,21 +51,26 @@ alarm, and its drill is the row Book and broker disagree in
 [halts-and-drills.md](../halts-and-drills.md#alarms-on-the-order-path), which [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds.
 
 Which issue writes each piece. Where a piece is a shared type, it lives in
-`core` whichever issue writes it.
+`core` whichever issue writes it, and `Journal` lives in the `journal`
+package.
 
 **Table:** Which issue writes each piece
 
 | Piece | Written on |
 | --- | --- |
 | Importing every source into marketlake, provenance on each bar, the one bar query | [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938), closed 2026-11-04 |
-| `core`'s shared types and every `Protocol`, the file form of each type, `Journal`, the storage contract of `BlobStore`, create-only writes, the blob header, the decision result, the plan, the queue port with its SQS and named-pipe adapters and their contract suite, the S3 and memory-backed folder adapters with one contract test suite, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
-| `Bar`, `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
-| Bollinger band alpha model, `Basket`, `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
-| `Constraints`, `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
-| Flat and linear cost models, `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
-| Equal-risk-weight portfolio construction, `TargetPortfolio` naming every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
-| Order manager, `OrderPath`, a plan's cancels and replacements, the journal's entries for orders and fills, fills keyed by the broker's fill id, the broker id mapped on each ack, the simulator and the Alpaca adapter around its SDK, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
-| `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| `core`'s shared types and every `Protocol`, the blob header, the decision result and the plan as types, the queue port, the file form of each type through the one codec, the key builders, the calendar function and the plan builder, the import rule test | [#22](https://github.com/l3a0/ithildin-runtime/issues/22) |
+| The storage contract of `BlobStore`, create-only writes, the decision result and its halt, the S3 and memory-backed folder adapters with one contract test suite, a capture held through an S3 outage | [#79](https://github.com/l3a0/ithildin-runtime/issues/79) |
+| `Journal.append`, the hash chain and the reader's checks, in the `journal` package | [#80](https://github.com/l3a0/ithildin-runtime/issues/80) |
+| The queue's SQS and named-pipe adapters and their contract suite, the routes generated from the table in `runtime`, the receive loop | [#81](https://github.com/l3a0/ithildin-runtime/issues/81) |
+| The test environment's bucket, queues and role, which the store and queue suites run against on each push to `main` | [#78](https://github.com/l3a0/ithildin-runtime/issues/78) |
+| The fields `Bar` and `Quote` gain for each price's kind, venues and delay, with [#50](https://github.com/l3a0/ithildin-runtime/issues/50), any field [#5](https://github.com/l3a0/ithildin-runtime/issues/5) adds to `Snapshot`, the marketlake reader, the snapshot and signal records, security master | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) |
+| Bollinger band alpha model, any field [#6](https://github.com/l3a0/ithildin-runtime/issues/6) adds to `Basket` and `Forecast` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
+| Any field [#7](https://github.com/l3a0/ithildin-runtime/issues/7) adds to `Constraints`, the risk gate that implements `RiskGate`, the daily loss stop, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| Flat and linear cost models, any field [#8](https://github.com/l3a0/ithildin-runtime/issues/8) adds to `CostSchedule` | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
+| Equal-risk-weight portfolio construction, any field [#9](https://github.com/l3a0/ithildin-runtime/issues/9) adds to `TargetPortfolio`, which names every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
+| Order manager, `OrderPath`, a plan's cancels and replacements, the journal's entries for orders and fills, `Journal.in_doubt` and `Journal.replay`, fills keyed by the broker's fill id, the broker id mapped on each ack, the simulator and the Alpaca adapter around its SDK, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, the third level of CI and its second required check, the journal entry for a capture lost when a worker's process dies, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each module issue also writes its own worker's entry point under `runtime`,
 the code that picks that worker's adapters for a mode.
@@ -74,16 +79,21 @@ Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, so the
 gross position is a fixed dollar amount the owner sets, recorded in the run's configuration.
 
-Two pieces belong to no single module.
+Five pieces belong to no single module. Each is written on a sub-issue of
+[#4](https://github.com/l3a0/ithildin-runtime/issues/4).
 
-1. `core`, with the shared types, every `Protocol`, and the storage contract
-   every worker uses: the create-only write, the blob header, the decision
-   result and its halt, the plan and the queue message.
-2. The import rule test, which reads every module's imports.
+1. `core`, with the shared types and every `Protocol`, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
+2. The import rule test, which reads every module's imports, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22).
+3. The storage contract every worker uses, in `core`: the create-only write
+   and the decision result and its halt, with the S3 and memory-backed folder
+   adapters, on [#79](https://github.com/l3a0/ithildin-runtime/issues/79).
+4. `Journal`, in the `journal` package, on [#80](https://github.com/l3a0/ithildin-runtime/issues/80).
+5. The queue's adapters and the receive loop, on [#81](https://github.com/l3a0/ithildin-runtime/issues/81).
 
-Both are written on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), which every module issue waits on.
+Every module issue waits on [#22](https://github.com/l3a0/ithildin-runtime/issues/22), and each worker's entry point also
+waits on [#81](https://github.com/l3a0/ithildin-runtime/issues/81).
 
-The supervisor imports no module, but it cannot run a day until every worker
+The supervisor imports no worker module, but it cannot run a day until every worker
 exists, so it is built last. This doc proposes building it on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which owns the startup order and waits on every
 other module. The fake-broker test goes there too, since it runs a whole day
@@ -97,10 +107,10 @@ CI has to test the components as they run on the VM: separate containers
 learning of each other's writes from the store's events and reading their inputs from
 a store that refuses an existing key. Testing the modules in one process
 would not exercise the messages, the restarts or the store's rules. GitHub's hosted
-runners are Linux VMs with Docker, so CI runs the real image. This is this
-doc's proposal for the CI that [#22](https://github.com/l3a0/ithildin-runtime/issues/22)
-and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) build, in
-three levels, from fast to slow.
+runners are Linux VMs with Docker, so CI runs the real image, in three
+levels, from fast to slow. [#79](https://github.com/l3a0/ithildin-runtime/issues/79) and [#81](https://github.com/l3a0/ithildin-runtime/issues/81) build the store and queue
+suites of the second level, [#78](https://github.com/l3a0/ithildin-runtime/issues/78) the test bucket and queues they run
+against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third level.
 
 1. **Module tests, in one process.** Each module's logic, the risk gate's
    seven refusals, its refusal beside an order in doubt and its refusal when a worst loss cannot be computed, the import rule and the journal's replay run as ordinary
@@ -129,7 +139,7 @@ three levels, from fast to slow.
      its write and the folder adapter's delivery announces again when it
      restarts. The SQS adapter runs through a local emulator that sends S3's
      events to EventBridge and SQS, named and pinned by digest when
-     [#22](https://github.com/l3a0/ithildin-runtime/issues/22) picks it, and
+     [#81](https://github.com/l3a0/ithildin-runtime/issues/81) picks it, and
      against the test environment's bucket and queues on each push to
      `main`. The queue port's `done` deletes a message, `extend` lengthens
      its visibility timeout, and `release` returns it at once with
@@ -160,7 +170,7 @@ three levels, from fast to slow.
 
 On a run with no credential, tests 1 and 2 read [the vintages](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl) quantitative-trading commits, at a pinned commit and against their committed checksums, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds. An absent input fails the check.
 
-The required `test` check runs the first two levels. A second required check, which `.github/rulesets/default.json` gains when [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds it, runs the third on the same
+The required `test` check runs the first two levels. A second required check, which `.github/rulesets/default.json` gains when [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it, runs the third on the same
 image, test 2 and the restart drills included, because the restart path is
 what this design rests on. That check also runs the real unit files and the
 host's watchdog under the runner's own systemd, which hosted runners appear

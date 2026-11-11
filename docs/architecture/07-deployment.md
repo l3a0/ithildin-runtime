@@ -949,7 +949,7 @@ Eleven rules keep the environments apart. Rules 1 to 8 follow as a list, and rul
 
    Every VM and volume carries a tag naming its environment, and every principal but the owner's refuses to add, change or remove it.
 
-   The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries the refusals of [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store), which keep it from reading a broker key.
+   The test role acts on the test bucket and test queues alone, with no SSM, EC2, IAM or EventBridge action, and carries the refusals of [The broker key lives in a secret store](#rule-3-the-broker-key-lives-in-a-secret-store), which keep it from reading a broker key. [#78](https://github.com/l3a0/ithildin-runtime/issues/78) builds the test bucket, the test queues and the test role.
 
    The tags and paths are this doc's proposal.
 
