@@ -178,7 +178,7 @@ The broker key moves out of marketlake's account. marketlake's refusals for the 
 The grants below say who pulls the switch and who clears it.
 
 - **The runtime's credential** can create the switch, which pulls it, and can never delete it.
-- **The rollback's credential**, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
+- **The rollback's credential**, which is the VM change credential on paper and live and the apply credential on shadow, in a VM image rollback the owner overrides for an emergency, pulls it too and never clears it, as [What rolls back a VM image that fails after its refresh](#what-rolls-back-a-vm-image-that-fails-after-its-refresh) says.
 - **The owner's and the operator's credentials** pull any account's switch.
 - Apart from the drill role clearing its own pull, below, only **the owner's credential** clears a live account's switch.
 - **The operator's credential** may also clear a paper or shadow account's switch.
@@ -274,7 +274,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so that session trades nothing until it is cleared. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
