@@ -698,9 +698,98 @@ any plan exists waits, so no worker acts before a supervisor has written the pla
 
 ### Rule 7: how a run stops
 
-Every worker, in every mode, finishes its decision loop once it has a
-result for every decision in the plan. Once every decision has a result and, in shadow, paper and live, the market's close has passed and the run has read the day's fills, a supervisor instance stores the run's stop, whose event reaches each worker and every other supervisor instance, which exit cleanly, and the stop ends the run. That timing lets execution serve a pull until the last moment a cancel could land, and reconciles the closing auction's fills the same evening. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that after the close execution reads the day's fills and the broker's positions, open orders, cash and records, sorts what it finds as `Sorting what the broker reports` says, journals the fills and each record as an outside entry, reconciles and stores a result naming each order the journal holds as open as settled or still open, and that the supervisor reads that result before it stores the stop. This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that a read that fails or misses a written time pages the owner, the next recover stage reads the fills, and the host's timer ends the run. For the same two issues it proposes that a difference the read finds halts and pages with its reason, that execution journals the open halt the holding-halt check reads, and that neither that write nor the page waits on the result or the stop. In shadow the market-on-close order stays open until the 18:30 sweep, so the read finds it open, which counts as read, and the fill lands at the next recover stage. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how. A timer on the host stops every unit later still,
-in case a stop is lost, and that timer is what ends a failed run in shadow, paper and live, whose supervisors have already exited. This doc proposes, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that a run the timer ended counts as no clean shutdown, because it stored no stop, at the price of a person's confirmation before the next session trades. In a backtest or a replay the supervisor stores the stop before it exits a failed run, since no cancel needs serving there. The price is that no backtest or replay runs the timer's ending of a failed run, so only the paper drill on fills not read by their deadline, in [halts-and-drills.md](halts-and-drills.md#alarms-on-the-order-path), exercises it. This doc proposes instead, for [#32](https://github.com/l3a0/ithildin-runtime/issues/32) and [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that the backtest and replay harness end a failed run as the host's timer does, in place of the supervisor's stop. Then the supervisor stores no stop for a failed run in any mode, which removes that price.
+A run stops in a set order, so that execution can serve a cancel until the last moment one could land.
+
+#### When a worker finishes
+
+Every worker, in every mode, finishes its decision loop once it has a result for every decision in the plan.
+
+#### Who stores the stop, and when
+
+A supervisor instance stores the run's stop once two things hold.
+
+1. Every decision has a result.
+2. In shadow, paper and live, the market's close has passed and the run has read the day's fills.
+
+Then the run ends in three steps.
+
+1. A supervisor instance stores the run's stop.
+2. The stop's event reaches each worker and every other supervisor instance.
+3. Each of them exits cleanly, and the stop ends the run.
+
+That timing lets execution serve a pull until the last moment a cancel could land, and reconciles the closing auction's fills the same evening.
+
+#### What execution reads after the close
+
+This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that after the close execution takes five steps.
+
+1. It reads the day's fills and the broker's positions, open orders, cash and records.
+2. It sorts what it finds as `Sorting what the broker reports`, under [Orders the platform did not send](#orders-the-platform-did-not-send), says.
+3. It journals the fills and each record as an outside entry.
+4. It reconciles.
+5. It stores a result naming each order the journal holds as open as settled or still open.
+
+The same proposal has the supervisor read that result before it stores the stop.
+
+#### A clean stop in shadow, paper and live
+
+The figure below is a C4 dynamic diagram of a clean stop in shadow, paper and live. The steps marked "Proposed" are the proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) above. It leaves out a read that fails or finds a difference, and a failed run, which the next three subsections cover.
+
+```mermaid
+sequenceDiagram
+    participant W as Every worker
+    participant E as Execution
+    participant S as One supervisor instance
+    participant O as Every other supervisor instance
+    participant T as The host's timer
+    W->>W: finishes its decision loop once every decision has a result
+    Note over E: The market's close passes
+    E->>E: Proposed: reads the day's fills and the broker's positions, open orders, cash and records
+    E->>E: Proposed: sorts what it finds
+    E->>E: Proposed: journals the fills and each record as an outside entry
+    E->>E: Proposed: reconciles
+    E->>E: Proposed: stores a result saying whether each open order is settled or still open
+    S->>S: Proposed: reads that result
+    S->>S: stores the run's stop
+    S-->>W: the stop's event reaches each worker
+    S-->>O: the stop's event reaches every other instance
+    W->>W: exits cleanly
+    O->>O: exits cleanly
+    Note over W,O: The stop ends the run
+    T->>T: stops every unit later still, in case a stop is lost
+```
+
+#### When the read fails, finds a difference, or finds an order open
+
+This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11), what follows a read that fails or misses a written time.
+
+1. The read pages the owner.
+2. The next recover stage reads the fills.
+3. The host's timer ends the run.
+
+For the same two issues it proposes three things about a difference the read finds.
+
+1. The difference halts and pages with its reason.
+2. Execution journals the open halt the holding-halt check reads.
+3. Neither that write nor the page waits on the result or the stop.
+
+In shadow the market-on-close order stays open until the 18:30 sweep, so the read finds it open, which counts as read, and the fill lands at the next recover stage.
+
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how.
+
+#### The host's timer ends a failed run in shadow, paper and live
+
+A timer on the host stops every unit later still, in case a stop is lost. That timer is what ends a failed run in shadow, paper and live, whose supervisors have already exited.
+
+This doc proposes, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that a run the timer ended counts as no clean shutdown, because it stored no stop, at the price of a person's confirmation before the next session trades.
+
+#### A failed run in a backtest or a replay
+
+In a backtest or a replay the supervisor stores the stop before it exits a failed run, since no cancel needs serving there.
+
+The price is that no backtest or replay runs the timer's ending of a failed run, so only the paper drill on fills not read by their deadline, in [halts-and-drills.md](halts-and-drills.md#alarms-on-the-order-path), exercises it.
+
+This doc proposes instead, for [#32](https://github.com/l3a0/ithildin-runtime/issues/32) and [#33](https://github.com/l3a0/ithildin-runtime/issues/33), that the backtest and replay harness end a failed run as the host's timer does, in place of the supervisor's stop. Then the supervisor stores no stop for a failed run in any mode, which removes that price.
 
 ### Rule 7: a halt is passed on
 
@@ -2266,7 +2355,101 @@ The **order path** runs from the target portfolio through the risk gate and the 
 3. **Every recorded record carries a checksum, and every read verifies it.** The checksums built into network protocols catch corruption on the wire, but not a bug at either end or corruption on disk, so DDIA calls for checksums from end to end (DDIA L16445, L9376). A crash can also leave a half-written record at the end of an append-only file, and a checksum is how a reader tells it from a whole one (DDIA L2471). DDIA's example detects such a record and ignores it. The journal's store writes each entry whole, as an object either exists or does not, so a torn journal entry cannot occur there. A local file can tear. A torn tail on a capture file is sealed and flagged, its bytes are moved aside and kept, and capture starts a new segment, which never halts capture. A record that fails its checksum anywhere else is corruption, and the reader halts and alerts. DDIA warns that data checked only when read can rot unseen on a disk the system manages (DDIA L5489, L\~16792). Here every recorded blob lives in S3, which runs periodic integrity checks of all data at rest and repairs corruption from its redundant copies, and which refuses an upload whose bytes do not match the checksum sent with it ([Data protection in Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DataDurability.html), [the S3 FAQ](https://aws.amazon.com/s3/faqs/), [Checking object integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)). So every write sends its checksum, and the platform runs no scheduled read-back of its own. Before live, the copy in a second account alarms when a recorded blob is not found in it within a written bound. Every recorded blob this platform writes lives in S3, and in slice 1 no disk it manages holds recorded data. Once this platform runs capture, its open segments and its spill to local disk would take a read-back. marketlake protects its own volume and bucket under its contract. A dead-man check running off the machine watches the heartbeat, so a dead VM or a dead monitoring process pages. A ping says only that a decision finished, so at each decision and ping-only entry monitoring reads the age of the jobs that run apart from a decision, and pages through the alert channel when one passes its written bound. Those jobs are the restore drill's last passing run, the newest off-machine copy, each strategy's outcome match and retiring check, the daily report, the check of orders back to their causes, the synthetic event's last result, the scheduled drift check's last result, and each paper session the journal records that has no comparison with its replay, a journal it cannot read alerting rather than reading as no sessions. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that a last-run record that is absent, unreadable or past its read's timeout counts as past its bound. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each record and the first-run case, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds where the drift result lands. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that each job pages once per cause at a written interval, not at every decision. Monitoring never withholds a ping for one of them, because a check left down stays silent about a dead VM the next day. The price is a page up to a day late, or on Monday for a job that stopped on Friday.
 4. **A case the design calls impossible ends in a halt and an alert, never in a guess.** Real code still has to handle what an algorithm assumes cannot happen, even when the handling is to stop and leave the cleanup to a person (DDIA L9488). DDIA divides properties into safety, meaning nothing bad happens, which must hold in every case, and liveness, meaning something good eventually happens, which may wait on conditions (DDIA L9454, L9466, L9469). Here every hard limit is a safety property and trading is a liveness property. A design may give up trading to keep a hard limit, and never the reverse. A safety property holds within a stated model of what can go wrong, and DDIA calls a model that bounds every pause unrealistic (DDIA L9405, L9466), so no hard limit here depends on timing. A cancel reduces risk, so it is not trading under this rule, though cancelling a resting protective order, an unwind or one leg of a pair does raise exposure, so a halt stops new work and keeps every working order, except the cancel that keeps a pair whole, and the kill switch is what cancels everything. A strategy's off switch cancels the strategy's working and in-doubt orders that add to a position and keeps those that reduce one, and [A strategy is judged over a sample](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) gives the same effect to the halts it names, a pair staying whole in each case as [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) says. Those are the other exceptions. The kill switch acts as a lease holder, so it is never a second sender. It runs in whichever instance receives its event, takes the account's lease, waiting for a hung holder's lease to expire if it must, journals its cancels, sends them from the rate-limit share reserved for cancels, and reads the broker's open orders again until a read returns none, and an order still open whose cancel has no answer is handled under the rule for a cancel whose answer is lost, below. Each halt states whether it releases itself after reconciliation and a hold time, or waits for the owner, and writes its reason where the monitor of the halt state reads it. On a live account no halt releases itself, and only the owner releases one, a fired loss stop and the kill switch among them. On paper and shadow the operator may too. The owner counts as unreachable when a page stays unacknowledged past a stated time.
 5. **A value from outside the process is checked against a sane range and a size limit when it is parsed, and a value that fails halts its consumer.** DDIA recommends such checks even between services that trust each other (DDIA L9360). The sane range comes from each instrument's metadata, since some instruments trade at negative prices, and a quantity above the instrument's size limit is the kind of value that stops the reader before it reaches a decision.
-6. **Every outside call has a timeout, the order path's dependencies each have a limit on concurrent calls and a breaker, and an open breaker stops new orders, stops a plan's own cancel only through the halt it stores, and never stops any other cancel.** Newman puts a timeout on every outside call, and names bulkheads and circuit breakers as tools to use where they fit (BM L4252, BM L4292, BM L4995). A breaker stops calling a dependency after a written number of failures and probes it until it answers. This design gives a limit and a breaker to the order path's dependencies: the feed, the broker, and the store that holds the lease and the journal, which share one breaker. The read of an owner's record, under [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control), has a limit and a breaker of its own, and an open one holds that close as unreadable state. Every other dependency, such as the time servers, the off-machine copy and reporting, has a timeout and stays asynchronous, the copy apart from the read at a start that [Keep the order path isolated](#keep-the-order-path-isolated) names, under its rule that nothing that does not earn money can stall the order path. His cautionary tale is a pricing queue with no retry limit, where one request that crashed its worker went back on the queue and crashed the next (BM L1286). An open breaker on the feed, the broker or the store halts new orders under hard limit 3, that missing input means stop, not flatten, rather than serving a stale value, names the breaker where the halt-state monitor reads it, and pages the owner. A cancel and the kill switch pass through an open breaker with every call they need: the lease's take, renewal, tag check and release, the takeover's broker list read and its capture's write, the journal's re-read and write, the halt-state read, and the broker reads and lookups below. Each order-path dependency keeps a written slice of its limit on concurrent calls for those calls, so a stalled new-order call cannot hold a cancel back. A cancel whose answer is lost is looked up first. When the lookup shows the order still working and no cancel pending, a new cancel goes out, journaled first and sent under the lease, at most a written number of times for each cancel, where the contract suite's latest scheduled run against that account shows the broker applies a repeated cancel at most once. No stage resends a plan's cancel yet, as `A plan changes or cancels its own unfilled orders` says. A lookup that shows the order cancelled, filled or expired settles the cancel and is journaled as received. Every other outcome leaves the cancel in doubt. That covers a lookup that cannot answer or shows a cancel pending, a written number already used up, a contract case that account's run cannot provoke, and a scheduled run that is missing, stale or failed. A resend does not end the doubt until a lookup or an answer shows the order cancelled, filled or expired, so a broker's acceptance of a cancel leaves it in doubt. The clock runs from the first cancel's journal entry, so a resend never resets it, and any cancel still unsettled past a written time halts new orders and pages the owner. That halt names each unsettled cancel by client order id, or by the broker's order id where the order carries no stamp, with its age and any leg waiting on it, where the halt-state monitor reads it. It cancels nothing further, keeps every working order, persists between sessions and waits for the owner, and its page names the owner's step in the broker's own interface. A halt still stops no cancel except a plan's own, as [What a cancel checks](#rule-9-fourth-item-what-a-cancel-checks) says. A run counts only for the account it ran against, so paper and live stay independent, and until a run exists for a live account every lost cancel there that no lookup or answer settles ends in that halt. The kill switch alone needs no run: its repeat keeps the lookup and the written number, at paper and at live. An answer such as "already filled" is journaled as received. An order in doubt is first looked up, through the broker's order list, and cancelled once a row or the lookup gives its broker id. The share of the rate limit reserved for cancels carries every cancel and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, as the rule that any difference from the broker halts trading, above, says. When the store itself is down, no cancel can be journaled, so none is sent: the page says so, and the owner's step is to cancel in the broker's own interface, which reconciliation later journals as outside entries once the owner confirms them. The call that tests whether a dependency recovered is a read, never an order. A breaker that closes ends only its own state, and the halt it raised releases under the rule above on how a halt releases, after reconciliation from a recorded journal position, its hold time and no order or cancel left in doubt, at most a written number of times a session, each release journaled with its count, after which it waits for the owner and names the count. In live trading it waits for the owner from the first, and the price is that a dependency's outage stops Live until the owner answers. Capture's connection to the feed sits outside the trading loop's breaker, and capture reconnects with bounded backoff and never stops retrying. A retried job off the order path, such as a report or a derived view, has a maximum, past which it is set aside and alerts. A job that consumes broker messages, the journal or captured data halts with the message named, and an order send is never retried, since a send with no answer stays in doubt under the one-writer rules.
+6. **Every outside call has a timeout, the order path's dependencies each have a limit on concurrent calls and a breaker, and an open breaker stops new orders, stops a plan's own cancel only through the halt it stores, and never stops any other cancel.** Newman puts a timeout on every outside call, and names bulkheads and circuit breakers as tools to use where they fit (BM L4252, BM L4292, BM L4995). A breaker stops calling a dependency after a written number of failures and probes it until it answers. The subsections after this list, from [Timeouts and breakers: which dependencies get a limit and a breaker](#timeouts-and-breakers-which-dependencies-get-a-limit-and-a-breaker) to [Timeouts and breakers: retries off the trading loop](#timeouts-and-breakers-retries-off-the-trading-loop), say how this rule applies.
+
+#### Timeouts and breakers: which dependencies get a limit and a breaker
+
+This design gives a limit and a breaker to the order path's dependencies. There are three.
+
+1. The feed.
+2. The broker.
+3. The store that holds the lease and the journal, which share one breaker.
+
+The read of an owner's record, under [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control), has a limit and a breaker of its own, and an open one holds that close as unreadable state.
+
+Every other dependency, such as the time servers, the off-machine copy and reporting, has a timeout and stays asynchronous, under the rule in [Keep the order path isolated](#keep-the-order-path-isolated) that nothing that does not earn money can stall the order path. The copy stays asynchronous apart from the read at a start that the same section names.
+
+#### Timeouts and breakers: what an open breaker stops
+
+An open breaker on the feed, the broker or the store takes three steps.
+
+1. It halts new orders under hard limit 3, that missing input means stop, not flatten, rather than serving a stale value.
+2. It names the breaker where the halt-state monitor reads it.
+3. It pages the owner.
+
+A cancel and the kill switch pass through an open breaker with every call they need. Those calls are these.
+
+- The lease's take, renewal, tag check and release.
+- The takeover's broker list read and its capture's write.
+- The journal's re-read and write.
+- The halt-state read.
+- The broker reads and lookups below.
+
+Each order-path dependency keeps a written slice of its limit on concurrent calls for those calls, so a stalled new-order call cannot hold a cancel back.
+
+The share of the rate limit reserved for cancels carries every cancel and every read and lookup a cancel, a sort or a pair-keeping cancel needs, the kill switch's included, as the rule that any difference from the broker halts trading, above, says.
+
+#### Timeouts and breakers: a cancel whose answer is lost
+
+A cancel whose answer is lost is looked up first. What the lookup shows decides what happens next.
+
+**Table:** What follows the lookup of a cancel whose answer is lost
+
+| The lookup shows | What follows |
+| --- | --- |
+| The order still working and no cancel pending, where the contract suite's latest scheduled run against that account shows the broker applies a repeated cancel at most once | A new cancel goes out, journaled first and sent under the lease, at most a written number of times for each cancel |
+| The order cancelled, filled or expired | The lookup settles the cancel and is journaled as received |
+| Any other outcome | The cancel stays in doubt |
+
+Every other outcome leaves the cancel in doubt. That last row covers four cases.
+
+1. A lookup that cannot answer or shows a cancel pending.
+2. A written number already used up.
+3. A contract case that account's run cannot provoke.
+4. A scheduled run that is missing, stale or failed.
+
+No stage resends a plan's cancel yet, as `A plan changes or cancels its own unfilled orders` says.
+
+A resend does not end the doubt until a lookup or an answer shows the order cancelled, filled or expired, so a broker's acceptance of a cancel leaves it in doubt. An answer such as "already filled" is journaled as received.
+
+#### Timeouts and breakers: when an unsettled cancel halts new orders
+
+The clock runs from the first cancel's journal entry, so a resend never resets it. Any cancel still unsettled past a written time halts new orders and pages the owner. That halt does four things.
+
+1. It names each unsettled cancel by client order id, or by the broker's order id where the order carries no stamp, with its age and any leg waiting on it, where the halt-state monitor reads it.
+2. It cancels nothing further and keeps every working order.
+3. It persists between sessions and waits for the owner.
+4. Its page names the owner's step in the broker's own interface.
+
+A halt still stops no cancel except a plan's own, as [What a cancel checks](#rule-9-fourth-item-what-a-cancel-checks) says.
+
+A run of the contract suite counts only for the account it ran against, so paper and live stay independent. Until a run exists for a live account, every lost cancel there that no lookup or answer settles ends in that halt. The kill switch alone needs no run. Its repeat keeps the lookup and the written number, at paper and at live.
+
+#### Timeouts and breakers: an order in doubt, and a store that is down
+
+An order in doubt is first looked up, through the broker's order list, and cancelled once a row or the lookup gives its broker id.
+
+When the store itself is down, no cancel can be journaled, so none is sent. The page says so, and the owner's step is to cancel in the broker's own interface, which reconciliation later journals as outside entries once the owner confirms them.
+
+#### Timeouts and breakers: how a breaker closes and its halt releases
+
+The call that tests whether a dependency recovered is a read, never an order. A breaker that closes ends only its own state.
+
+The halt it raised releases under the rule above on how a halt releases, after three things.
+
+1. Reconciliation from a recorded journal position.
+2. Its hold time.
+3. No order or cancel left in doubt.
+
+It releases this way at most a written number of times a session, and each release is journaled with its count. After that it waits for the owner and names the count. In live trading it waits for the owner from the first, and the price is that a dependency's outage stops Live until the owner answers.
+
+#### Timeouts and breakers: retries off the trading loop
+
+Capture's connection to the feed sits outside the trading loop's breaker, and capture reconnects with bounded backoff and never stops retrying.
+
+A retried job off the order path, such as a report or a derived view, has a maximum, past which it is set aside and alerts. Newman's cautionary tale is a pricing queue with no retry limit, where one request that crashed its worker went back on the queue and crashed the next (BM L1286).
+
+A job that consumes broker messages, the journal or captured data halts with the message named, and an order send is never retried, since a send with no answer stays in doubt under the one-writer rules.
 
 ### Time comes from one clock, and order from sequence numbers
 
@@ -2346,11 +2529,221 @@ The **order path** runs from the target portfolio through the risk gate and the 
 
 1. **The checks that clear a release to trade are the code its tests ran, run where the release runs with only the target changed, and the release trades only after they pass.** Farcic runs the same integration tests against the new release twice, with only the address changed: once at its own address before it is made publicly available, and once through the entry point users reach after the switch (DT p. 173, p. 247, p. 248). Here that suite is the charter's Startup step. Its functions run in CI against the simulated broker and replay, and in each environment against that environment's adapters, so the code that clears a release is code the tests ran. No second suite exists beside it, because a second list of checks drifts from the first. A release enables strategies only after Startup passes, a test fails each Startup check in turn and asserts that no order reached the broker's stand-in, a test runs Startup with every check passing and asserts it received no order and no cancel, and a test lets a readiness wait expire and asserts the check fails. A failure follows [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), which says what a release still serves after each kind of failed check, and a store finding follows rule 3 below. The book's second run, after the switch, is here reconciliation on every fill under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) and the synthetic event in shadow under the monitoring rules. No Startup check sends an order or a cancel in any environment, so Startup adds no sender beside the order path and its code is the same everywhere. Serving a set kill switch is the order path's work, and it runs once the digest and journal checks pass. The synthetic event checks shadow's round trip against the simulated broker, and the first real order is what exercises the real send path, under the operator's check of the first sessions in the charter's Production step. A check that starts something waits on a readiness check with a timeout, never on a fixed sleep, and a wait that expires fails the check. The book calls its own fixed pause something to use rarely (DT p. 200), and this doc makes it never.
 2. **The owner's merge deploys to shadow and a healthy shadow to paper, and the pipeline deploys nothing to live.** Farcic's continuous deployment runs from a commit to production with no human intervention (DT p. 20). His continuous delivery stops one step short, where every build that passes could be deployed and a person decides when (DT p. 19). Hard limit 6 makes the merge and every deploy to live the owner's, so this platform takes continuous deployment as far as paper and continuous delivery at live. The pipeline ends at an artifact whose checks passed, recorded under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), and the owner deploys it to live. No workflow run whose code comes from a branch other than `main` holds any credential, broker or cloud, to a shadow, paper or live account or a data vendor, and no workflow run at all holds a broker credential, since the design on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) gives the broker key to the execution worker's user alone. So the scheduled contract suite against the paper account is not a workflow run. It shares the one paper account, so it never runs beside a session or any other test on that account, and its orders meet the hard limits and the account's lease like any other order and never reach a strategy's positions. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it runs. A deploy accepts only a digest that a signed attestation shows a run on `main` built, where that run was started by a push, never by a manual dispatch, `pull_request_target` or `workflow_run`. The attestation is the record this rule relies on, and it proves the build. A check at run time proves the head: the deploy and apply jobs compare their commit with `main`'s head and refuse otherwise. A deploy also refuses a blocked digest, and a re-run of a job reaches no role, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. A branch's job could push an image to GitHub's container registry, and could sign it under its own branch, but a VM verifies the signature names the publish workflow on `main` before every container start, whatever named the digest. A credential that deploys the platform is reachable only through a GitHub environment, one for each cloud account plus `paper-vm` and `live-vm` for changes to a VM, because a required reviewer binds a whole environment. Each admits `main` alone with no administrator bypass, and only live's environment and those two name as their required reviewer an identity no agent session holds, since a merge is the owner's act and otherwise reaches shadow and paper with no second person. No login an agent session holds, on GitHub or in the cloud, can change such an environment, bypass `main`'s ruleset, assume the owner's role or change who can, or assume a role that deploys or applies the code. Moving agents off the owner's admin login is deferred. Until that move agents run on the login that is also the required reviewer. So on GitHub the two sentences before this one, and every statement in this doc that an agent cannot reach an environment, `main`'s ruleset or a deploying role, are rules agents follow, and nothing enforces them. Hard limit 1, that no agent places a live order or moves money, and hard limit 6, that the owner merges, hold by instruction alone, an admin login can change a reviewer and reach a deploy role through it, and GitHub's records name one login for the owner and for agents. The owner-only acts in live trading stay fenced in AWS against a person's credential, and a release shipped through this gap is not bound by that fence. The price and the open end point are on [#32](https://github.com/l3a0/ithildin-runtime/issues/32), which whoever creates the live environment reads first. Each account's deploy role trusts only its own environment, so a paper deploy cannot reach live. A deploy to shadow runs only on a push to `main`, a promotion to paper only on its schedule on `main`, and a manual dispatch on `main` only behind live's reviewer, so the owner's merge stays the only way onto shadow and paper. An apply to shadow or paper runs on a push to `main`, one that changes a paper VM's image or startup script waits behind the owner's review, and one to live runs only behind live's reviewer. None runs on `pull_request_target` or `workflow_run`, which run with `main`'s privileges whatever started them, and each runs nothing but `main`'s head. The build board's Pages environment deploys on its own and is outside this rule, since it holds no credential to the platform. These credential rules are this doc's, not the book's, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how they are built.
-3. **Every machine is built from committed code, a check of that code against what it built finds no difference, and the code cannot destroy what cannot be recovered.** Farcic runs every step from the delivery server, and finds no need to log in to a server and work on it by hand (DT p. 88). A second run of his playbook finds almost nothing left to do (DT p. 190). Here the hosts, their users and grants, the queues and the buckets are declared in committed code, which every environment applies alike, differing only in the keys of the committed list under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), which names where each credential is read from and holds none, whose state stays out of the repository and holds no secret, and whose plan output and deploy logs stay out of any public log or artifact. An apply to shadow or paper follows the owner's merge, except that a change to a paper VM's image or startup script waits for the owner's approval, and a change to the VM role's permissions on paper or live is the owner's by hand, because a change to the host itself can undo the checks on later releases, and an apply to live is the owner's by hand. An apply that touches execution, its roles and grants, its queue, the host's restart settings and switch, or the stores of the journal, the halt state or the lease happens between sessions, as [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) has a release do, since a change to any of them can stop a cancel, so a merge's apply starts only inside the window between sessions that [When a refresh may run](architecture/07-deployment.md#when-a-refresh-may-run) defines, while no session is open and the next start is more than its bound away, checked at its start and again just before its first change, and otherwise changes nothing, alarms and waits for the next window, unless the owner overrides it for an incident, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds. An infrastructure change rolls back by a new commit on `main`, applied like any other change, that restores the code before it and detaches, never destroys, any protected store the change created. It rolls forward by bringing that store back under the code by its recorded id, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds. The price is that a rollback waits on a merge, which hard limit 6 makes the owner's. The paper gate drills both. After each change and on a schedule, the code runs in a mode that only reports, under a role that cannot write and reads no stored data, and a difference is drift, which alerts. Monitoring reads each scheduled check's last result, and a result missing past a written bound alerts the owner. A change made by hand during an incident goes in the operator's change log, and is then written into the code or undone. Neither the code nor any role that applies it can delete, overwrite, append to, expire or recreate the journal, captured data, their backups, the halt state, a journal store's first-start record, the lease, apart from the rule that expires the noncurrent versions its rewrites leave, execution's queue or the owner's records, write the hard caps, release a halt, a loss stop or a kill switch, write an override or an owner's record, or read, overwrite or delete a broker or data-vendor credential, grant read of one to any principal but the one the Configuration table names, or change who can act as that principal or who can assume the owner's role. The one exception covers the launch template and the VM's role alone, on paper and live, and every other refusal still binds that credential. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval. On shadow the apply credential makes these changes, and shadow's journal holds simulated fills only, which is the accepted price. The operator acts through a principal of its own in each paper and shadow account, which can read the log and state stores, call the restart switch, pull the kill switch and run the report-only check. It sits under the same denies, with one exception: on a paper or shadow account it may also release a halt, a loss stop or a kill switch and write an override, so a release this group gives the owner is the operator's too there, and so is clearing a lease, and a pull journals itself on paper and shadow, while what journals an operator's pull on live is open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11). A release's rollback by its pin on a paper or shadow account is the operator's too, as an exception to rule 2's GitHub environment beside the owner's own hand on a pin, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how. An infrastructure rollback stays the owner's. In a live account the operator acts only to pull the kill switch and switch a strategy off, as hard limit 1's one exception allows, so the live restart switch is the owner's, and it reads the log and state stores there. That guard sits where the role it binds cannot edit it, a check on every plan refuses any such change whether or not the store's block is still in the code, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how both are built and tested. A protected store found missing or created again never reads as empty. It halts new orders until the owner releases the halt and pages the owner, naming the store and saying whether any instance can still serve cancels, with the broker's interface when none can, and it names the store where the halt-state monitor reads it unless the halt state is the store that is gone. A journal store is behind when a copy holds an entry that reads and verifies and the store does not. A journal store found missing, empty or behind follows the procedure for an unreadable journal in [Every fact has one writer](#every-fact-has-one-writer) and takes no entry until it is restored, only by the owner's hand, so its cancels wait for the restore and the page names the broker's interface. A journal verified to a non-empty head whose comparison with a copy cannot finish is not such a failure, and a copy reporting a position no entry backs counts as such a comparison. It halts new orders until the owner releases the halt, alerts naming the copy and still serves cancels, except a plan's own while a halt is stored, and the kill switch, and the price is that an outage of a copy's store at a session's start stops new orders until then, and an entry it writes stays through any restore under [Recorded data is append-only](#recorded-data-is-append-only-and-every-view-of-it-is-rebuilt). A journal store starts empty only once, on a record that says this is the first start, and evidence that is absent or unreadable halts under hard limit 3. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how these are compared, spent and restored. A halt-state store created again starts halted until the owner releases it. A lease store created again keeps the lease guards in [Every fact has one writer](#every-fact-has-one-writer). By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), each lease it lost reads as absent, as [who may send](#rule-9-who-may-send-the-accounts-lease) says, so the next take after the owner's release counts as a takeover. A missing queue is created again only by the owner's hand. Capture keeps spilling to its local disk and never halts, and a captured-data store found empty or behind its copies counts as missing. In slice 1 marketlake protects its own stores, and this platform reads only its record and freshness. Every interface that can control a host or a container takes only authenticated calls from the identities the design names for it. The book's own setup listens for remote requests from any address and says a real one must be much more restrictive (DT p. 92). Deployment and provisioning code follows the rules for the code itself, so it swallows no error. The book's function that reads which release is live returns an empty value on any failure (DT p. 246). An outage there reads as no release live, and the next deploy can land on the release that is serving. Here a deployment state that cannot be read halts the deploy and names what it could not read, and a CI test feeds it an unreadable state, as another feeds the drift check a plan with a difference.
-4. **An automatic restart, reschedule or scale step is capped, recorded and reported, a halt is never a failure to heal, and a missing reading leads to no step at all.** Farcic's self-healing at the level of the system restarts a failed process or scales a service by its response time. He warns that recovery often needs a person to find the cause, so a notification goes with it (DT p. 302). He finds a bare redeploy incomplete, because someone needs to be notified and what came before the failure examined (DT p. 263). His redeploy brings back the release that ran before the failure and builds nothing (DT p. 331), while Docker's `always` policy restarts a container without limit (DT p. 345). Here a restart starts the digest the open session pinned, under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), and the step that restarts reads the release's record and never writes it. An execution restart that cannot confirm its digest serves nothing and pages the owner, naming the broker's interface, under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off). A record that cannot be read takes no restart and alerts, except for the components named below as keeping on. One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which, apart from the two named below. The count runs across a component's instances. One instance past its own limit, execution's and capture's apart, is taken out and alarms while the others carry on, and the cap is reached when the count across instances reaches it or no instance is healthy. Each component's class under this rule is written down, a component with no written class counts as one the order path depends on, and the replay harness's restarter is a stand-in under [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production), so a crash's outcome has one definition. A window can let a slow crash loop pass, so any restart during a session of a component the order path depends on pages the owner as well, and a component of any kind whose restarts pass a written count over a session or a day pages the owner. One continuing cause raises one page, repeated at a written interval, and never holds back a different alarm. The cap of N lets the Nth restart run, and the crash after it is the one that reaches the cap. Each restart, reschedule and scale step is recorded with the component, its exit or reason and its count, and reports under the first monitors' heartbeat, so that list stays at nine. A count that survives a move to another machine, kept outside the journal's store, is the written next step for when components first move between machines on their own, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it is built. A crash while consuming a broker message, a journal entry or captured data halts under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) before the cap applies, and the restart comes up halted. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds what marks such a crash so no other instance consumes the record. SQS's receive count cannot, because a held lease and an ordinary restart raise it too. That halt never stops the kill switch's item, a takeover or the cancel that keeps a pair whole. A component counts as one the order path depends on when trading reads its output or relies on a check it runs, such as reconciliation or the clock's checks. Reaching the cap on such a component halts trading, writes the component, its last exit and the count where the halt-state monitor reads them, and pages the owner, and the halt waits for the owner. Any other component pages at its cap and stops restarting. Two kinds of component keep on past their cap, because stopping them loses something that cannot be recovered or leaves nothing serving a cancel. Capture keeps restarting and never halts, and reports time not recording under the first monitors' data freshness. In slice 1 capture is marketlake's, so its restarts are marketlake's and this platform reads only that freshness. Execution keeps restarting halted, on any exit while a session is open, a clean one included, so it can still serve cancels and the kill switch if its crash lies in the trading path. Each restarts with a delay that grows to a written maximum, and pages the owner, and execution's maximum, plus the time from a start to serving a cancel, sits below monitoring's kill switch deadline, and that sum is a written limit under [Design ahead](#design-ahead-and-write-down-where-the-build-stops). For these two the implementation that counts the others does not stop restarts, each comes up halted where it must, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how. Any other instance that can take the account's lease keeps serving cancels, except a plan's own while a halt is stored, and the kill switch. When none can, the page says so, and the owner's step is to cancel in the broker's interface, as it is when the journal's store is down. A halted component keeps running and reports itself halted, so no health check reads a halt as a failure, and a restart reads the halt state through the charter's Startup step. A restart during a session runs its own digest and journal checks, reads its switch, its count and the halt state, and checks the clock. It keeps rule 3's checks for an empty store and a first start. It skips the comparison with a journal's copies, because the comparison that passes at the session's start writes a create-only result holding the sequence number and hash it compared, and a restart requires the entry at that number to hash the same. With no result stored, it runs the full comparison. So one crash cannot stop new orders, and a restart cannot trust a shortened journal. That result also tells a first start from a replacement. The book's own average over the last hour comes back null when no entry falls inside it (DT p. 383), and here a null, stale or failed reading takes no step and alerts. Once a scaling step first runs, execution's scaling has a written floor of instances able to answer a kill switch event within monitoring's deadline under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), and falling below the floor alarms under the first monitors' heartbeat. No scaling step takes a component above the written scale limit that [Design ahead](#design-ahead-and-write-down-where-the-build-stops) makes it state, sized for execution against the broker's rate limit. The operator can switch restarts, reschedules and scaling off for each component without a deploy, leaving it running, so an incident's evidence is not restarted away, and the switch never stops capture's restarts or execution's restarts into a halted state. A flip is recorded off the machine, where [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names, the switch's position travels in every heartbeat, and a switch found off at a session's start alerts, naming the component. An unreadable switch takes no restart, reschedule or scale step and alerts, except that capture and execution keep restarting, and execution comes up halted when it cannot read its switch or its count, finds its switch absent at any start, or finds its count absent during a session. Execution's halts on an unreadable switch or count, on a count absent during a session and on a flipped switch wait for the owner. So in slice 1's group of one, a VM replaced mid-session brings execution up halted, and the session waits for the owner. In the cluster only that VM's instance comes up halted. The group's replacement is recorded and reported like a reschedule, with no cap or switch applied to it. With its restarts switched off, execution still restarts halted and pages the owner, and the page names the broker's interface only when that halted restart fails too. A crash of any other component that takes no restart, for any reason, counts as reaching its cap. The code declares the switch and never its position, so a flip is no drift and no apply changes it. The switch takes only authenticated calls from the owner and, outside a live account, the operator. The book's scale-down simply removes the instances it no longer wants (DT p. 286). Here an instance that scaling or rescheduling removes stops taking work, and its open broker calls and the lease's takeover follow [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and the rules in [Every fact has one writer](#every-fact-has-one-writer).
+3. **Every machine is built from committed code, a check of that code against what it built finds no difference, and the code cannot destroy what cannot be recovered.** Farcic runs every step from the delivery server, and finds no need to log in to a server and work on it by hand (DT p. 88). A second run of his playbook finds almost nothing left to do (DT p. 190). The subsections after this list, from [Infrastructure code: what it declares](#infrastructure-code-what-it-declares) to [Infrastructure code: who can control a host, and errors in deployment code](#infrastructure-code-who-can-control-a-host-and-errors-in-deployment-code), say how this rule applies.
+4. **An automatic restart, reschedule or scale step is capped, recorded and reported, a halt is never a failure to heal, and a missing reading leads to no step at all.** Farcic's self-healing at the level of the system restarts a failed process or scales a service by its response time. He warns that recovery often needs a person to find the cause, so a notification goes with it (DT p. 302). He finds a bare redeploy incomplete, because someone needs to be notified and what came before the failure examined (DT p. 263). His redeploy brings back the release that ran before the failure and builds nothing (DT p. 331), while Docker's `always` policy restarts a container without limit (DT p. 345). The subsections after this list, from [Automatic restarts: which release a restart starts](#automatic-restarts-which-release-a-restart-starts) to [Automatic restarts: the switch that turns healing off](#automatic-restarts-the-switch-that-turns-healing-off), say how this rule applies.
 5. **Every component's log lines leave its machine as structured records, into one place that can be searched, no log write waits on that place, and the journal is never one of them.** Farcic finds a service's logs spread over several files and several servers, and gathers them into one store that can be searched (DT p. 349, p. 350, p. 362). The machine keeps no state, so a log kept there is lost with it. Here each component writes structured lines, those a decision led to carrying its id under [Monitoring answers whether there is a problem first](#monitoring-answers-whether-there-is-a-problem-first), through a bounded buffer that drops and counts what it cannot write rather than wait, under that section's rule that every queue and buffer states its bound. A stalled log pipeline then never stalls the order path, which [Keep the order path isolated](#keep-the-order-path-isolated) lets monitoring fail without. The buffer's fill and the shipping lag alarm under the first monitors' heartbeat at 75% of the buffer's bound, under [Design ahead](#design-ahead-and-write-down-where-the-build-stops), below the point where a line drops. Lines still in the buffer at a crash go with the process, and the buffer's bound caps how many. Comparing lines written with lines received waits for real use, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds the deferral. The price is that a line lost after the buffer goes unnoticed until an incident looks for it. The log store sits in the environment's own cloud account, a component's credential for it can only write, under the component's own prefix, and only the owner and the operator read it, and no line from any component carries a credential, token or account number. The lines are diagnostic data, with the owner and end date the data-cost rule below gives them. The journal and captured data are recorded facts with their own stores, so no log pipeline, retention rule or cleanup reaches them.
 
 The faults this group adds to the list in [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) inject its failures at run time. The failures that happen at deploy time, which are a Startup check that fails on a new release, a deployment state that cannot be read, a drift the check reports and an infrastructure change rolled back and forward, each have a CI test and a drill on the paper host under the charter's Release table. The restart cap and a crash loop slower than its window run under the host's real supervisor, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds, and every alarm the group adds has a drill.
+
+#### Infrastructure code: what it declares
+
+Here the hosts, their users and grants, the queues and the buckets are declared in committed code, which every environment applies alike. Environments differ only in the keys of the committed list under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), which names where each credential is read from and holds none. Two things about the code stay out of public view.
+
+1. Its state stays out of the repository and holds no secret.
+2. Its plan output and deploy logs stay out of any public log or artifact.
+
+#### Infrastructure code: who applies a change
+
+**Table:** Who applies each change of infrastructure code
+
+| The change | Who applies it |
+| --- | --- |
+| An apply to shadow or paper | It follows the owner's merge |
+| A change to a paper VM's image or startup script | It waits for the owner's approval |
+| A change to the VM role's permissions on paper or live | The owner, by hand |
+| An apply to live | The owner, by hand |
+
+The two changes to a VM wait on the owner because a change to the host itself can undo the checks on later releases.
+
+#### Infrastructure code: when a change that can stop a cancel applies
+
+An apply that touches any of these happens between sessions, as [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) has a release do, since a change to any of them can stop a cancel.
+
+- Execution, its roles and grants, and its queue.
+- The host's restart settings and switch.
+- The stores of the journal, the halt state or the lease.
+
+So a merge's apply starts only inside the window between sessions that [When a refresh may run](architecture/07-deployment.md#when-a-refresh-may-run) defines, while no session is open and the next start is more than its bound away. That is checked at the apply's start and again just before its first change. Otherwise the apply changes nothing, alarms and waits for the next window, unless the owner overrides it for an incident, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
+
+#### Infrastructure code: rolling a change back and forward
+
+An infrastructure change rolls back by a new commit on `main`, applied like any other change. That commit does two things.
+
+1. It restores the code before the change.
+2. It detaches, never destroys, any protected store the change created.
+
+The change rolls forward by bringing that store back under the code by its recorded id, as [#32](https://github.com/l3a0/ithildin-runtime/issues/32) builds. The price is that a rollback waits on a merge, which hard limit 6 makes the owner's. The paper gate drills both.
+
+#### Infrastructure code: drift and changes made by hand
+
+After each change and on a schedule, the code runs in a mode that only reports, under a role that cannot write and reads no stored data. A difference is drift, which alerts. Monitoring reads each scheduled check's last result, and a result missing past a written bound alerts the owner.
+
+A change made by hand during an incident goes in the operator's change log, and is then written into the code or undone.
+
+#### Infrastructure code: what no apply can change
+
+Neither the code nor any role that applies it can do any of these.
+
+- Delete, overwrite, append to, expire or recreate any of these stores.
+  - The journal.
+  - Captured data.
+  - Their backups.
+  - The halt state.
+  - A journal store's first-start record.
+  - The lease, apart from the rule that expires the noncurrent versions its rewrites leave.
+  - Execution's queue.
+  - The owner's records.
+- Write the hard caps.
+- Release a halt, a loss stop or a kill switch.
+- Write an override or an owner's record.
+- Read, overwrite or delete a broker or data-vendor credential.
+- Grant read of one to any principal but the one the Configuration table names.
+- Change who can act as that principal or who can assume the owner's role.
+
+The one exception covers the launch template and the VM's role alone, on paper and live, and every other refusal still binds that credential. Reach to a VM counts as every worker's credential in that environment, the broker key included, so it stays behind the owner's approval.
+
+On shadow the apply credential makes these changes, and shadow's journal holds simulated fills only, which is the accepted price.
+
+The guard behind these refusals sits where the role it binds cannot edit it. A check on every plan refuses any such change whether or not the store's block is still in the code. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how both are built and tested.
+
+#### Infrastructure code: what the operator may do
+
+The operator acts through a principal of its own in each paper and shadow account. That principal can do four things.
+
+1. Read the log and state stores.
+2. Call the restart switch.
+3. Pull the kill switch.
+4. Run the report-only check.
+
+It sits under the same denies, with one exception. On a paper or shadow account it may also release a halt, a loss stop or a kill switch and write an override. So a release this group gives the owner is the operator's too there, and so is clearing a lease. A pull journals itself on paper and shadow, while what journals an operator's pull on live is open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+
+A release's rollback by its pin on a paper or shadow account is the operator's too, beside the owner's own hand on a pin. That is an exception to rule 2 above, under which a credential that deploys the platform is reachable only through a GitHub environment, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how. An infrastructure rollback stays the owner's.
+
+In a live account the operator acts only to pull the kill switch and switch a strategy off, as hard limit 1's one exception allows, so the live restart switch is the owner's. The operator reads the log and state stores there.
+
+#### Infrastructure code: a protected store found missing or created again
+
+A protected store found missing or created again never reads as empty. It does three things.
+
+1. It halts new orders until the owner releases the halt.
+2. It pages the owner, naming the store and saying whether any instance can still serve cancels, with the broker's interface when none can.
+3. It names the store where the halt-state monitor reads it, unless the halt state is the store that is gone.
+
+A journal store is behind when a copy holds an entry that reads and verifies and the store does not. A journal store found missing, empty or behind follows the procedure for an unreadable journal in [Every fact has one writer](#every-fact-has-one-writer). It takes no entry until it is restored, only by the owner's hand, so its cancels wait for the restore and the page names the broker's interface.
+
+A journal verified to a non-empty head whose comparison with a copy cannot finish is not such a failure, and a copy reporting a position no entry backs counts as such a comparison. It halts new orders until the owner releases the halt, alerts naming the copy and still serves cancels, except a plan's own while a halt is stored, and the kill switch. The price is that an outage of a copy's store at a session's start stops new orders until then, and an entry it writes stays through any restore under [Recorded data is append-only](#recorded-data-is-append-only-and-every-view-of-it-is-rebuilt).
+
+A journal store starts empty only once, on a record that says this is the first start, and evidence that is absent or unreadable halts under hard limit 3. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how these are compared, spent and restored.
+
+**Table:** What else holds for each other protected store found missing or created again
+
+| The store | What else holds |
+| --- | --- |
+| A halt-state store created again | It starts halted until the owner releases it |
+| A lease store created again | It keeps the lease guards in [Every fact has one writer](#every-fact-has-one-writer). By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), each lease it lost reads as absent, as [who may send](#rule-9-who-may-send-the-accounts-lease) says, so the next take after the owner's release counts as a takeover |
+| A missing queue | It is created again only by the owner's hand |
+| A captured-data store found empty or behind its copies | It counts as missing |
+
+Capture keeps spilling to its local disk and never halts. In slice 1 marketlake protects its own stores, and this platform reads only its record and freshness.
+
+#### Infrastructure code: who can control a host, and errors in deployment code
+
+Every interface that can control a host or a container takes only authenticated calls from the identities the design names for it. The book's own setup listens for remote requests from any address and says a real one must be much more restrictive (DT p. 92).
+
+Deployment and provisioning code follows the rules for the code itself, so it swallows no error. The book's function that reads which release is live returns an empty value on any failure (DT p. 246). An outage there reads as no release live, and the next deploy can land on the release that is serving. Here a deployment state that cannot be read halts the deploy and names what it could not read, and a CI test feeds it an unreadable state, as another feeds the drift check a plan with a difference.
+
+#### Automatic restarts: which release a restart starts
+
+Here a restart starts the digest the open session pinned, under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), and the step that restarts reads the release's record and never writes it.
+
+An execution restart that cannot confirm its digest serves nothing and pages the owner, naming the broker's interface, under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off). A record that cannot be read takes no restart and alerts, except for the components named below as keeping on.
+
+#### Automatic restarts: how restarts are counted
+
+One implementation counts each component's restarts in a written window, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds which, apart from the two named below.
+
+1. The count runs across a component's instances.
+2. One instance past its own limit, execution's and capture's apart, is taken out and alarms while the others carry on.
+3. The cap is reached when the count across instances reaches it or no instance is healthy.
+4. The cap of N lets the Nth restart run, and the crash after it is the one that reaches the cap.
+
+Each component's class under this rule is written down, and a component with no written class counts as one the order path depends on. The replay harness's restarter is a stand-in under [The code holds its own rules](#the-code-holds-its-own-rules-and-every-check-runs-in-production), so a crash's outcome has one definition.
+
+#### Automatic restarts: when a restart pages, and what is recorded
+
+A window can let a slow crash loop pass, so two more cases page the owner.
+
+1. Any restart during a session of a component the order path depends on pages the owner as well.
+2. A component of any kind whose restarts pass a written count over a session or a day pages the owner.
+
+One continuing cause raises one page, repeated at a written interval, and never holds back a different alarm.
+
+Each restart, reschedule and scale step is recorded with the component, its exit or reason and its count, and reports under the first monitors' heartbeat, so the list of first monitors stays at nine. A count that survives a move to another machine, kept outside the journal's store, is the written next step for when components first move between machines on their own, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how it is built.
+
+#### Automatic restarts: a crash while consuming a record
+
+A crash while consuming a broker message, a journal entry or captured data halts under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) before the cap applies, and the restart comes up halted. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds what marks such a crash so no other instance consumes the record. SQS's receive count cannot, because a held lease and an ordinary restart raise it too. That halt never stops the kill switch's item, a takeover or the cancel that keeps a pair whole.
+
+#### Automatic restarts: what reaching the cap does
+
+A component counts as one the order path depends on when trading reads its output or relies on a check it runs, such as reconciliation or the clock's checks.
+
+**Table:** What reaching the cap does to each kind of component
+
+| The component | What reaching its cap does |
+| --- | --- |
+| One the order path depends on | It halts trading, writes the component, its last exit and the count where the halt-state monitor reads them, and pages the owner. The halt waits for the owner |
+| Any other component | It pages and stops restarting |
+| Capture or execution | It keeps on past its cap, as the next subsection says |
+
+#### Automatic restarts: the two components that keep on past their cap
+
+Two kinds of component keep on past their cap, because stopping them loses something that cannot be recovered or leaves nothing serving a cancel.
+
+1. Capture keeps restarting and never halts, and reports time not recording under the first monitors' data freshness. In slice 1 capture is marketlake's, so its restarts are marketlake's and this platform reads only that freshness.
+2. Execution keeps restarting halted, on any exit while a session is open, a clean one included, so it can still serve cancels and the kill switch if its crash lies in the trading path.
+
+Each restarts with a delay that grows to a written maximum, and pages the owner. Execution's maximum, plus the time from a start to serving a cancel, sits below monitoring's kill switch deadline, and that sum is a written limit under [Design ahead](#design-ahead-and-write-down-where-the-build-stops). For these two the implementation that counts the others does not stop restarts, each comes up halted where it must, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds how.
+
+Any other instance that can take the account's lease keeps serving cancels, except a plan's own while a halt is stored, and the kill switch. When none can, the page says so, and the owner's step is to cancel in the broker's interface, as it is when the journal's store is down.
+
+#### Automatic restarts: what a restart during a session checks
+
+A halted component keeps running and reports itself halted, so no health check reads a halt as a failure, and a restart reads the halt state through the charter's Startup step.
+
+A restart during a session takes five steps.
+
+1. It runs its own digest and journal checks.
+2. It reads its switch, its count and the halt state.
+3. It checks the clock.
+4. It keeps rule 3's checks for an empty store and a first start, which [Infrastructure code: a protected store found missing or created again](#infrastructure-code-a-protected-store-found-missing-or-created-again) states.
+5. It skips the comparison with a journal's copies, because the comparison that passes at the session's start writes a create-only result holding the sequence number and hash it compared, and a restart requires the entry at that number to hash the same.
+
+With no result stored, it runs the full comparison. So one crash cannot stop new orders, and a restart cannot trust a shortened journal. That result also tells a first start from a replacement.
+
+#### Automatic restarts: readings and scaling
+
+The book's own average over the last hour comes back null when no entry falls inside it (DT p. 383), and here a null, stale or failed reading takes no step and alerts.
+
+Once a scaling step first runs, execution's scaling has a written floor of instances able to answer a kill switch event within monitoring's deadline under [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off), and falling below the floor alarms under the first monitors' heartbeat. No scaling step takes a component above the written scale limit that [Design ahead](#design-ahead-and-write-down-where-the-build-stops) makes it state, sized for execution against the broker's rate limit.
+
+The book's scale-down simply removes the instances it no longer wants (DT p. 286). Here an instance that scaling or rescheduling removes stops taking work, and its open broker calls and the lease's takeover follow [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and the rules in [Every fact has one writer](#every-fact-has-one-writer).
+
+#### Automatic restarts: the switch that turns healing off
+
+The operator can switch restarts, reschedules and scaling off for each component without a deploy, leaving it running, so an incident's evidence is not restarted away. The switch never stops capture's restarts or execution's restarts into a halted state.
+
+A flip is recorded off the machine, where [#32](https://github.com/l3a0/ithildin-runtime/issues/32) names, the switch's position travels in every heartbeat, and a switch found off at a session's start alerts, naming the component. The code declares the switch and never its position, so a flip is no drift and no apply changes it. The switch takes only authenticated calls from the owner and, outside a live account, the operator.
+
+An unreadable switch takes no restart, reschedule or scale step and alerts, except that capture and execution keep restarting. Execution comes up halted in three cases.
+
+1. It cannot read its switch or its count.
+2. It finds its switch absent at any start.
+3. It finds its count absent during a session.
+
+Execution's halts on an unreadable switch or count, on a count absent during a session and on a flipped switch wait for the owner. So in slice 1's group of one, a VM replaced mid-session brings execution up halted, and the session waits for the owner. In the cluster only that VM's instance comes up halted. The group's replacement is recorded and reported like a reschedule, with no cap or switch applied to it.
+
+With its restarts switched off, execution still restarts halted and pages the owner, and the page names the broker's interface only when that halted restart fails too. A crash of any other component that takes no restart, for any reason, counts as reaching its cap.
 
 ### Monitoring answers whether there is a problem first
 
