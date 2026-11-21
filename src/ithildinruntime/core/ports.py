@@ -137,7 +137,14 @@ class RiskGate(Protocol):
 
 
 class BlobStore(Protocol):
-    """The storage port. Each write sends its SHA-256, and no worker deletes through it."""
+    """The storage port. Each write sends its SHA-256, and no worker deletes through it.
+
+    A call the store does not carry out raises one of the refusals in
+    `core.storage`, the same from every adapter: `KeyExists`, `ChecksumMismatch`,
+    `StaleTag`, `BlobMissing`, or `StoreUnavailable` for any other refusal and
+    for no answer. Workers write through `core.Storage`, which applies the rule
+    for each kind of stage on top of this port.
+    """
 
     def create(self, key: str, data: bytes, sha256: str) -> str:
         """Store a blob under a key that does not exist yet, and return its tag."""
