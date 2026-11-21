@@ -444,8 +444,9 @@ class RestartRecord(_Record):
 class HaltRecord(_Record):
     """Why a decision halted, and what it leaves behind.
 
-    `unstored` lists each capture the process still held, by the key it was
-    trying and its SHA-256, when S3 would not store it. design.md's `### Rule 1:
+    `unstored` lists each capture the process still held that is not stored,
+    for any reason, such as S3 not answering or its key holding other bytes, by
+    the key it was trying and its SHA-256. design.md's `### Rule 1:
     a write S3 refuses or does not answer` refuses a `clear` of the halt until
     each is stored or journaled as lost, and #11 builds that refusal.
     """

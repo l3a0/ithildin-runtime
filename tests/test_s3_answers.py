@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import boto3
 import pytest
+from botocore.config import Config
 from botocore.stub import Stubber
 
 from ithildinruntime.adapters import S3Store
@@ -37,11 +38,19 @@ SHA = sha256_of(DATA)
 B64 = base64.b64encode(bytes.fromhex(SHA)).decode()
 
 
+def _client(**retries):
+    return boto3.client(
+        "s3",
+        region_name=REGION,
+        endpoint_url="http://stubbed.invalid",
+        config=Config(retries=retries or {"mode": "standard", "total_max_attempts": 1}),
+        **EMULATOR_KEYS,
+    )
+
+
 @pytest.fixture
 def stubbed():
-    client = boto3.client(
-        "s3", region_name=REGION, endpoint_url="http://stubbed.invalid", **EMULATOR_KEYS
-    )
+    client = _client()
     with Stubber(client) as stub:
         yield S3Store(client, BUCKET), stub
         stub.assert_no_pending_responses()
@@ -199,9 +208,7 @@ def test_a_409_on_a_create_is_retried_until_s3_answers(stubbed) -> None:
 def test_a_call_botocore_refuses_before_sending_is_a_bug_not_an_outage() -> None:
     from botocore.exceptions import ParamValidationError
 
-    client = boto3.client(
-        "s3", region_name=REGION, endpoint_url="http://stubbed.invalid", **EMULATOR_KEYS
-    )
+    client = _client()
     with pytest.raises(ParamValidationError):
         S3Store(client, BUCKET).create(None, DATA, SHA)  # type: ignore[arg-type]
 
@@ -231,3 +238,14 @@ def test_a_body_that_breaks_partway_through_a_read_is_no_answer(stubbed) -> None
     stub.add_response("get_object", {"Body": Broken()})
     with pytest.raises(StoreUnavailable, match="no answer"):
         store.get(KEY)
+
+
+@pytest.mark.parametrize(
+    "retries",
+    [{"mode": "standard"}, {"mode": "standard", "max_attempts": 1}, {"total_max_attempts": 3}],
+    ids=["default", "max_attempts counts retries", "three sends"],
+)
+def test_a_client_that_resends_is_refused(retries: dict) -> None:
+    """A resent call can meet its own first send, so a 409 or a 412 no longer means what it says."""
+    with pytest.raises(ValueError, match="sends each call once"):
+        S3Store(_client(**retries), BUCKET)

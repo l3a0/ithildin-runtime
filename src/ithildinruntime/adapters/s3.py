@@ -23,9 +23,10 @@ gives. Any answer not listed here, and no answer at all, is
   `Conflict`, a kind of `StoreUnavailable`, so a create is tried again and
   then meets 412.
 
-The client is the caller's to build. The storage contract retries on its own
-deadline, so a client built with botocore's retries off, `total_max_attempts`
-of 1, keeps each try's worst case to one call. A client that resends a rewrite
+The client is the caller's to build, and the store refuses one that resends.
+The storage contract retries on its own deadline, so a client with botocore's
+`total_max_attempts` of 1 sends each call once, which keeps a 409's meaning
+that nothing landed and each try's worst case to one call. A client that resends a rewrite
 whose first try landed reads its own write as `StaleTag`. The runtime builds
 its clients when its entry points exist, and #10 holds how a lease reads that
 answer.
@@ -66,6 +67,12 @@ class S3Store:
     """A `BlobStore` on one S3 bucket. `client` is a boto3 S3 client."""
 
     def __init__(self, client: Any, bucket: str) -> None:
+        retries = client.meta.config.retries or {}
+        if retries.get("total_max_attempts") != 1:
+            raise ValueError(
+                "an S3 client for the store sends each call once: build it with "
+                "botocore's retries set to total_max_attempts of 1"
+            )
         self._client = client
         self._bucket = bucket
 

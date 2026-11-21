@@ -25,6 +25,8 @@ two keys that differ only in case share a file. And a key cannot sit below
 another stored key, such as `a.json/b.json` beside `a.json`, which S3 stores
 and the folder refuses as existing, so the storage contract finds no blob
 there, holds the capture and halts. No key builder in `core` writes either.
+The folder does not check for a symlink inside it, which only someone who can
+already write the folder can plant.
 """
 
 from __future__ import annotations

@@ -211,6 +211,15 @@ class _Differs(Exception):
     pass
 
 
+class _AlarmFailed(Exception):
+    """A capture is stored, and the alarm that says so could not be sent."""
+
+    def __init__(self, reason: str, error: Exception) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.error = error
+
+
 class Storage:
     """The storage contract every worker writes and reads through.
 
@@ -271,6 +280,12 @@ class Storage:
         held = _Held(key, data, sha256_of(data), attempt, key)
         try:
             return self._place(kind, held)
+        except _AlarmFailed as failed:
+            # The capture is stored, so it is not held, and the halt says so.
+            raise self._halt(
+                f"{failed.reason}, and that alarm could not be sent: "
+                f"{type(failed.error).__name__}: {failed.error}"
+            ) from failed.error
         except _Deadline as late:
             self._hold(kind, held)
             raise self._outage(f"S3 did not store {late.key}", late) from None
@@ -334,7 +349,15 @@ class Storage:
                 self._claimed.append(held)
             try:
                 done = self._place(StageKind.CAPTURING, held, once=True)
+            except _AlarmFailed:
+                # Stored at its attempt key. The halt that held it already
+                # named it, so only the alarm is lost.
+                with self._lock:
+                    self._held.remove(held)
+                continue
             except Exception:
+                # A capture S3 still will not take stays held and named by
+                # every halt, whatever the error, so one cannot block the rest.
                 continue
             else:
                 with self._lock:
@@ -439,10 +462,14 @@ class Storage:
                 if n > 1:
                     # Raised whether this call stored it or found it stored by
                     # a try whose reply was lost, so the alarm is never missed.
-                    self._alerts.alarm(
+                    reason = (
                         f"{held.key} holds a capture with SHA-256 {counts.sha256}, and a "
                         f"later capture with SHA-256 {held.sha256} is stored at {key}"
                     )
+                    try:
+                        self._alerts.alarm(reason)
+                    except Exception as error:
+                        raise _AlarmFailed(reason, error) from error
                 return Stored(BlobRef(key, held.sha256), counts)
             if n == 1:
                 counts = BlobRef(held.key, stored)
@@ -522,7 +549,12 @@ class Storage:
             f"{what} by the deadline: {late.answer}. Captures not yet stored: {listed}. "
             f"The owner's step: {self._owner_step}"
         )
-        self._alerts.alarm(halt.reason)
+        try:
+            self._alerts.alarm(halt.reason)
+        except Exception as error:
+            return Halt(
+                f"{halt.reason}. The alarm could not be sent: {type(error).__name__}: {error}"
+            )
         return halt
 
     def _same_decision(self, key: str, header: BlobHeader, decision_at: datetime) -> None:

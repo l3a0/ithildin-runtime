@@ -231,10 +231,15 @@ def test_an_attempt_key_that_repeats_halts_and_the_capture_stays_held(spec: Stor
             StageKind.CAPTURING, _snapshot_key(), f"read {n}".encode(), attempt=_attempt()
         )
     assert stored.ref.key == core.attempt_key("ci", RUN, AT, "data", "snapshot", 12)
+
+    def repeat(n: int) -> str:
+        # Bounded, so a contract that never checks for a repeat fails here
+        # rather than walking forever.
+        assert n < 50, "the attempt walk never noticed the repeated key"
+        return _snapshot_key()
+
     with pytest.raises(Halt, match="repeats") as halted:
-        storage.put(
-            StageKind.CAPTURING, _snapshot_key(), b"read x", attempt=lambda n: _snapshot_key()
-        )
+        storage.put(StageKind.CAPTURING, _snapshot_key(), b"read x", attempt=repeat)
     assert sha256_of(b"read x") in halted.value.reason
     assert [ref.sha256 for ref in storage.unstored()] == [sha256_of(b"read x")]
 
@@ -588,6 +593,70 @@ def test_a_reader_halts_when_s3_does_not_answer_a_read(spec: StoreSpec) -> None:
     reason = halted.value.reason
     assert snapshot in reason and sha256_of(b"snapshot") in reason and OWNER_STEP in reason
     assert alarms.reasons[-1] == reason and len(alarms.reasons) == 2
+
+
+def test_a_reader_halt_names_each_capture_still_held(spec: StoreSpec) -> None:
+    storage, result_key, ref = _listed(spec, _output([USO], decision_at=AT - timedelta(days=1)))
+    flaky = Flaky(spec.open())
+    holding, _, _ = _storage(flaky)
+    flaky.down = True
+    with pytest.raises(Halt):
+        holding.put(StageKind.CAPTURING, _snapshot_key(), b"snapshot", attempt=_attempt())
+    flaky.down = False
+    with pytest.raises(Halt, match="stale") as halted:
+        holding.read_output(result_key, holding.read_result(result_key, AT), ref, AT, Instrument)
+    assert _snapshot_key() in halted.value.reason
+    assert sha256_of(b"snapshot") in halted.value.reason
+
+
+class FailingAlarms(Alarms):
+    def alarm(self, reason: str) -> None:
+        super().alarm(reason)
+        raise ConnectionError("the pager is unreachable")
+
+
+def test_an_alarm_that_cannot_be_sent_leaves_a_true_halt(spec: StoreSpec) -> None:
+    """A stored capture is never named as unstored, and an outage halt keeps its reason."""
+    flaky = Flaky(spec.open())
+    timer, alarms = FakeTimer(), FailingAlarms()
+    storage = Storage(
+        flaky, timer=timer, pause=timer.pause, retry=RETRY, alerts=alarms, owner_step=OWNER_STEP
+    )
+    key = _snapshot_key()
+    attempt_2 = core.attempt_key("ci", RUN, AT, "data", "snapshot", 2)
+    storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
+    with pytest.raises(Halt, match="could not be sent") as stored:
+        storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt())
+    assert f"is stored at {attempt_2}" in stored.value.reason
+    assert "not stored" not in stored.value.reason
+    assert storage.unstored() == ()
+    assert flaky.get(attempt_2) == b"read two"
+
+    flaky.down = True
+    with pytest.raises(Halt) as outage:
+        storage.put(StageKind.CAPTURING, core.broker_read_key("ci", RUN, AT, 1), b"read")
+    reason = outage.value.reason
+    assert "did not store" in reason and OWNER_STEP in reason
+    assert "The alarm could not be sent: ConnectionError" in reason
+    assert alarms.reasons[-1] in reason
+
+
+def test_a_held_capture_whose_alarm_fails_on_retry_is_released_as_stored(spec: StoreSpec) -> None:
+    flaky = Flaky(spec.open())
+    timer, alarms = FakeTimer(), FailingAlarms()
+    storage = Storage(
+        flaky, timer=timer, pause=timer.pause, retry=RETRY, alerts=alarms, owner_step=OWNER_STEP
+    )
+    key = _snapshot_key()
+    attempt_2 = core.attempt_key("ci", RUN, AT, "data", "snapshot", 2)
+    flaky.create(key, b"read one", sha256_of(b"read one"))
+    flaky.down_at = attempt_2
+    with pytest.raises(Halt):
+        storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt())
+    flaky.down_at = None
+    assert storage.retry_held() == ()
+    assert storage.unstored() == ()
+    assert flaky.get(attempt_2) == b"read two"
 
 
 # The output file's form

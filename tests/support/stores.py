@@ -50,7 +50,7 @@ class StoreSpec:
             "s3",
             endpoint_url=self.endpoint,
             region_name=REGION,
-            config=Config(retries={"mode": "standard", "max_attempts": 1}),
+            config=Config(retries={"mode": "standard", "total_max_attempts": 1}),
             **EMULATOR_KEYS,
         )
 

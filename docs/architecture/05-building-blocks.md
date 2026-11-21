@@ -608,7 +608,7 @@ classDiagram
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
         +read_result(key, decision_at) DecisionResult
-        +read_output(result_key, DecisionResult, BlobRef, decision_at, kind) OutputFile
+        +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
         +retry_held() list
         +unstored() list
         +halt_record(Halt) HaltRecord
@@ -950,7 +950,7 @@ Every type that crosses between workers has a file form, `BrokerAccount` and `Se
 | --- | --- |
 | `cause` | The halt the worker met, when it is passing one on. Empty when the worker found the problem itself |
 | `found_outputs` | Each output file stored under the decision's prefix when the halt was written, a capturing stage's stored capture included |
-| `unstored` | Each capture the process still held, by the key it was trying and its SHA-256, because S3 would not store it. A `clear` of the halt is refused until each is stored or journaled as lost, as [A write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says |
+| `unstored` | Each capture the process still held that is not stored, for any reason, such as S3 not answering or its key holding other bytes, by the key it was trying and its SHA-256. A `clear` of the halt is refused until each is stored or journaled as lost, as [A write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says |
 
 The supervisor writes the same record for a worker that failed, naming its restart records. The host's stop handler and the restarted worker write those records, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) says.
 

@@ -2,7 +2,8 @@
 
 Only `runtime` imports this package, and it imports nothing from
 `ithildinruntime` but `core`, so no module builds an adapter and picks its own
-mode. boto3 and botocore are imported here and nowhere else.
+mode. botocore is imported here and nowhere else, and so is boto3 once the
+runtime builds its clients here.
 """
 
 from .folder import FolderStore

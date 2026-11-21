@@ -5,7 +5,8 @@ description = "A systematic trading platform after Narang's Inside the Black Box
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # The S3 store's client, imported only in `adapters`. botocore 1.35.69 is
+    # The S3 store's client, imported only in `adapters`, which builds the
+    # client once the runtime's entry points exist. botocore 1.35.69 is
     # the first release whose PutObject takes If-Match, which a lease rewrite
     # sends. 1.35.66 already takes If-None-Match.
     "boto3>=1.35.69",
