@@ -214,10 +214,11 @@ class _Differs(Exception):
 class _AlarmFailed(Exception):
     """A capture is stored, and the alarm that says so could not be sent."""
 
-    def __init__(self, reason: str, error: Exception) -> None:
+    def __init__(self, reason: str, error: Exception, stored: Stored) -> None:
         super().__init__(reason)
         self.reason = reason
         self.error = error
+        self.stored = stored
 
 
 class Storage:
@@ -334,6 +335,9 @@ class Storage:
     def retry_held(self) -> tuple[Stored, ...]:
         """Try each held capture once more, with no pause, and return the ones now stored.
 
+        A capture stored at its attempt key is returned even when the alarm
+        that says so could not be sent.
+
         A capture S3 still will not take stays held. The process that holds a
         halt calls this while it lives, so each capture is stored once S3
         answers. Each capture is claimed under the lock, so two handlers
@@ -349,11 +353,12 @@ class Storage:
                 self._claimed.append(held)
             try:
                 done = self._place(StageKind.CAPTURING, held, once=True)
-            except _AlarmFailed:
-                # Stored at its attempt key. The halt that held it already
-                # named it, so only the alarm is lost.
+            except _AlarmFailed as failed:
+                # Stored at its attempt key, and returned, so the caller names
+                # it even though the alarm that says so could not be sent.
                 with self._lock:
                     self._held.remove(held)
+                stored.append(failed.stored)
                 continue
             except Exception:
                 # A capture S3 still will not take stays held and named by
@@ -466,10 +471,12 @@ class Storage:
                         f"{held.key} holds a capture with SHA-256 {counts.sha256}, and a "
                         f"later capture with SHA-256 {held.sha256} is stored at {key}"
                     )
+                    done = Stored(BlobRef(key, held.sha256), counts)
                     try:
                         self._alerts.alarm(reason)
                     except Exception as error:
-                        raise _AlarmFailed(reason, error) from error
+                        raise _AlarmFailed(reason, error, done) from error
+                    return done
                 return Stored(BlobRef(key, held.sha256), counts)
             if n == 1:
                 counts = BlobRef(held.key, stored)

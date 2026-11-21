@@ -654,7 +654,8 @@ def test_a_held_capture_whose_alarm_fails_on_retry_is_released_as_stored(spec: S
     with pytest.raises(Halt):
         storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt())
     flaky.down_at = None
-    assert storage.retry_held() == ()
+    (stored,) = storage.retry_held()
+    assert stored.ref == BlobRef(attempt_2, sha256_of(b"read two"))
     assert storage.unstored() == ()
     assert flaky.get(attempt_2) == b"read two"
 
