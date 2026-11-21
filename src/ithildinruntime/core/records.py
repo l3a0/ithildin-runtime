@@ -445,8 +445,9 @@ class HaltRecord(_Record):
     """Why a decision halted, and what it leaves behind.
 
     `unstored` lists each capture the process still held, by the key it was
-    trying and its SHA-256, when S3 would not store it. A reader refuses a
-    `clear` of the halt until each is stored or journaled as lost.
+    trying and its SHA-256, when S3 would not store it. design.md's `### Rule 1:
+    a write S3 refuses or does not answer` refuses a `clear` of the halt until
+    each is stored or journaled as lost, and #11 builds that refusal.
     """
 
     reason: str

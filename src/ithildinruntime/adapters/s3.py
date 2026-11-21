@@ -12,13 +12,20 @@ gives. Any answer not listed here, and no answer at all, is
 
 - 412 PreconditionFailed is `KeyExists` on a create and `StaleTag` on a
   rewrite.
-- 404 NoSuchKey is `BlobMissing`.
+- 404 NoSuchKey is `BlobMissing` on a read, a lookup or a rewrite. Any other
+  404, such as NoSuchBucket, and any 404 on a create, is `StoreUnavailable`,
+  because a missing bucket says nothing about the key.
 - BadDigest, or a checksum S3 says is invalid, is `ChecksumMismatch`.
 - 409 ConditionalRequestConflict, a conditional write racing another, is
-  `StoreUnavailable`, so a create is tried again and then meets 412.
+  `Conflict`, a kind of `StoreUnavailable`, so a create is tried again and
+  then meets 412.
 
-A retried create whose first try landed gets 412, and the contract then finds
-the same SHA-256 at the key, which is how a lost reply costs nothing.
+The client is the caller's to build. The storage contract retries on its own
+deadline, so a client built with botocore's retries off, `total_max_attempts`
+of 1, keeps each try's worst case to one call. A client that resends a rewrite
+whose first try landed reads its own write as `StaleTag`. The runtime builds
+its clients when its entry points exist, and #10 holds how a lease reads that
+answer.
 """
 
 from __future__ import annotations
@@ -28,14 +35,13 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, TypeVar
 
-import boto3
-from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError, ParamValidationError
 
 from ithildinruntime.core import (
     BlobMissing,
     BlobRef,
     ChecksumMismatch,
+    Conflict,
     KeyExists,
     StaleTag,
     StoredBlob,
@@ -48,9 +54,9 @@ __all__ = ["S3Store"]
 
 R = TypeVar("R")
 
-_EXISTS = {"PreconditionFailed", "412"}
-_MISSING = {"NoSuchKey", "404", "NotFound"}
-_DIGEST = {"BadDigest", "XAmzContentSHA256Mismatch", "InvalidDigest"}
+_EXISTS = {"PreconditionFailed"}
+_MISSING_KEY = {"NoSuchKey", "404", "NotFound"}
+_DIGEST = {"BadDigest"}
 
 
 class S3Store:
@@ -59,24 +65,6 @@ class S3Store:
     def __init__(self, client: Any, bucket: str) -> None:
         self._client = client
         self._bucket = bucket
-
-    @classmethod
-    def connect(
-        cls,
-        bucket: str,
-        *,
-        region: str | None = None,
-        endpoint_url: str | None = None,
-        timeout: float = 10.0,
-    ) -> S3Store:
-        """A store on `bucket`, with botocore's standard retries and a timeout on each call."""
-        config = Config(
-            retries={"mode": "standard", "max_attempts": 3},
-            connect_timeout=timeout,
-            read_timeout=timeout,
-        )
-        client = boto3.client("s3", region_name=region, endpoint_url=endpoint_url, config=config)
-        return cls(client, bucket)
 
     def create(self, key: str, data: bytes, sha256: str) -> str:
         reply = self._call(
@@ -89,6 +77,7 @@ class S3Store:
                 IfNoneMatch="*",
             ),
             on_precondition=KeyExists,
+            on_missing=StoreUnavailable,
         )
         return reply["ETag"]
 
@@ -100,7 +89,7 @@ class S3Store:
         try:
             return reply["Body"].read()
         except BotoCoreError as error:
-            raise StoreUnavailable(key, str(error)) from None
+            raise StoreUnavailable(key, f"no answer: {error}") from None
 
     def head(self, key: str) -> StoredBlob:
         reply = self._call(
@@ -111,8 +100,8 @@ class S3Store:
         if checksum and reply.get("ChecksumType", "FULL_OBJECT") == "FULL_OBJECT":
             sha = base64.b64decode(checksum).hex()
         else:
-            # A blob stored without a SHA-256 checksum, which no create here
-            # writes, is hashed from its bytes.
+            # A blob stored without a whole-object SHA-256, which no create
+            # here writes, is hashed from its bytes.
             sha = sha256_of(self.get(key))
         stored_at = reply["LastModified"].astimezone(UTC)
         return StoredBlob(BlobRef(key, sha), reply["ETag"], stored_at)
@@ -122,10 +111,11 @@ class S3Store:
         pages = self._client.get_paginator("list_objects_v2").paginate(
             Bucket=self._bucket, Prefix=prefix, **({"StartAfter": after} if after else {})
         )
-        try:
-            return [item["Key"] for page in pages for item in page.get("Contents", ())]
-        except (ClientError, BotoCoreError) as error:
-            raise _refusal(prefix, error, None) from None
+        return self._call(
+            prefix,
+            lambda: [item["Key"] for page in pages for item in page.get("Contents", ())],
+            on_missing=StoreUnavailable,
+        )
 
     def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
         reply = self._call(
@@ -146,6 +136,7 @@ class S3Store:
         key: str,
         call: Callable[[], R],
         on_precondition: type[StoreError] | None = None,
+        on_missing: type[StoreError] = BlobMissing,
     ) -> R:
         try:
             return call()
@@ -153,10 +144,15 @@ class S3Store:
             # A call botocore refuses before sending is a bug here, never an outage.
             raise
         except (ClientError, BotoCoreError) as error:
-            raise _refusal(key, error, on_precondition) from None
+            raise _refusal(key, error, on_precondition, on_missing) from None
 
 
-def _refusal(key: str, error: Exception, on_precondition: type[StoreError] | None) -> StoreError:
+def _refusal(
+    key: str,
+    error: Exception,
+    on_precondition: type[StoreError] | None,
+    on_missing: type[StoreError],
+) -> StoreError:
     if not isinstance(error, ClientError):
         return StoreUnavailable(key, f"no answer: {error}")
     detail = error.response.get("Error", {})
@@ -166,8 +162,10 @@ def _refusal(key: str, error: Exception, on_precondition: type[StoreError] | Non
     answer = f"{status} {code}: {message}".strip()
     if on_precondition is not None and (code in _EXISTS or status == 412):
         return on_precondition(key, answer)
-    if code in _MISSING or status == 404:
-        return BlobMissing(key, answer)
+    if code in _MISSING_KEY:
+        return on_missing(key, answer)
+    if code == "ConditionalRequestConflict" or status == 409:
+        return Conflict(key, answer)
     if code in _DIGEST or (code == "InvalidRequest" and "checksum" in message.lower()):
         return ChecksumMismatch(key, answer)
     return StoreUnavailable(key, answer)

@@ -8,13 +8,12 @@ moto honours `If-None-Match` and `If-Match`, and a probe on 2026-11-21 saw one
 of 40 racing creates win. It does not check the SHA-256 a write sends, so the
 suite marks that case as failing on moto, strictly, and botocore's stubbed
 answers in tests/test_s3_answers.py show the adapter's handling of S3's own
-refusal. The run against the test environment's bucket, once #78 builds it,
+refusal. The run against the test environment's bucket, which #88 holds,
 closes both gaps.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,8 +64,6 @@ class StoreSpec:
     def overwrite(self, key: str, data: bytes) -> None:
         """Change a stored blob by hand, around every rule the store keeps."""
         if self.kind == "folder":
-            path = Path(self.root, key)
-            os.chmod(path, 0o644)
-            path.write_bytes(data)
+            Path(self.root, key).write_bytes(data)
         else:
             self.client().put_object(Bucket=self.bucket, Key=key, Body=data)

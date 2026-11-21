@@ -55,7 +55,7 @@ def test_a_write_whose_bytes_differ_from_its_sha256_is_refused(
         request.applymarker(
             pytest.mark.xfail(
                 strict=True,
-                reason="moto stores a blob whose SHA-256 differs; the bucket run on #78 covers S3",
+                reason="moto stores a blob whose SHA-256 differs; the bucket run on #88 covers S3",
             )
         )
     store = spec.open()
@@ -283,3 +283,41 @@ def test_a_lost_reply_on_a_create_that_landed_reads_as_no_answer(spec: StoreSpec
     assert store.get(KEY) == b"landed"
     with pytest.raises(KeyExists):
         _create(store, KEY, b"landed")
+
+
+def test_a_folder_create_leaves_no_temporary_file(spec: StoreSpec) -> None:
+    if spec.kind != "folder":
+        pytest.skip("only the folder writes a temporary file")
+    store = spec.open()
+    _create(store, KEY, b"first")
+    with pytest.raises(KeyExists):
+        _create(store, KEY, b"second")
+    with pytest.raises(ChecksumMismatch):
+        store.create("runs/ci/other.json", b"x", sha256_of(b"y"))
+    tag = _create(store, LEASE, b"lease one")
+    store.replace_if_match(LEASE, b"lease two", sha256_of(b"lease two"), tag)
+    assert os.listdir(os.path.join(spec.root, ".incoming")) == []
+
+
+def test_a_folder_lists_nothing_outside_its_own_folder(spec: StoreSpec, tmp_path) -> None:
+    if spec.kind != "folder":
+        pytest.skip("S3 has no folder to leave")
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "secret.txt").write_text("x")
+    store = spec.open()
+    for prefix in ("../", "../outside/", "/etc/", "runs/../../"):
+        with pytest.raises(ValueError):
+            store.list(prefix, None)
+
+
+def test_a_folder_reads_a_path_that_holds_no_blob_as_missing(spec: StoreSpec) -> None:
+    if spec.kind != "folder":
+        pytest.skip("S3 has no folders")
+    store = spec.open()
+    _create(store, KEY, b"bytes")
+    folder = KEY.rpartition("/")[0]
+    for key in (folder, f"{KEY}/below.json"):
+        with pytest.raises(BlobMissing):
+            store.get(key)
+        with pytest.raises(BlobMissing):
+            store.head(key)

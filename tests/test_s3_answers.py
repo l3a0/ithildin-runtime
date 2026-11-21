@@ -2,7 +2,7 @@
 
 moto checks no SHA-256 and never answers 409, so these show what the S3
 adapter does with each answer S3 itself gives. The run against the test
-environment's bucket, once #78 builds it, shows S3 giving them.
+environment's bucket, which #88 holds, shows S3 giving them.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from ithildinruntime.core import (
     BlobMissing,
     BlobRef,
     ChecksumMismatch,
+    Conflict,
     KeyExists,
     Retry,
     StageKind,
@@ -54,28 +55,19 @@ def _rewrite_params() -> dict:
     return {"Bucket": BUCKET, "Key": KEY, "Body": DATA, "ChecksumSHA256": B64, "IfMatch": '"old"'}
 
 
+PRECONDITION = "At least one of the pre-conditions you specified did not hold"
+CONFLICT = "A conflicting conditional operation is in progress"
+DIGEST = "The SHA256 you specified did not match the calculated checksum."
+
 CREATE_ANSWERS = [
-    (
-        "PreconditionFailed",
-        412,
-        "At least one of the pre-conditions you specified did not hold",
-        KeyExists,
-    ),
-    (
-        "ConditionalRequestConflict",
-        409,
-        "A conflicting conditional operation is in progress",
-        StoreUnavailable,
-    ),
-    (
-        "BadDigest",
-        400,
-        "The SHA256 you specified did not match the calculated checksum.",
-        ChecksumMismatch,
-    ),
+    ("PreconditionFailed", 412, PRECONDITION, KeyExists),
+    ("ConditionalRequestConflict", 409, CONFLICT, Conflict),
+    ("BadDigest", 400, DIGEST, ChecksumMismatch),
     ("InvalidRequest", 400, "Value for x-amz-checksum-sha256 header is invalid.", ChecksumMismatch),
     ("AccessDenied", 403, "Access Denied", StoreUnavailable),
     ("InternalError", 500, "We encountered an internal error. Please try again.", StoreUnavailable),
+    ("NoSuchBucket", 404, "The specified bucket does not exist", StoreUnavailable),
+    ("NoSuchKey", 404, "The specified key does not exist.", StoreUnavailable),
 ]
 
 
@@ -90,25 +82,11 @@ def test_each_answer_to_a_create_becomes_its_refusal(stubbed, code, status, mess
 
 
 REWRITE_ANSWERS = [
-    (
-        "PreconditionFailed",
-        412,
-        "At least one of the pre-conditions you specified did not hold",
-        StaleTag,
-    ),
+    ("PreconditionFailed", 412, PRECONDITION, StaleTag),
     ("NoSuchKey", 404, "The specified key does not exist.", BlobMissing),
-    (
-        "ConditionalRequestConflict",
-        409,
-        "A conflicting conditional operation is in progress",
-        StoreUnavailable,
-    ),
-    (
-        "BadDigest",
-        400,
-        "The SHA256 you specified did not match the calculated checksum.",
-        ChecksumMismatch,
-    ),
+    ("ConditionalRequestConflict", 409, CONFLICT, Conflict),
+    ("BadDigest", 400, DIGEST, ChecksumMismatch),
+    ("NoSuchBucket", 404, "The specified bucket does not exist", StoreUnavailable),
 ]
 
 
@@ -210,7 +188,7 @@ def test_a_409_on_a_create_is_retried_until_s3_answers(stubbed) -> None:
         store,
         timer=Timer(),
         pause=pause,
-        retry=Retry(timedelta(seconds=30), 1.0, 8.0, 10),
+        retry=Retry(timedelta(seconds=30), 1.0, 8.0),
         alerts=Alerts(),
         owner_step="x",
     )
@@ -226,3 +204,30 @@ def test_a_call_botocore_refuses_before_sending_is_a_bug_not_an_outage() -> None
     )
     with pytest.raises(ParamValidationError):
         S3Store(client, BUCKET).create(None, DATA, SHA)  # type: ignore[arg-type]
+
+
+def test_a_conflict_is_a_kind_of_no_answer() -> None:
+    assert issubclass(Conflict, StoreUnavailable)
+
+
+def test_a_read_of_a_missing_bucket_is_no_answer_not_a_missing_blob(stubbed) -> None:
+    store, stub = stubbed
+    stub.add_client_error("get_object", "NoSuchBucket", "The specified bucket does not exist", 404)
+    with pytest.raises(StoreUnavailable):
+        store.get(KEY)
+    stub.add_client_error("get_object", "NoSuchKey", "The specified key does not exist.", 404)
+    with pytest.raises(BlobMissing):
+        store.get(KEY)
+
+
+def test_a_body_that_breaks_partway_through_a_read_is_no_answer(stubbed) -> None:
+    from botocore.exceptions import ResponseStreamingError
+
+    class Broken:
+        def read(self) -> bytes:
+            raise ResponseStreamingError(error="connection reset")
+
+    store, stub = stubbed
+    stub.add_response("get_object", {"Body": Broken()})
+    with pytest.raises(StoreUnavailable, match="no answer"):
+        store.get(KEY)

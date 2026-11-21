@@ -10,12 +10,20 @@ system such as `/dev/shm`, so its blobs vanish when the run ends.
 2. A rewrite takes a lock on the key, compares the blob's tag with the one it
    names, and renames a checked temporary file over the key, which a reader
    also sees whole.
-3. A tag is the file's inode and its modification time in nanoseconds, so
-   every create and rewrite gives a new one. A stored time is the
-   modification time in whole seconds, which is what S3 records.
+3. A tag is the file's inode and its modification time in nanoseconds, read
+   from the writer's own temporary file, so every create and rewrite gives a
+   new one and a create never returns a later writer's tag. A stored time is
+   the modification time in whole seconds, which is what S3 records.
 
 Nothing here deletes a blob, and a writer killed partway leaves only a
-temporary file, which no listing shows.
+temporary file, which no listing shows. Any error the file system raises
+beyond the refusals `core` names is `StoreUnavailable`, as S3's are.
+
+Two limits differ from S3. The folder must sit on a case-sensitive file
+system, as Linux's memory-backed ones are, because on macOS's default volume
+two keys that differ only in case share a file. And a key cannot sit below
+another stored key, such as `a.json/b.json` beside `a.json`, which S3 stores
+and the folder refuses as unavailable. No key builder in `core` writes either.
 """
 
 from __future__ import annotations
@@ -44,6 +52,8 @@ __all__ = ["FolderStore"]
 
 _INCOMING = ".incoming"
 _LOCKS = ".locks"
+# A read of a key whose path is a folder, or runs through a file, finds no blob.
+_NOT_A_BLOB = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
 
 
 class FolderStore:
@@ -56,60 +66,76 @@ class FolderStore:
 
     def create(self, key: str, data: bytes, sha256: str) -> str:
         path = self._path(key)
-        incoming = self._incoming(key, data, sha256)
+        incoming: Path | None = None
         try:
+            incoming = self._incoming(key, data, sha256)
+            tag = _tag(incoming.stat())
             path.parent.mkdir(parents=True, exist_ok=True)
             os.link(incoming, path)
         except FileExistsError:
             raise KeyExists(key, "the key already holds a blob") from None
         except OSError as error:
-            raise StoreUnavailable(key, str(error)) from None
+            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
         finally:
-            incoming.unlink(missing_ok=True)
-        return _tag(path.stat())
+            if incoming is not None:
+                incoming.unlink(missing_ok=True)
+        return tag
 
     def get(self, key: str) -> bytes:
+        path = self._path(key)
         try:
-            return self._path(key).read_bytes()
-        except FileNotFoundError:
+            return path.read_bytes()
+        except _NOT_A_BLOB:
             raise BlobMissing(key, "no blob at the key") from None
+        except OSError as error:
+            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
 
     def head(self, key: str) -> StoredBlob:
+        path = self._path(key)
         try:
-            fd = os.open(self._path(key), os.O_RDONLY)
-        except FileNotFoundError:
+            with open(path, "rb") as file:
+                info = os.fstat(file.fileno())
+                sha = hashlib.sha256(file.read()).hexdigest()
+        except _NOT_A_BLOB:
             raise BlobMissing(key, "no blob at the key") from None
-        with os.fdopen(fd, "rb") as file:
-            info = os.fstat(file.fileno())
-            sha = hashlib.sha256(file.read()).hexdigest()
+        except OSError as error:
+            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
         stored_at = datetime.fromtimestamp(int(info.st_mtime), UTC)
         return StoredBlob(BlobRef(key, sha), _tag(info), stored_at)
 
     def list(self, prefix: str, after: str | None) -> list[str]:
         """Every key that starts with `prefix` and sorts after `after`, in S3's order."""
-        start = self._root / prefix.rpartition("/")[0]
+        folder = prefix.rpartition("/")[0]
+        start = self._path(folder) if folder else self._root
         keys = []
-        for path in _files(start):
-            key = path.relative_to(self._root).as_posix()
-            if key.startswith(prefix) and (after is None or _order(key) > _order(after)):
-                keys.append(key)
+        try:
+            for path in _files(start):
+                key = path.relative_to(self._root).as_posix()
+                if key.startswith(prefix) and (after is None or _order(key) > _order(after)):
+                    keys.append(key)
+        except OSError as error:
+            raise StoreUnavailable(prefix, f"{type(error).__name__}: {error}") from None
         return sorted(keys, key=_order)
 
     def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
         path = self._path(key)
-        with self._locked(key):
-            incoming = self._incoming(key, data, sha256)
-            try:
+        try:
+            with self._locked(key):
+                incoming = self._incoming(key, data, sha256)
                 try:
-                    info = path.stat()
-                except FileNotFoundError:
-                    raise BlobMissing(key, "no blob at the key to rewrite") from None
-                if _tag(info) != etag:
-                    raise StaleTag(key, f"the blob's tag is {_tag(info)}, not {etag}")
-                os.replace(incoming, path)
-            finally:
-                incoming.unlink(missing_ok=True)
-            return _tag(path.stat())
+                    try:
+                        info = path.stat()
+                    except _NOT_A_BLOB:
+                        raise BlobMissing(key, "no blob at the key to rewrite") from None
+                    if _tag(info) != etag:
+                        raise StaleTag(key, f"the blob's tag is {_tag(info)}, not {etag}")
+                    tag = _tag(incoming.stat())
+                    os.replace(incoming, path)
+                finally:
+                    incoming.unlink(missing_ok=True)
+        except OSError as error:
+            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
+        return tag
 
     def _path(self, key: str) -> Path:
         parts = key.split("/")

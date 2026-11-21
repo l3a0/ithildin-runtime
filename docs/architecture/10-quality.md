@@ -134,7 +134,7 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      40 racing creates through. It checks no SHA-256 a write sends and never
      answers 409. So the suite marks the SHA-256 case as failing on moto, and
      botocore's stubbed answers show the S3 adapter's handling of S3's own
-     checksum refusal and its 409. The run against the test bucket covers both.
+     checksum refusal and its 409. The run against the test bucket, which [#88](https://github.com/l3a0/ithildin-runtime/issues/88) holds, covers both.
    - **The queue suite** holds the SQS adapter and the named-pipe adapter
      to what both guarantee. A write reaches the queue of every reader its
      routes name and no other, and the suite loads the generated rules into
