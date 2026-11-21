@@ -402,8 +402,10 @@ def test_a_store_that_does_not_answer_never_starts_a_decision_or_deletes_its_eve
 def test_an_event_with_no_free_handler_goes_back_to_the_queue_at_once(tmp_path) -> None:
     holder: list = []
     waiting = Waiting(holder)
+    # A receive waits up to two seconds, so the one in flight when the check
+    # takes the only handler is the one that hears the second event.
     folder, the_plan, store, made, queue, _ = _stub_loop(
-        tmp_path, waiting, decisions=2, pool_size=1
+        tmp_path, waiting, decisions=2, pool_size=1, queue=StubQueue(wait=2.0)
     )
     holder.extend((store, the_plan))
     with running({"alpha": made}) as started:
@@ -801,7 +803,8 @@ def test_the_loop_gives_up_only_once_the_refusals_last_longer_than_the_bound(
     _, _, _, made, _, alarms = _stub_loop(tmp_path, queue=queue, deaf_after=1.0, timer=clock)
     with running({"alpha": made}) as started:
         # The first refusal is at reading 0, and every later one at 1.0 + past.
-        time.sleep(0.2)
+        assert queue.entered.wait(5)
+        time.sleep(0.1)
         clock.at = 1.0 + past
         time.sleep(0.4)
         assert started.threads["alpha"].is_alive() is not ends
@@ -821,3 +824,99 @@ def test_an_error_from_a_delete_other_than_an_unavailable_queue_ends_the_loop(tm
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     assert "could not answer its queue" in str(failures[0])
     assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
+
+
+def test_refusals_before_a_busy_pool_do_not_count_across_it(tmp_path) -> None:
+    """The queue refuses, the pool fills with no answer between, then one more refusal."""
+    import time
+
+    from ithildinruntime.core import QueueUnavailable
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(Refusing(base, gets=("/alpha/result.json",)))
+        return refusing[0]
+
+    clock = HeldClock()
+    queue = StubQueue()
+    queue.error = QueueUnavailable("ServiceUnavailable: the queue is down")
+    holder: list = []
+    waiting = Waiting(holder)
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        waiting,
+        wrap=wrap,
+        decisions=1,
+        queue=queue,
+        pool_size=1,
+        deaf_after=1.0,
+        extend_every=0.1,
+        timer=clock,
+    )
+    holder.extend((store, the_plan))
+    _feed(store, the_plan)
+    with running({"alpha": made}) as started:
+        # The start check meets a store that does not answer, and the queue
+        # refuses every receive from reading 0.
+        assert started.wait_for(lambda: refusing[0].refused > 0 and queue.entered.is_set(), 5)
+        refusing[0].down = False
+        # The ticker's recheck, not an answer from the queue, fills the pool.
+        clock.at = 0.5
+        assert started.wait_for(lambda: bool(waiting.started), 5)
+        clock.at = 5.0
+        queue.error = None
+        queue.refusals = 1
+        waiting.go.set()
+        assert started.wait_for(lambda: queue.refusals == 0, 5)
+        time.sleep(0.3)
+        assert not started.errors and started.threads["alpha"].is_alive()
+    # The store's own outage alarms, and nothing says the queue stopped answering.
+    assert not [reason for reason in alarms.reasons if "stopped receiving" in reason]
+
+
+def test_an_error_from_a_release_other_than_an_unavailable_queue_ends_the_loop(
+    tmp_path,
+) -> None:
+    import time
+
+    # A receive waits up to two seconds, so the one in flight when the check
+    # takes the only handler is the one that hears the second event.
+    queue = StubQueue(wait=2.0)
+    queue.release_error = KeyError("ReceiptHandle")
+    holder: list = []
+    waiting = Waiting(holder)
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, waiting, decisions=2, queue=queue, pool_size=1
+    )
+    holder.extend((store, the_plan))
+
+    def fill_the_pool_then_send_one_more() -> None:
+        _feed(store, the_plan)
+        # The first decision takes the only handler from a check of its keys,
+        # so the second's event has no handler and goes back to the queue.
+        queue.put(_key("feed", 5))
+        end = time.monotonic() + 5
+        while not waiting.started and time.monotonic() < end:
+            time.sleep(0.01)
+        queue.put(_key("feed", 1))
+
+    failures = _run_until_it_fails(made, fill_the_pool_then_send_one_more)
+    assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+    assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
+
+
+def test_a_halt_that_cannot_be_stored_names_the_worker_in_loop_failed(tmp_path) -> None:
+    alarms = Alarms()
+
+    def alpha(item: Item, report):
+        raise ValueError("broken")
+
+    folder, the_plan, store, made, pipe = _alpha_loop(
+        tmp_path, alpha, alarms, store_wrapper=RefusingResults, decisions=1
+    )
+    made._storage._retry = Retry(timedelta(seconds=0.2), 0.05, 0.05)
+    _feed(storage(folder.store(), alarms), the_plan)
+    failures = _run_until_it_fails(made)
+    pipe.close()
+    assert "alpha-1" in str(failures[0]) and "was not stored" in str(failures[0])

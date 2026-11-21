@@ -531,6 +531,7 @@ class StubQueue:
         self.answers_fail = False
         self.extend_error: BaseException | None = None
         self.done_error: BaseException | None = None
+        self.release_error: BaseException | None = None
         # How many receives in a row refuse before the queue answers again.
         self.refusals = 0
         self.entered = threading.Event()
@@ -590,6 +591,8 @@ class StubQueue:
 
     def release(self, event) -> None:
         self.released.append(event.key)
+        if self.release_error is not None:
+            raise self.release_error
 
 
 class Refusing:

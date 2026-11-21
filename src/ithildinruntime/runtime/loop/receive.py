@@ -46,7 +46,8 @@ How the loop runs, in order.
    refused every receive for longer than `deaf_after`, because a loop that
    can no longer receive must not go on beating. Each queue failure alarms
    first. The refusals count from the first one since the queue last
-   answered, so a pool busy for a while and then refused once goes on.
+   answered or every handler was last busy, so a pool busy for a while and
+   then refused once goes on.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
@@ -374,9 +375,9 @@ class ReceiveLoop:
                 )
                 self._refused_since = None
             except QueueUnavailable as refused:
-                # Counted from the first refusal since the queue last answered,
-                # so time the loop spent asking nothing, with every handler
-                # busy, never counts as the queue refusing.
+                # Counted from the first refusal since the queue last answered
+                # or the loop last waited with every handler busy, so time it
+                # spent asking nothing never counts as the queue refusing.
                 now = self._timer.monotonic()
                 if self._refused_since is None:
                     self._refused_since = now
@@ -591,6 +592,10 @@ class ReceiveLoop:
         now = self._timer.monotonic()
         running = _Running(item, last_report=now, extended=now)
         self._running[item] = running
+        if self._free() <= 0:
+            # Every handler is busy, so the loop asks the queue nothing until
+            # one frees. Refusals before this do not carry across it.
+            self._refused_since = None
         future = self._loop.run_in_executor(self._handlers_pool, self._work, running)
         future.add_done_callback(lambda done: self._handler_ended(running, done))
         return running
@@ -599,8 +604,7 @@ class ReceiveLoop:
         running.done = True
         error = future.exception() if not future.cancelled() else None
         if isinstance(error, _Fatal):
-            self._failure = error.__cause__ or error
-            self._stopping = True
+            self._fail(error.__cause__ or error, f"{self._worker}: {error}")
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
 

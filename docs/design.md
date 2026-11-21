@@ -1561,7 +1561,9 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    it. While a handler works, the loop extends its message's visibility
    timeout, and it deletes the message once the handler's result is stored.
    A message whose instance dies, or whose extend fails, returns to the
-   queue for another, and the create-only result fences a second start.
+   queue for another, which may start the same decision again. The
+   create-only result keeps the first result stored, and a stage that writes
+   outside rests on its own claim and on [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s lease on the account.
 4. **Stages that read the journal keep the plan's order.** Execution's two
    stages and monitoring's reconcile read a book the decision before
    changed, so a handler starts decision N of one of them only once the same
