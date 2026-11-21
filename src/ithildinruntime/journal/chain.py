@@ -10,9 +10,9 @@ journal entry is hashed and checked` says how an entry is hashed. In short:
   and sixty-four zeros on the first entry. `JournalEntry.hash()` is the one
   function that computes it, and it equals the SHA-256 of the stored bytes
   only because `core.decode` refuses bytes that are not canonical.
-- S3's refusal of an existing key keeps two writers from taking one number.
-  The refused writer reads the new entries and decides its step again, so
-  `append` never renumbers an entry itself.
+- S3's refusal of an existing key keeps two writers from taking one number,
+  and `append` never renumbers an entry itself. What the refused writer does
+  next is design.md's Rule 8 and #10's to build.
 - A reader halts on bytes that are not canonical, a key whose number differs
   from the `seq` inside it, a `format` it does not know, a link that does not
   chain and a gap in the numbers.
@@ -67,10 +67,10 @@ _CHECKPOINTS = "checkpoints/"
 class NumberTaken(Exception):
     """Another writer's entry already holds this number.
 
-    The refused writer reads the new entries, checks the kill switch and any
-    halt among them, decides its step again against what it has read, and
-    builds a new entry. Resending the refused entry under another number would
-    record a step decided on a book that has since moved.
+    The refused writer decides its step again on what it reads, as design.md's
+    `### Rule 8: the journal is the one numbered log` says, and #10 builds
+    that. Resending the refused entry under another number would record a step
+    decided on a book that has since moved.
     """
 
     def __init__(self, account: str, seq: int) -> None:
@@ -82,10 +82,10 @@ class NumberTaken(Exception):
 class Journal:
     """One account's journal, read and appended through a `BlobStore`.
 
-    Execution and monitoring each build their own from the store and the
-    account handed to them, and so do the supervisor and the `ithildin` tool.
-    No other code may import this package, which tests/test_import_rule.py
-    holds.
+    Execution builds the one `OrderPath` holds and monitoring the one
+    `Monitoring` holds, each from the store and the account handed to it. No
+    code outside execution, monitoring, the supervisor and the `ithildin` tool
+    may import this package, which tests/test_import_rule.py holds.
 
     The `Journal` remembers the newest entry it has checked, so a later read
     or append starts there rather than from the first entry. That memory is

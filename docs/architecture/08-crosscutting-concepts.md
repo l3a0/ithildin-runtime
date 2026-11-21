@@ -269,7 +269,7 @@ Six writers can append.
 
 Only execution, monitoring, the supervisor and the `ithildin` tool may import the `journal` package, so the rollback's credential and the approved drill role may write their entries only by running one of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles which, and how the drill's pull carries its run id and its clear stays bound to the tag of its own pull, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) requires.
 
-S3's refusal of an existing key is what keeps two of them from taking one number. `Journal.append` never renumbers an entry. Where the key holds the same bytes, the append is the writer's own earlier attempt and is done, and where it holds other bytes, the append raises `NumberTaken`. As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the writer that is refused then reads the new entries, decides its step again, and takes the next number.
+S3's refusal of an existing key is what keeps two of them from taking one number. `Journal.append` halts, storing nothing, on an entry that does not chain to the stored entry before it, and it never renumbers an entry. Where the key holds the same bytes, the append is the writer's own earlier attempt and is done, and where it holds other bytes, the append raises `NumberTaken`. That refusal is two writers racing for a number, so it raises none of the alarms on a create-only write whose stored bytes differ. As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the writer that is refused then reads the new entries, decides its step again, and takes the next number.
 
 Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
@@ -449,7 +449,7 @@ A blob cannot hold its own hash, so `JournalEntry.hash()` computes it as the SHA
 2. That each key's number equals the `seq` inside it.
 3. That it knows the entry's `format`.
 
-Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and skips the checkpoints kept under the same prefix.
+Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and on any key under the journal's prefix that is not an entry's. It skips `journal/<account>/checkpoints/`, where the checkpoints this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sit.
 
 Every journal format ever written stays readable by every later release, because the book can always be replayed from the first entry, even when a rebuild starts from a book snapshot, and each format has a committed fixture entry and a test that replays it.
 

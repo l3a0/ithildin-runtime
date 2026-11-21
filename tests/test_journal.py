@@ -19,6 +19,7 @@ import pytest
 
 from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
+    BlobMissing,
     Halt,
     JournalEntry,
     StoreUnavailable,
@@ -202,6 +203,19 @@ def test_an_entry_past_a_gap_is_refused_before_it_is_stored(tmp_path: Path) -> N
     with pytest.raises(Halt, match="entry 2 is missing"):
         Journal(store, ACCOUNT).append(_entry(3, "f" * 64))
     assert len(store.list("journal/", None)) == 1
+
+
+def test_a_journal_that_knows_its_newest_entry_still_refuses_one_past_a_gap(
+    spec: StoreSpec,
+) -> None:
+    store = spec.open()
+    journal = Journal(store, ACCOUNT)
+    for n in (1, 2, 3):
+        _append(journal, n)
+    newest = journal.head()
+    with pytest.raises(Halt, match="entry 4 is missing"):
+        journal.append(_entry(5, newest.entry_hash))
+    assert len(store.list("journal/", None)) == 3
 
 
 @pytest.mark.parametrize("seq", [0, -1, True])
@@ -391,16 +405,78 @@ def test_the_reader_halts_after_yielding_every_entry_before_the_fault(tmp_path: 
     assert seen == [1, 2]
 
 
-def test_the_reader_skips_checkpoints_and_halts_on_any_other_key(tmp_path: Path) -> None:
-    store = FolderStore(tmp_path)
+def _two_entries_and_a_checkpoint(root: Path) -> FolderStore:
+    store = FolderStore(root)
     journal = Journal(store, ACCOUNT)
     _append(journal, 1)
     store.create(checkpoint_key(ACCOUNT, 1), b"{}", sha256_of(b"{}"))
     _append(Journal(store, ACCOUNT), 2)
+    return store
+
+
+def test_the_reader_skips_checkpoints(tmp_path: Path) -> None:
+    store = _two_entries_and_a_checkpoint(tmp_path)
     assert [e.seq for e in Journal(store, ACCOUNT).read()] == [1, 2]
-    store.create(f"journal/{ACCOUNT}/stray.json", b"{}", sha256_of(b"{}"))
-    with pytest.raises(Halt, match="stray.json is not an entry's key"):
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "stray.json",
+        "000000000003.json.tmp",
+        "000000000003.jsonx",
+        "old/000000000003.json",
+        "checkpoint/000000000003.json",
+    ],
+)
+def test_the_reader_halts_on_any_other_key_under_the_journal(tmp_path: Path, name: str) -> None:
+    store = _two_entries_and_a_checkpoint(tmp_path)
+    data = encode(_entry(3, hashlib.sha256(_stored(store, 2)).hexdigest()))
+    store.create(f"journal/{ACCOUNT}/{name}", data, sha256_of(data))
+    with pytest.raises(Halt, match="is not an entry's key"):
         list(Journal(store, ACCOUNT).read())
+
+
+class _Listing:
+    """A store whose listing or reads misbehave, to show the reader halts on them."""
+
+    def __init__(self, store, *, extra: list[str] = (), missing: set[str] = frozenset()) -> None:
+        self._store = store
+        self._extra = list(extra)
+        self._missing = set(missing)
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def list(self, prefix: str, after: str | None) -> list[str]:
+        return sorted([*self._store.list(prefix, after), *self._extra])
+
+    def get(self, key: str) -> bytes:
+        if key in self._missing:
+            raise BlobMissing(key, "no blob at the key")
+        return self._store.get(key)
+
+
+def test_the_reader_halts_on_a_listed_key_outside_its_account(tmp_path: Path) -> None:
+    store = FolderStore(tmp_path)
+    _append(Journal(store, "pb"), 1)
+    wrong = _Listing(store, extra=store.list("journal/pb/", None))
+    with pytest.raises(Halt, match="the listing returned journal/pb/000000000001.json"):
+        list(Journal(wrong, "pa").read())
+
+
+def test_the_reader_halts_on_an_entry_listed_and_then_missing(tmp_path: Path) -> None:
+    store = FolderStore(tmp_path)
+    _append(Journal(store, ACCOUNT), 1)
+    gone = _Listing(store, missing={journal_entry_key(ACCOUNT, 1)})
+    with pytest.raises(Halt, match="was listed and then missing"):
+        list(Journal(gone, ACCOUNT).read())
+
+
+@pytest.mark.parametrize("after", [-1, True, "1", 0.0, 1.0])
+def test_a_read_refuses_a_start_that_is_not_an_entry_number(tmp_path: Path, after: object) -> None:
+    with pytest.raises(ValueError, match="is not an entry number or 0"):
+        list(Journal(FolderStore(tmp_path), ACCOUNT).read(after=after))
 
 
 def test_a_read_from_a_later_entry_checks_its_link_against_the_stored_entry(
@@ -439,6 +515,12 @@ def test_head_checks_what_another_writer_appended(tmp_path: Path) -> None:
 
 
 def test_the_committed_format_1_journal_reads_and_chains(tmp_path: Path) -> None:
+    """The committed journal was written by `Journal` itself at commit 31b0abc.
+
+    Nothing in it was typed by hand: each `prev_hash` is the SHA-256 of the
+    file before it, which this read checks. Its bodies use the kind `fixture`,
+    because what a real body holds is #10's.
+    """
     shutil.copytree(FIXTURE, tmp_path, dirs_exist_ok=True)
     entries = list(Journal(FolderStore(tmp_path), "fixture").read())
     assert [(e.seq, e.format) for e in entries] == [(1, 1), (2, 1), (3, 1)]
