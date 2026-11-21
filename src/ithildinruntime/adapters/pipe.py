@@ -80,6 +80,11 @@ class PipeQueue:
     built, so a writer's event reaches it from then on. It also holds the pipe
     open for writing itself, so a read never meets the end of the file while
     no writer has the pipe open.
+
+    `close` wakes a receive that is waiting and waits for it to return before
+    it closes anything. Closing a descriptor under a waiting receive would let
+    the kernel give its number to the next file another thread opens, and the
+    receive would then read that file's bytes, as CI on Linux showed.
     """
 
     def __init__(self, pipes: Path | str, reader: str, *, wait_seconds: float = 20.0) -> None:
@@ -95,22 +100,32 @@ class PipeQueue:
         self._wait = wait_seconds
         self._read = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         self._keep = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        self._wake, self._waker = os.pipe()
         self._serial = itertools.count(1)
         self._lock = threading.Lock()
+        # Held for the whole of a receive, so `close` waits for it.
+        self._reading = threading.Lock()
+        self._closed = False
 
     def receive(self, limit: int) -> Sequence[Event]:
         if limit < 1:
             raise ValueError("a receive asks for at least one event")
+        with self._reading:
+            if self._closed:
+                raise QueueUnavailable("the pipe is closed")
+            return self._receive(limit)
+
+    def _receive(self, limit: int) -> Sequence[Event]:
         end = time.monotonic() + self._wait
         while True:
             left = end - time.monotonic()
             if left <= 0:
                 return ()
             try:
-                ready, _, _ = select.select([self._read], [], [], left)
+                ready, _, _ = select.select([self._read, self._wake], [], [], left)
             except (OSError, ValueError) as error:
                 raise QueueUnavailable(f"the pipe cannot be read: {error}") from None
-            if not ready:
+            if self._wake in ready or not ready:
                 return ()
             try:
                 data = os.read(self._read, RECORD * limit)
@@ -140,8 +155,13 @@ class PipeQueue:
         """A pipe keeps nothing to return, so a released event is gone."""
 
     def close(self) -> None:
-        for fd in (self._read, self._keep):
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        if self._closed:
+            return
+        self._closed = True
+        os.write(self._waker, b"x")
+        with self._reading:
+            for fd in (self._read, self._keep, self._wake, self._waker):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass

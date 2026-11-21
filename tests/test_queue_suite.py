@@ -25,7 +25,7 @@ import pytest
 
 from ithildinruntime.adapters import Faults
 from ithildinruntime.adapters.pipe import PipeQueue, send
-from ithildinruntime.core import EventKind, event_body, output_key, result_key
+from ithildinruntime.core import EventKind, QueueUnavailable, event_body, output_key, result_key
 from ithildinruntime.runtime.loop import Item
 from tests.support import queues as q
 
@@ -626,3 +626,28 @@ def test_the_sqs_events_parse_like_the_folders(cloud: q.Cloud) -> None:
     assert event.etag and event.sequencer
     body = json.loads(event_body(cloud.bucket, key, EventKind.CREATED, "t", "s"))
     assert body["detail"]["object"]["key"] == key
+
+
+def test_closing_a_pipe_waits_for_a_receive_and_leaves_no_descriptor_behind(
+    tmp_path: Path,
+) -> None:
+    """A receive woken by `close` returns before its descriptor is closed.
+
+    Closing the descriptor under a waiting receive let Linux give its number to
+    the next file opened, and the receive then read that file's bytes.
+    """
+    reader = PipeQueue(tmp_path, "alpha", wait_seconds=5)
+    got: list = []
+    waiting = threading.Thread(target=lambda: got.append(reader.receive(1)))
+    waiting.start()
+    time.sleep(0.2)
+    started = time.monotonic()
+    reader.close()
+    waiting.join(2)
+    assert not waiting.is_alive() and got == [()]
+    assert time.monotonic() - started < 2
+    blob = tmp_path / "blob"
+    blob.write_bytes(b"x" * 401)
+    assert blob.read_bytes() == b"x" * 401
+    with pytest.raises(QueueUnavailable):
+        reader.receive(1)
