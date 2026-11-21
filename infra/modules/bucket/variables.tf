@@ -51,7 +51,7 @@ variable "operator_principal_arns" {
 }
 
 variable "switch_clearer_arns" {
-  description = "The principals that may delete an account's switch, accounts/<account>/switch.json."
+  description = "The principals that may delete an account's switch, accounts/<account>/switch.json, a version delete included. Live's approved drill role, which may not delete a version, needs a statement this module does not carry yet."
   type        = list(string)
   nullable    = false
 }
@@ -72,6 +72,13 @@ variable "max_retention_days" {
   description = "When set, the policy refuses any write that sets an Object Lock retention date further out than this many days. Null sets no cap."
   type        = number
   default     = null
+}
+
+variable "regenerable_only" {
+  description = "True only for a bucket whose every blob can be made again, such as test's. It lifts the check that no lifecycle rule reaches recorded data."
+  type        = bool
+  default     = false
+  nullable    = false
 }
 
 variable "lifecycle_rules" {

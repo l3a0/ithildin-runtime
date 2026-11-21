@@ -25,96 +25,27 @@ mock_provider "aws" {
   }
 }
 
+# The dead-letter queue gets an ARN of its own, so a rule aimed at it fails the check
+# that the rule targets its queue.
+override_resource {
+  target = module.routes.aws_sqs_queue.dead_letter["smoke"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:mock-dlq"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/mock-dlq"
+  }
+}
+
 variables {}
 
-run "the_bucket_policy_holds_the_refusals_production_uses" {
+run "the_bucket_policy_is_exactly_the_reviewed_document" {
   command = plan
 
-  # Each statement the docs' table of refusals asks for, by its Sid, written out.
+  # tests/test-bucket-policy.json is the test bucket's whole policy, written out and
+  # read against 07-deployment.md's table of refusals. Every statement is compared,
+  # so a changed action, resource, condition or principal fails here.
   assert {
-    condition = [for s in jsondecode(module.bucket.policy).Statement : s if s.Sid == "RefuseCreateOnlyWritesWithoutIfNoneMatch"] == [{
-      Sid       = "RefuseCreateOnlyWritesWithoutIfNoneMatch"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:PutObject"
-      Resource = [
-        "arn:aws:s3:::ithildin-runtime-test/runs/*",
-        "arn:aws:s3:::ithildin-runtime-test/journal/*",
-        "arn:aws:s3:::ithildin-runtime-test/sim/*",
-      ]
-      Condition = { Null = { "s3:if-none-match" = "true" } }
-    }]
-    error_message = "The policy does not refuse a write on runs/, journal/ and sim/ without If-None-Match."
-  }
-
-  assert {
-    condition = [for s in jsondecode(module.bucket.policy).Statement : s if s.Sid == "RefuseRetentionPastTheCap"] == [{
-      Sid       = "RefuseRetentionPastTheCap"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = ["s3:PutObject", "s3:PutObjectRetention"]
-      Resource  = ["arn:aws:s3:::ithildin-runtime-test/*"]
-      Condition = { NumericGreaterThan = { "s3:object-lock-remaining-retention-days" = "1" } }
-    }]
-    error_message = "The test bucket does not cap retention at one day."
-  }
-
-  assert {
-    condition = [for s in jsondecode(module.bucket.policy).Statement : s.Condition if s.Sid == "RefuseUnlistedPrincipals"] == [{
-      StringNotLike = { "aws:PrincipalArn" = [
-        "arn:aws:iam::000000000000:role/ithildin-test-ci",
-        "arn:aws:iam::000000000000:role/ithildin-test-apply",
-        "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole",
-      ] }
-    }]
-    error_message = "The bucket admits a principal other than the test role, the apply role and the owner's role."
-  }
-
-  # The test role is the test bucket's runtime principal, so every refusal the docs
-  # give the runtime's roles binds the suites.
-  assert {
-    condition = alltrue([
-      for sid in ["RefuseRuntimeLeaseWritesWithNeitherCondition", "RefuseRuntimeWritesWithoutIfNoneMatch", "RefuseRuntimeDeletes"] :
-      [for s in jsondecode(module.bucket.policy).Statement : s.Condition.ArnLike["aws:PrincipalArn"] if s.Sid == sid] == [["arn:aws:iam::000000000000:role/ithildin-test-ci"]]
-    ])
-    error_message = "A refusal of the runtime's principals does not bind the test role."
-  }
-
-  assert {
-    condition = [for s in jsondecode(module.bucket.policy).Statement : s.Condition.Null if s.Sid == "RefuseRuntimeLeaseWritesWithNeitherCondition"] == [{
-      "s3:if-none-match" = "true"
-      "s3:if-match"      = "true"
-    }]
-    error_message = "A lease write that carries neither conditional header is not refused."
-  }
-
-  assert {
-    condition = [for s in jsondecode(module.bucket.policy).Statement : s.Condition if s.Sid == "RefuseSettingsChanges"] == [{
-      StringNotLike = { "aws:PrincipalArn" = [
-        "arn:aws:iam::000000000000:role/ithildin-test-apply",
-        "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole",
-      ] }
-    }]
-    error_message = "A principal other than the apply role and the owner's role may change the test bucket's settings."
-  }
-
-  assert {
-    condition = toset([for s in jsondecode(module.bucket.policy).Statement : s.Sid]) == toset([
-      "RefuseUnlistedPrincipals",
-      "RefuseCreateOnlyWritesWithoutIfNoneMatch",
-      "RefuseCreateOnlyDeletes",
-      "RefuseLeaseDeletes",
-      "RefuseRuntimeLeaseWritesWithNeitherCondition",
-      "RefuseRuntimeWritesWithoutIfNoneMatch",
-      "RefuseRuntimeDeletes",
-      "RefusePeoplesAccountLeaseWritesWithoutIfMatch",
-      "RefuseSwitchDeletes",
-      "RefuseLossStopDeletes",
-      "RefuseOffSwitchDeletes",
-      "RefuseSettingsChanges",
-      "RefuseRetentionPastTheCap",
-    ])
-    error_message = "The test bucket's policy gained or lost a statement."
+    condition     = jsondecode(module.bucket.policy) == jsondecode(file("${path.module}/tests/test-bucket-policy.json"))
+    error_message = "The test bucket's policy differs from tests/test-bucket-policy.json. Read the change against 07-deployment.md's table of refusals before updating the file."
   }
 
   assert {
@@ -123,7 +54,7 @@ run "the_bucket_policy_holds_the_refusals_production_uses" {
   }
 }
 
-run "the_test_bucket_empties_itself" {
+run "the_test_bucket_carries_the_settings_production_uses" {
   command = plan
 
   assert {
@@ -132,18 +63,33 @@ run "the_test_bucket_empties_itself" {
   }
 
   assert {
-    condition = jsonencode([for r in module.bucket.lifecycle_rules : {
-      id         = r.id
-      current    = r.expire_current_days
-      noncurrent = r.expire_noncurrent_days
-      uploads    = r.abort_incomplete_upload
-      markers    = r.expire_old_delete_marker
-      prefix     = r.prefix
-      }]) == jsonencode([
-      { id = "expire-everything", current = 1, noncurrent = 1, uploads = 1, markers = false, prefix = "" },
-      { id = "remove-old-delete-markers", current = null, noncurrent = null, uploads = null, markers = true, prefix = "" },
+    condition = module.bucket.settings == {
+      object_lock_enabled     = true
+      versioning              = "Enabled"
+      object_lock             = "Enabled"
+      sse_algorithm           = "AES256"
+      block_public_acls       = true
+      block_public_policy     = true
+      ignore_public_acls      = true
+      restrict_public_buckets = true
+      object_ownership        = "BucketOwnerEnforced"
+      eventbridge             = true
+    }
+    error_message = "The test bucket lost versioning, Object Lock, S3's managed key, the public access block, owner-enforced ownership or its EventBridge notifications."
+  }
+}
+
+run "the_test_bucket_empties_itself" {
+  command = plan
+
+  # A day count of 0 and a marker of false are how the provider shows an expiration
+  # that sets neither.
+  assert {
+    condition = jsonencode(module.bucket.lifecycle_rules) == jsonencode([
+      { id = "expire-everything", status = "Enabled", prefix = "", current = 1, marker = false, noncurrent = 1, uploads = 1 },
+      { id = "remove-old-delete-markers", status = "Enabled", prefix = "", current = 0, marker = true, noncurrent = null, uploads = null },
     ])
-    error_message = "The test bucket does not expire everything after a day."
+    error_message = "The test bucket's lifecycle does not expire everything after a day."
   }
 }
 
@@ -165,5 +111,58 @@ run "each_route_matches_its_own_keys_on_the_test_bucket" {
   assert {
     condition     = module.routes.queues["smoke"] == { queue = "ithildin-test-smoke", dead_letter = "ithildin-test-smoke-dlq" }
     error_message = "The smoke route's queues are not named ithildin-test-smoke and ithildin-test-smoke-dlq."
+  }
+}
+
+run "each_route_takes_its_settings_from_the_routes_file_and_admits_only_its_rule" {
+  command = plan
+
+  assert {
+    condition = {
+      for k, v in module.routes.queue_settings : k => {
+        retention             = v.retention
+        dead_letter_retention = v.dead_letter_retention
+        visibility_timeout    = v.visibility_timeout
+        sse                   = v.sse
+        dead_letter_sse       = v.dead_letter_sse
+        max_receive_count     = v.max_receive_count
+      }
+      } == {
+      smoke = {
+        retention             = 3600
+        dead_letter_retention = 3600
+        visibility_timeout    = 30
+        sse                   = true
+        dead_letter_sse       = true
+        max_receive_count     = 3
+      }
+    }
+    error_message = "A route's queues do not carry routes.json's visibility timeout and receive count, one hour's retention, and SSE-SQS."
+  }
+
+  # The mock gives every queue the same ARN apart from the dead-letter queue's, so this
+  # checks the shape: the rule sends to the queue, not the dead-letter queue, the queue
+  # redrives to its dead-letter queue, and the queue's policy admits EventBridge only
+  # for that rule.
+  assert {
+    condition     = module.routes.queue_settings["smoke"].rule_target == "arn:aws:sqs:us-east-1:000000000000:mock"
+    error_message = "The smoke rule does not target the smoke queue."
+  }
+
+  assert {
+    condition     = module.routes.queue_settings["smoke"].dead_letter_target == "arn:aws:sqs:us-east-1:000000000000:mock-dlq"
+    error_message = "The smoke queue's redrive does not point at its dead-letter queue."
+  }
+
+  assert {
+    condition = module.routes.queue_settings["smoke"].queue_policy.Statement == [{
+      Sid       = "AdmitOnlyThisRoutesRule"
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = "arn:aws:sqs:us-east-1:000000000000:mock"
+      Condition = { ArnEquals = { "aws:SourceArn" = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
+    }]
+    error_message = "The smoke queue's policy admits more than EventBridge sending for the smoke rule."
   }
 }

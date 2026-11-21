@@ -10,9 +10,14 @@ Every key carries the run's own id, `ITHILDIN_TEST_RUN`, which is `GITHUB_RUN_ID
 `GITHUB_RUN_ATTEMPT` joined by a hyphen, because the bucket is create-only and a rerun
 must never meet its own earlier keys.
 
-A refusal case fails when an Allow for its action is added to the role. Removing a Deny
-row cannot make it fail, because no Allow stands behind it, so infra/test/bootstrap's
-tofu test is what pins the Deny rows.
+What fails when what. The refusal cases for an SSM read, an EC2 describe, an
+EventBridge list and an S3 delete each sit under an explicit Deny, and an explicit Deny
+overrides any Allow. So neither adding an Allow nor removing one Deny makes them fail.
+infra/test/bootstrap's tofu test pins the role's inline policy exactly, and the
+SendMessage case, the one refusal with no Deny behind it, fails when a send is granted
+from any policy. Likewise two bucket statements refuse a write without If-None-Match,
+so the case for it shows the deployed bucket refuses the write, and infra/test's tofu
+test pins each statement.
 """
 
 from __future__ import annotations
@@ -76,8 +81,8 @@ def _queue_url(sqs, name: str) -> str:
     return sqs.get_queue_url(QueueName=name)["QueueUrl"]
 
 
-def _keys_on(sqs, name: str, wait: float) -> list[str]:
-    """Receive from a queue until `wait` seconds pass, deleting what arrives."""
+def _keys_on(sqs, name: str, wait: float, until: str | None = None) -> list[str]:
+    """Receive from a queue, deleting what arrives, until `until` arrives or `wait` passes."""
     url = _queue_url(sqs, name)
     keys: list[str] = []
     deadline = time.monotonic() + wait
@@ -91,7 +96,7 @@ def _keys_on(sqs, name: str, wait: float) -> list[str]:
             event = json.loads(message["Body"])
             keys.append(event["detail"]["object"]["key"])
             sqs.delete_message(QueueUrl=url, ReceiptHandle=message["ReceiptHandle"])
-        if keys:
+        if until is not None and until in keys:
             return keys
     return keys
 
@@ -102,7 +107,7 @@ def test_a_write_without_if_none_match_is_refused(s3, run):
     assert _status(refused.value) == 403
 
 
-def test_a_create_lands_once_and_its_event_reaches_only_its_route(s3, sqs, run):
+def test_a_create_lands_once_and_its_event_reaches_its_route(s3, sqs, run):
     key = _key(run, "create")
     s3.put_object(Bucket=BUCKET, Key=key, Body=b"{}", IfNoneMatch="*")
 
@@ -110,15 +115,26 @@ def test_a_create_lands_once_and_its_event_reaches_only_its_route(s3, sqs, run):
         s3.put_object(Bucket=BUCKET, Key=key, Body=b"{}", IfNoneMatch="*")
     assert _status(second.value) == 412
 
-    delivered = _keys_on(sqs, f"{QUEUE_PREFIX}-{SMOKE}", DELIVERY_SECONDS)
+    delivered = _keys_on(sqs, f"{QUEUE_PREFIX}-{SMOKE}", DELIVERY_SECONDS, until=key)
     assert key in delivered, (
         f"The {SMOKE} route delivered nothing for {key} in {DELIVERY_SECONDS} seconds. "
         "If this merge changed infra/test/routes.json, infra.yml's apply may not have finished."
     )
 
-    for route in ROUTES:
-        if route["reader"] != SMOKE:
-            assert key not in _keys_on(sqs, f"{QUEUE_PREFIX}-{route['reader']}", 1)
+
+OTHER_ROUTES = [route["reader"] for route in ROUTES if route["reader"] != SMOKE]
+
+
+@pytest.mark.skipif(
+    not OTHER_ROUTES,
+    reason="infra/test/routes.json holds the smoke route alone until #81's generator adds more",
+)
+def test_a_smoke_write_reaches_no_other_route(s3, sqs, run):
+    key = _key(run, "no-other-route")
+    s3.put_object(Bucket=BUCKET, Key=key, Body=b"{}", IfNoneMatch="*")
+    assert key in _keys_on(sqs, f"{QUEUE_PREFIX}-{SMOKE}", DELIVERY_SECONDS, until=key)
+    for reader in OTHER_ROUTES:
+        assert key not in _keys_on(sqs, f"{QUEUE_PREFIX}-{reader}", DELIVERY_SECONDS, until=key)
 
 
 def test_a_retention_date_within_the_cap_lands_with_a_checksum(s3, run):
@@ -129,6 +145,19 @@ def test_a_retention_date_within_the_cap_lands_with_a_checksum(s3, run):
         IfNoneMatch="*",
         ObjectLockMode="GOVERNANCE",
         ObjectLockRetainUntilDate=datetime.now(UTC) + timedelta(hours=12),
+        ChecksumAlgorithm="SHA256",
+    )
+
+
+def test_a_retention_date_just_under_the_cap_lands(s3, run):
+    # The policy refuses retention that exceeds one day, so a day's worth is allowed.
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=_key(run, "retention-under-cap"),
+        Body=b"{}",
+        IfNoneMatch="*",
+        ObjectLockMode="GOVERNANCE",
+        ObjectLockRetainUntilDate=datetime.now(UTC) + timedelta(hours=23),
         ChecksumAlgorithm="SHA256",
     )
 
@@ -151,6 +180,12 @@ def test_a_key_never_written_answers_404(s3, run):
     with pytest.raises(ClientError) as missing:
         s3.get_object(Bucket=BUCKET, Key=_key(run, "never-written"))
     assert _status(missing.value) == 404
+
+
+def test_the_test_role_is_refused_a_send_to_a_queue(sqs):
+    with pytest.raises(ClientError) as refused:
+        sqs.send_message(QueueUrl=_queue_url(sqs, f"{QUEUE_PREFIX}-{SMOKE}"), MessageBody="{}")
+    assert _status(refused.value) == 403
 
 
 def test_the_test_role_is_refused_an_ssm_read():

@@ -88,12 +88,12 @@ resource "aws_iam_role_policy" "apply" {
       },
       {
         # The bucket's own settings, never its objects: every resource is the bucket's
-        # ARN, which matches no object.
+        # ARN, which matches no object. No delete of the bucket and no tag write, since
+        # nothing here sets a tag and retiring test runs from the laptop.
         Sid    = "ManageTheTestBucket"
         Effect = "Allow"
         Action = [
           "s3:CreateBucket",
-          "s3:DeleteBucket",
           "s3:Get*",
           "s3:List*",
           "s3:PutBucketPolicy",
@@ -105,7 +105,6 @@ resource "aws_iam_role_policy" "apply" {
           "s3:PutBucketOwnershipControls",
           "s3:PutBucketNotification",
           "s3:PutLifecycleConfiguration",
-          "s3:PutBucketTagging",
         ]
         Resource = [local.bucket]
       },
@@ -119,8 +118,6 @@ resource "aws_iam_role_policy" "apply" {
           "sqs:GetQueueAttributes",
           "sqs:GetQueueUrl",
           "sqs:ListQueueTags",
-          "sqs:TagQueue",
-          "sqs:UntagQueue",
           "sqs:ListDeadLetterSourceQueues",
         ]
         Resource = [local.queues]
@@ -137,8 +134,6 @@ resource "aws_iam_role_policy" "apply" {
           "events:PutTargets",
           "events:RemoveTargets",
           "events:ListTargetsByRule",
-          "events:TagResource",
-          "events:UntagResource",
           "events:ListTagsForResource",
         ]
         Resource = [local.rules]

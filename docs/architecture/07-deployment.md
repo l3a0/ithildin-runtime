@@ -239,7 +239,7 @@ A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease gr
 
 The bucket's lifecycle expires heartbeats and the noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
 
-This describes the runtime's buckets on shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything a day after it is written, and its policy refuses any retention date more than a day out so the lifecycle can always empty it.
+This describes the runtime's buckets on shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything within two to three days of the last write, and its policy refuses any retention date more than a day out so the lifecycle can always empty it.
 
 #### Who can change the bucket's settings or delete a version
 
@@ -250,7 +250,7 @@ No credential the runtime holds can delete a version, or change any of these fou
 3. Its lifecycle.
 4. Its notification configuration.
 
-On the test bucket the test environment's apply credential may change them too, because `.github/workflows/infra.yml` applies the test bucket's settings after each merge.
+On the test bucket the test environment's apply credential may change them too, because `.github/workflows/infra.yml` applies the test bucket's settings after each merge that changes `infra/`.
 
 #### What the bucket's policy refuses, and to whom
 
@@ -272,7 +272,12 @@ The bucket's policy makes the nine refusals in this table.
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
 
-Every environment's bucket takes these statements from one OpenTofu module, `infra/modules/bucket/`, and who each statement names is an input. So the suites that run against the test bucket meet the statements production uses. On the test bucket the test role is the runtime's principal, and the test environment's apply credential may change the policy beside the owner.
+The table's refusals are written once, in the OpenTofu module `infra/modules/bucket/`, which every environment's bucket is meant to come from, and who each statement names is an input. So the suites that run against the test bucket meet the statements production will use. On the test bucket the test role is the runtime's principal, and the test environment's apply credential may change the policy beside the owner. Four details differ from the text above.
+
+1. The module also refuses changes to the bucket's encryption, replication, ownership and public access block to all but those who may change its settings, because it sets those itself.
+2. It refuses a multipart upload on `runs/`, `journal/` and `sim/` at its start rather than at its completion, because a multipart upload's first requests cannot carry `If-None-Match`.
+3. It does not yet carry Rule 4's refusal on the hard caps and the releases, or live's limit on the approved drill role's delete of the switch. A later environment adds both before it stores anything, with [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which holds those grants.
+4. It refuses any lifecycle rule that covers the whole bucket, reaches `runs/`, `journal/` or `sim/`, or expires a current lease, because a bucket policy cannot stop a lifecycle rule. Only a bucket whose every blob is regenerable, such as test's, lifts that check.
 
 #### How the release uploads each blob
 
@@ -501,14 +506,14 @@ push to `main`, never on `pull_request_target`, `workflow_run` or a
 manual dispatch.
 
 1. A test job rebuilds the image and runs the tests on it.
-
-Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the image and this publishing workflow, the run against the test bucket and queues sits in `.github/workflows/ci.yml`'s `aws` job, on the runner rather than in the image, and only on a push to `main`. When the publishing workflow arrives, that job moves into it as its test job, and the test role's trust moves with it. It moves rather than gaining a second copy, because two jobs purging the same queues would break each other.
 2. A publish job, which needs
    the test job, rebuilds the image, publishes it to GitHub's container
    registry tagged with its commit and attests its build provenance. It
    runs no project code beyond the image build. Signing runs where no test code can reach the token, and the VM and the deploy job require that signer. Its image build installs every dependency from
    wheels only, with `uv`'s `--no-build`, so the job that signs runs no
    dependency's build code either.
+
+Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the image and this publishing workflow, the run against the test bucket and queues sits in `.github/workflows/ci.yml`'s `aws` job, on the runner rather than in the image, and only on a push to `main`. When the publishing workflow arrives, that job moves into it as its test job, and the test role's trust moves with it. It moves rather than gaining a second copy, because two jobs purging the same queues would break each other.
 
 #### Which job holds which permission
 

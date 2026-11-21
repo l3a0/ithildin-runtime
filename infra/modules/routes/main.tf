@@ -1,8 +1,12 @@
-# For each route in a routes file: a queue, its dead-letter queue, an EventBridge rule
-# on the default bus that matches the bucket's Object Created events by the route's key
-# pattern, and a queue policy that admits only that rule. Every environment calls this
-# module with the routes file its release carries, and the test environment calls it
-# with infra/test/routes.json, which #81's generator writes.
+# For each route it is given: a queue, its dead-letter queue, an EventBridge rule on
+# the default bus that matches the bucket's Object Created events by the route's key
+# pattern, and a queue policy that admits only that rule. A route that leaves the list
+# takes its rule and queues with it on the next apply.
+#
+# The test environment calls it with infra/test/routes.json alone, which #81's
+# generator writes. On shadow, paper and live rules only grow, as design.md's "Rules
+# only grow, and a release checks them" says, so a caller there passes every route that
+# any release it may still run names, never only the current release's file.
 #
 # Queues use SSE-SQS, SQS's managed encryption. EventBridge's troubleshooting page says
 # an encrypted target queue needs a customer-managed KMS key, and does not name SSE-SQS
@@ -53,9 +57,23 @@ variable "routes" {
 }
 
 variable "message_retention_seconds" {
-  description = "How long each queue and dead-letter queue keeps a message."
+  description = "How long each queue keeps a message."
   type        = number
   nullable    = false
+}
+
+# On a standard queue a message keeps its first enqueue time when it moves to the
+# dead-letter queue, so a dead-letter queue that alarms on its depth keeps messages
+# longer than its source.
+variable "dead_letter_retention_seconds" {
+  description = "How long each dead-letter queue keeps a message. At least message_retention_seconds."
+  type        = number
+  nullable    = false
+
+  validation {
+    condition     = var.dead_letter_retention_seconds >= var.message_retention_seconds
+    error_message = "A dead-letter queue must keep messages at least as long as its source queue."
+  }
 }
 
 locals {
@@ -66,7 +84,7 @@ resource "aws_sqs_queue" "dead_letter" {
   for_each = local.routes
 
   name                      = "${var.name_prefix}-${each.key}-dlq"
-  message_retention_seconds = var.message_retention_seconds
+  message_retention_seconds = var.dead_letter_retention_seconds
   sqs_managed_sse_enabled   = true
 }
 
@@ -138,6 +156,24 @@ output "queues" {
     for reader in keys(local.routes) : reader => {
       queue       = aws_sqs_queue.this[reader].name
       dead_letter = aws_sqs_queue.dead_letter[reader].name
+    }
+  }
+}
+
+output "queue_settings" {
+  description = "Each route's queue settings and queue policy, read from the resources, by reader, which the tests read."
+  value = {
+    for reader in keys(local.routes) : reader => {
+      retention             = aws_sqs_queue.this[reader].message_retention_seconds
+      dead_letter_retention = aws_sqs_queue.dead_letter[reader].message_retention_seconds
+      visibility_timeout    = aws_sqs_queue.this[reader].visibility_timeout_seconds
+      sse                   = aws_sqs_queue.this[reader].sqs_managed_sse_enabled
+      dead_letter_sse       = aws_sqs_queue.dead_letter[reader].sqs_managed_sse_enabled
+      max_receive_count     = jsondecode(aws_sqs_queue.this[reader].redrive_policy).maxReceiveCount
+      dead_letter_target    = jsondecode(aws_sqs_queue.this[reader].redrive_policy).deadLetterTargetArn
+      rule_target           = aws_cloudwatch_event_target.this[reader].arn
+      queue_arn             = aws_sqs_queue.this[reader].arn
+      queue_policy          = jsondecode(aws_sqs_queue_policy.this[reader].policy)
     }
   }
 }

@@ -24,7 +24,7 @@ its tests show it works.
   and every drill.
 - [infra/](infra/) holds the test environment's OpenTofu configuration, which
   [.github/workflows/infra.yml](.github/workflows/infra.yml) checks on every pull
-  request and applies after each merge.
+  request that changes it and applies after each merge that changes it.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.
@@ -53,4 +53,5 @@ The OpenTofu checks need OpenTofu 1.13 and no AWS credential.
 tofu fmt -check -recursive infra/
 tofu -chdir=infra/test/bootstrap init -backend=false && tofu -chdir=infra/test/bootstrap test
 tofu -chdir=infra/test init -backend=false && tofu -chdir=infra/test test
+tofu -chdir=infra/modules/bucket init -backend=false && tofu -chdir=infra/modules/bucket test
 ```

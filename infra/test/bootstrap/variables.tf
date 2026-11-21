@@ -9,16 +9,11 @@ variable "state_bucket" {
   }
 }
 
-variable "budget_email" {
-  description = "The address the budget alarm writes to. Pass it with -var on the command line."
+variable "budget_limit" {
+  description = "The monthly budget in US dollars. 5, by the owner's ruling. The budget alarm's drill lowers it for a day, as docs/halts-and-drills.md says."
   type        = string
+  default     = "5"
   nullable    = false
-  sensitive   = true
-
-  validation {
-    condition     = can(regex("^[^@\\s]+@[^@\\s]+$", var.budget_email))
-    error_message = "budget_email must be an email address."
-  }
 }
 
 variable "adopt_existing" {

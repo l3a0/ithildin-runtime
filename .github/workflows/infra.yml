@@ -29,6 +29,10 @@ on:
       - "infra/**"
       - "!infra/**/*.md"
       - ".github/workflows/infra.yml"
+  # Re-applies main's configuration with no code change: after a lock is cleared, or to
+  # undo a change made by hand in the test account. The apply job runs only on main, and
+  # the apply role trusts this file on main in the test environment, whatever the event.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -70,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [test/bootstrap, test]
+        config: [test/bootstrap, test, modules/bucket]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,7 +103,9 @@ jobs:
 
   apply:
     name: tofu apply (test)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main'
     needs: [fmt, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -546,7 +546,7 @@ prefix, and the noncurrent versions under `leases/`, which a
 noncurrent-version expiry removes, as this doc proposes for
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so a lease's
 rewrites do not pile up. A bucket policy [cannot stop a lifecycle rule](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html), so the refusal of every delete under `leases/` leaves that expiry working. So no rule matches a key that holds recorded
-data, a snapshot a decision read included.
+data, a snapshot a decision read included. This holds for the buckets of shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything, as [What the bucket's lifecycle expires](architecture/07-deployment.md#what-the-buckets-lifecycle-expires-and-where-log-lines-go) says, and the bucket module refuses such a rule on any bucket not marked regenerable.
 
 ### Rule 1: the replica before live
 
@@ -674,7 +674,7 @@ so the supervisor can tell a live worker from a hung or lost one without
 being its parent, and monitoring can tell the same of the supervisor. The
 bucket's lifecycle expires heartbeats after a week, and removes the
 noncurrent versions a lease's rewrites leave under `leases/`, as [Object Lock and the lifecycle rules](#rule-1-object-lock-and-the-lifecycle-rules)
-says. Nothing else is removed.
+says. Nothing else is removed, apart from the test bucket, whose lifecycle expires everything.
 
 ### Rule 6: an absent, stale or empty input halts
 
@@ -3476,12 +3476,22 @@ design needs and what it may do. The owner's own machine may still keep
 developer settings under `~/.config/ithildin-runtime/`. `CLAUDE.md`'s `## Secrets and machine paths`
 matches.
 
-No setting exists yet. Each credential this design uses gets a row here in the
+The test environment's settings are the first, in the table below. Each credential this design uses gets a row here in the
 change that first reads it, naming where it lives and what reads it, and a
 short-lived role records what it trusts in place of where a secret lives. A credential lives in the environment of the run, in the machine's
 keychain, or for the broker key in AWS Systems Manager Parameter Store, and a long-lived secret never in a file. Two exceptions live in memory-backed files the provisioning step writes, and neither is a long-lived secret on disk. Each worker user's short-lived AWS credential sits in a file only that user can read, as architecture/07-deployment.md's [Rule 3: the broker key lives in a secret store](architecture/07-deployment.md#rule-3-the-broker-key-lives-in-a-secret-store) says, in memory-backed storage, as its rule that the environment is read once at the edge says, and the provisioning step refreshes it before it expires, as its [Rule 10: the release is one container image](architecture/07-deployment.md#rule-10-the-release-is-one-container-image) says of each fenced container. The ping addresses and the address of each environment's own push topic sit beside them, as its [Four environments](architecture/07-deployment.md#four-environments) says. The owner writes the email address behind an SNS subscription by hand, so it enters no tracked file and no OpenTofu state, as [Email on two checks](architecture/07-deployment.md#environment-rule-9-email-on-two-checks) says. The table takes the columns Setting, Secret,
 Lives in, Read by and May do, and the broker's row states that it holds no
 withdrawal or transfer permission and how that was checked.
+
+**Table:** Each setting the platform reads, where it lives, and what it may do
+
+| Setting | Secret | Lives in | Read by | May do |
+| --- | --- | --- | --- | --- |
+| The test role, `ithildin-test-ci` | No, a short-lived role | The test account, trusting only `ci.yml`'s `aws` job on a push to `main` | That job, through GitHub's OIDC token | Create and read under `runs/ci/` and `leases/plans/ci/` in the test bucket, list it, and receive, delete, hide and purge on the test queues, as [#78](https://github.com/l3a0/ithildin-runtime/issues/78) lists. No send, no delete, no SSM, EC2, IAM, EventBridge or KMS |
+| The test environment's apply role, `ithildin-test-apply` | No, a short-lived role | The test account, trusting only `infra.yml`'s apply job on `main` in the `test` GitHub environment | That job, through GitHub's OIDC token | Plan and apply `infra/test`: read and write its own state key, change the test bucket's settings, and manage queues and rules named `ithildin-test-*`. No IAM action and no SSM read |
+| `AWS_TEST_ROLE_ARN`, `AWS_TEST_APPLY_ROLE_ARN` and `TF_STATE_BUCKET_TEST` | No, names rather than credentials | The repository's Actions secrets, so the account id enters no tracked file | `ci.yml`'s `aws` job and `infra.yml`'s apply job | Nothing on their own |
+| The budget alarm's address | No | The SNS subscription the owner writes by hand on the test account's budget topic | AWS Budgets, through the topic | Receive the alarm |
+| `ITHILDIN_TEST_RUN` | No | The `aws` job's environment, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` joined by a hyphen | `tests/aws/` | Name the run's own keys |
 
 ## Decisions
 
@@ -3831,6 +3841,9 @@ This section lists every decision made on the project, oldest first, one heading
 ### 2026-11-11
 
 1. The owner ruled that a decision time outside its session halts the whole plan, which for a backtest is its whole span. A time stated as minutes before the close moves with an early close, and a clock time after an early close is dropped. Any other time outside its session halts, such as a clock time after the regular close, a time before the open, or minutes before an early close that reach back before the open. The owner said "Okay." to the recommendation to keep the halt. Turned down: skipping that decision, which would leave a strategy silently never trading. The price is that one strategy's wrong time stops every strategy that day, or a backtest's whole span, until its schedule is fixed. Relayed from the owner's chat of 2026-11-11, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22#issuecomment-6785743198). Governs: `### Strategies, schedules and decisions` in design.md.
+2. The owner ruled that the AWS organization is created now, with a new, empty management account that holds nothing else, and the test account as its first member. The owner said "Okay." to that recommendation. Turned down: a standalone test account invited into an organization later, which costs the same money and a second move. The price is about one to two hours of the owner's time and no AWS charge. Relayed from the owner's chat of 2026-11-11, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-6785742995). Governs: `### Set up the test environment` in what-a-person-runs.md.
+3. The owner ruled that test's separate read-only plan credential is built with [#32](https://github.com/l3a0/ithildin-runtime/issues/32)'s drift check, and that until then test's apply job plans with its apply credential under the plan credential's limits. The owner said "Okay." to that recommendation. Turned down: building a plan credential now that no job in test needs. The price is a test account that departs from the list of three credentials until then. Relayed from the owner's chat of 2026-11-11, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-6785742995). Governs: `##### Which credentials each runtime account holds` in architecture/07-deployment.md.
+4. The owner ruled that the test account's budget alarm is 5 US dollars a month. The owner said "Okay." to that recommendation. The price is nothing, since AWS Budgets charges nothing for an account's first two budgets. Relayed from the owner's chat of 2026-11-11, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-6785742995). Governs: `### Alarms on operations` in halts-and-drills.md.
 
 ## Considered and rejected
 

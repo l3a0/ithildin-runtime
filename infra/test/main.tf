@@ -2,6 +2,11 @@
 # rules that infra/test/routes.json lists. .github/workflows/infra.yml applies this
 # after each merge to main, in the `test` GitHub environment, with the apply role
 # infra/test/bootstrap creates. docs/what-a-person-runs.md carries the owner's steps.
+#
+# The bucket and its routes share one configuration here only because test lets the
+# apply role change the test bucket's settings. On shadow, paper and live the bucket's
+# settings stay the owner's, so the bucket module sits in a configuration the owner
+# applies, apart from the routes the apply job applies.
 
 terraform {
   required_version = "~> 1.13"
@@ -56,6 +61,10 @@ module "bucket" {
   # always empty the bucket.
   max_retention_days = 1
 
+  # Every blob in the test bucket can be made again by a run, so its lifecycle may
+  # expire everything.
+  regenerable_only = true
+
   # Everything expires. S3 rounds each expiry up to the next midnight UTC, so the
   # bucket empties two to three days after the last write.
   lifecycle_rules = [
@@ -77,10 +86,11 @@ module "bucket" {
 module "routes" {
   source = "../modules/routes"
 
-  name_prefix               = "ithildin-test"
-  bucket                    = module.bucket.name
-  routes                    = jsondecode(file("${path.module}/routes.json"))
-  message_retention_seconds = 3600
+  name_prefix                   = "ithildin-test"
+  bucket                        = module.bucket.name
+  routes                        = jsondecode(file("${path.module}/routes.json"))
+  message_retention_seconds     = 3600
+  dead_letter_retention_seconds = 3600
 }
 
 output "queues" {

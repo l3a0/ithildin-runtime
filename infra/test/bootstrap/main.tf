@@ -1,6 +1,6 @@
 # What CI needs in the test account before it can run: the OpenTofu state bucket,
 # GitHub's OIDC provider, the apply role .github/workflows/infra.yml uses, the test role
-# ci.yml's `aws` job uses, and a budget alarm. The owner applies this from the laptop,
+# ci.yml's `aws` job uses, and a budget alarm with its topic. The owner applies this from the laptop,
 # through OrganizationAccountAccessRole, because the CI it creates cannot apply it.
 # docs/what-a-person-runs.md carries the steps.
 
@@ -79,28 +79,49 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 # -- the budget alarm ---------------------------------------------------------------
 
-# AWS Budgets charges nothing for an account's first two budgets. The address arrives
-# on the command line, never in a tracked file.
+# AWS Budgets charges nothing for an account's first two budgets. It publishes to a
+# topic, and the owner subscribes an address to the topic by hand and confirms it, as
+# docs/what-a-person-runs.md's "Confirm an alarm email subscription" says. So the
+# address enters no tracked file and no OpenTofu state, as with every other alarm email.
+resource "aws_sns_topic" "budget" {
+  name = "ithildin-test-budget"
+}
+
+resource "aws_sns_topic_policy" "budget" {
+  arn = aws_sns_topic.budget.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AdmitOnlyThisAccountsBudgets"
+      Effect    = "Allow"
+      Principal = { Service = "budgets.amazonaws.com" }
+      Action    = "SNS:Publish"
+      Resource  = aws_sns_topic.budget.arn
+      Condition = { StringEquals = { "aws:SourceAccount" = local.account_id } }
+    }]
+  })
+}
+
 resource "aws_budgets_budget" "monthly" {
   name         = "ithildin-test-monthly"
   budget_type  = "COST"
-  limit_amount = "5"
+  limit_amount = var.budget_limit
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
   notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.budget_email]
+    comparison_operator       = "GREATER_THAN"
+    threshold                 = 100
+    threshold_type            = "PERCENTAGE"
+    notification_type         = "ACTUAL"
+    subscriber_sns_topic_arns = [aws_sns_topic.budget.arn]
   }
 
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "FORECASTED"
-    subscriber_email_addresses = [var.budget_email]
-  }
+  depends_on = [aws_sns_topic_policy.budget]
+}
+
+output "budget_topic_arn" {
+  description = "The topic the budget alarm publishes to, which the owner subscribes an address to by hand."
+  value       = aws_sns_topic.budget.arn
 }

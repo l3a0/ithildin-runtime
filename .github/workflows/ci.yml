@@ -97,9 +97,12 @@ jobs:
           aws-region: us-east-1
           mask-aws-account-id: true
 
+      # No cache. The `test` job, whose actions are pinned to tags rather than commits,
+      # saves the cache this job would restore under the same key, which would undo the
+      # pins on the one job holding the test role.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Install the toolchain and dependencies
         run: uv sync --dev --locked
@@ -107,15 +110,42 @@ jobs:
       # A cancelled run leaves messages for keys under another run's id, so each run
       # starts from empty queues. SQS allows one purge of a queue every 60 seconds, so a
       # case that purges again waits that out.
+      #
+      # A queue that does not exist yet means a merge added a route and infra.yml's apply
+      # has not finished, so the step says so rather than failing on AWS's own error. A
+      # purge refused as already in progress means the run before this one purged under
+      # a minute ago, so the step waits that out once.
       - name: Purge the test queues
         shell: bash
         run: |
+          purge() {
+            local name="$1" url err
+            if ! url="$(aws sqs get-queue-url --queue-name "$name" --query QueueUrl --output text 2>&1)"; then
+              if grep -q NonExistentQueue <<<"$url"; then
+                echo "::error::Queue $name does not exist yet. infra.yml's apply may not have finished creating it. Re-run this job once that apply has ended."
+              else
+                echo "::error::Could not find queue $name."
+              fi
+              return 1
+            fi
+            if ! err="$(aws sqs purge-queue --queue-url "$url" 2>&1)"; then
+              if grep -q PurgeQueueInProgress <<<"$err"; then
+                echo "Queue $name was purged under a minute ago. Waiting 60 seconds to purge again."
+                sleep 60
+                aws sqs purge-queue --queue-url "$url"
+              else
+                echo "::error::Could not purge queue $name."
+                return 1
+              fi
+            fi
+          }
           for reader in $(jq -r '.[].reader' infra/test/routes.json); do
-            for name in "ithildin-test-$reader" "ithildin-test-$reader-dlq"; do
-              url="$(aws sqs get-queue-url --queue-name "$name" --query QueueUrl --output text)"
-              aws sqs purge-queue --queue-url "$url"
-            done
+            purge "ithildin-test-$reader"
+            purge "ithildin-test-$reader-dlq"
           done
+          # A purge can still delete messages sent during the minute after it starts, so
+          # the suites wait it out before writing anything.
+          sleep 60
 
       # With nothing collected, pytest exits 5, so the job fails rather than passing
       # empty.
