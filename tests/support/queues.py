@@ -528,6 +528,10 @@ class StubQueue:
         self.error: BaseException | None = None
         self.extend_takes = 0.0
         self.answers_fail = False
+        self.extend_error: BaseException | None = None
+        self.entered = threading.Event()
+        # Called as a receive hands back events, so a case can act in that window.
+        self.on_answer: Callable[[], None] | None = None
         self.blocking = False
         self.free = threading.Event()
         self.lock = threading.Condition()
@@ -542,6 +546,7 @@ class StubQueue:
             self.lock.notify_all()
 
     def receive(self, limit: int):
+        self.entered.set()
         if self.error is not None:
             raise self.error
         if self.blocking:
@@ -551,7 +556,9 @@ class StubQueue:
             if not self.pending:
                 self.lock.wait(self.wait)
             taken, self.pending = self.pending[:limit], self.pending[limit:]
-            return tuple(taken)
+        if taken and self.on_answer is not None:
+            self.on_answer()
+        return tuple(taken)
 
     def done(self, event) -> None:
         self.done_keys.append(event.key)
@@ -560,6 +567,8 @@ class StubQueue:
     def extend(self, event) -> None:
         time.sleep(self.extend_takes)
         self.extended.append(event.key)
+        if self.extend_error is not None:
+            raise self.extend_error
         self._refuse()
 
     def _refuse(self) -> None:

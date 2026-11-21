@@ -25,7 +25,9 @@ How the loop runs, in order.
    again, in the plan's order, as far as the first decision not ready, so a
    later decision whose event was lost waits for that one, a later event or
    a restart. An event whose check met a store that did not answer is left
-   unanswered, so SQS hands it out again once its visibility runs out. A
+   unanswered, so SQS hands it out again once its visibility runs out, and on
+   a named pipe it is gone. A full check that met such a store runs again
+   from the ticker until one completes. A
    heard control blob's event, such as the run's stop, names no decision, so
    today it wakes a check and is deleted. #10 and #11 add the handlers that
    act on those events, and until then no component may rely on hearing one.
@@ -40,8 +42,9 @@ How the loop runs, in order.
    not handle also alarms, naming the worker, the stage, the decision and the
    error. The other handlers go on. A halt that cannot be stored ends the
    loop with `LoopFailed`, and the host restarts the process. So does any
-   error from the queue's `receive` other than `QueueUnavailable`, because a
-   loop that can no longer receive must not go on beating.
+   error from the queue other than `QueueUnavailable`, and a queue that has
+   refused every receive for longer than `deaf_after`, because a loop that
+   can no longer receive must not go on beating. Each alarms first.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
@@ -110,7 +113,8 @@ class Handler(Protocol):
     `report` is called at every blob write, journal append and broker call
     the handler finishes, so the loop knows it is not hung. A handler can run
     more than once for one item, after a crash or on two instances at once, so
-    before any outside write it reads its own record, as #10 and #80 build.
+    a stage that writes outside rests on a create-only record of its own, such
+    as the send stage's claim, and on #10's lease on the account.
     """
 
     def __call__(self, item: Item, report: Callable[[], None]) -> DecisionResult: ...
@@ -162,6 +166,7 @@ class ReceiveLoop:
         extend_every: float = 10.0,
         tick: float = 1.0,
         stop_timeout: float = 30.0,
+        deaf_after: float = 60.0,
     ) -> None:
         stages = table.stages_of(component)
         if not stages:
@@ -189,6 +194,7 @@ class ReceiveLoop:
         self._extend_every = extend_every
         self._tick = tick
         self._stop_timeout = stop_timeout
+        self._deaf_after = deaf_after
         self._routes: tuple[Route, ...] = tuple(
             r for r in routes(table, plan.deployment) if r.reader == component
         )
@@ -209,11 +215,17 @@ class ReceiveLoop:
         self._background: set[asyncio.Future] = set()
         self._retrying = False
         self._retried = float("-inf")
+        self._answered = 0.0
+        # Set when the full check met a store that did not answer, so the
+        # ticker runs it again until one completes.
+        self._recheck = False
+        self._met_unknown = False
 
     # Running and stopping
 
     def run(self) -> None:
-        """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored."""
+        """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored,
+        or a queue could not be read or answered."""
         asyncio.run(self._main())
         if self._failure is not None:
             raise LoopFailed(str(self._failure)) from self._failure
@@ -263,6 +275,7 @@ class ReceiveLoop:
             await self._in_io(self._announce_newest)
         finally:
             self._ready.set()
+        self._answered = self._timer.monotonic()
         receiver = asyncio.create_task(self._receiver())
         try:
             while not self._stopping and self._failure is None:
@@ -277,6 +290,8 @@ class ReceiveLoop:
                 elif kind == "finished":
                     await self._on_finished(value)
                     await self._check(full=False)
+                elif kind == "recheck":
+                    await self._check(full=True)
         finally:
             ticker.cancel()
             if receiver is not None:
@@ -312,14 +327,27 @@ class ReceiveLoop:
         return self._loop.run_in_executor(self._io, call, *args)
 
     async def _quietly(self, call: Callable[[Event], None], message: Event) -> None:
-        # A queue call that fails leaves the message to come back once its
+        # A queue that does not answer leaves the message to come back once its
         # visibility runs out. The item is then checked by its keys, and while
         # a handler still runs another instance can start the same decision,
         # which the create-only result and #10's lease on the account fence.
+        # Any other error is a bug, and it ends the loop rather than leaving a
+        # message whose visibility runs out unseen.
         assert self._loop is not None
         try:
             await self._loop.run_in_executor(self._answers, call, message)
         except QueueUnavailable:
+            pass
+        except Exception as error:
+            self._give_up(f"could not answer its queue: {type(error).__name__}: {error}", error)
+
+    def _give_up(self, what: str, error: BaseException) -> None:
+        """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
+        self._fail(error)
+        try:
+            self._alerts.alarm(f"{self._worker} {what}")
+        except Exception:
+            # The loop ends with LoopFailed, and the host's restart shows.
             pass
 
     # Receiving
@@ -341,18 +369,22 @@ class ReceiveLoop:
                 events = await self._loop.run_in_executor(
                     self._receiving, self._receive_or_return, limit
                 )
-            except QueueUnavailable:
+                self._answered = self._timer.monotonic()
+            except QueueUnavailable as refused:
+                deaf = self._timer.monotonic() - self._answered
+                if deaf > self._deaf_after:
+                    # A queue that refuses every receive for this long leaves a
+                    # worker that hears nothing, which must not go on beating.
+                    self._give_up(
+                        f"stopped receiving: the queue refused every receive for "
+                        f"{deaf:.0f} seconds, last with {refused.answer}",
+                        refused,
+                    )
+                    return
                 events = ()
                 await asyncio.sleep(self._tick)
             except Exception as error:
-                self._fail(error)
-                try:
-                    self._alerts.alarm(
-                        f"{self._worker} stopped receiving: {type(error).__name__}: {error}"
-                    )
-                except Exception:
-                    # The loop ends with LoopFailed, and the host's restart shows.
-                    pass
+                self._give_up(f"stopped receiving: {type(error).__name__}: {error}", error)
                 return
             if events:
                 # Wait until the events have handlers, so the next receive asks
@@ -363,7 +395,9 @@ class ReceiveLoop:
 
     def _receive_or_return(self, limit: int) -> Sequence[Event]:
         events = self._queue.receive(limit)
-        if self._stopping:
+        # `stop` sets `_stop_asked` at once and `_stopping` a moment later on
+        # the event loop's thread, so a receive answered between them counts too.
+        if self._stopping or self._stop_asked.is_set():
             # The loop stopped while this receive waited, so nothing will run them.
             for event in events:
                 try:
@@ -503,6 +537,8 @@ class ReceiveLoop:
                     continue
                 if state == "unknown":
                     # The store did not answer, so this check goes no further.
+                    if full:
+                        self._met_unknown = True
                     break
                 if state == "waiting":
                     if stage.keeps_order or not full:
@@ -520,7 +556,14 @@ class ReceiveLoop:
         if self._stopping or (free <= 0 and not full):
             return
         busy = set(self._running)
-        for item in await self._in_io(self._ready_items, full, max(free, 0), busy):
+        if full:
+            self._met_unknown = False
+        ready = await self._in_io(self._ready_items, full, max(free, 0), busy)
+        if full:
+            # A full check the store cut short runs again from the ticker, so
+            # a decision with no later event still starts once S3 answers.
+            self._recheck = self._met_unknown
+        for item in ready:
             if self._free() <= 0 or self._stopping:
                 break
             if item not in self._running:
@@ -630,7 +673,8 @@ class ReceiveLoop:
             )
             try:
                 self._storage.put_result(
-                    self._key(item), self._halt_result(stage, item, halt, result.outputs)
+                    self._key(item),
+                    self._halt_result(stage, item, halt, self._own_outputs(item, result)),
                 )
             except Exception as second:
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from second
@@ -676,6 +720,9 @@ class ReceiveLoop:
             if not self._retrying and now - self._retried >= self._extend_every:
                 self._retried = now
                 self._spawn(self._retry_held())
+                if self._recheck and self._inbox is not None:
+                    self._recheck = False
+                    self._inbox.put_nowait(("recheck", None))
             await asyncio.sleep(self._tick)
 
     def _spawn(self, work) -> None:

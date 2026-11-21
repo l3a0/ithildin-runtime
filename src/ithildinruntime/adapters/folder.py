@@ -231,8 +231,9 @@ class FolderStore:
         readers = self._readers(key)
         if not readers:
             return
-        # A count per store rather than the time of day, so it never goes
-        # back when the clock is corrected. Nothing reads it yet.
+        # A count per store rather than the time of day, so a corrected clock
+        # never moves it. It is unique only within one store's life, and
+        # nothing reads it yet.
         sequencer = f"{next(self._sequence):016x}"
         body = event_body(self._bucket, key, EventKind.CREATED, tag, sequencer)
         for reader in readers:

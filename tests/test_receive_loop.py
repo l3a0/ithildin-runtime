@@ -12,11 +12,13 @@ from datetime import timedelta
 import pytest
 
 from ithildinruntime.core import (
+    BlobRef,
     DecisionResult,
     EventKind,
     Halt,
     Retry,
     StoreUnavailable,
+    output_key,
     result_key,
 )
 from ithildinruntime.runtime.loop import Item, LoopFailed, ReceiveLoop
@@ -148,7 +150,11 @@ def test_a_result_for_another_item_is_stored_as_a_halt(tmp_path, stage, minutes,
     def alpha(item: Item, report):
         result = handlers(holder["store"], holder["plan"], Calls())["alpha"](item, report)
         at = item.decision_at + timedelta(minutes=minutes)
-        return DecisionResult(header(stage, at, {}), result.outputs, None)
+        # A ref under another decision's prefix, which no halt of this item may name.
+        stray = BlobRef(
+            output_key(DEPLOYMENT, RUN, FIRST + timedelta(minutes=5), "alpha", "x"), "0"
+        )
+        return DecisionResult(header(stage, at, {}), (*result.outputs, stray), None)
 
     folder, the_plan, store, made, pipe = _alpha_loop(tmp_path, alpha, alarms, decisions=1)
     holder.update(store=store, plan=the_plan)
@@ -415,13 +421,14 @@ def test_a_receive_answered_after_stop_returns_its_events(tmp_path) -> None:
     queue = StubQueue()
     queue.blocking = True
     _, _, _, made, _, _ = _stub_loop(tmp_path, queue=queue)
-    started = running({"alpha": made})
-    with started:
-        __import__("time").sleep(0.2)
+    # `stop` is asked while the receive hands its event back, before the event
+    # loop has had a turn, which is the window a stop must still cover.
+    queue.on_answer = made.stop
+    with running({"alpha": made}) as started:
+        assert queue.entered.wait(5)
         queue.put(_key("feed"))
-        made.stop()
         queue.free.set()
-        __import__("time").sleep(0.3)
+        assert started.wait_for(lambda: bool(queue.released), 5)
     assert queue.released == [_key("feed")] and queue.done_keys == []
 
 
@@ -525,7 +532,19 @@ def test_a_result_that_could_not_be_stored_becomes_a_halt_naming_its_outputs(tmp
         refusing.append(Once(base))
         return refusing[0]
 
-    folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, wrap=wrap, decisions=1)
+    holder: dict = {}
+
+    def alpha(item: Item, report):
+        result = handlers(holder["store"], holder["plan"], Calls())["alpha"](item, report)
+        # A ref under another decision's prefix, which no halt of this item may name.
+        later = FIRST + timedelta(minutes=5)
+        stray = BlobRef(output_key(DEPLOYMENT, RUN, later, "alpha", "x"), "0")
+        return DecisionResult(result.header, (*result.outputs, stray), None)
+
+    folder, the_plan, store, made, queue, alarms = _stub_loop(
+        tmp_path, alpha, wrap=wrap, decisions=1
+    )
+    holder.update(store=store, plan=the_plan)
     with running({"alpha": made}) as started:
         _feed(store, the_plan)
         queue.put(_key("feed"))
@@ -578,3 +597,134 @@ def test_a_queue_that_refuses_a_delete_or_an_extend_leaves_the_loop_running(tmp_
         assert started.wait_for(lambda: len(queue.done_keys) >= 2, 5)
         __import__("time").sleep(0.3)
         assert not started.errors and started.threads["alpha"].is_alive()
+
+
+def _run_until_it_fails(made, then=lambda: None) -> list[BaseException]:
+    failures: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            made.run()
+        except BaseException as error:  # noqa: BLE001 - the test reads it
+            failures.append(error)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert made.wait_started(5)
+    then()
+    thread.join(10)
+    assert not thread.is_alive(), "the loop went on"
+    return failures
+
+
+def test_an_error_from_extend_other_than_an_unavailable_queue_ends_the_loop(tmp_path) -> None:
+    queue = StubQueue()
+    queue.extend_error = KeyError("ReceiptHandle")
+    holder: list = []
+    waiting = Waiting(holder)
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, waiting, decisions=1, queue=queue, extend_every=0.05
+    )
+    holder.extend((store, the_plan))
+
+    def feed_after_the_start_check() -> None:
+        # The event, not the start check, starts the decision, so its message
+        # is held and extended.
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+
+    failures = _run_until_it_fails(made, feed_after_the_start_check)
+    assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+    assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
+
+
+def test_a_queue_that_refuses_every_receive_ends_the_loop_after_a_bound(tmp_path) -> None:
+    from ithildinruntime.core import QueueUnavailable
+
+    queue = StubQueue()
+    queue.error = QueueUnavailable("AccessDenied: the role may not receive")
+    _, _, _, made, _, alarms = _stub_loop(tmp_path, queue=queue, deaf_after=0.5)
+    failures = _run_until_it_fails(made)
+    assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+    assert "refused every receive" in alarms.reasons[0] and "AccessDenied" in alarms.reasons[0]
+
+
+def test_a_capture_still_held_is_tried_once_more_as_the_loop_stops(tmp_path) -> None:
+    from ithildinruntime.core import StageKind
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(Refusing(base, creates=("/alpha/capture.json",)))
+        return refusing[0]
+
+    holder: dict = {}
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+        raise AssertionError("put should halt while S3 refuses the capture")
+
+    # The ticker retries only once every 100 seconds, so only the stop's try runs.
+    folder, the_plan, store, made, queue, _ = _stub_loop(
+        tmp_path, alpha, wrap=wrap, decisions=1, extend_every=100
+    )
+    holder["store"] = made._storage
+    with running({"alpha": made}) as started:
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+        assert started.wait_for(lambda: (folder.root / _key("alpha")).exists(), 5)
+        refusing[0].down = False
+        __import__("time").sleep(0.3)
+        assert not (folder.root / capture).exists()
+    assert (folder.root / capture).exists() and made._storage.unstored() == ()
+
+
+def test_a_start_check_the_store_cut_short_runs_again_once_s3_answers(tmp_path) -> None:
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(Refusing(base, gets=("/alpha/result.json",)))
+        return refusing[0]
+
+    folder, the_plan, store, made, _, _ = _stub_loop(
+        tmp_path, wrap=wrap, decisions=1, extend_every=0.1
+    )
+    _feed(store, the_plan)
+    with running({"alpha": made}) as started:
+        assert refusing[0].refused > 0
+        refusing[0].down = False
+        # No event comes, so only the ticker's second full check starts it.
+        assert started.wait_for(lambda: (folder.root / _key("alpha")).exists(), 5)
+
+
+def test_a_slow_queue_call_never_holds_up_a_check(tmp_path) -> None:
+    import time
+
+    queue = StubQueue()
+    queue.extend_takes = 1.5
+    holder: list = []
+    waiting = Waiting(holder)
+    folder, the_plan, store, made, _, _ = _stub_loop(
+        tmp_path, waiting, decisions=3, queue=queue, extend_every=0.05, pool_size=3
+    )
+    holder.extend((store, the_plan))
+    feed = handlers(store, the_plan, Calls())["feed"]
+
+    def feed_one(n: int) -> None:
+        at = the_plan.decisions[n].at
+        store.put_result(_key("feed", n), feed(Item(at, "feed"), lambda: None))
+
+    with running({"alpha": made}) as started:
+        feed_one(0)
+        feed_one(1)
+        queue.put(_key("feed", 0))
+        queue.put(_key("feed", 1))
+        # Both handlers hold a message, and each extend takes a second and a half.
+        assert started.wait_for(lambda: len(waiting.started) == 2, 5)
+        time.sleep(0.3)
+        feed_one(2)
+        began = time.monotonic()
+        queue.put(_key("feed", 2))
+        assert started.wait_for(lambda: len(waiting.started) == 3, 5)
+        assert time.monotonic() - began < 0.7

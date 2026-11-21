@@ -1548,8 +1548,10 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    SDK's HTTP session is not documented as safe to share.
 2. **An item is a stage and a decision, not a message.** The loop turns
    each message, once it passes the checks below, into the stage and
-   decision it concerns, except the kill switch's event, which becomes an item of its own, as item 8 says, and a sort's, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes. On waking and on starting it also adds every
-   decision it has not finished, in the plan's order. One instance never
+   decision it concerns, except the kill switch's event, which becomes an item of its own, as item 8 says, and a sort's, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes. On starting it also adds every
+   decision it has not finished, in the plan's order, and on waking it checks
+   as far as `An event is a hint, and the keys come from the plan` below
+   proposes. One instance never
    runs an item twice at once, so the loop deletes a message whose item is
    already in a handler.
 3. **The loop receives only for free handlers.** It asks SQS for at most as
@@ -2073,8 +2075,9 @@ time. An instance holds the lease only from re-reading the journal for one
 order until the journal holds the broker's answer, as [Who may send](#rule-9-who-may-send-the-accounts-lease)
 says, so the others never wait long. The instance running a send stage extends its
 message's visibility timeout while it works, so the message returns to the
-queue only once that instance dies, and [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
-says who then takes the send stage over. Within one portfolio, more execution instances
+queue only once that instance dies or an extend fails. [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
+says who then takes a dead send stage over, and the send stage's claim
+leaves a live one to the instance already running it. Within one portfolio, more execution instances
 buy failover rather than throughput, because sends still go one at a time,
 and throughput comes from more portfolios, each sending on its own
 account.

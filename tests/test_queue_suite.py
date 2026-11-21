@@ -157,7 +157,9 @@ def test_a_write_reaches_every_reader_its_routes_name_and_no_other(side: Side) -
     while time.monotonic() < end and any(len(heard[c]) < len(expected[c]) for c in q.COMPONENTS):
         for component in q.COMPONENTS:
             heard[component].extend(side.heard(component))
-    # One more read, so a delivery to a reader the routes do not name shows.
+    # A settle, then one more read, so a late delivery to a reader the routes
+    # do not name shows.
+    time.sleep(0.5)
     for component in q.COMPONENTS:
         heard[component] = sorted(heard[component] + side.heard(component))
     side.close()
@@ -366,6 +368,8 @@ def test_s3_skips_an_announcement_because_it_announced_the_blob_itself(cloud: q.
     _write(store, key)
     assert _waiting(cloud, "alpha", 1)
     store.announce(key)
+    # A settle, so an announcement S3 sent late would be on the queue.
+    time.sleep(0.5)
     assert [m["detail"]["object"]["key"] for m in cloud.messages("alpha")] == [key]
 
 
@@ -642,9 +646,10 @@ def test_a_full_pipe_drops_the_event(tmp_path: Path) -> None:
 def test_a_record_holds_a_body_of_up_to_511_bytes() -> None:
     from ithildinruntime.adapters.pipe import RECORD, record
 
-    assert len(record(b"x" * (RECORD - 1))) == RECORD
+    assert RECORD == 512
+    assert len(record(b"x" * 511)) == 512
     with pytest.raises(ValueError, match="record"):
-        record(b"x" * RECORD)
+        record(b"x" * 512)
 
 
 def test_an_event_too_long_for_one_record_is_refused_before_the_write(tmp_path: Path) -> None:
