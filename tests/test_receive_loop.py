@@ -920,3 +920,33 @@ def test_a_halt_that_cannot_be_stored_names_the_worker_in_loop_failed(tmp_path) 
     failures = _run_until_it_fails(made)
     pipe.close()
     assert "alpha-1" in str(failures[0]) and "was not stored" in str(failures[0])
+
+
+def test_a_deaf_queue_alarms_on_time_while_a_backlog_keeps_the_pool_full(tmp_path) -> None:
+    """A full pool clears the count that ends the loop, never the alarm."""
+    import time
+
+    from ithildinruntime.core import QueueUnavailable
+
+    queue = StubQueue()
+    queue.error = QueueUnavailable("ServiceUnavailable: the queue is down")
+    holder: dict = {}
+
+    def slow_alpha(item: Item, report):
+        time.sleep(0.2)
+        report()
+        return handlers(holder["store"], holder["plan"], Calls())["alpha"](item, report)
+
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, slow_alpha, decisions=30, queue=queue, pool_size=1, deaf_after=0.5
+    )
+    holder.update(store=store, plan=the_plan)
+    _feed(store, the_plan)
+    with running({"alpha": made}) as started:
+        assert started.wait_for(lambda: any("answered no receive" in r for r in alarms.reasons), 3)
+        # Half a second more of refusals, a dozen of them, pages no second time.
+        time.sleep(0.5)
+        # The backlog is still running, so the loop has not ended yet.
+        assert started.threads["alpha"].is_alive()
+        assert not (folder.root / _key("alpha", 29)).exists()
+    assert sum("answered no receive" in r for r in alarms.reasons) == 1

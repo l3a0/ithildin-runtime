@@ -47,7 +47,9 @@ How the loop runs, in order.
    can no longer receive must not go on beating. Each queue failure alarms
    first. The refusals count from the first one since the queue last
    answered or every handler was last busy, so a pool busy for a while and
-   then refused once goes on.
+   then refused once goes on. A queue that has answered nothing for longer
+   than `deaf_after` while a backlog keeps every handler busy alarms once,
+   and the loop ends once a handler frees and the refusals go on.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
@@ -220,6 +222,10 @@ class ReceiveLoop:
         self._retrying = False
         self._retried = float("-inf")
         self._refused_since: float | None = None
+        # The first refusal since the queue last answered, which a busy pool
+        # never clears, and whether its alarm has gone out.
+        self._unanswered_since: float | None = None
+        self._alarmed_unanswered = False
         # Set when the full check met a store that did not answer, so the
         # ticker runs it again until one completes.
         self._recheck = False
@@ -374,6 +380,8 @@ class ReceiveLoop:
                     self._receiving, self._receive_or_return, limit
                 )
                 self._refused_since = None
+                self._unanswered_since = None
+                self._alarmed_unanswered = False
             except QueueUnavailable as refused:
                 # Counted from the first refusal since the queue last answered
                 # or the loop last waited with every handler busy, so time it
@@ -381,6 +389,8 @@ class ReceiveLoop:
                 now = self._timer.monotonic()
                 if self._refused_since is None:
                     self._refused_since = now
+                if self._unanswered_since is None:
+                    self._unanswered_since = now
                 refusing = now - self._refused_since
                 if refusing > self._deaf_after:
                     # A queue that refuses every receive for this long leaves a
@@ -391,6 +401,9 @@ class ReceiveLoop:
                         refused,
                     )
                     return
+                # Only when a busy pool reset the count above does this fire,
+                # so one fault pages once.
+                self._alarm_unanswered(now, refused)
                 events = ()
                 await asyncio.sleep(self._tick)
             except Exception as error:
@@ -402,6 +415,29 @@ class ReceiveLoop:
                 handled = self._loop.create_future()
                 self._inbox.put_nowait(("events", (events, handled)))
                 await handled
+
+    def _alarm_unanswered(self, now: float, refused: QueueUnavailable) -> None:
+        """Alarm once when the queue has answered nothing for longer than `deaf_after`.
+
+        The count that ends the loop starts afresh each time the pool fills,
+        so a backlog that keeps every handler busy could hold a deaf queue's
+        halt back until the work runs out. This alarm counts from the first
+        refusal since the queue last answered, which a busy pool never
+        clears, so the owner hears of it on time.
+        """
+        assert self._unanswered_since is not None
+        silent = now - self._unanswered_since
+        if silent <= self._deaf_after or self._alarmed_unanswered:
+            return
+        self._alarmed_unanswered = True
+        try:
+            self._alerts.alarm(
+                f"{self._worker}'s queue has answered no receive for {silent:.0f} seconds, "
+                f"last with {refused.answer}"
+            )
+        except Exception:
+            # The loop goes on, and the halt on the deaf queue still comes.
+            pass
 
     def _receive_or_return(self, limit: int) -> Sequence[Event]:
         events = self._queue.receive(limit)
