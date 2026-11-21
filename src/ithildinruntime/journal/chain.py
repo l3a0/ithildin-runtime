@@ -87,11 +87,18 @@ class Journal:
     code outside execution, monitoring, the supervisor and the `ithildin` tool
     may import this package, which tests/test_import_rule.py holds.
 
-    The `Journal` remembers the newest entry it has checked, so a later read
-    or append starts there rather than from the first entry. That memory is
-    only a starting point: a stale one costs a refused create and a re-read,
-    never a wrong entry, because the store's create-only rule decides who
-    holds each number.
+    The `Journal` remembers the newest entry it has checked or stored, and
+    builds the next entry on it, as Rule 8 has a writer take the last number
+    it knows. A memory behind the store costs a refused create and a read
+    forward, never a wrong entry, because the store's create-only rule decides
+    who holds each number. The memory is trusted for the link to the entry
+    before, so a store that lost entries after this `Journal` checked them is
+    not caught here. The next full read halts on such a gap, and a lost newest
+    entry is caught only by the bucket's refusal of deletes, its Object Lock,
+    its alarm on a delete and the head comparison design.md proposes for #10.
+
+    One `Journal` may be shared between threads. Two that build from the same
+    memory take the same number, and the second gets `NumberTaken`.
     """
 
     def __init__(self, store: BlobStore, account: str) -> None:
@@ -102,10 +109,6 @@ class Journal:
         self._prefix = journal_entry_key(account, FIRST_SEQ).rpartition("/")[0] + "/"
         self._head: JournalAck | None = None
         self._lock = threading.Lock()
-
-    @property
-    def account(self) -> str:
-        return self._account
 
     def head(self) -> JournalAck | None:
         """The newest entry's number and hash, or `None` for a journal with no entry.
@@ -119,14 +122,16 @@ class Journal:
         return self._known()
 
     def build(self, body: Mapping[str, object], built_at: datetime) -> JournalEntry:
-        """The next entry for `body`, chained to the newest entry stored.
+        """The next entry for `body`, chained to the newest entry this `Journal` knows.
 
-        `built_at` is the writer's own clock read. The entry is built once and
-        resent unchanged on a retry, so a live writer recognises its own
-        earlier attempt by its bytes. The codec refuses a body that is not
+        It reads the journal only when it knows no entry yet, and otherwise
+        lists nothing, so a step journals with one write. `built_at` is the
+        writer's own clock read. The entry is built once and resent unchanged
+        on a retry, so a live writer recognises its own earlier attempt by its
+        bytes. The codec refuses a body that is not
         plain JSON values, here rather than at the write.
         """
-        head = self.head()
+        head = self._known() or self.head()
         entry = JournalEntry(
             seq=head.seq + 1 if head else FIRST_SEQ,
             format=JOURNAL_FORMAT,
@@ -140,13 +145,16 @@ class Journal:
     def append(self, entry: JournalEntry) -> JournalAck:
         """Store `entry` at its number's key, and return its number and hash.
 
-        It halts, storing nothing, on an entry that does not chain to the
-        stored entry before it, since a create-only entry with a wrong link
-        breaks the chain for good. An existing key holding these same bytes is
-        this writer's own earlier attempt whose answer was lost, so the append
-        is done. One holding other bytes raises `NumberTaken`. A store that
-        does not answer raises `StoreUnavailable`, and resending the same
-        entry is then safe.
+        It halts, storing nothing, on an entry that does not chain to the entry
+        before it, as stored or as this `Journal` remembers it, since a
+        create-only entry with a wrong link breaks the chain for good. An
+        existing key holding these same bytes is this writer's own earlier
+        attempt whose answer was lost, so the append is done. One holding other
+        bytes raises `NumberTaken`, once this `Journal` has read forward past
+        it, so its next `build` takes the next free number. A key refused as
+        existing and then missing halts, because the bucket refuses deletes. A
+        store that does not answer raises `StoreUnavailable`, and resending the
+        same entry is then safe.
         """
         if entry.format not in FORMATS:
             raise Halt(
@@ -160,7 +168,15 @@ class Journal:
         try:
             self._store.create(key, data, digest)
         except KeyExists:
-            if self._store.get(key) != data:
+            try:
+                stored = self._store.get(key)
+            except BlobMissing:
+                raise Halt(
+                    f"journal {self._account}: entry {entry.seq} was refused as existing "
+                    f"and then missing"
+                ) from None
+            if stored != data:
+                self.head()
                 raise NumberTaken(self._account, entry.seq) from None
         ack = JournalAck(seq=entry.seq, entry_hash=digest)
         self._advance(ack)

@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     BlobMissing,
     Halt,
     JournalEntry,
+    KeyExists,
     StoreUnavailable,
     checkpoint_key,
     encode,
@@ -254,12 +255,16 @@ def test_racing_writers_each_take_their_own_numbers(spec: StoreSpec) -> None:
         try:
             start.wait()
             for i in range(each):
-                while True:
+                # A writer that never moves past a taken number would spin
+                # here, so the tries are bounded and running out fails.
+                for _ in range(writers * each):
                     try:
                         journal.append(journal.build({"kind": "fixture", "w": w, "i": i}, AT))
                         break
                     except NumberTaken:
                         continue
+                else:
+                    raise AssertionError(f"writer {w} never took a number for entry {i}")
         except BaseException as error:  # noqa: BLE001
             failures.append(error)
 
@@ -508,7 +513,51 @@ def test_head_checks_what_another_writer_appended(tmp_path: Path) -> None:
     with pytest.raises(Halt, match="entry 2's prev_hash"):
         journal.head()
     with pytest.raises(Halt, match="entry 2's prev_hash"):
-        journal.build(_body(3), AT)
+        journal.append(journal.build(_body(3), AT))
+    assert len(store.list("journal/", None)) == 2
+
+
+def test_a_build_on_a_known_entry_lists_nothing(tmp_path: Path) -> None:
+    store = _Counting(FolderStore(tmp_path))
+    journal = Journal(store, ACCOUNT)
+    _append(journal, 1)
+    listed = []
+    store.list = lambda prefix, after: listed.append(prefix) or store._store.list(prefix, after)
+    _append(journal, 2)
+    assert listed == []
+
+
+def test_a_writer_refused_at_a_number_reads_forward_before_its_next_build(
+    tmp_path: Path,
+) -> None:
+    store = FolderStore(tmp_path)
+    ours, theirs = Journal(store, ACCOUNT), Journal(store, ACCOUNT)
+    _append(ours, 1)
+    _append(theirs, 50)
+    _append(theirs, 51)
+    with pytest.raises(NumberTaken):
+        _append(ours, 2)
+    assert ours.build(_body(2), AT).seq == 4
+
+
+class _RefusedThenMissing:
+    def __init__(self, store) -> None:
+        self._store = store
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def create(self, key: str, data: bytes, sha256: str) -> str:
+        raise KeyExists(key, "the key already holds a blob")
+
+    def get(self, key: str) -> bytes:
+        raise BlobMissing(key, "no blob at the key")
+
+
+def test_a_key_refused_as_existing_and_then_missing_halts(tmp_path: Path) -> None:
+    journal = Journal(_RefusedThenMissing(FolderStore(tmp_path)), ACCOUNT)
+    with pytest.raises(Halt, match="refused as existing and then missing"):
+        journal.append(_entry(1, FIRST_PREV_HASH))
 
 
 # Every format ever written stays readable.
