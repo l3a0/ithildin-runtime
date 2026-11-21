@@ -1,6 +1,6 @@
 # CLAUDE.md — ithildin-runtime
 
-ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Status: nothing is built yet, and the first milestone is a walking skeleton that trades on paper. Code lives in `src/ithildinruntime`, with tests under `tests/`.
+ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Status: only `core`, the shared types and code every module imports, is built, and the first milestone is a walking skeleton that trades on paper. Code lives in `src/ithildinruntime`, with tests under `tests/`.
 
 **The premise is what cannot be recovered.** Three things are gone once lost.
 
@@ -208,7 +208,7 @@ A repo drifts when two surfaces describe the same thing and only one gets update
 This repo's prose surfaces are every tracked Markdown file, which `git ls-files '*.md'` lists. Three pairs can drift today.
 
 1. The hard limits, stated here and in [docs/team-charter.md](docs/team-charter.md). This file wins.
-2. The module table in the charter and the modules under `src/ithildinruntime`, once any exist. A module renamed in code is renamed in the charter, and on the slice issues that name it, in the same change.
+2. The module table in the charter and the modules under `src/ithildinruntime`. A module renamed in code is renamed in the charter, and on the slice issues that name it, in the same change.
 3. The `l3a0` plugin's board skills and the repo-template commit that `.github/workflows/board.yml` pins. A pin moved past a change to what the generator reads, with no plugin release beside it, leaves a session following one version's rules on another version's board. [Keep the build board current](#keep-the-build-board-current) says how the two stay in step.
 
 Before reporting a code change done, sweep the prose surfaces for what the change could have invalidated, and end the response with a short **Consistency sweep** note listing what was checked, what was updated, and what is still stale. For a pure-internal refactor that moves no line numbers and changes no observable behavior, say "no prose-facing surfaces affected" so it is clear the check was considered rather than forgotten.

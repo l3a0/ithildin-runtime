@@ -4,7 +4,9 @@ version = "0.0.0"
 description = "A systematic trading platform after Narang's Inside the Black Box: one runtime for backtest, paper and live."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "rfc8785==0.1.4",
+]
 
 [dependency-groups]
 # ithildincore draws the whiteboard sketches in docs/figures and its tests pin
