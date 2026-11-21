@@ -631,7 +631,10 @@ classDiagram
     class Journal {
         -BlobStore store
         -str account
+        +head() JournalAck
+        +build(body, built_at) JournalEntry
         +append(entry) JournalAck
+        +read(after) list
         +in_doubt() list
         +replay() Book
     }
@@ -1039,7 +1042,7 @@ An arrow means "may import". The diagram draws four rules.
 
 1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
    1. `core`, which every module may import.
-   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Which code builds the `Journal` that `OrderPath` and `Monitoring` hold is [#80](https://github.com/l3a0/ithildin-runtime/issues/80)'s to settle, inside the four importers.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Each of the four builds its own `Journal` from the `BlobStore` and the account it is handed, so execution builds the one `OrderPath` holds and monitoring the one `Monitoring` holds, and no other code constructs one.
 
    `adapters`, `execution.brokers` and `runtime.loop` import nothing from `ithildinruntime` but `core`.
 

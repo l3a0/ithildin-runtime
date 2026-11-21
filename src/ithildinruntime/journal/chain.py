@@ -1,13 +1,15 @@
 """The journal's writer and reader: one numbered, hash-chained log per broker account.
 
-docs/design.md's paragraph opening "The journal is the one numbered log" gives
+docs/design.md's `### Rule 8: the journal is the one numbered log` gives
 the rules, and docs/architecture/08-crosscutting-concepts.md's `#### How a
 journal entry is hashed and checked` says how an entry is hashed. In short:
 
 - An entry is one canonical blob at `journal/<account>/<seq>.json`, created
   once and never replaced, and an account's first entry is number 1.
 - Its `prev_hash` is the SHA-256 of the stored bytes of the entry before it,
-  and sixty-four zeros on the first entry.
+  and sixty-four zeros on the first entry. `JournalEntry.hash()` is the one
+  function that computes it, and it equals the SHA-256 of the stored bytes
+  only because `core.decode` refuses bytes that are not canonical.
 - S3's refusal of an existing key keeps two writers from taking one number.
   The refused writer reads the new entries and decides its step again, so
   `append` never renumbers an entry itself.
@@ -21,7 +23,6 @@ defines the bodies they read.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import threading
@@ -152,9 +153,9 @@ class Journal:
                 f"journal {self._account}: entry {entry.seq} has format {entry.format}, "
                 f"which this release does not read"
             )
-        data = encode(entry)
-        digest = hashlib.sha256(data).hexdigest()
         self._check_link(entry)
+        data = encode(entry)
+        digest = entry.hash()
         key = journal_entry_key(self._account, entry.seq)
         try:
             self._store.create(key, data, digest)
@@ -203,7 +204,7 @@ class Journal:
                     f"match the SHA-256 of entry {seq}'s stored bytes"
                 )
             seq = number
-            expected = hashlib.sha256(data).hexdigest()
+            expected = entry.hash()
             self._advance(JournalAck(seq=seq, entry_hash=expected))
             yield entry
 
@@ -228,8 +229,7 @@ class Journal:
             data = self._store.get(key)
         except BlobMissing:
             raise Halt(f"journal {self._account}: entry {seq} is missing") from None
-        self._checked(seq, data)
-        return hashlib.sha256(data).hexdigest()
+        return self._checked(seq, data).hash()
 
     def _get(self, key: str) -> bytes:
         try:
@@ -239,6 +239,8 @@ class Journal:
 
     def _checked(self, seq: int, data: bytes) -> JournalEntry:
         """Entry `seq`'s stored bytes, read back with the reader's three checks."""
+        # A blob that decodes holds an integer format, so this one check
+        # covers every format the decode below could accept.
         written = _written_format(data)
         if written is not None and written not in FORMATS:
             raise Halt(
@@ -251,11 +253,6 @@ class Journal:
             raise Halt(
                 f"journal {self._account}: entry {seq} is not a canonical journal entry: {error}"
             ) from None
-        if entry.format not in FORMATS:
-            raise Halt(
-                f"journal {self._account}: entry {seq} has format {entry.format}, "
-                f"which this release does not read"
-            )
         if entry.seq != seq:
             raise Halt(f"journal {self._account}: the key of entry {seq} holds seq {entry.seq}")
         return entry

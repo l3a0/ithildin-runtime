@@ -1,6 +1,6 @@
 """The journal's writer and reader: the hash chain, the append's refusals and the reader's checks.
 
-docs/design.md's paragraph opening "The journal is the one numbered log" and
+docs/design.md's `### Rule 8: the journal is the one numbered log` and
 docs/architecture/08-crosscutting-concepts.md's `#### How a journal entry is
 hashed and checked` hold the rules these tests pin. The tests that matter for
 both stores run through the `spec` fixture, once on the folder and once on S3
@@ -206,7 +206,7 @@ def test_an_entry_past_a_gap_is_refused_before_it_is_stored(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("seq", [0, -1, True])
 def test_an_entry_numbered_below_one_is_refused(tmp_path: Path, seq: object) -> None:
-    with pytest.raises((Halt, ValueError)):
+    with pytest.raises(Halt, match="not an entry number"):
         Journal(FolderStore(tmp_path), ACCOUNT).append(_entry(seq, FIRST_PREV_HASH))
     assert FolderStore(tmp_path).list("journal/", None) == []
 
@@ -259,6 +259,34 @@ def test_racing_writers_each_take_their_own_numbers(spec: StoreSpec) -> None:
     assert [e.seq for e in entries] == list(range(1, writers * each + 1))
     written = sorted((e.body["w"], e.body["i"]) for e in entries)
     assert written == [(w, i) for w in range(writers) for i in range(each)]
+
+
+class _Counting:
+    """A store that counts the blobs read, to show what a `Journal` re-reads."""
+
+    def __init__(self, store) -> None:
+        self._store = store
+        self.gets: list[str] = []
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def get(self, key: str) -> bytes:
+        self.gets.append(key)
+        return self._store.get(key)
+
+
+def test_a_journal_reads_no_entry_twice_once_it_has_checked_it(tmp_path: Path) -> None:
+    store = _Counting(FolderStore(tmp_path))
+    journal = Journal(store, ACCOUNT)
+    for n in range(1, 4):
+        _append(journal, n)
+    assert store.gets == []
+    assert next(journal.read()).seq == 1
+    store.gets.clear()
+    assert journal.head().seq == 3
+    _append(journal, 4)
+    assert store.gets == []
 
 
 # Acceptance 2: the reader's checks.
