@@ -10,7 +10,7 @@ variable "state_bucket" {
 }
 
 variable "budget_limit" {
-  description = "The monthly budget in US dollars. 5, by the owner's ruling. The budget alarm's drill lowers it for a day, as docs/halts-and-drills.md says."
+  description = "The monthly budget in US dollars. 5, by the owner's ruling. The budget alarm's drill lowers it for up to a day, as docs/what-a-person-runs.md's \"Drill the budget alarm\" says."
   type        = string
   default     = "5"
   nullable    = false

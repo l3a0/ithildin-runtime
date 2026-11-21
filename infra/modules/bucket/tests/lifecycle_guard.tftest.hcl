@@ -250,3 +250,39 @@ run "a_prefix_short_of_the_heartbeats_folder_is_refused" {
 
   expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
 }
+
+run "an_allowed_rule_beside_a_refused_one_does_not_pass_it" {
+  command = plan
+
+  # Every rule is checked, so one allowed rule cannot carry a refused one.
+  variables {
+    lifecycle_rules = [
+      { id = "heartbeats", prefix = "heartbeats/", expire_current_days = 7 },
+      { id = "everything", prefix = "", expire_current_days = 30 },
+    ]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_rule_on_the_release_blobs_is_refused" {
+  command = plan
+
+  # The key holds leases/ inside it, so only a check on the start of the prefix refuses it.
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "accounts/a/releases/", expire_noncurrent_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_rule_with_heartbeats_inside_its_prefix_is_refused" {
+  command = plan
+
+  # The key holds heartbeats/ inside it, so only a check on the start of the prefix refuses it.
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "journal/heartbeats/", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
