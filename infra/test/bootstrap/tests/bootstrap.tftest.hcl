@@ -21,7 +21,7 @@ variables {
   adopt_existing = false
 }
 
-run "each_trust_names_one_job_on_main" {
+run "each_trust_names_one_workflow_file_on_main" {
   command = plan
 
   assert {
@@ -36,7 +36,7 @@ run "each_trust_names_one_job_on_main" {
         }
       }
     }]
-    error_message = "The test role's trust is not exactly ci.yml on a push to main."
+    error_message = "The test role's trust is not exactly ci.yml on main."
   }
 
   assert {
@@ -253,6 +253,11 @@ run "the_budget_alarm_is_five_dollars_a_month_to_its_topic" {
       Condition = { StringEquals = { "aws:SourceAccount" = "000000000000" } }
     }]
     error_message = "The alarm topic admits more than this account's budgets publishing to it."
+  }
+
+  assert {
+    condition     = aws_sns_topic.alarms.name == "ithildin-test-alarms"
+    error_message = "The test account's alarm topic is not named ithildin-test-alarms, the name the docs give."
   }
 
   assert {

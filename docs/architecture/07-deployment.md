@@ -239,7 +239,7 @@ A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease gr
 
 The bucket's lifecycle expires heartbeats and the noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
 
-This describes the runtime's buckets on shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything within two to three days of the last write, and its policy refuses any retention date more than a day out so the lifecycle can always empty it.
+This describes the runtime's buckets on shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires every current version one to two days after it is written and leaves the bucket empty at least three days after the last write, and its policy refuses any retention date more than a day out so the lifecycle can always empty it.
 
 #### Who can change the bucket's settings or delete a version
 
@@ -1061,7 +1061,7 @@ The promotion check and the live drill check each have a second alarm action, an
 
 ##### Which accounts send the email
 
-As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so shadow holds neither alarm and needs no topic. Test's account holds one topic, `ithildin-test-alarms`, which carries only its budget alarm, as [Set up the test environment](../what-a-person-runs.md#set-up-the-test-environment) says. A budget alarm on another account publishes to that account's one topic.
+As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so shadow holds neither alarm and needs no topic. Test's account holds one topic, `ithildin-test-alarms`, which carries only its budget alarm, as [Set up the test environment](../what-a-person-runs.md#set-up-the-test-environment) says.
 
 ##### How the email route is set up
 
@@ -1140,7 +1140,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 | Environment | When its drills run |
 | --- | --- |
-| Test | Drills that depend only on code run once, in test |
+| Test | Drills that depend only on code run once, in test, and the drills whose Gate is before [#78](https://github.com/l3a0/ithildin-runtime/issues/78) closes run once before it closes |
 | Shadow | Before paper's gate |
 | Paper | Before paper's gate |
 | Live | Before the owner switches, in a live session started with the kill switch already set. After the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch |
@@ -1167,7 +1167,7 @@ The owner approves every live drill that changes live's state, and only a run th
 
 #### Environment rule 10: how an environment's infrastructure is applied
 
-Each environment's infrastructure is applied by a plan of its own. This doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that on shadow, paper and live the bucket's configuration is one the owner applies, because its settings are the owner's alone, apart from the routes and the rest, which the apply credential applies. In test both sit in one configuration the apply credential applies, because test lets it change the test bucket's settings. A bad apply rolls back by a revert commit that applies the previous configuration, which on shadow, paper and live never removes an event rule. In test, a route that leaves `infra/test/routes.json` takes its rule and queue with it, because no release runs against test that still needs them. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
+Each environment's infrastructure is applied by a plan of its own. This doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that on shadow, paper and live the bucket's configuration is one the owner applies, because its settings are the owner's alone, apart from the routes, which the apply credential applies. In test both sit in one configuration the apply credential applies, because test lets it change the test bucket's settings. A bad apply rolls back by a revert commit that applies the previous configuration, which on shadow, paper and live never removes an event rule. In test, a route that leaves `infra/test/routes.json` takes its rule and queue with it, because no release runs against test that still needs them. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
 
 ##### What an apply puts on the host
 

@@ -423,8 +423,10 @@ Applying before the merge means the first `aws` run on `main` finds the environm
 
 Two checks follow the merge.
 
-1. The merge's own `Infra` run is the apply role's first real plan, because steps 5 and 7 ran as the owner's role. Check that it ends with no changes to apply. A grant the apply role lacks fails that run with AWS's "access denied" naming the action, while the environment steps 5 to 7 applied keeps running. The fix is to add the grant in `infra/test/bootstrap/roles.tf`, merge it, and re-apply the bootstrap from `main` as step 5 says.
-2. Run `tofu -chdir=infra/test/bootstrap plan -var state_bucket=<state bucket>` from `main`, and expect no changes. Step 5 applied the bootstrap from the build's branch, and no workflow compares it with what merged.
+1. The merge's own `Infra` run is the apply role's first real plan, because steps 5 and 7 ran as the owner's role. Check that it ends with no changes to apply. A grant the apply role lacks fails that run with AWS's "access denied" naming the action, while the environment steps 5 to 7 applied keeps running. The fix is to add the grant in `infra/test/bootstrap/roles.tf`, merge it, and re-apply the bootstrap from `main` as step 5 says. That merge's own `Infra` run fails the same way, because the grant is not applied yet, so after the bootstrap apply re-run it with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main` and check that its `tofu apply (test)` summary reads "No changes."
+2. In a checkout of `main`, run step 5's `init` and then `tofu -chdir=infra/test/bootstrap plan -var state_bucket=<state bucket>`, and expect no changes. Step 5 applied the bootstrap from the build's branch, and no workflow compares it with what merged.
+
+After every apply of the bootstrap, this rollback's and the budget drill's included, check that the alarm topic still has its subscription, with `aws sns list-subscriptions-by-topic --topic-arn <alarm topic ARN>`, and expect one confirmed email subscription. A change that replaces the topic drops it, because the subscription lives outside OpenTofu state. If there is none, repeat step 6 and run [the budget alarm's drill](#drill-the-budget-alarm) again.
 
 #### Check that an event reaches its queue
 
@@ -434,13 +436,13 @@ The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`
 2. Find the queue with `aws sqs get-queue-url --queue-name ithildin-test-smoke`.
 3. Receive with `aws sqs receive-message --queue-url <queue URL> --wait-time-seconds 20`, up to three times. One message names the key in its `detail.object.key`.
 
-If no message arrives, read the rule's two counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-smoke --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once with `TriggeredRules` and once with `FailedInvocations`. The `date -v-1H` form is macOS's.
+If no message arrives, wait five minutes after the write, because EventBridge's counts reach CloudWatch a minute or more after the event. Then read the rule's three counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-smoke --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once each with `TriggeredRules`, `Invocations` and `FailedInvocations`. The `date -v-1H` form is macOS's.
 
 CloudWatch answers a metric with no data with no datapoint rather than with zero.
 
 - **`TriggeredRules` has no datapoint, or zero:** the rule never matched, so the bucket's EventBridge notifications or the route's pattern is at fault, and the queue's encryption is not.
 - **`FailedInvocations` counts the write:** EventBridge matched and could not deliver. The likeliest cause is that it cannot send to a queue under SQS's own encryption, and the fix is a customer-managed KMS key at about 1 US dollar a month in every environment's account. That is the owner's decision.
-- **`TriggeredRules` counts the write and `FailedInvocations` has no datapoint:** the event was delivered and the receive missed it. Receive again, and read the queue's `ApproximateNumberOfMessages` with `aws sqs get-queue-attributes`.
+- **`TriggeredRules` and `Invocations` count the write and `FailedInvocations` has no datapoint:** the event was delivered and the receive missed it. Receive again, and read the queue's `ApproximateNumberOfMessages` with `aws sqs get-queue-attributes`.
 
 The key expires with everything else in the bucket, two to three days later.
 
@@ -455,7 +457,26 @@ An apply that fails or is cancelled halfway can leave the state locked, and the 
 #### Roll back a bad apply
 
 - **`infra/test`:** revert the merge that changed it, in a pull request. The revert's merge starts an apply of the earlier configuration. A route the revert removes takes its rule and queues with it, as [Environment rule 10](architecture/07-deployment.md#environment-rule-10-how-an-environments-infrastructure-is-applied) says of test.
-- **`infra/test/bootstrap`:** no workflow applies it. Revert the bad change in a pull request, and once it merges, run step 5's `init` and `apply` again from `main`, from the laptop. Rolling back from an older commit alone would leave `main` holding the bad change, and the next apply from `main` would put it back.
+- **`infra/test/bootstrap`:** no workflow applies it. Revert the bad change in a pull request, and once it merges, run step 5's `init` and `apply` again from `main`, from the laptop. Rolling back from an older commit alone would leave `main` holding the bad change, and the next apply from `main` would put it back. The revert's own `Infra` run happens under the bad bootstrap, so re-run it afterwards with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main` and check that its `tofu apply (test)` summary reads "No changes."
+
+#### Drill the rollback
+
+Run this once, after the first merge that applies `infra/test`, and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), as [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) says.
+
+1. Merge a pull request that changes the smoke route's `visibility_timeout_seconds` in `infra/test/routes.json`, from 30 to 31.
+2. Check that the merge's `Infra` run ran its `tofu apply (test)` job, and that the job's summary lists `module.routes.aws_sqs_queue.this[…]` as an `update` of `visibility_timeout_seconds`. The summary hides each key, so the route's name does not appear.
+3. Read the value with `aws sqs get-queue-attributes --queue-url $(aws sqs get-queue-url --queue-name ithildin-test-smoke --query QueueUrl --output text) --attribute-names VisibilityTimeout`, and expect 31.
+4. Merge the revert of that pull request, and expect step 2's job to have run again and step 3's read to show 30.
+
+#### Drill the budget alarm
+
+Run this once and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), naming who saw the email and when. It waits on the owner's ruling on whether the budget counts usage before AWS credits, because credits can hold the month's spend at zero, and then the drill cannot start.
+
+1. Wait until `aws budgets describe-budget --account-id <test account id> --budget-name ithildin-test-monthly` shows `CalculatedSpend.ActualSpend` above 0.01 US dollars.
+2. In a checkout of `main`, run step 5's `init`, then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket> -var budget_limit=0.01`.
+3. Wait up to a day for the email at the confirmed address. If none arrives, read `aws sns list-subscriptions-by-topic --topic-arn <alarm topic ARN>` and the topic's `NumberOfNotificationsFailed` metric in CloudWatch, and record the drill as failed.
+4. Whether or not the email arrived, put the limit back with the same `apply` without `-var budget_limit=0.01`, and check the subscription as the setup section says.
+5. Read `aws budgets describe-notifications-for-budget --account-id <test account id> --budget-name ithildin-test-monthly` until the notification's state reads `OK`, for up to a day. AWS Budgets refreshes its figures a few times a day. Record the drill as failed while it still reads `ALARM`.
 
 The drill row for this rollback under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) runs it once with a harmless change.
 

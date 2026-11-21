@@ -30,7 +30,8 @@ on:
       - "infra/**"
       - "!infra/**/*.md"
       - ".github/workflows/infra.yml"
-  # Re-applies main's configuration with no code change, after a lock is cleared. The
+  # Re-applies main's configuration with no code change, after a lock is cleared or a
+  # bootstrap apply. The
   # apply job runs only on main, and the apply role trusts this file on main in the test
   # environment, whatever the event.
   workflow_dispatch:
@@ -110,8 +111,9 @@ jobs:
     needs: [fmt, validate]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The apply role trusts only this job's subject: this workflow, on main, in the
-    # `test` environment.
+    # The apply role trusts any job of this file on main in the `test` environment. This
+    # is the only job here that runs in `test`, and a job added there later reaches the
+    # role too.
     environment: test
     # Applies take turns, and none is cancelled halfway, since a cancelled apply leaves
     # its lock behind. docs/what-a-person-runs.md says how to clear one.

@@ -92,7 +92,7 @@ run "a_bucket_marked_regenerable_without_the_one_day_cap_is_refused" {
 
   variables {
     regenerable_only   = true
-    max_retention_days = 30
+    max_retention_days = 2
     lifecycle_rules    = [{ id = "everything", prefix = "", expire_current_days = 1 }]
   }
 
@@ -171,8 +171,10 @@ run "a_rule_reaching_the_release_records_is_refused" {
 run "a_short_prefix_over_the_leases_is_refused" {
   command = plan
 
+  # A noncurrent expiry, which the leases/ clause would accept, so only the prefix
+  # decides.
   variables {
-    lifecycle_rules = [{ id = "r", prefix = "lease", expire_current_days = 1 }]
+    lifecycle_rules = [{ id = "r", prefix = "leases", expire_noncurrent_days = 1 }]
   }
 
   expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
@@ -225,4 +227,26 @@ run "an_operator_is_refused_version_deletes_and_unconditional_account_lease_writ
     }]
     error_message = "The owner and the operator are not both refused a write under leases/accounts/ without If-Match."
   }
+}
+
+run "a_rule_expiring_old_versions_across_the_whole_bucket_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "", expire_noncurrent_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_prefix_short_of_the_heartbeats_folder_is_refused" {
+  command = plan
+
+  # A current expiry, which the heartbeats/ clause would accept, so only the prefix
+  # decides.
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "heartbeats", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
 }

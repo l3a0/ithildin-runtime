@@ -1,4 +1,6 @@
-# Two roles, each assumed through GitHub's OIDC provider by one job on main.
+# Two roles, each assumed through GitHub's OIDC provider by any job of one workflow file
+# on main. One job in each file holds the permission or the environment that reaches
+# its role, which is what keeps each role to that job.
 #
 # 1. The apply role, for .github/workflows/infra.yml's apply job in the `test` GitHub
 #    environment. It plans and applies infra/test, so it carries the plan credential's

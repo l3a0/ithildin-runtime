@@ -80,7 +80,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 # -- the budget alarm ---------------------------------------------------------------
 
 # AWS Budgets charges nothing for an account's first two budgets. It publishes to the
-# account's one alarm topic, as every account has one, and the owner subscribes an address to the topic by hand and confirms it, as
+# test account's one alarm topic, and the owner subscribes an address to the topic by hand and confirms it, as
 # docs/what-a-person-runs.md's "Confirm an alarm email subscription" says. So the
 # address enters no tracked file and no OpenTofu state, as with every other alarm email.
 resource "aws_sns_topic" "alarms" {

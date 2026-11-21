@@ -66,8 +66,9 @@ module "bucket" {
   # expire everything.
   regenerable_only = true
 
-  # Everything expires. S3 rounds each expiry up to the next midnight UTC, so the
-  # bucket empties two to three days after the last write.
+  # Everything expires. S3 rounds each expiry up to the next midnight UTC, so a current
+  # version expires one to two days after it is written, and the bucket holds no
+  # version or delete marker at least three days after the last write.
   lifecycle_rules = [
     {
       id                      = "expire-everything"
