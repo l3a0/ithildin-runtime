@@ -728,3 +728,96 @@ def test_a_slow_queue_call_never_holds_up_a_check(tmp_path) -> None:
         queue.put(_key("feed", 2))
         assert started.wait_for(lambda: len(waiting.started) == 3, 5)
         assert time.monotonic() - began < 0.7
+
+
+def test_one_refusal_after_a_busy_pool_leaves_the_loop_running(tmp_path) -> None:
+    """The refusals count from the first one, not from the queue's last answer."""
+    import time
+
+    queue = StubQueue()
+    holder: list = []
+    waiting = Waiting(holder)
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, waiting, decisions=1, queue=queue, pool_size=1, deaf_after=0.5
+    )
+    holder.extend((store, the_plan))
+    with running({"alpha": made}) as started:
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+        assert started.wait_for(lambda: bool(waiting.started), 5)
+        # The only handler is busy past the bound, so the loop asks nothing.
+        time.sleep(1.0)
+        queue.refusals = 1
+        waiting.go.set()
+        assert started.wait_for(lambda: (folder.root / _key("alpha")).exists(), 5)
+        assert started.wait_for(lambda: queue.refusals == 0, 5)
+        time.sleep(0.3)
+        assert not started.errors and started.threads["alpha"].is_alive()
+    assert alarms.reasons == []
+
+
+def test_refusals_broken_by_an_answer_never_add_up_to_the_bound(tmp_path) -> None:
+    import time
+
+    queue = StubQueue()
+    _, _, _, made, _, alarms = _stub_loop(tmp_path, queue=queue, deaf_after=0.3)
+    with running({"alpha": made}) as started:
+        end = time.monotonic() + 1.2
+        while time.monotonic() < end:
+            # Two refusals take about a tenth of a second, and then it answers.
+            queue.refusals = 2
+            time.sleep(0.15)
+        assert not started.errors and started.threads["alpha"].is_alive()
+    assert alarms.reasons == []
+
+
+class HeldClock:
+    """Wall time as it is, and a monotonic reading a case sets by hand."""
+
+    def __init__(self) -> None:
+        self.at = 0.0
+
+    def now(self):
+        return SystemTimer().now()
+
+    def monotonic(self) -> float:
+        return self.at
+
+    def after(self, seconds: float) -> object:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(("past", "ends"), [(-0.001, False), (0.0, False), (0.001, True)])
+def test_the_loop_gives_up_only_once_the_refusals_last_longer_than_the_bound(
+    tmp_path, past, ends
+) -> None:
+    import time
+
+    from ithildinruntime.core import QueueUnavailable
+
+    clock = HeldClock()
+    queue = StubQueue()
+    queue.error = QueueUnavailable("AccessDenied: the role may not receive")
+    _, _, _, made, _, alarms = _stub_loop(tmp_path, queue=queue, deaf_after=1.0, timer=clock)
+    with running({"alpha": made}) as started:
+        # The first refusal is at reading 0, and every later one at 1.0 + past.
+        time.sleep(0.2)
+        clock.at = 1.0 + past
+        time.sleep(0.4)
+        assert started.threads["alpha"].is_alive() is not ends
+    assert bool(alarms.reasons) is ends
+
+
+def test_an_error_from_a_delete_other_than_an_unavailable_queue_ends_the_loop(tmp_path) -> None:
+    queue = StubQueue()
+    queue.done_error = KeyError("ReceiptHandle")
+    folder, the_plan, store, made, _, alarms = _stub_loop(tmp_path, decisions=1, queue=queue)
+
+    def feed_after_the_start_check() -> None:
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+
+    failures = _run_until_it_fails(made, feed_after_the_start_check)
+    assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+    assert "could not answer its queue" in str(failures[0])
+    assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]

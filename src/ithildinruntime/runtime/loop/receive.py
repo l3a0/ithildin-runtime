@@ -44,7 +44,9 @@ How the loop runs, in order.
    loop with `LoopFailed`, and the host restarts the process. So does any
    error from the queue other than `QueueUnavailable`, and a queue that has
    refused every receive for longer than `deaf_after`, because a loop that
-   can no longer receive must not go on beating. Each alarms first.
+   can no longer receive must not go on beating. Each queue failure alarms
+   first. The refusals count from the first one since the queue last
+   answered, so a pool busy for a while and then refused once goes on.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
@@ -121,7 +123,7 @@ class Handler(Protocol):
 
 
 class LoopFailed(Exception):
-    """A halt the loop could not store, or a queue it could not read, so the process exits."""
+    """A halt the loop could not store, or a queue it could not read or answer, so it exits."""
 
 
 @dataclass(eq=False)
@@ -208,6 +210,7 @@ class ReceiveLoop:
         self._running: dict[Item, _Running] = {}
         self._stopping = False
         self._failure: BaseException | None = None
+        self._failed_because: str | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._inbox: asyncio.Queue | None = None
         self._ready = threading.Event()
@@ -215,11 +218,10 @@ class ReceiveLoop:
         self._background: set[asyncio.Future] = set()
         self._retrying = False
         self._retried = float("-inf")
-        self._answered = 0.0
+        self._refused_since: float | None = None
         # Set when the full check met a store that did not answer, so the
         # ticker runs it again until one completes.
         self._recheck = False
-        self._met_unknown = False
 
     # Running and stopping
 
@@ -228,7 +230,8 @@ class ReceiveLoop:
         or a queue could not be read or answered."""
         asyncio.run(self._main())
         if self._failure is not None:
-            raise LoopFailed(str(self._failure)) from self._failure
+            reason = self._failed_because or str(self._failure)
+            raise LoopFailed(reason) from self._failure
 
     def stop(self) -> None:
         """Stop receiving and drain the pool. Safe to call from any thread, at any time."""
@@ -249,10 +252,11 @@ class ReceiveLoop:
         assert self._inbox is not None
         self._inbox.put_nowait(("stop", None))
 
-    def _fail(self, error: BaseException) -> None:
+    def _fail(self, error: BaseException, what: str | None = None) -> None:
         """End the loop with `LoopFailed`, from the event loop's thread."""
         if self._failure is None:
             self._failure = error
+            self._failed_because = what
         self._stopping = True
         assert self._inbox is not None
         self._inbox.put_nowait(("stop", None))
@@ -275,7 +279,6 @@ class ReceiveLoop:
             await self._in_io(self._announce_newest)
         finally:
             self._ready.set()
-        self._answered = self._timer.monotonic()
         receiver = asyncio.create_task(self._receiver())
         try:
             while not self._stopping and self._failure is None:
@@ -343,7 +346,7 @@ class ReceiveLoop:
 
     def _give_up(self, what: str, error: BaseException) -> None:
         """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
-        self._fail(error)
+        self._fail(error, f"{self._worker} {what}")
         try:
             self._alerts.alarm(f"{self._worker} {what}")
         except Exception:
@@ -369,15 +372,21 @@ class ReceiveLoop:
                 events = await self._loop.run_in_executor(
                     self._receiving, self._receive_or_return, limit
                 )
-                self._answered = self._timer.monotonic()
+                self._refused_since = None
             except QueueUnavailable as refused:
-                deaf = self._timer.monotonic() - self._answered
-                if deaf > self._deaf_after:
+                # Counted from the first refusal since the queue last answered,
+                # so time the loop spent asking nothing, with every handler
+                # busy, never counts as the queue refusing.
+                now = self._timer.monotonic()
+                if self._refused_since is None:
+                    self._refused_since = now
+                refusing = now - self._refused_since
+                if refusing > self._deaf_after:
                     # A queue that refuses every receive for this long leaves a
                     # worker that hears nothing, which must not go on beating.
                     self._give_up(
                         f"stopped receiving: the queue refused every receive for "
-                        f"{deaf:.0f} seconds, last with {refused.answer}",
+                        f"{refusing:.0f} seconds, last with {refused.answer}",
                         refused,
                     )
                     return
@@ -512,19 +521,21 @@ class ReceiveLoop:
             return "unknown"
         return "ready"
 
-    def _ready_items(self, full: bool, free: int, busy: set[Item]) -> list[Item]:
+    def _ready_items(self, full: bool, free: int, busy: set[Item]) -> tuple[list[Item], bool]:
         """Decisions ready to start, in the plan's order, stage by stage.
 
-        A full check reads every decision, as the loop does once when it
-        starts. Otherwise a stage is read as far as its first decision not
-        ready, and no further than `free` ready decisions.
+        A full check reads every decision, as the loop does when it starts.
+        Otherwise a stage is read as far as its first decision not ready, and
+        no further than `free` ready decisions. The second value says whether
+        a store that did not answer cut the check short.
         """
         found: list[Item] = []
+        cut_short = False
         for stage in self._stages:
             ready_here = 0
             for index in range(self._first_open[stage.name], len(self._decisions)):
                 if self._stopping:
-                    return []
+                    return [], cut_short
                 item = Item(self._decisions[index], stage.name)
                 if item in busy:
                     if stage.keeps_order:
@@ -537,8 +548,7 @@ class ReceiveLoop:
                     continue
                 if state == "unknown":
                     # The store did not answer, so this check goes no further.
-                    if full:
-                        self._met_unknown = True
+                    cut_short = True
                     break
                 if state == "waiting":
                     if stage.keeps_order or not full:
@@ -549,20 +559,18 @@ class ReceiveLoop:
                     ready_here += 1
                 if ready_here >= free and not full:
                     break
-        return sorted(found)[:free]
+        return sorted(found)[:free], cut_short
 
     async def _check(self, full: bool) -> None:
         free = self._free()
         if self._stopping or (free <= 0 and not full):
             return
         busy = set(self._running)
-        if full:
-            self._met_unknown = False
-        ready = await self._in_io(self._ready_items, full, max(free, 0), busy)
+        ready, cut_short = await self._in_io(self._ready_items, full, max(free, 0), busy)
         if full:
             # A full check the store cut short runs again from the ticker, so
             # a decision with no later event still starts once S3 answers.
-            self._recheck = self._met_unknown
+            self._recheck = cut_short
         for item in ready:
             if self._free() <= 0 or self._stopping:
                 break

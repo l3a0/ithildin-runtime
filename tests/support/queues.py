@@ -295,6 +295,7 @@ def loop(
     handlers_by_stage: dict[str, Callable],
     pool_size: int = 4,
     beat: Callable[[], None] = lambda: None,
+    timer=None,
     **limits: float,
 ) -> ReceiveLoop:
     return ReceiveLoop(
@@ -307,7 +308,7 @@ def loop(
         bucket=bucket,
         handlers={s.name: handlers_by_stage[s.name] for s in TABLE.stages_of(component)},
         alerts=alarms,
-        timer=SystemTimer(),
+        timer=timer or SystemTimer(),
         beat=beat,
         config_hash=CONFIG,
         pool_size=pool_size,
@@ -529,6 +530,9 @@ class StubQueue:
         self.extend_takes = 0.0
         self.answers_fail = False
         self.extend_error: BaseException | None = None
+        self.done_error: BaseException | None = None
+        # How many receives in a row refuse before the queue answers again.
+        self.refusals = 0
         self.entered = threading.Event()
         # Called as a receive hands back events, so a case can act in that window.
         self.on_answer: Callable[[], None] | None = None
@@ -547,6 +551,11 @@ class StubQueue:
 
     def receive(self, limit: int):
         self.entered.set()
+        if self.refusals:
+            self.refusals -= 1
+            from ithildinruntime.core import QueueUnavailable
+
+            raise QueueUnavailable("ServiceUnavailable: one refusal")
         if self.error is not None:
             raise self.error
         if self.blocking:
@@ -562,6 +571,8 @@ class StubQueue:
 
     def done(self, event) -> None:
         self.done_keys.append(event.key)
+        if self.done_error is not None:
+            raise self.done_error
         self._refuse()
 
     def extend(self, event) -> None:

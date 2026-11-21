@@ -1549,7 +1549,8 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
 2. **An item is a stage and a decision, not a message.** The loop turns
    each message, once it passes the checks below, into the stage and
    decision it concerns, except the kill switch's event, which becomes an item of its own, as item 8 says, and a sort's, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes. On starting it also adds every
-   decision it has not finished, in the plan's order, and on waking it checks
+   decision it has not finished, in the plan's order, again until one such
+   check meets no store that did not answer, and on waking it checks
    as far as `An event is a hint, and the keys come from the plan` below
    proposes. One instance never
    runs an item twice at once, so the loop deletes a message whose item is
@@ -1559,7 +1560,8 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    waits hidden inside a busy instance while another instance could take
    it. While a handler works, the loop extends its message's visibility
    timeout, and it deletes the message once the handler's result is stored.
-   A message whose instance dies returns to the queue for another.
+   A message whose instance dies, or whose extend fails, returns to the
+   queue for another, and the create-only result fences a second start.
 4. **Stages that read the journal keep the plan's order.** Execution's two
    stages and monitoring's reconcile read a book the decision before
    changed, so a handler starts decision N of one of them only once the same
@@ -1627,8 +1629,9 @@ arrive late, arrive out of order, or, in a backtest or CI or while its
 reader is down, not arrive at all. A worker treats an event only as a reason
 to wake. It drops one whose bucket is not its environment's or whose key
 matches no key pattern its routes give it, and it reads only keys it builds
-from the plan and the table, never a key taken from the event. Once when it
-starts, it checks every decision it has not finished, in the plan's order.
+from the plan and the table, never a key taken from the event. When it
+starts, it checks every decision it has not finished, in the plan's order,
+and checks again until one check meets no store that did not answer.
 On waking, this doc proposes that it checks the decision the event names and
 each stage's decisions in the plan's order as far as the first one not
 ready, because checking every unfinished decision on every wake costs a read
