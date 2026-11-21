@@ -118,10 +118,6 @@ class Table:
     def stage(self, name: str) -> Stage:
         return self._by_name[name]
 
-    @property
-    def components(self) -> tuple[str, ...]:
-        return tuple(sorted({stage.component for stage in self.stages}))
-
     def stages_of(self, component: str) -> tuple[Stage, ...]:
         return tuple(s for s in self.stages if s.component == component)
 

@@ -7,8 +7,9 @@ generated from the stand-in table loaded into the emulator rather than routed
 by hand. The cases a pipe cannot keep, extending, deleting and returning a
 message, run on SQS alone.
 
-The run against the test environment's queues on each push to `main` waits
-on #78's queues.
+Events repeated, delayed, reordered and dropped at random come from the
+folder's seeded `Faults`, so those cases run over the folder alone. The run
+against the test environment's queues on each push to `main` is #91's.
 """
 
 from __future__ import annotations
@@ -147,13 +148,19 @@ def test_a_write_reaches_every_reader_its_routes_name_and_no_other(side: Side) -
     }
     for key in written:
         _write(store, key)
-    time.sleep(0.5)
-    heard = {component: sorted(side.heard(component)) for component in q.COMPONENTS}
-    side.close()
     expected = {
         component: sorted(k for k, readers in written.items() if component in readers)
         for component in q.COMPONENTS
     }
+    heard: dict[str, list[str]] = {component: [] for component in q.COMPONENTS}
+    end = time.monotonic() + 10
+    while time.monotonic() < end and any(len(heard[c]) < len(expected[c]) for c in q.COMPONENTS):
+        for component in q.COMPONENTS:
+            heard[component].extend(side.heard(component))
+    # One more read, so a delivery to a reader the routes do not name shows.
+    for component in q.COMPONENTS:
+        heard[component] = sorted(heard[component] + side.heard(component))
+    side.close()
     assert heard == expected
 
 
@@ -271,6 +278,20 @@ def _no() -> None:
     pass
 
 
+def _waiting(cloud: q.Cloud, component: str, count: int, timeout: float = 10) -> bool:
+    """Wait until a queue holds `count` messages, without taking any off it."""
+    sqs = q.client("sqs", cloud.endpoint)
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        attributes = sqs.get_queue_attributes(
+            QueueUrl=cloud.urls[component], AttributeNames=["ApproximateNumberOfMessages"]
+        )["Attributes"]
+        if int(attributes["ApproximateNumberOfMessages"]) >= count:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def test_events_dropped_while_a_reader_is_down_are_recovered_when_it_starts(
     side: Side,
 ) -> None:
@@ -281,7 +302,8 @@ def test_events_dropped_while_a_reader_is_down_are_recovered_when_it_starts(
         assert not (side.folder.pipes / "alpha.pipe").exists()
     else:
         _feed_results(side, the_plan)
-        time.sleep(0.5)
+        # Purge only once every event has arrived, so none arrives after it.
+        assert _waiting(side.cloud, "alpha", len(the_plan.decisions))
         q.client("sqs", side.cloud.endpoint).purge_queue(QueueUrl=side.cloud.urls["alpha"])
     calls, alarms = q.Calls(), q.Alarms()
     alpha = _alpha_alone(side, the_plan, calls, alarms)
@@ -342,18 +364,34 @@ def test_s3_skips_an_announcement_because_it_announced_the_blob_itself(cloud: q.
     store = cloud.store()
     key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
     _write(store, key)
+    assert _waiting(cloud, "alpha", 1)
     store.announce(key)
-    time.sleep(0.5)
     assert [m["detail"]["object"]["key"] for m in cloud.messages("alpha")] == [key]
 
 
 # What both queues guarantee, run through the receive loop.
 
 
+_gates: list[Gate] = []
+
+
+@pytest.fixture(autouse=True)
+def _open_every_gate():
+    """Let every gated handler through when a case ends, passed or failed.
+
+    A handler left waiting keeps its thread alive, so a failed assertion
+    would hang the run rather than fail the case.
+    """
+    yield
+    while _gates:
+        _gates.pop().go.set()
+
+
 class Gate:
     """A handler that waits to be let through, counting how many it ran."""
 
     def __init__(self, report: bool = True) -> None:
+        _gates.append(self)
         self.go = threading.Event()
         self.started = threading.Event()
         self.report = report
@@ -601,6 +639,14 @@ def test_a_full_pipe_drops_the_event(tmp_path: Path) -> None:
     assert sent[0] and not all(sent)
 
 
+def test_a_record_holds_a_body_of_up_to_511_bytes() -> None:
+    from ithildinruntime.adapters.pipe import RECORD, record
+
+    assert len(record(b"x" * (RECORD - 1))) == RECORD
+    with pytest.raises(ValueError, match="record"):
+        record(b"x" * RECORD)
+
+
 def test_an_event_too_long_for_one_record_is_refused_before_the_write(tmp_path: Path) -> None:
     folder = q.Folder(tmp_path / "store", tmp_path / "queues")
     key = f"runs/{q.DEPLOYMENT}/{q.RUN}/{'x' * 400}/feed/result.json"
@@ -620,7 +666,7 @@ def test_the_sqs_events_parse_like_the_folders(cloud: q.Cloud) -> None:
     store = cloud.store()
     key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
     _write(store, key)
-    time.sleep(0.5)
+    assert _waiting(cloud, "alpha", 1)
     (event,) = cloud.queue("alpha").receive(10)
     assert (event.bucket, event.key, event.kind) == (cloud.bucket, key, EventKind.CREATED)
     assert event.etag and event.sequencer

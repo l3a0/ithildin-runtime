@@ -43,6 +43,7 @@ from ithildinruntime.core import (
     StageKind,
     Storage,
     encode_output,
+    event_body,
     output_key,
     result_key,
 )
@@ -508,3 +509,97 @@ def hang_alpha(endpoint: str, bucket: str, url: str, marker: str) -> None:
     Path(marker).write_text("started")
     while True:
         time.sleep(1)
+
+
+class StubQueue:
+    """A queue a case fills by hand, recording every answer the loop gives.
+
+    `receive` waits up to `wait` seconds for an event, and `blocking` makes it
+    wait until `free` is set, so a case can hold a receive open across `stop`.
+    """
+
+    def __init__(self, wait: float = 0.05) -> None:
+        self.pending: list = []
+        self.done_keys: list[str] = []
+        self.released: list[str] = []
+        self.extended: list[str] = []
+        self.limits: list[int] = []
+        self.wait = wait
+        self.error: BaseException | None = None
+        self.extend_takes = 0.0
+        self.answers_fail = False
+        self.blocking = False
+        self.free = threading.Event()
+        self.lock = threading.Condition()
+        self._handles = iter(range(1, 1_000_000))
+
+    def put(self, key: str, bucket: str = "folder", kind: EventKind = EventKind.CREATED) -> None:
+        from ithildinruntime.core import parse_event
+
+        body = event_body(bucket, key, kind, "tag", "0")
+        with self.lock:
+            self.pending.append(parse_event(body, f"stub-{next(self._handles)}"))
+            self.lock.notify_all()
+
+    def receive(self, limit: int):
+        if self.error is not None:
+            raise self.error
+        if self.blocking:
+            self.free.wait(10)
+        with self.lock:
+            self.limits.append(limit)
+            if not self.pending:
+                self.lock.wait(self.wait)
+            taken, self.pending = self.pending[:limit], self.pending[limit:]
+            return tuple(taken)
+
+    def done(self, event) -> None:
+        self.done_keys.append(event.key)
+        self._refuse()
+
+    def extend(self, event) -> None:
+        time.sleep(self.extend_takes)
+        self.extended.append(event.key)
+        self._refuse()
+
+    def _refuse(self) -> None:
+        if self.answers_fail:
+            from ithildinruntime.core import QueueUnavailable
+
+            raise QueueUnavailable("ReceiptHandleIsInvalid: the receipt has expired")
+
+    def release(self, event) -> None:
+        self.released.append(event.key)
+
+
+class Refusing:
+    """A store that answers nothing for keys a case names, until the case lets it."""
+
+    def __init__(self, store, *, gets: tuple[str, ...] = (), creates: tuple[str, ...] = ()):
+        self._store = store
+        self.gets = set(gets)
+        self.creates = set(creates)
+        self.down = True
+        self.refused = 0
+
+    def _refuse(self, key: str, names: set[str]) -> None:
+        from ithildinruntime.core import StoreUnavailable
+
+        if self.down and any(key.endswith(n) for n in names):
+            self.refused += 1
+            raise StoreUnavailable(key, "503 SlowDown: the endpoint is blocked")
+
+    def create(self, key, data, sha256):
+        self._refuse(key, self.creates)
+        return self._store.create(key, data, sha256)
+
+    def get(self, key):
+        self._refuse(key, self.gets)
+        return self._store.get(key)
+
+    def head(self, key):
+        self._refuse(key, self.gets)
+        return self._store.head(key)
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)

@@ -570,16 +570,16 @@ classDiagram
         +str bucket
         +str key
         +EventKind kind
-        +str etag
-        +str sequencer
+        +str or None etag
+        +str or None sequencer
         +str handle
     }
     class Route {
         +str reader
         +EventKind kind
         +str key
+        +str name
         +matches(EventKind, key) bool
-        +name() str
     }
     class Broker {
         <<Protocol>>

@@ -42,10 +42,10 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import itertools
 import os
 import random
 import threading
-import time
 import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -128,6 +128,7 @@ class FolderStore:
         self._faults = faults
         self._chance = random.Random(faults.seed if faults else 0)
         self._chance_lock = threading.Lock()
+        self._sequence = itertools.count(1)
         (self._root / _INCOMING).mkdir(parents=True, exist_ok=True)
         (self._root / _LOCKS).mkdir(exist_ok=True)
 
@@ -230,7 +231,9 @@ class FolderStore:
         readers = self._readers(key)
         if not readers:
             return
-        sequencer = f"{time.time_ns():016x}"
+        # A count per store rather than the time of day, so it never goes
+        # back when the clock is corrected. Nothing reads it yet.
+        sequencer = f"{next(self._sequence):016x}"
         body = event_body(self._bucket, key, EventKind.CREATED, tag, sequencer)
         for reader in readers:
             for wait in self._copies():

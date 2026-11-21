@@ -209,11 +209,13 @@ def test_a_409_on_a_create_is_retried_until_s3_answers(stubbed) -> None:
 
 
 def test_a_call_botocore_refuses_before_sending_is_a_bug_not_an_outage() -> None:
-    from botocore.exceptions import ParamValidationError
+    from botocore.exceptions import BotoCoreError
 
     client = _client()
-    with pytest.raises(ParamValidationError):
+    with pytest.raises(TypeError, match="refused the call") as raised:
         S3Store(client, BUCKET).create(None, DATA, SHA)  # type: ignore[arg-type]
+    # Python's own error, so no botocore type leaves the adapter.
+    assert not isinstance(raised.value, BotoCoreError) and raised.value.__cause__ is None
 
 
 def test_a_conflict_is_a_kind_of_no_answer() -> None:

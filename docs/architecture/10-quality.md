@@ -150,7 +150,11 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      EventBridge and on to SQS. A probe of moto 5.2.5 found it matches a
      `wildcard` pattern on the event's key, delivers only to the rule's own
      queue and honours a visibility of 0, so the suite needs no Docker, and
-     `uv.lock` pins moto by its wheel's SHA-256. The run against the test
+     `uv.lock` pins moto by its wheel's SHA-256. Events repeated, delayed,
+     reordered and dropped at random come from the folder adapter's seeded
+     fault, so that case runs over the folder. On SQS the suite repeats an
+     event while its decision is in a handler, and purges a reader's queue
+     while it is down. The run against the test
      environment's queues on each push to `main`, with the routes file
      generated from the suite's own table, is
      [#91](https://github.com/l3a0/ithildin-runtime/issues/91)'s. The queue port's `done` deletes a message, `extend` lengthens

@@ -647,8 +647,9 @@ sends anything beyond its write. An event names the blob its reader
 should read: a decision result, the plan, the run's halt or stop, or the
 kill switch. A starting worker drains its queue and then checks its keys
 once, so nothing written while it was down goes unread. A woken worker
-checks every decision it has not finished rather than only the one an
-event names, so a repeated, late or out-of-order event costs nothing.
+checks more than the one decision an event names, so a repeated, late or
+out-of-order event costs nothing, as `### How a component learns of a
+change` says.
 
 ### Rule 5: each blob names what made it
 
@@ -1469,12 +1470,12 @@ sends its events to EventBridge, as AWS's
 [S3 and EventBridge page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
 describes. One function in `runtime` turns the table that declares every
 worker's inputs, and the control blobs every component hears, into routes:
-a reader, a prefix and an event kind. Execution's routes include the writes
+a reader, a key pattern and an event kind. Execution's routes include the writes
 under `leases/accounts/`, so a lease's release reaches its queue. The routes generate one EventBridge
 rule each, which copies each matching event to that reader's SQS queue, and
 the same routes drive the memory-backed folder adapter. Each rule's pattern
 matches `aws.s3` as the source, the event's kind, the environment's bucket
-and the prefix, because EventBridge refuses a custom event whose source
+and the key pattern, because EventBridge refuses a custom event whose source
 starts with `aws.`, so nobody can put a forged S3 event on the bus that a
 rule would pass on.
 
@@ -1623,11 +1624,16 @@ says they are not guaranteed to arrive in order. So an event can repeat,
 arrive late, arrive out of order, or, in a backtest or CI or while its
 reader is down, not arrive at all. A worker treats an event only as a reason
 to wake. It drops one whose bucket is not its environment's or whose key
-lies outside a prefix its routes give it, and it reads only keys it builds
-from the plan and the table, never a key taken from the event. On waking,
-and once when it starts, it checks every decision it has not finished, in
-the plan's order, so a repeated, late, reordered or lost event costs nothing
-but time. It reads anything that touches money again right before it acts.
+matches no key pattern its routes give it, and it reads only keys it builds
+from the plan and the table, never a key taken from the event. Once when it
+starts, it checks every decision it has not finished, in the plan's order.
+On waking, this doc proposes that it checks the decision the event names and
+each stage's decisions in the plan's order as far as the first one not
+ready, because checking every unfinished decision on every wake costs a read
+for each of them, about 400 a wake on a day of decisions a minute apart. A
+decision behind one not ready is checked once that one is stored, a halt
+included, so a repeated, late, reordered or lost event costs nothing but
+time. It reads anything that touches money again right before it acts.
 
 **An absence is a deadline, not a poll.** No event announces that something
 did not happen: a worker that hung, a result never written, a heartbeat that
@@ -1792,7 +1798,7 @@ every mode, because a deadline guards against a hung process rather than
 shaping what a strategy sees, and it reads it through a timer port of its
 own, faked in tests, so a deadline never reads the history clock and never
 bypasses a port. The port gives wall time and a monotonic reading, and every
-deadline measures elapsed time on the monotonic one. Apart from those places, a worker reads wall time only through the same timer port, to key its heartbeat and, in execution, monitoring and portfolio construction, to set the deadlines of `### How a component learns of a change`, none of which, apart from portfolio construction's, shapes what a strategy sees. Portfolio construction's deadline is the one for a late forecast under hard limit 3's written age, and it can turn a strategy's late forecast into no change. This doc proposes, with [#54](https://github.com/l3a0/ithildin-runtime/issues/54), that in a backtest or a replay the timer adapter handed to portfolio construction never expires it unless a test injects the lateness. Then a slow model in a backtest never reads as no change. Every writer also takes a record's own time from `Clock`: each journal entry's `built_at`, as `### How a component learns of a change` says, and each capture's read time, as [Rule 1: clock times in headers and captures](#rule-1-clock-times-in-headers-and-captures) says. Those times are written down and never decide what a strategy sees. Otherwise the workers move on only when messages arrive.
+deadline measures elapsed time on the monotonic one. Apart from those places, a worker reads time only through the same timer port: wall time to key its heartbeat and, in execution, monitoring and portfolio construction, the monotonic reading for the deadlines of `### How a component learns of a change`, none of which, apart from portfolio construction's, shapes what a strategy sees. Portfolio construction's deadline is the one for a late forecast under hard limit 3's written age, and it can turn a strategy's late forecast into no change. This doc proposes, with [#54](https://github.com/l3a0/ithildin-runtime/issues/54), that in a backtest or a replay the timer adapter handed to portfolio construction never expires it unless a test injects the lateness. Then a slow model in a backtest never reads as no change. Every writer also takes a record's own time from `Clock`: each journal entry's `built_at`, as `### How a component learns of a change` says, and each capture's read time, as [Rule 1: clock times in headers and captures](#rule-1-clock-times-in-headers-and-captures) says. Those times are written down and never decide what a strategy sees. Otherwise the workers move on only when messages arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
 halts again if its cause is still there. A failure stops the whole run.

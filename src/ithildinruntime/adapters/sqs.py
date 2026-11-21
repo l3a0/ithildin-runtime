@@ -15,9 +15,11 @@ a component learns of a change` holds the reasons.
 3. **`release` sets the visibility to 0**, so another instance can take the
    message at once.
 4. **Every refusal and every missing answer is `QueueUnavailable`.** A
-   delete or an extend of a message whose receipt has expired is one, and
-   costs nothing, because the item is checked by its keys whoever receives
-   the message next.
+   delete or an extend of a message whose receipt has expired is one. The
+   message then comes back, and its item is checked by its keys whoever
+   receives it next. While its handler still runs, another instance can start
+   the same decision, which the create-only result and #10's lease on the
+   account fence.
 """
 
 from __future__ import annotations
@@ -105,9 +107,11 @@ class SqsQueue:
     def _call(self, call: Callable[[], R]) -> R:
         try:
             return call()
-        except ParamValidationError:
-            # A call botocore refuses before sending is a bug here, never an outage.
-            raise
+        except ParamValidationError as error:
+            # A call botocore refuses before sending is a bug here, never an
+            # outage, so it is no store refusal to retry. It leaves the adapter
+            # as Python's own error, so no botocore type reaches a caller.
+            raise TypeError(f"botocore refused the call before sending it: {error}") from None
         except ClientError as error:
             detail = error.response.get("Error", {})
             raise QueueUnavailable(

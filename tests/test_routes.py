@@ -116,7 +116,6 @@ def test_a_component_holds_every_stage_named_under_it() -> None:
             Stage("execution/send", StageKind.CAPTURING, ("execution/recover",), True),
         )
     )
-    assert table.components == ("execution",)
     assert [s.name for s in table.stages_of("execution")] == [
         "execution/recover",
         "execution/send",
@@ -209,8 +208,9 @@ def test_the_sqs_queue_refuses_a_read_timeout_far_from_the_wait(read_timeout) ->
         SqsQueue(_sqs(read_timeout), "u", visibility_timeout=30)
 
 
-def test_the_sqs_queue_takes_a_read_timeout_a_little_over_the_wait() -> None:
-    SqsQueue(_sqs(22), "u", visibility_timeout=30)
+@pytest.mark.parametrize("read_timeout", [21, 22, 30])
+def test_the_sqs_queue_takes_a_read_timeout_a_little_over_the_wait(read_timeout) -> None:
+    SqsQueue(_sqs(read_timeout), "u", visibility_timeout=30)
 
 
 @pytest.mark.parametrize(
@@ -239,3 +239,13 @@ def test_an_sqs_queue_that_does_not_answer_is_unavailable() -> None:
     )
     with pytest.raises(QueueUnavailable, match="no answer"):
         SqsQueue(client, "http://127.0.0.1:1/q", visibility_timeout=30, wait_seconds=1).receive(1)
+
+
+def test_an_sqs_call_botocore_refuses_before_sending_leaves_as_pythons_own_error() -> None:
+    from botocore.exceptions import BotoCoreError
+
+    queue = SqsQueue(_sqs(22), "u", visibility_timeout=30)
+    event = parse_event(b"{}", None)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="refused the call") as raised:
+        queue.done(event)
+    assert not isinstance(raised.value, BotoCoreError) and raised.value.__cause__ is None
