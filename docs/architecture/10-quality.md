@@ -126,7 +126,15 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      shows a reader half a blob. The suite
      runs against the memory-backed folder and against the S3 adapter, the
      second through a local S3 emulator that honours the refuse-if-it-exists
-     condition, which the first build confirms, and against the test environment's bucket on each push to `main`.
+     condition, and against the test environment's bucket on each push to `main`.
+     The emulator is moto's S3 server, started inside the test run, so the
+     suite needs no Docker and runs on every local `uv run pytest`. `uv.lock`
+     pins moto's wheel by its SHA-256. A probe of moto 5.2.5 found it refuses
+     a create on an existing key and a rewrite on a stale tag, and lets one of
+     40 racing creates through. It checks no SHA-256 a write sends and never
+     answers 409. So the suite marks the SHA-256 case as failing on moto, and
+     botocore's stubbed answers show the S3 adapter's handling of S3's own
+     checksum refusal and its 409. The run against the test bucket covers both.
    - **The queue suite** holds the SQS adapter and the named-pipe adapter
      to what both guarantee. A write reaches the queue of every reader its
      routes name and no other, and the suite loads the generated rules into
