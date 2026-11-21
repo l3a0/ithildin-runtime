@@ -179,6 +179,9 @@ def test_a_409_on_a_create_is_retried_until_s3_answers(stubbed) -> None:
         def now(self):
             return now[0]
 
+        def monotonic(self):
+            return (now[0] - datetime(2026, 11, 2, 20, 40, tzinfo=UTC)).total_seconds()
+
         def after(self, seconds):
             raise NotImplementedError
 

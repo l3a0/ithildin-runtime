@@ -22,6 +22,8 @@ from .keys import __all__ as _keys
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
 from .ports import __all__ as _ports
+from .queue import *  # noqa: F403
+from .queue import __all__ as _queue
 from .records import *  # noqa: F403
 from .records import __all__ as _records
 from .sessions import (
@@ -60,6 +62,7 @@ __all__ = [
     "to_utc",
     *_keys,
     *_ports,
+    *_queue,
     *_records,
     *_storage,
 ]

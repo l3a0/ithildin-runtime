@@ -141,6 +141,9 @@ class S3Store:
         )
         return reply["ETag"]
 
+    def announce(self, key: str) -> None:
+        """S3 announced the blob when it stored it, so a second announcement is skipped."""
+
     def _call(
         self,
         key: str,
