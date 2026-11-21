@@ -177,7 +177,7 @@ host's watchdog under the runner's own systemd, which hosted runners appear
 to allow with `sudo`, as the first build confirms. A local backtest has no
 restart behaviour, so no test host that reimplements systemd exists.
 
-What CI cannot cover runs in each environment that has the resource, as [When drills run](07-deployment.md#rule-10-when-drills-run) says, as drills on
+What CI cannot cover runs in each environment that has the resource, as [When drills run](07-deployment.md#environment-rule-10-when-drills-run) says, as drills on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11): the instance
 metadata fence against AWS's own service, S3's bucket policy and CloudTrail,
 and the account's real roles. The memory-backed folder and the emulator only

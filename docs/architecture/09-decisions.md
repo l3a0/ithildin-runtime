@@ -4,35 +4,11 @@ This page is section 9 of [the architecture](00-README.md), in the order of the 
 
 ## Contents
 
+- [Proposals awaiting a ruling](#proposals-awaiting-a-ruling)
 - [The market-on-close cutoff proposal](#the-market-on-close-cutoff-proposal)
   - [What Alpaca's documentation says about the cutoff](#what-alpacas-documentation-says-about-the-cutoff)
   - [What a missing input and a pair with one leg accepted do](#what-a-missing-input-and-a-pair-with-one-leg-accepted-do)
   - [How each mode fills a market-on-close order](#how-each-mode-fills-a-market-on-close-order)
-- [Proposals awaiting a ruling](#proposals-awaiting-a-ruling)
-
-## The market-on-close cutoff proposal
-
-One row of the table under [Proposals awaiting a ruling](#proposals-awaiting-a-ruling) proposes a cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. What the row rests on runs too long for a table cell, so it sits here. [The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close.
-
-### What Alpaca's documentation says about the cutoff
-
-Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so close−12 on such a day stays unconfirmed until a test order on Alpaca's paper account on an early-close day shows where Alpaca's cutoff falls. The test order goes through `OrderPath`. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it runs as a test strategy of its own while every other strategy on paper is switched off, under a cutoff the owner sets in paper's hard caps for the test and puts back afterwards, and that it is journaled like any order, with its fill counted toward the test strategy's position alone.
-
-### What a missing input and a pair with one leg accepted do
-
-- A missing input on a day halts that decision rather than switching to another time.
-- A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone.
-
-### How each mode fills a market-on-close order
-
-One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says.
-
-Alpaca's paper account accepts market-on-close orders. Two sources describe how it fills them.
-
-1. Its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time".
-2. [Alpaca staff on its forum](https://forum.alpaca.markets/t/opening-and-closing-market-prices-in-paper-trading/11664) say paper does not tell a market-on-close order from a market order.
-
-So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole.
 
 ## Proposals awaiting a ruling
 
@@ -56,7 +32,7 @@ in [design.md](../design.md)'s `## Decisions`.
 | A cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. [What the proposal rests on](#the-market-on-close-cutoff-proposal) | None named | Execution reads the clock for the cutoff, a pair whose second leg can be rejected after the first is accepted, which execution then cancels while the exchange still takes cancels, and a kill switch that cannot stop a closing-auction fill after the exchange's cancel cutoff | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The release is one container image, pinned by digest, each component a container of its own kept running by systemd, and CI testing the image on every pull request while one job on `main` publishes it with a provenance attestation the owner verifies before pinning | A Python environment installed on the VM, or containers started by the supervisor through the Docker socket | A Docker daemon to maintain and patch outside sessions, a unit per container, an image build per pull request, and a verification step before each deploy | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | A person acts through one command line tool, `ithildin`, run off the VM with their own credential, including `pin set` and `pin unblock` for rollbacks, whose reading commands show status and liveness and explain a halt, and whose writing commands pull or clear the switch, clear a halt, record an override under its own prefix, and clear a lease, each journaled through the `journal` package and checked against CloudTrail, apart from an operator's pull or switch-off on live, which [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles | Commands on the VM, a web page, editing blobs by hand, or overrides inside the journal where a key-based policy cannot fence them | A tool to build and drill, CloudTrail data events, and two credentials off the VM, the owner's behind a hardware key and the operator's a short-lived principal of its own, neither with a long-lived secret in a file | This doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| What [The broker key lives in a secret store](07-deployment.md#rule-3-the-broker-key-lives-in-a-secret-store) and [Each environment has an AWS account of its own](07-deployment.md#rule-11-each-environment-has-an-aws-account-of-its-own) add to the accounts: the service control policies binding each account's root user, and the one read-only statement in marketlake's bucket policy. [The 2026-11-02 entries](../design.md#2026-11-02) settled an account per environment and the broker key's place | None named | A read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+| What [The broker key lives in a secret store](07-deployment.md#rule-3-the-broker-key-lives-in-a-secret-store) and [Each environment has an AWS account of its own](07-deployment.md#environment-rule-11-each-environment-has-an-aws-account-of-its-own) add to the accounts: the service control policies binding each account's root user, and the one read-only statement in marketlake's bucket policy. [The 2026-11-02 entries](../design.md#2026-11-02) settled an account per environment and the broker key's place | None named | A read grant from marketlake for each environment | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | The provisional read of marketlake's capture segments before the day is sealed, with the runtime's own minimum checks and a comparison with the sealed day afterwards | None named | Data at decision time has not passed marketlake's validation battery, and a difference after sealing has to be journaled and explained | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#16](https://github.com/l3a0/ithildin-runtime/issues/16) |
 | A supervisor that writes the plan, whose event reaches every worker, and keeps no state, while the host keeps every worker running and restarts one that crashes, with a halt that flows down the pipeline and is final for its decision | A supervisor that starts and watches its workers as their parent, which in a container per component needs a grant that is root on the host, or one that holds the run's state in memory | Heartbeats from every worker, a host watchdog for a hung one, and execution cancelling a stranded leg itself on restart | [#11](https://github.com/l3a0/ithildin-runtime/issues/11), as [design.md](../design.md#processes-and-files) proposes |
 | Execution's recover stage reconciles positions, open orders and cash before the models read the book, and monitoring reconciles again off the order path and journals and alarms every halt | Monitoring's reconcile as a stage every decision waits on, a second comparison rather than the one `core.reconcile` every caller shares, or the supervisor raising alarms | One more output file, the broker's account, which also makes the reconciliation readable afterwards, a larger recover result, and a second check that comes after the gate rather than before it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
@@ -102,3 +78,27 @@ in [design.md](../design.md)'s `## Decisions`.
 | The backtest and replay harness ends a failed run as the host's timer does, in place of the supervisor's stop, so the supervisor stores no stop for a failed run in any mode and a backtest runs the same ending as shadow, paper and live | The supervisor storing the stop before it exits a failed run in a backtest or a replay, which leaves the timer's ending untested before paper | The harness stands in for one more piece of the host, beside the replay harness's restarter | [#32](https://github.com/l3a0/ithildin-runtime/issues/32) and [#33](https://github.com/l3a0/ithildin-runtime/issues/33) |
 | The owner's credential creates journal entries on every account, and the operator's on paper and shadow only | Any person's credential creating any kind of entry on every account | An operator's pull or switch-off on live writes its blob but no journal entry of its own, until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles what journals it | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 | In a backtest or a replay, the timer adapter handed to portfolio construction never expires the deadline for a late forecast unless a test injects the lateness | A wall-clock deadline in every mode, which lets a slow model in a backtest read as no change | One more adapter difference between modes, beside the history clock | [#54](https://github.com/l3a0/ithildin-runtime/issues/54) |
+
+## The market-on-close cutoff proposal
+
+One row of the table under [Proposals awaiting a ruling](#proposals-awaiting-a-ruling) proposes a cutoff of close−12 for market-on-close orders in the paper account's hard caps, which execution checks before every send and again before each broker call. What the row rests on runs too long for a table cell, so it sits here. [The 2026-10-29 entries](../design.md#2026-10-29), [the 2026-11-01 entries](../design.md#2026-11-01) and [the 2026-11-04 entries](../design.md#2026-11-04) settled trading the close, the close−20 decision and the early close.
+
+### What Alpaca's documentation says about the cutoff
+
+Alpaca's order documentation says market-on-close orders "submitted after 3:50pm but before 7:00pm ET will be rejected". Alpaca's order page does not state a cutoff for an early-close day, so close−12 on such a day stays unconfirmed until a test order on Alpaca's paper account on an early-close day shows where Alpaca's cutoff falls. The test order goes through `OrderPath`. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it runs as a test strategy of its own while every other strategy on paper is switched off, under a cutoff the owner sets in paper's hard caps for the test and puts back afterwards, and that it is journaled like any order, with its fill counted toward the test strategy's position alone.
+
+### What a missing input and a pair with one leg accepted do
+
+- A missing input on a day halts that decision rather than switching to another time.
+- A pair left with one leg accepted is cancelled, and each leg must fit `max_net` alone.
+
+### How each mode fills a market-on-close order
+
+One simulator fills by order type in backtest and shadow, a market order at the decision quote as [#16](https://github.com/l3a0/ithildin-runtime/issues/16) says.
+
+Alpaca's paper account accepts market-on-close orders. Two sources describe how it fills them.
+
+1. Its [paper trading page](https://docs.alpaca.markets/docs/paper-trading) says it fills "based on the real-time quotes" and gives "partial fills for a random size 10% of the time".
+2. [Alpaca staff on its forum](https://forum.alpaca.markets/t/opening-and-closing-market-prices-in-paper-trading/11664) say paper does not tell a market-on-close order from a market order.
+
+So paper fills measure the quote near the close rather than the closing auction's price, and the random partial fills exercise the path that keeps a pair whole.
