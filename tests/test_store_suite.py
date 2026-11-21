@@ -321,3 +321,52 @@ def test_a_folder_reads_a_path_that_holds_no_blob_as_missing(spec: StoreSpec) ->
             store.get(key)
         with pytest.raises(BlobMissing):
             store.head(key)
+
+
+def test_a_folder_create_returns_its_own_tag_when_a_rewrite_follows_at_once(
+    spec: StoreSpec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewrite landing between the link and any later read leaves the creator its own tag."""
+    if spec.kind != "folder":
+        pytest.skip("S3 returns the tag of the write it answers")
+    from ithildinruntime.adapters import folder
+
+    store, rival = spec.open(), spec.open()
+    real_link = os.link
+
+    def link_then_rival(source, target) -> None:
+        real_link(source, target)
+        monkeypatch.setattr(folder.os, "link", real_link)
+        rival.replace_if_match(LEASE, b"rival", sha256_of(b"rival"), rival.head(LEASE).etag)
+
+    monkeypatch.setattr(folder.os, "link", link_then_rival)
+    tag = _create(store, LEASE, b"creator")
+    assert store.get(LEASE) == b"rival"
+    assert tag != store.head(LEASE).etag
+    with pytest.raises(StaleTag):
+        store.replace_if_match(LEASE, b"creator two", sha256_of(b"creator two"), tag)
+
+
+def test_a_folder_reports_a_file_system_fault_as_no_answer(spec: StoreSpec) -> None:
+    """A fault beyond the refusals core names is StoreUnavailable, never a raw error."""
+    if spec.kind != "folder":
+        pytest.skip("tests/test_s3_answers.py shows S3's answers")
+    from ithildinruntime.core import StoreUnavailable
+
+    store = spec.open()
+    _create(store, KEY, b"bytes")
+    tag = _create(store, LEASE, b"lease one")
+    folder = os.path.join(spec.root, KEY.rpartition("/")[0])
+    incoming = os.path.join(spec.root, ".incoming")
+    os.chmod(folder, 0o000)
+    os.chmod(incoming, 0o500)
+    try:
+        with pytest.raises(StoreUnavailable):
+            store.get(KEY)
+        with pytest.raises(StoreUnavailable):
+            store.list("runs/", None)
+        with pytest.raises(StoreUnavailable):
+            store.replace_if_match(LEASE, b"lease two", sha256_of(b"lease two"), tag)
+    finally:
+        os.chmod(folder, 0o755)
+        os.chmod(incoming, 0o755)

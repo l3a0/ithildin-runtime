@@ -23,7 +23,8 @@ Two limits differ from S3. The folder must sit on a case-sensitive file
 system, as Linux's memory-backed ones are, because on macOS's default volume
 two keys that differ only in case share a file. And a key cannot sit below
 another stored key, such as `a.json/b.json` beside `a.json`, which S3 stores
-and the folder refuses as unavailable. No key builder in `core` writes either.
+and the folder refuses as existing, so the storage contract finds no blob
+there, holds the capture and halts. No key builder in `core` writes either.
 """
 
 from __future__ import annotations
@@ -175,10 +176,16 @@ def _order(key: str) -> bytes:
     return key.encode("utf-8")
 
 
+def _raise(error: OSError) -> None:
+    # os.walk skips a folder it cannot read unless told otherwise, which
+    # would leave keys out of a listing without a word.
+    raise error
+
+
 def _files(start: Path) -> Iterator[Path]:
     if not start.is_dir():
         return
-    for directory, folders, files in os.walk(start):
+    for directory, folders, files in os.walk(start, onerror=_raise):
         folders[:] = [f for f in folders if not f.startswith(".")]
         for name in files:
             yield Path(directory, name)
