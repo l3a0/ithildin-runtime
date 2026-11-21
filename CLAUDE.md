@@ -1,6 +1,6 @@
 # CLAUDE.md — ithildin-runtime
 
-ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Status: most of the design is not built yet. The [README](README.md) lists the modules that exist, and the tracker carries what comes next. Code lives in `src/ithildinruntime`, with tests under `tests/`.
+ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Code lives in `src/ithildinruntime`, with tests under `tests/`.
 
 **The premise is what cannot be recovered.** Three things are gone once lost.
 
