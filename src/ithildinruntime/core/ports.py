@@ -8,7 +8,7 @@ adapter, so no module can build an S3 store or an SQS queue and choose its
 own mode.
 
 `OrderPath` and `Monitoring` are classes with behaviour that #10 and #11
-build, and `Journal` lives in the `journal` package that #80 builds.
+build, and `Journal` lives in the `journal` package.
 """
 
 from __future__ import annotations
