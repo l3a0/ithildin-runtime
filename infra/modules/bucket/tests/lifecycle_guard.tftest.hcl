@@ -25,6 +25,16 @@ run "a_runtime_buckets_own_rules_plan" {
       { id = "old-leases", prefix = "leases/", expire_noncurrent_days = 7 },
     ]
   }
+
+  # The resource carries each rule's own prefix and expiry kind, so a rule the guard
+  # accepted is the rule the bucket gets.
+  assert {
+    condition = jsonencode(output.lifecycle_rules) == jsonencode([
+      { id = "heartbeats", status = "Enabled", prefix = "heartbeats/", current = 7, marker = false, noncurrent = null, uploads = null },
+      { id = "old-leases", status = "Enabled", prefix = "leases/", current = null, marker = null, noncurrent = 7, uploads = null },
+    ])
+    error_message = "The lifecycle the bucket gets is not the two rules the guard accepted, with their own prefixes and expiry kinds."
+  }
 }
 
 run "a_rule_over_the_whole_bucket_is_refused" {
@@ -282,6 +292,33 @@ run "a_rule_with_heartbeats_inside_its_prefix_is_refused" {
   # The key holds heartbeats/ inside it, so only a check on the start of the prefix refuses it.
   variables {
     lifecycle_rules = [{ id = "r", prefix = "journal/heartbeats/", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_refused_rule_before_an_allowed_one_is_refused" {
+  command = plan
+
+  # The same pair as the run above it in reverse order, so a guard that reads only
+  # the last rule fails here.
+  variables {
+    lifecycle_rules = [
+      { id = "everything", prefix = "", expire_current_days = 30 },
+      { id = "heartbeats", prefix = "heartbeats/", expire_current_days = 7 },
+    ]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_one_day_cap_does_not_mark_a_bucket_regenerable" {
+  command = plan
+
+  # Only regenerable_only lifts the guard. A retention cap alone does not.
+  variables {
+    max_retention_days = 1
+    lifecycle_rules    = [{ id = "everything", prefix = "", expire_current_days = 1 }]
   }
 
   expect_failures = [aws_s3_bucket_lifecycle_configuration.this]

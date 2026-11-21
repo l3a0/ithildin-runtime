@@ -54,4 +54,5 @@ tofu fmt -check -recursive infra/
 tofu -chdir=infra/test/bootstrap init -backend=false && tofu -chdir=infra/test/bootstrap test
 tofu -chdir=infra/test init -backend=false && tofu -chdir=infra/test test
 tofu -chdir=infra/modules/bucket init -backend=false && tofu -chdir=infra/modules/bucket test
+tofu -chdir=infra/modules/routes init -backend=false && tofu -chdir=infra/modules/routes test
 ```
