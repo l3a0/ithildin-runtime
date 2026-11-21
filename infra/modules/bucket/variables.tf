@@ -75,7 +75,7 @@ variable "max_retention_days" {
 }
 
 variable "regenerable_only" {
-  description = "True only for a bucket whose every blob can be made again, such as test's. It lifts the check that no lifecycle rule reaches recorded data."
+  description = "True only for a bucket whose every blob can be made again, such as test's. It lifts the check that the lifecycle does only what a runtime bucket's may, and requires max_retention_days of 1 or less."
   type        = bool
   default     = false
   nullable    = false

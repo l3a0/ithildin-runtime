@@ -5,8 +5,8 @@
 #
 # The test environment calls it with infra/test/routes.json alone, which #81's
 # generator writes. On shadow, paper and live rules only grow, as design.md's "Rules
-# only grow, and a release checks them" says, so a caller there passes every route that
-# any release it may still run names, never only the current release's file.
+# only grow, and a release checks them" says, so a caller there passes every route any
+# earlier release named, and never removes one.
 #
 # Queues use SSE-SQS, SQS's managed encryption. EventBridge's troubleshooting page says
 # an encrypted target queue needs a customer-managed KMS key, and does not name SSE-SQS
@@ -174,6 +174,9 @@ output "queue_settings" {
       rule_target           = aws_cloudwatch_event_target.this[reader].arn
       queue_arn             = aws_sqs_queue.this[reader].arn
       queue_policy          = jsondecode(aws_sqs_queue_policy.this[reader].policy)
+      policy_queue_url      = aws_sqs_queue_policy.this[reader].queue_url
+      redrive_allow         = jsondecode(aws_sqs_queue_redrive_allow_policy.dead_letter[reader].redrive_allow_policy)
+      redrive_allow_queue   = aws_sqs_queue_redrive_allow_policy.dead_letter[reader].queue_url
     }
   }
 }

@@ -150,7 +150,8 @@ def test_a_retention_date_within_the_cap_lands_with_a_checksum(s3, run):
 
 
 def test_a_retention_date_just_under_the_cap_lands(s3, run):
-    # The policy refuses retention that exceeds one day, so a day's worth is allowed.
+    # The policy refuses retention that exceeds one day, so a date 23 hours out, under
+    # that, must land. How S3 counts a date between one and two days is not pinned.
     s3.put_object(
         Bucket=BUCKET,
         Key=_key(run, "retention-under-cap"),

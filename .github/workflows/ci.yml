@@ -58,8 +58,10 @@ jobs:
         run: uv run pytest
 
   # Runs the suites marked `aws` against the test environment, with the test role. Only
-  # on a push to main: the role trusts this job's subject alone, which names this file
-  # on main, so neither a pull request nor the board's job can assume it. Every action
+  # on a push to main. The role trusts any job of this file on main, so neither a pull
+  # request nor the board's job can assume it, and this is the one job here that holds
+  # `id-token: write`, which is what keeps the role to this job. A job given that
+  # permission later reaches the role too. Every action
   # is pinned to a commit, because any step of a job holding `id-token: write` can mint
   # its token. The job moves into the publishing workflow once #11 builds it, rather
   # than gaining a second copy, since two jobs purging the same queues would break both.
@@ -125,6 +127,7 @@ jobs:
                 echo "::error::Queue $name does not exist yet. infra.yml's apply may not have finished creating it. Re-run this job once that apply has ended."
               else
                 echo "::error::Could not find queue $name."
+                echo "$url" >&2
               fi
               return 1
             fi
@@ -135,6 +138,7 @@ jobs:
                 aws sqs purge-queue --queue-url "$url"
               else
                 echo "::error::Could not purge queue $name."
+                echo "$err" >&2
                 return 1
               fi
             fi

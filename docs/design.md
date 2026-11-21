@@ -546,7 +546,7 @@ prefix, and the noncurrent versions under `leases/`, which a
 noncurrent-version expiry removes, as this doc proposes for
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11), so a lease's
 rewrites do not pile up. A bucket policy [cannot stop a lifecycle rule](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html), so the refusal of every delete under `leases/` leaves that expiry working. So no rule matches a key that holds recorded
-data, a snapshot a decision read included. This holds for the buckets of shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything, as [What the bucket's lifecycle expires](architecture/07-deployment.md#what-the-buckets-lifecycle-expires-and-where-log-lines-go) says, and the bucket module refuses such a rule on any bucket not marked regenerable.
+data, a snapshot a decision read included. This holds for the buckets of shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires everything, as [What the bucket's lifecycle expires](architecture/07-deployment.md#what-the-buckets-lifecycle-expires-and-where-log-lines-go) says, and the bucket module accepts only the rules this section lists, an abort of unfinished uploads aside, on any bucket not marked regenerable.
 
 ### Rule 1: the replica before live
 
@@ -3487,10 +3487,10 @@ withdrawal or transfer permission and how that was checked.
 
 | Setting | Secret | Lives in | Read by | May do |
 | --- | --- | --- | --- | --- |
-| The test role, `ithildin-test-ci` | No, a short-lived role | The test account, trusting only `ci.yml`'s `aws` job on a push to `main` | That job, through GitHub's OIDC token | Create and read under `runs/ci/` and `leases/plans/ci/` in the test bucket, list it, and receive, delete, hide and purge on the test queues, as [#78](https://github.com/l3a0/ithildin-runtime/issues/78) lists. No send, no delete, no SSM, EC2, IAM, EventBridge or KMS |
-| The test environment's apply role, `ithildin-test-apply` | No, a short-lived role | The test account, trusting only `infra.yml`'s apply job on `main` in the `test` GitHub environment | That job, through GitHub's OIDC token | Plan and apply `infra/test`: read and write its own state key, change the test bucket's settings, and manage queues and rules named `ithildin-test-*`. No IAM action and no SSM read |
+| The test role, `ithildin-test-ci` | No, a short-lived role | The test account, trusting any job of `ci.yml` on `main`. The `aws` job, on a push, is the one job there that holds `id-token: write` | That job, through GitHub's OIDC token | Create and read under `runs/ci/` and `leases/plans/ci/` in the test bucket, list it, and receive, delete, hide and purge on the test queues, as [#78](https://github.com/l3a0/ithildin-runtime/issues/78) lists. No send, no delete, no SSM, EC2, IAM, EventBridge or KMS |
+| The test environment's apply role, `ithildin-test-apply` | No, a short-lived role | The test account, trusting any job of `infra.yml` on `main` in the `test` GitHub environment. The apply job is the one job that runs there | That job, through GitHub's OIDC token | Plan and apply `infra/test`: read and write its own state key, change the test bucket's settings, and manage queues and rules named `ithildin-test-*`. No IAM action and no SSM read |
 | `AWS_TEST_ROLE_ARN`, `AWS_TEST_APPLY_ROLE_ARN` and `TF_STATE_BUCKET_TEST` | No, names rather than credentials | The repository's Actions secrets, so the account id enters no tracked file | `ci.yml`'s `aws` job and `infra.yml`'s apply job | Nothing on their own |
-| The budget alarm's address | No | The SNS subscription the owner writes by hand on the test account's budget topic | AWS Budgets, through the topic | Receive the alarm |
+| The budget alarm's address | No | The SNS subscription the owner writes by hand on the test account's alarm topic, `ithildin-test-alarms` | AWS Budgets, through the topic | Receive the alarm |
 | `ITHILDIN_TEST_RUN` | No | The `aws` job's environment, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` joined by a hyphen | `tests/aws/` | Name the run's own keys |
 
 ## Decisions

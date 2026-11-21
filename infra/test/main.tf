@@ -1,12 +1,13 @@
 # The test environment CI's `aws` job runs against: the test bucket, and the queues and
 # rules that infra/test/routes.json lists. .github/workflows/infra.yml applies this
-# after each merge to main, in the `test` GitHub environment, with the apply role
+# after each merge to main that changes infra/ or that workflow, and on a manual
+# dispatch from main, in the `test` GitHub environment, with the apply role
 # infra/test/bootstrap creates. docs/what-a-person-runs.md carries the owner's steps.
 #
 # The bucket and its routes share one configuration here only because test lets the
-# apply role change the test bucket's settings. On shadow, paper and live the bucket's
-# settings stay the owner's, so the bucket module sits in a configuration the owner
-# applies, apart from the routes the apply job applies.
+# apply role change the test bucket's settings. 07-deployment.md's "Environment rule
+# 10: how an environment's infrastructure is applied" says how shadow, paper and live
+# split them.
 
 terraform {
   required_version = "~> 1.13"

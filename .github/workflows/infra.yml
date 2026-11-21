@@ -1,8 +1,9 @@
 # Checks and applies the test environment's configuration under infra/.
 #
-# On a pull request: tofu fmt, validate and tofu test against a mock provider, with no
-# AWS credential. On a push to main: plan and apply infra/test in the `test` GitHub
-# environment, with the apply role infra/test/bootstrap creates. The bootstrap itself
+# On a pull request that changes infra/ or this file: tofu fmt, validate and tofu test
+# against a mock provider, with no AWS credential. On such a push to main, or a manual
+# dispatch from main: plan and apply infra/test in the `test` GitHub environment, with
+# the apply role infra/test/bootstrap creates. The bootstrap itself
 # is the owner's to apply, from the laptop, as docs/what-a-person-runs.md says.
 #
 # No job here is named `test`, because the ruleset on main requires a check by that
@@ -29,9 +30,9 @@ on:
       - "infra/**"
       - "!infra/**/*.md"
       - ".github/workflows/infra.yml"
-  # Re-applies main's configuration with no code change: after a lock is cleared, or to
-  # undo a change made by hand in the test account. The apply job runs only on main, and
-  # the apply role trusts this file on main in the test environment, whatever the event.
+  # Re-applies main's configuration with no code change, after a lock is cleared. The
+  # apply job runs only on main, and the apply role trusts this file on main in the test
+  # environment, whatever the event.
   workflow_dispatch:
 
 permissions:
@@ -74,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [test/bootstrap, test, modules/bucket]
+        config: [test/bootstrap, test, modules/bucket, modules/routes]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

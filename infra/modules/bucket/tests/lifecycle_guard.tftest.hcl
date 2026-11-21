@@ -1,5 +1,5 @@
-# The module refuses a lifecycle rule that would expire recorded data, unless the
-# caller says every blob in the bucket is regenerable. A bucket policy cannot stop a
+# The module refuses every lifecycle rule but the three a runtime bucket may carry,
+# unless the caller says every blob in the bucket is regenerable. A bucket policy cannot stop a
 # lifecycle rule, so this check is what keeps a later environment's journal safe from
 # one. Every run plans, because test cleanup cannot destroy a prevent_destroy resource.
 
@@ -81,8 +81,40 @@ run "a_regenerable_bucket_may_expire_everything" {
   command = plan
 
   variables {
+    regenerable_only   = true
+    max_retention_days = 1
+    lifecycle_rules    = [{ id = "everything", prefix = "", expire_current_days = 1 }]
+  }
+}
+
+run "a_bucket_marked_regenerable_without_the_one_day_cap_is_refused" {
+  command = plan
+
+  variables {
+    regenerable_only   = true
+    max_retention_days = 30
+    lifecycle_rules    = [{ id = "everything", prefix = "", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket.this]
+}
+
+run "a_bucket_marked_regenerable_with_no_cap_is_refused" {
+  command = plan
+
+  variables {
     regenerable_only = true
-    lifecycle_rules  = [{ id = "everything", prefix = "", expire_current_days = 1 }]
+    lifecycle_rules  = []
+  }
+
+  expect_failures = [aws_s3_bucket.this]
+}
+
+run "aborting_unfinished_uploads_plans" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "uploads", prefix = "", abort_incomplete_upload = 1 }]
   }
 }
 
@@ -103,5 +135,94 @@ run "an_empty_list_of_clearers_refuses_everyone" {
       Resource  = ["arn:aws:s3:::example-runtime/accounts/*/switch.json"]
     }]
     error_message = "An empty list of those who may clear the switch does not refuse every principal."
+  }
+}
+
+run "a_rule_reaching_the_simulated_broker_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "sim/", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_rule_reaching_the_account_controls_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "accounts/", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_rule_reaching_the_release_records_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "release/", expire_noncurrent_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_short_prefix_over_the_leases_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "lease", expire_current_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "a_one_letter_prefix_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "a", expire_noncurrent_days = 1 }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "removing_old_delete_markers_under_leases_is_refused" {
+  command = plan
+
+  variables {
+    lifecycle_rules = [{ id = "r", prefix = "leases/", expire_old_delete_marker = true }]
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.this]
+}
+
+run "an_operator_is_refused_version_deletes_and_unconditional_account_lease_writes" {
+  command = plan
+
+  variables {
+    lifecycle_rules         = []
+    operator_principal_arns = ["arn:aws:iam::000000000000:role/operator"]
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s if s.Sid == "RefuseOperatorVersionDeletes"] == [{
+      Sid       = "RefuseOperatorVersionDeletes"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:DeleteObjectVersion"
+      Resource  = ["arn:aws:s3:::example-runtime/*"]
+      Condition = { ArnLike = { "aws:PrincipalArn" = ["arn:aws:iam::000000000000:role/operator"] } }
+    }]
+    error_message = "The operator is not refused every version delete."
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Condition if s.Sid == "RefusePeoplesAccountLeaseWritesWithoutIfMatch"] == [{
+      Null    = { "s3:if-match" = "true" }
+      ArnLike = { "aws:PrincipalArn" = ["arn:aws:iam::000000000000:role/owner", "arn:aws:iam::000000000000:role/operator"] }
+    }]
+    error_message = "The owner and the operator are not both refused a write under leases/accounts/ without If-Match."
   }
 }

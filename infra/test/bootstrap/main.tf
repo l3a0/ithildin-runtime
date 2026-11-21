@@ -1,6 +1,6 @@
 # What CI needs in the test account before it can run: the OpenTofu state bucket,
 # GitHub's OIDC provider, the apply role .github/workflows/infra.yml uses, the test role
-# ci.yml's `aws` job uses, and a budget alarm with its topic. The owner applies this from the laptop,
+# ci.yml's `aws` job uses, and a budget alarm with the account's alarm topic. The owner applies this from the laptop,
 # through OrganizationAccountAccessRole, because the CI it creates cannot apply it.
 # docs/what-a-person-runs.md carries the steps.
 
@@ -79,16 +79,16 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 # -- the budget alarm ---------------------------------------------------------------
 
-# AWS Budgets charges nothing for an account's first two budgets. It publishes to a
-# topic, and the owner subscribes an address to the topic by hand and confirms it, as
+# AWS Budgets charges nothing for an account's first two budgets. It publishes to the
+# account's one alarm topic, as every account has one, and the owner subscribes an address to the topic by hand and confirms it, as
 # docs/what-a-person-runs.md's "Confirm an alarm email subscription" says. So the
 # address enters no tracked file and no OpenTofu state, as with every other alarm email.
-resource "aws_sns_topic" "budget" {
-  name = "ithildin-test-budget"
+resource "aws_sns_topic" "alarms" {
+  name = "ithildin-test-alarms"
 }
 
-resource "aws_sns_topic_policy" "budget" {
-  arn = aws_sns_topic.budget.arn
+resource "aws_sns_topic_policy" "alarms" {
+  arn = aws_sns_topic.alarms.arn
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -97,7 +97,7 @@ resource "aws_sns_topic_policy" "budget" {
       Effect    = "Allow"
       Principal = { Service = "budgets.amazonaws.com" }
       Action    = "SNS:Publish"
-      Resource  = aws_sns_topic.budget.arn
+      Resource  = aws_sns_topic.alarms.arn
       Condition = { StringEquals = { "aws:SourceAccount" = local.account_id } }
     }]
   })
@@ -115,13 +115,13 @@ resource "aws_budgets_budget" "monthly" {
     threshold                 = 100
     threshold_type            = "PERCENTAGE"
     notification_type         = "ACTUAL"
-    subscriber_sns_topic_arns = [aws_sns_topic.budget.arn]
+    subscriber_sns_topic_arns = [aws_sns_topic.alarms.arn]
   }
 
-  depends_on = [aws_sns_topic_policy.budget]
+  depends_on = [aws_sns_topic_policy.alarms]
 }
 
-output "budget_topic_arn" {
-  description = "The topic the budget alarm publishes to, which the owner subscribes an address to by hand."
-  value       = aws_sns_topic.budget.arn
+output "alarm_topic_arn" {
+  description = "The test account's one alarm topic, which the budget alarm publishes to and the owner subscribes an address to by hand."
+  value       = aws_sns_topic.alarms.arn
 }

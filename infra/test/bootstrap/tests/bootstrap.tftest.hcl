@@ -11,7 +11,7 @@ mock_provider "aws" {
   # The topic policy's ARN must look like an ARN, and the mock's random string does not.
   mock_resource "aws_sns_topic" {
     defaults = {
-      arn = "arn:aws:sns:us-east-1:000000000000:ithildin-test-budget"
+      arn = "arn:aws:sns:us-east-1:000000000000:ithildin-test-alarms"
     }
   }
 }
@@ -237,21 +237,26 @@ run "the_budget_alarm_is_five_dollars_a_month_to_its_topic" {
       threshold           = 100
       threshold_type      = "PERCENTAGE"
       notification_type   = "ACTUAL"
-      topics              = ["arn:aws:sns:us-east-1:000000000000:ithildin-test-budget"]
+      topics              = ["arn:aws:sns:us-east-1:000000000000:ithildin-test-alarms"]
       emails              = null
     }])
     error_message = "The budget alarm does not notify its topic, and only its topic, when actual spend passes the whole budget."
   }
 
   assert {
-    condition = jsondecode(aws_sns_topic_policy.budget.policy).Statement == [{
+    condition = jsondecode(aws_sns_topic_policy.alarms.policy).Statement == [{
       Sid       = "AdmitOnlyThisAccountsBudgets"
       Effect    = "Allow"
       Principal = { Service = "budgets.amazonaws.com" }
       Action    = "SNS:Publish"
-      Resource  = aws_sns_topic.budget.arn
+      Resource  = aws_sns_topic.alarms.arn
       Condition = { StringEquals = { "aws:SourceAccount" = "000000000000" } }
     }]
-    error_message = "The budget topic admits more than this account's budgets publishing to it."
+    error_message = "The alarm topic admits more than this account's budgets publishing to it."
+  }
+
+  assert {
+    condition     = aws_sns_topic_policy.alarms.arn == "arn:aws:sns:us-east-1:000000000000:ithildin-test-alarms"
+    error_message = "The alarm topic's policy is attached to another topic."
   }
 }

@@ -165,4 +165,17 @@ run "each_route_takes_its_settings_from_the_routes_file_and_admits_only_its_rule
     }]
     error_message = "The smoke queue's policy admits more than EventBridge sending for the smoke rule."
   }
+
+  assert {
+    condition     = module.routes.queue_settings["smoke"].policy_queue_url == "https://sqs.us-east-1.amazonaws.com/000000000000/mock"
+    error_message = "The smoke queue's policy is attached to another queue."
+  }
+
+  assert {
+    condition = (
+      module.routes.queue_settings["smoke"].redrive_allow_queue == "https://sqs.us-east-1.amazonaws.com/000000000000/mock-dlq"
+      && module.routes.queue_settings["smoke"].redrive_allow == { redrivePermission = "byQueue", sourceQueueArns = ["arn:aws:sqs:us-east-1:000000000000:mock"] }
+    )
+    error_message = "The smoke dead-letter queue does not admit redrives from the smoke queue alone."
+  }
 }

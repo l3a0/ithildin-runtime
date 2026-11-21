@@ -276,12 +276,12 @@ The table's refusals are written once, in the OpenTofu module `infra/modules/buc
 
 1. The module also refuses changes to the bucket's encryption, replication, ownership and public access block to all but those who may change its settings, because it sets those itself.
 2. It refuses a multipart upload on `runs/`, `journal/` and `sim/` at its start rather than at its completion, because a multipart upload's first requests cannot carry `If-None-Match`.
-3. It does not yet carry Rule 4's refusal on the hard caps and the releases, or live's limit on the approved drill role's delete of the switch. A later environment adds both before it stores anything, with [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which holds those grants.
-4. It refuses any lifecycle rule that covers the whole bucket, reaches `runs/`, `journal/` or `sim/`, or expires a current lease, because a bucket policy cannot stop a lifecycle rule. Only a bucket whose every blob is regenerable, such as test's, lifts that check.
+3. It does not yet carry Rule 4's refusal on the hard caps and the releases, or live's limit on the approved drill role's delete of the switch. The module gains both, with who they name as inputs, before a later environment's bucket stores anything, so the test bucket runs them too. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds those grants.
+4. It accepts only the lifecycle rules a runtime bucket may carry: an expiry under `heartbeats/`, an expiry of noncurrent versions under `leases/`, and the abort of an unfinished upload. A bucket policy cannot stop a lifecycle rule, so the module refuses every other rule. Only a bucket whose every blob is regenerable, such as test's, lifts that check, and it must also cap retention at a day so its lifecycle can empty it.
 
 #### How the release uploads each blob
 
-The release writes every blob with one single-part upload, never a multipart one, so each blob is one request checked against one SHA-256, and the policy marks a multipart start so a stray one fails when it completes rather than halfway.
+The release writes every blob with one single-part upload, never a multipart one, so each blob is one request checked against one SHA-256, and the policy refuses a multipart start on `runs/`, `journal/` and `sim/`, so a stray one never begins there.
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
@@ -1061,7 +1061,7 @@ The promotion check and the live drill check each have a second alarm action, an
 
 ##### Which accounts send the email
 
-As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so test and shadow hold neither alarm and need no topic.
+As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so shadow holds neither alarm and needs no topic. Test's account holds one topic, `ithildin-test-alarms`, which carries only its budget alarm, as [Set up the test environment](../what-a-person-runs.md#set-up-the-test-environment) says. A budget alarm on another account publishes to that account's one topic.
 
 ##### How the email route is set up
 
@@ -1167,7 +1167,7 @@ The owner approves every live drill that changes live's state, and only a run th
 
 #### Environment rule 10: how an environment's infrastructure is applied
 
-Each environment's infrastructure is applied by a plan of its own. A bad apply rolls back by a revert commit that applies the previous configuration, which on shadow, paper and live never removes an event rule. In test, a route that leaves `infra/test/routes.json` takes its rule and queue with it, because no release runs against test that still needs them. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
+Each environment's infrastructure is applied by a plan of its own. This doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that on shadow, paper and live the bucket's configuration is one the owner applies, because its settings are the owner's alone, apart from the routes and the rest, which the apply credential applies. In test both sit in one configuration the apply credential applies, because test lets it change the test bucket's settings. A bad apply rolls back by a revert commit that applies the previous configuration, which on shadow, paper and live never removes an event rule. In test, a route that leaves `infra/test/routes.json` takes its rule and queue with it, because no release runs against test that still needs them. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
 
 ##### What an apply puts on the host
 

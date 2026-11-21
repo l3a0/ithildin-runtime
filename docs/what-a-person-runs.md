@@ -377,7 +377,7 @@ An alarm's email subscription sends nothing until it is confirmed. The owner con
 
 Every command below runs under the owner's credential, signed in to the account that holds the topic. `<region>` is the region the topic's ARN names. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
 
-1. Subscribe the address with `aws sns subscribe --region <region> --topic-arn <topic ARN> --protocol email --notification-endpoint <address>`, where `<topic ARN>` is the account's alarm topic. It prints `pending confirmation` in place of the subscription's ARN, and SNS emails the address a confirmation link.
+1. Subscribe the address with `aws sns subscribe --region <region> --topic-arn <topic ARN> --protocol email --notification-endpoint <address>`, where `<topic ARN>` is the account's alarm topic, which on the test account is `ithildin-test-alarms`. It prints `pending confirmation` in place of the subscription's ARN, and SNS emails the address a confirmation link.
 2. Copy the emailed link's address without following it, and take the value of its `Token` parameter. AWS's [Subscribe](https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html) page says a token is valid for two days, and the [email notifications](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html) page says SNS deletes a subscription still unconfirmed after 48 hours, so a token older than that means starting again at step 1.
 3. Run `aws sns confirm-subscription --region <region> --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
 4. Run `aws sns get-subscription-attributes --region <region> --subscription-arn <subscription ARN>` and check that `ConfirmationWasAuthenticated` reads `true`. If it does not, the subscription was confirmed by the link instead. Remove it with `aws sns unsubscribe --region <region> --subscription-arn <subscription ARN>` and start again at step 1.
@@ -390,7 +390,7 @@ The drill rows for an email subscription under [Drills with no alarm](halts-and-
 
 The test environment is the bucket, queues and roles that CI's `aws` job runs the store and queue suites against, in real S3 and SQS. [#78](https://github.com/l3a0/ithildin-runtime/issues/78) holds the plan it was built from, and [What an environment holds](architecture/07-deployment.md#what-an-environment-holds) says what test is for. The configuration sits under `infra/`.
 
-1. `infra/test/bootstrap/` holds what CI needs before it can run: the state bucket, GitHub's OIDC provider, the apply role, the test role, and a budget alarm with its topic. The owner applies it.
+1. `infra/test/bootstrap/` holds what CI needs before it can run: the state bucket, GitHub's OIDC provider, the apply role, the test role, and a budget alarm with the account's alarm topic. The owner applies it.
 2. `infra/test/` holds the test bucket and the queues and rules `infra/test/routes.json` lists. `.github/workflows/infra.yml` applies it after each merge that changes `infra/` or the workflow, and on a manual dispatch from `main`. The owner applies it once by hand, before the merge that adds it.
 
 #### Reach the test account
@@ -412,16 +412,19 @@ The order matters. Each step needs the one before it.
 2. Set the repository's OIDC subject template to include `repo`, `context` and `job_workflow_ref`, with `gh api -X PUT repos/l3a0/ithildin-runtime/actions/oidc/customization/sub -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'`. Read it back with `gh api repos/l3a0/ithildin-runtime/actions/oidc/customization/sub` and check that `use_immutable_subject` still reads `true`. The board deploys through OIDC too, so dispatch it with `gh workflow run board.yml --repo l3a0/ithildin-runtime` and check that the run deploys.
 3. Create the state bucket under a name of the owner's choosing, with `aws s3api create-bucket --bucket <state bucket>`. A new bucket comes encrypted and with public access blocked, and the bootstrap turns its versioning on.
 4. Write the backend's file outside the repository, with `mkdir -p ~/.config/ithildin-runtime` and then `printf 'bucket = "%s"\n' <state bucket> > ~/.config/ithildin-runtime/test.tfbackend`.
-5. Apply the bootstrap from the build's branch, with `tofu -chdir=infra/test/bootstrap init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket>`. The apply prints the two roles' ARNs and the budget topic's ARN.
-6. Subscribe an address to the budget topic and confirm it, by the steps in [Confirm an alarm email subscription](#confirm-an-alarm-email-subscription), with `<topic ARN>` the budget topic's ARN and `<region>` `us-east-1`. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state.
+5. Apply the bootstrap from the build's branch, with `tofu -chdir=infra/test/bootstrap init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket>`. The apply prints the two roles' ARNs and the alarm topic's ARN.
+6. Subscribe an address to the alarm topic and confirm it, by the steps in [Confirm an alarm email subscription](#confirm-an-alarm-email-subscription), with `<topic ARN>` the alarm topic's ARN and `<region>` `us-east-1`. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state.
 7. Apply the environment from the same branch, with `tofu -chdir=infra/test init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test apply`.
-8. Run the delivery check below. If no event arrives, stop and do not merge, and read the rule's metrics as that check says, because the fix for the likeliest cause has a monthly price the owner decides on.
+8. Run the delivery check below. If no event arrives, stop and do not merge, and read the rule's metrics as that check says, because the fix for the likeliest cause has a monthly price the owner decides on. The environment applied so far can stay in place, unused, until the owner decides.
 9. Run `scripts/setup-repo.sh l3a0/ithildin-runtime`, which creates the `test` GitHub environment, limited to `main` with no reviewer.
 10. Set the three repository secrets the workflows read, with `gh secret set AWS_TEST_ROLE_ARN`, `gh secret set AWS_TEST_APPLY_ROLE_ARN` and `gh secret set TF_STATE_BUCKET_TEST`. Each command asks for its value, so none enters the shell's history. `tofu -chdir=infra/test/bootstrap output` prints the two ARNs again.
 
 Applying before the merge means the first `aws` run on `main` finds the environment already there, and a failed delivery reaches the owner before anything merges.
 
-The merge's own `Infra` run is the apply role's first real plan, because steps 5 and 7 ran as the owner's role. Check that it ends with no changes to apply. A grant the apply role lacks fails that run with AWS's "access denied" naming the action, while the environment steps 5 to 7 applied keeps running.
+Two checks follow the merge.
+
+1. The merge's own `Infra` run is the apply role's first real plan, because steps 5 and 7 ran as the owner's role. Check that it ends with no changes to apply. A grant the apply role lacks fails that run with AWS's "access denied" naming the action, while the environment steps 5 to 7 applied keeps running. The fix is to add the grant in `infra/test/bootstrap/roles.tf`, merge it, and re-apply the bootstrap from `main` as step 5 says.
+2. Run `tofu -chdir=infra/test/bootstrap plan -var state_bucket=<state bucket>` from `main`, and expect no changes. Step 5 applied the bootstrap from the build's branch, and no workflow compares it with what merged.
 
 #### Check that an event reaches its queue
 
@@ -433,8 +436,11 @@ The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`
 
 If no message arrives, read the rule's two counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-smoke --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once with `TriggeredRules` and once with `FailedInvocations`. The `date -v-1H` form is macOS's.
 
-- **`TriggeredRules` is zero:** the rule never matched, so the bucket's EventBridge notifications or the route's pattern is at fault, and the queue's encryption is not.
+CloudWatch answers a metric with no data with no datapoint rather than with zero.
+
+- **`TriggeredRules` has no datapoint, or zero:** the rule never matched, so the bucket's EventBridge notifications or the route's pattern is at fault, and the queue's encryption is not.
 - **`FailedInvocations` counts the write:** EventBridge matched and could not deliver. The likeliest cause is that it cannot send to a queue under SQS's own encryption, and the fix is a customer-managed KMS key at about 1 US dollar a month in every environment's account. That is the owner's decision.
+- **`TriggeredRules` counts the write and `FailedInvocations` has no datapoint:** the event was delivered and the receive missed it. Receive again, and read the queue's `ApproximateNumberOfMessages` with `aws sqs get-queue-attributes`.
 
 The key expires with everything else in the bucket, two to three days later.
 
@@ -449,7 +455,7 @@ An apply that fails or is cancelled halfway can leave the state locked, and the 
 #### Roll back a bad apply
 
 - **`infra/test`:** revert the merge that changed it, in a pull request. The revert's merge starts an apply of the earlier configuration. A route the revert removes takes its rule and queues with it, as [Environment rule 10](architecture/07-deployment.md#environment-rule-10-how-an-environments-infrastructure-is-applied) says of test.
-- **`infra/test/bootstrap`:** no workflow applies it. Check out the commit before the bad change and run step 5's `init` and `apply` again from the laptop.
+- **`infra/test/bootstrap`:** no workflow applies it. Revert the bad change in a pull request, and once it merges, run step 5's `init` and `apply` again from `main`, from the laptop. Rolling back from an older commit alone would leave `main` holding the bad change, and the next apply from `main` would put it back.
 
 The drill row for this rollback under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) runs it once with a harmless change.
 
@@ -458,9 +464,9 @@ The drill row for this rollback under [Drills with no alarm](halts-and-drills.md
 The bucket module carries OpenTofu's `prevent_destroy`, and other environments will call it, so retiring test removes the bucket from test's state rather than editing the module. In this order:
 
 1. Merge a pull request that removes the `aws` job from `ci.yml` and the `apply` job from `infra.yml`, so nothing writes to the bucket or applies to it again.
-2. Wait three days, so the lifecycle empties the bucket of its current versions, noncurrent versions and delete markers.
+2. Wait until the lifecycle has emptied the bucket of its current versions, noncurrent versions and delete markers, which takes at least three days. `aws s3api list-object-versions --bucket ithildin-runtime-test --max-items 1` shows no `Versions` and no `DeleteMarkers` once it has. Until then, wait a day and check again.
 3. Remove the bucket's resources from test's state, with `tofu -chdir=infra/test state list` and then `tofu -chdir=infra/test state rm` on each address under `module.bucket`. Then delete the empty bucket with `aws s3api delete-bucket --bucket ithildin-runtime-test`.
 4. Destroy the rest of test, the queues and rules, with `tofu -chdir=infra/test destroy`.
-5. The state bucket also carries `prevent_destroy` and holds the bootstrap's own state. Move that state off it with `tofu -chdir=infra/test/bootstrap init -migrate-state` to a local backend, remove the state bucket from the bootstrap's state with `tofu -chdir=infra/test/bootstrap state rm aws_s3_bucket.state aws_s3_bucket_versioning.state`, and destroy the rest with `tofu -chdir=infra/test/bootstrap destroy`.
+5. The state bucket also carries `prevent_destroy`. Remove it from the bootstrap's state with `tofu -chdir=infra/test/bootstrap state rm aws_s3_bucket.state aws_s3_bucket_versioning.state`, and destroy the rest with `tofu -chdir=infra/test/bootstrap destroy -var state_bucket=<state bucket>`. The bootstrap's state stays in the bucket until the next step deletes it.
 6. Empty the state bucket of every version and delete it, with `aws s3api delete-objects` on each version `aws s3api list-object-versions` names, and then `aws s3api delete-bucket`.
 7. Delete the three secrets with `gh secret delete`, and the `test` GitHub environment under the repository's Settings.

@@ -5,14 +5,15 @@
 # against the test bucket meet the statements production uses. Who the statements name,
 # the retention cap and the lifecycle are inputs.
 #
-# Three refusals the docs promise are not carried here yet, and a later environment
-# adds them before it stores anything:
+# Two refusals the docs promise are not carried here yet. This module gains each, with
+# who it names as an input, before a later environment's bucket stores anything, so
+# the test bucket runs them too:
 # 1. Rule 4's refusal of every principal but the owner on accounts/<account>/caps.json
 #    and accounts/<account>/releases/, whose grants #11 holds.
 # 2. Live's limit on the approved drill role, which may delete the switch only with
 #    If-Match and never a version. switch_clearer_arns exempts a principal from both.
-# 3. A refusal of a create-only write that carries no retention date, the one control
-#    that holds against a lifecycle rule, which #11 weighs with the retention period.
+# #11 also weighs a refusal of a create-only write that carries no retention date, the
+# one control that holds against a lifecycle rule.
 #
 # A multipart upload on runs/, journal/ and sim/ is refused at its start, because its
 # first requests cannot carry If-None-Match.
@@ -205,12 +206,20 @@ resource "aws_s3_bucket" "this" {
   bucket              = var.name
   object_lock_enabled = true
 
+
   # A plan that destroys the bucket fails while this stays in the code. A commit that
   # drops the module call drops this too, so #32's plan check, which fails such a plan
   # whether or not the block is still there, is what guards a runtime bucket. Retiring
   # test removes the bucket from state instead, as docs/what-a-person-runs.md says.
   lifecycle {
     prevent_destroy = true
+
+    # A bucket marked regenerable must be one its lifecycle can empty, so no write may
+    # lock a version there for more than a day.
+    precondition {
+      condition     = !var.regenerable_only || (var.max_retention_days != null && try(var.max_retention_days <= 1, false))
+      error_message = "A bucket marked regenerable must cap retention at one day or less, so its lifecycle can always empty it."
+    }
   }
 }
 
@@ -269,18 +278,20 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
   bucket = aws_s3_bucket.this.id
 
   # A bucket policy cannot stop a lifecycle rule, and a version nobody locked has no
-  # other protection. So on a bucket that holds recorded data, no rule may cover the
-  # whole bucket, reach runs/, journal/ or sim/, or expire current versions under
-  # leases/. Only a bucket whose every blob is regenerable, such as test's, skips this.
+  # other protection. So on a bucket that holds recorded data the lifecycle may do only
+  # what design.md's "Rule 1: Object Lock and the lifecycle rules" lists: expire
+  # heartbeats, expire the noncurrent versions under leases/, and abort unfinished
+  # uploads. Every other rule is refused. Only a bucket whose every blob is regenerable,
+  # such as test's, skips this.
   lifecycle {
     precondition {
       condition = var.regenerable_only || alltrue([
-        for r in var.lifecycle_rules : r.prefix != "" && alltrue([
-          for recorded in ["runs/", "journal/", "sim/"] :
-          !startswith(recorded, r.prefix) && !startswith(r.prefix, recorded)
-        ]) && !(startswith(r.prefix, "leases/") && r.expire_current_days != null)
+        for r in var.lifecycle_rules :
+        startswith(r.prefix, "heartbeats/") ||
+        (startswith(r.prefix, "leases/") && r.expire_current_days == null && !r.expire_old_delete_marker) ||
+        (r.expire_current_days == null && r.expire_noncurrent_days == null && !r.expire_old_delete_marker)
       ])
-      error_message = "A lifecycle rule would expire recorded data: it covers the whole bucket, reaches runs/, journal/ or sim/, or expires current versions under leases/."
+      error_message = "A lifecycle rule would expire recorded data. On a bucket not marked regenerable, a rule may only expire heartbeats under heartbeats/, expire noncurrent versions under leases/, or abort unfinished uploads."
     }
   }
 
