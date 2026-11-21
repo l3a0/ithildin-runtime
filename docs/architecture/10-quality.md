@@ -178,7 +178,7 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
 
 On a run with no credential, tests 1 and 2 read [the vintages](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl) quantitative-trading commits, at a pinned commit and against their committed checksums, as [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds. An absent input fails the check.
 
-The required `test` check runs the first two levels. A second required check, which `.github/rulesets/default.json` gains when [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it, runs the third on the same
+The required `test` check runs the first two levels. The runs against the test bucket and queues are the exception. They need the test role, so they run in `ci.yml`'s `aws` job, only on a push to `main`, and no ruleset requires that check, because a check that reports only on a push would never report on a pull request and would block every merge. A second required check, which `.github/rulesets/default.json` gains when [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it, runs the third on the same
 image, test 2 and the restart drills included, because the restart path is
 what this design rests on. That check also runs the real unit files and the
 host's watchdog under the runner's own systemd, which hosted runners appear

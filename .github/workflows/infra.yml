@@ -1,0 +1,168 @@
+# Checks and applies the test environment's configuration under infra/.
+#
+# On a pull request: tofu fmt, validate and tofu test against a mock provider, with no
+# AWS credential. On a push to main: plan and apply infra/test in the `test` GitHub
+# environment, with the apply role infra/test/bootstrap creates. The bootstrap itself
+# is the owner's to apply, from the laptop, as docs/what-a-person-runs.md says.
+#
+# No job here is named `test`, because the ruleset on main requires a check by that
+# name and ci.yml provides it.
+#
+# A public repository's logs are readable by anyone, so plan and apply send their human
+# output to /dev/null. Each writes resource addresses and actions to its step summary
+# through infra/ci/plan_summary.py, and never a value. Event values reach a `run:`
+# script only through `env:`, never by interpolation.
+#
+# Every action is pinned to a commit. Any step in a job with `id-token: write` can mint
+# the job's OIDC token, so a re-pointed tag would get the AWS role.
+name: Infra
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "!infra/**/*.md"
+      - ".github/workflows/infra.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+      - "!infra/**/*.md"
+      - ".github/workflows/infra.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # An explicit bash adds pipefail, so a failed `tofu show` fails its pipe.
+    shell: bash
+
+env:
+  # Pins CI's OpenTofu. required_version in each configuration is only a floor that
+  # the laptop's release must meet.
+  TOFU_VERSION: "1.13.1"
+  AWS_REGION: us-east-1
+
+jobs:
+  fmt:
+    name: tofu fmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      # Without -recursive, misformatted files in tests/ and the modules pass.
+      - name: Check formatting
+        run: tofu fmt -check -recursive infra/
+
+  validate:
+    name: tofu validate and test (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [test/bootstrap, test]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Initialise without a backend
+        run: tofu -chdir="infra/$CONFIG" init -input=false -backend=false -lockfile=readonly
+        env:
+          CONFIG: ${{ matrix.config }}
+
+      - name: Validate
+        run: tofu -chdir="infra/$CONFIG" validate
+        env:
+          CONFIG: ${{ matrix.config }}
+
+      # Runs against a mock provider, with no AWS credentials.
+      - name: Test
+        run: tofu -chdir="infra/$CONFIG" test
+        env:
+          CONFIG: ${{ matrix.config }}
+
+  apply:
+    name: tofu apply (test)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [fmt, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The apply role trusts only this job's subject: this workflow, on main, in the
+    # `test` environment.
+    environment: test
+    # Applies take turns, and none is cancelled halfway, since a cancelled apply leaves
+    # its lock behind. docs/what-a-person-runs.md says how to clear one.
+    concurrency:
+      group: infra-test
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse an empty secret
+        env:
+          AWS_TEST_APPLY_ROLE_ARN: ${{ secrets.AWS_TEST_APPLY_ROLE_ARN }}
+          TF_STATE_BUCKET_TEST: ${{ secrets.TF_STATE_BUCKET_TEST }}
+        run: |
+          missing=0
+          for name in AWS_TEST_APPLY_ROLE_ARN TF_STATE_BUCKET_TEST; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is empty. docs/what-a-person-runs.md says where to set it."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_TEST_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Initialise
+        env:
+          TF_STATE_BUCKET_TEST: ${{ secrets.TF_STATE_BUCKET_TEST }}
+        run: |
+          printf 'bucket = "%s"\n' "$TF_STATE_BUCKET_TEST" > "$RUNNER_TEMP/test.tfbackend"
+          tofu -chdir=infra/test init -input=false -lockfile=readonly \
+            -backend-config="$RUNNER_TEMP/test.tfbackend"
+
+      - name: Plan
+        run: |
+          tofu -chdir=infra/test plan -input=false -lock-timeout=5m \
+            -out="$RUNNER_TEMP/test.tfplan" > /dev/null
+
+      - name: Summarise the plan
+        run: |
+          tofu -chdir=infra/test show -json "$RUNNER_TEMP/test.tfplan" \
+            | python3 infra/ci/plan_summary.py "Plan this run applies to infra/test" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        run: |
+          tofu -chdir=infra/test apply -input=false -lock-timeout=5m \
+            "$RUNNER_TEMP/test.tfplan" > /dev/null

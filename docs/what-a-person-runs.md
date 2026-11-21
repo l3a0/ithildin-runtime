@@ -9,6 +9,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [The commands](#the-commands)
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
+  - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
 
@@ -384,3 +385,55 @@ Every command below runs under the owner's credential, signed in to the account 
 To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first. Then find the old subscription's ARN with `aws sns list-subscriptions-by-topic --region <region> --topic-arn <topic ARN>` and remove it with `aws sns unsubscribe`, so the topic always has at least one confirmed subscription. Last, run the drill row for an email subscription on that account. The same `aws sns unsubscribe` command ends a subscription on purpose.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.
+
+### Set up the test environment
+
+The test environment is the bucket, queues and roles that CI's `aws` job runs the store and queue suites against, in real S3 and SQS. [#78](https://github.com/l3a0/ithildin-runtime/issues/78) holds the reasoning, and [What an environment holds](architecture/07-deployment.md#what-an-environment-holds) says what test is for. The configuration sits under `infra/`.
+
+1. `infra/test/bootstrap/` holds what CI needs before it can run: the state bucket, GitHub's OIDC provider, the apply role, the test role and a budget alarm. The owner applies it.
+2. `infra/test/` holds the test bucket and the queues and rules `infra/test/routes.json` lists. `.github/workflows/infra.yml` applies it after each merge to `main`. The owner applies it once by hand, before the merge that adds it.
+
+#### Reach the test account
+
+Every command below runs as `OrganizationAccountAccessRole`, which AWS Organizations creates in each account it creates, and which the test bucket's policy admits. One way is an AWS CLI profile in `~/.aws/config` that assumes the role from the management account's credential, used with `export AWS_PROFILE=<profile>`.
+
+```ini
+[profile <profile>]
+role_arn = arn:aws:iam::<test account id>:role/OrganizationAccountAccessRole
+source_profile = <management account profile>
+region = us-east-1
+```
+
+#### Set it up, before the merge that adds it
+
+The order matters. Each step needs the one before it.
+
+1. Create the AWS organization, with a new, empty management account that holds nothing else, and the test account as its first member, with centralized root access on.
+2. Set the repository's OIDC subject template to include `repo`, `context` and `job_workflow_ref`, with `gh api -X PUT repos/l3a0/ithildin-runtime/actions/oidc/customization/sub -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'`. Read it back with `gh api repos/l3a0/ithildin-runtime/actions/oidc/customization/sub` and check that `use_immutable_subject` still reads `true`. The board deploys through OIDC too, so dispatch it with `gh workflow run board.yml --repo l3a0/ithildin-runtime` and check that the run deploys.
+3. Create the state bucket under a name of the owner's choosing, with `aws s3api create-bucket --bucket <state bucket>`. A new bucket comes encrypted and with public access blocked, and the bootstrap turns its versioning on.
+4. Write the backend's file outside the repository, with `printf 'bucket = "%s"\n' <state bucket> > ~/.config/ithildin-runtime/test.tfbackend`.
+5. Apply the bootstrap from the build's branch, with `tofu -chdir=infra/test/bootstrap init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket> -var budget_email=<address>`. The address is typed only at the command line, so it enters no tracked file. The apply prints the two roles' ARNs.
+6. Apply the environment from the same branch, with `tofu -chdir=infra/test init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test apply`.
+7. Run the delivery check below. If no event arrives, stop and do not merge, because the queues' encryption is the likely cause and its fallback has a monthly price the owner decides on.
+8. Run `scripts/setup-repo.sh l3a0/ithildin-runtime`, which creates the `test` GitHub environment, limited to `main` with no reviewer.
+9. Set the three repository secrets the workflows read, with `gh secret set AWS_TEST_ROLE_ARN`, `gh secret set AWS_TEST_APPLY_ROLE_ARN` and `gh secret set TF_STATE_BUCKET_TEST`. Each command asks for its value, so none enters the shell's history. The two ARNs are what step 5 printed, and `tofu -chdir=infra/test/bootstrap output` prints them again.
+
+Applying before the merge means the first `aws` run on `main` finds the environment already there, and a failed delivery reaches the owner before anything merges.
+
+#### Check that an event reaches its queue
+
+The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`. A write under `runs/` must carry `If-None-Match`, or the bucket refuses it.
+
+1. Write a key with `aws s3api put-object --bucket ithildin-runtime-test --key runs/ci/owner-check-$(date -u +%Y%m%dT%H%M%SZ)/smoke/check.json --body /dev/null --if-none-match '*'`.
+2. Find the queue with `aws sqs get-queue-url --queue-name ithildin-test-smoke`.
+3. Receive with `aws sqs receive-message --queue-url <queue URL> --wait-time-seconds 20`, up to three times. One message names the key in its `detail.object.key`.
+
+The key expires with everything else in the bucket, two to three days later.
+
+#### Clear a lock a failed apply leaves
+
+An apply that fails or is cancelled halfway can leave the state locked, and the next apply then waits five minutes and fails with a message that names the lock's id. First check in [the Infra workflow's runs](https://github.com/l3a0/ithildin-runtime/actions/workflows/infra.yml) that no apply is still running. Then clear the lock from the laptop with `tofu -chdir=infra/test force-unlock <lock id>`, after the same `init` as step 6 above, and re-run the failed job.
+
+#### Retire the test environment
+
+The test bucket carries OpenTofu's `prevent_destroy`, and its lifecycle empties it two to three days after the last write. So retiring it waits until no `aws` run has written for three days, then takes a commit that removes `prevent_destroy` from `infra/modules/bucket/main.tf`, which is safe only while test is the module's one caller, and a `tofu destroy` of `infra/test` and then of `infra/test/bootstrap`, from the laptop.
