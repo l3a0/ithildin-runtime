@@ -1,6 +1,6 @@
 # CLAUDE.md — ithildin-runtime
 
-ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Status: most of the design is not built yet. The [README](README.md) lists the modules that exist, and the tracker carries what comes next. Code lives in `src/ithildinruntime`, with tests under `tests/`.
+ithildin-runtime is a systematic trading platform built after the one Rishi Narang outlines in *Inside the Black Box*. Its one rule is that what is tested is what runs live: backtest, paper and live trading run the same modules, and differ only in the adapter at each edge. Code lives in `src/ithildinruntime`, with tests under `tests/`.
 
 **The premise is what cannot be recovered.** Three things are gone once lost.
 
@@ -219,7 +219,7 @@ A mechanical consequence of an edit is part of that edit, not a separate decisio
 
 This repo is public. Tracked files never carry secrets or machine-specific paths. Machine-local config lives under `~/.config/ithildin-runtime/`, and the design doc's Configuration section states the full rules. Sweep for leaks before any publish.
 
-Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture/07-deployment.md`'s `## Where it runs` says who can read it. None exists yet.
+Broker and data-vendor credentials are this repo's secrets. The owner ruled on 2026-10-29 that the broker key lives in AWS Systems Manager Parameter Store as a `SecureString`. `docs/architecture/07-deployment.md` proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that only the execution worker's user can read it, into memory. The broker key never enters a file or an environment variable, and no credential enters a tracked file, an issue or a pull request. Any other credential lives in the environment of the run that needs it or in the machine's keychain, and a long-lived secret never in a file. The design doc's Configuration section names each one as it arrives, and `docs/architecture/07-deployment.md`'s `## Where it runs` says who can read it.
 
 ## Committing
 
@@ -307,7 +307,7 @@ The environment caches what the script installs for about seven days. So a cloud
 A `band:N` label ranks a card under the directive in [Rank work by what makes the product usable](#rank-work-by-what-makes-the-product-usable), and a lower number is taken first.
 
 1. `band:1` marks a deliverable on the shortest path to a product someone can use, which while a slice is open means that slice's sub-issues. The slice's parent issue takes no band. It builds nothing itself and closes last, yet with a band it would sort ahead of the deliverables it waits on.
-2. `band:2` and `band:3` hold nothing yet. They are for work that real use ranks below band 1, and each gets its meaning here when the first issue needs it, since a meaning written before any use would be a ranking made in advance.
+2. `band:2` and `band:3` are for work that real use ranks below band 1, and each gets its meaning here when the first issue needs it, since a meaning written before any use would be a ranking made in advance.
 
 A card with no band is left out of the board's default view, and the page's Show all button still draws it. A card in flight, meaning one a session holds or an open pull request carries, shows either way.
 
