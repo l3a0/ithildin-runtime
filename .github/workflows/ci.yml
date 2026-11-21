@@ -36,8 +36,10 @@ jobs:
         with:
           enable-cache: true
 
+      # `--locked` fails the job when uv.lock does not match pyproject.toml,
+      # so the versions and digests the lock pins are the ones CI installs.
       - name: Install the toolchain and dependencies
-        run: uv sync --dev
+        run: uv sync --dev --locked
 
       # Unscoped, exactly as a local check should run. A path-scoped local run
       # passes while CI fails, because CI lints every file.

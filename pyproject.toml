@@ -5,6 +5,12 @@ description = "A systematic trading platform after Narang's Inside the Black Box
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # The S3 store's client, imported only in `adapters`, which builds the
+    # client once the runtime's entry points exist. botocore 1.35.69 is
+    # the first release whose PutObject takes If-Match, which a lease rewrite
+    # sends. 1.35.66 already takes If-None-Match.
+    "boto3>=1.35.69",
+    "botocore>=1.35.69",
     "rfc8785==0.1.4",
 ]
 
@@ -16,6 +22,13 @@ dependencies = [
 # on PyPI, as that repository's README explains.
 dev = [
     "ithildincore[whiteboard] @ git+https://github.com/l3a0/ithildin-core@a4094dbac15b4b605d83cb1859a02d705b4cf469",
+    # The S3 emulator the store suite runs the S3 adapter against, started
+    # inside the test run. uv.lock pins its wheel by SHA-256. The `s3` extra
+    # with flask and flask-cors is what its server needs for S3 alone, where
+    # the `server` extra pulls in every service moto imitates.
+    "moto[s3]>=5.2.5",
+    "flask>=3",
+    "flask-cors>=5",
     "pytest>=8",
     "ruff>=0.8",
 ]

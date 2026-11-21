@@ -463,6 +463,7 @@ classDiagram
         +BlobRef cause
         +list restart_records
         +list found_outputs
+        +list unstored
     }
     class RestartRecord {
         +int format
@@ -601,6 +602,27 @@ classDiagram
         +list(prefix, after) list
         +replace_if_match(key, data, sha256, etag) str
     }
+    class Storage {
+        -BlobStore store
+        -Alerts alerts
+        +put(StageKind, key, data, attempt) Stored
+        +put_result(key, DecisionResult) DecisionResult
+        +read_result(key, decision_at) DecisionResult
+        +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
+        +retry_held() list
+        +unstored() list
+        +halt_record(Halt) HaltRecord
+    }
+    class StageKind {
+        <<enumeration>>
+        DETERMINISTIC
+        CAPTURING
+    }
+    class OutputFile {
+        +BlobHeader header
+        +list entries
+        +bool trade_nothing
+    }
     class Alerts {
         <<Protocol>>
         +alarm(reason)
@@ -638,6 +660,8 @@ classDiagram
     }
 
     Journal o-- BlobStore
+    Storage o-- BlobStore
+    Storage o-- Alerts
     Monitoring o-- Alerts
     OrderPath o-- Journal
     OrderPath o-- RiskGate
@@ -926,6 +950,7 @@ Every type that crosses between workers has a file form, `BrokerAccount` and `Se
 | --- | --- |
 | `cause` | The halt the worker met, when it is passing one on. Empty when the worker found the problem itself |
 | `found_outputs` | Each output file stored under the decision's prefix when the halt was written, a capturing stage's stored capture included |
+| `unstored` | Each capture the process still held that is not stored, for any reason, such as S3 not answering or its key holding other bytes, by the key it was trying and its SHA-256. A `clear` of the halt is refused until each is stored or journaled as lost, as [A write S3 refuses or does not answer](../design.md#rule-1-a-write-s3-refuses-or-does-not-answer) says |
 
 The supervisor writes the same record for a worker that failed, naming its restart records. The host's stop handler and the restarted worker write those records, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) says.
 
@@ -937,7 +962,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 
 ##### How the storage port rewrites a blob
 
-`BlobStore` is the storage port, S3 in shadow, paper and live and a memory-backed folder in a backtest, and one contract test suite runs against both. A case in it writes, through `create` and through `replace_if_match`, bytes whose SHA-256 differs from the one sent, and both adapters refuse it. `create` returns the stored blob's tag and `head` its stored time. `replace_if_match` rewrites a blob only while it still carries the tag it names, and returns the new tag. That is how a lease is taken, renewed, released and taken over, and it is the one rewrite the port allows. So a lease can be rewritten only on a tag.
+`BlobStore` is the storage port, S3 in shadow, paper and live and a memory-backed folder in a backtest, and one contract test suite runs against both. A case in it writes, through `create` and through `replace_if_match`, bytes whose SHA-256 differs from the one sent, and both adapters refuse it. The emulator the S3 adapter's run uses does not check the SHA-256, so until the run against the test bucket on [#88](https://github.com/l3a0/ithildin-runtime/issues/88), botocore's stubbed answer of S3's refusal shows the adapter's side, as [How CI runs them](10-quality.md#how-ci-runs-them) says. `create` returns the stored blob's tag and `head` its stored time. `replace_if_match` rewrites a blob only while it still carries the tag it names, and returns the new tag. That is how a lease is taken, renewed, released and taken over, and it is the one rewrite the port allows. So a lease can be rewritten only on a tag.
 
 **Table:** Which tag each rewrite of a lease names
 
@@ -1024,7 +1049,8 @@ An arrow means "may import". The diagram draws four rules.
    - the `Halt` exception;
    - every `Protocol`, including `RiskGate`;
    - the storage contract every worker uses:
-     - the `BlobStore` port, writing a blob S3 refuses to replace;
+     - the `BlobStore` port, writing a blob S3 refuses to replace, and the refusals every store gives;
+     - `Storage`, which applies the rule for each `StageKind`, holds each capture S3 will not store, and runs the reader's checks on an `OutputFile`;
      - the blob header;
      - the decision result and its halt;
      - the plan;

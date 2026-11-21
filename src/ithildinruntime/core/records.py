@@ -442,10 +442,20 @@ class RestartRecord(_Record):
 
 @dataclass(frozen=True)
 class HaltRecord(_Record):
+    """Why a decision halted, and what it leaves behind.
+
+    `unstored` lists each capture the process still held that is not stored,
+    for any reason, such as S3 not answering or its key holding other bytes, by
+    the key it was trying and its SHA-256. design.md's `### Rule 1:
+    a write S3 refuses or does not answer` refuses a `clear` of the halt until
+    each is stored or journaled as lost, and #11 builds that refusal.
+    """
+
     reason: str
     cause: BlobRef | None
     restart_records: tuple[RestartRecord, ...]
     found_outputs: tuple[BlobRef, ...]
+    unstored: tuple[BlobRef, ...]
 
 
 @dataclass(frozen=True)
