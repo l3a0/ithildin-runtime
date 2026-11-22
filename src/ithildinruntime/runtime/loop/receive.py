@@ -71,7 +71,7 @@ How the loop runs, in order.
    refusal alarmed. From the moment receiving stops it beats whatever its
    handlers do, so the host's watchdog does not kill it, and it alarms
    naming each blob and why receiving stopped, again until the alert
-   channel takes it. This doc proposes that a
+   channel takes it. A
    halt S3 answered and will not store, such as one whose key holds another
    result, is dropped with an alarm giving its reason. A capture is never
    dropped. `run` returns or raises only once nothing is held. The price is
