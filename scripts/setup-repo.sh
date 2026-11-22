@@ -2,15 +2,16 @@
 #
 # Copied into l3a0/ithildin-runtime from scripts/setup-repo.sh in
 # l3a0/repo-template at commit 4bb3f7f301300ed3f86a4992e6792fba3f7d3ed7,
-# the merge of l3a0/repo-template#26. Two changes are local: this paragraph,
-# and the closing note naming repo-template's README.md, since this repo's
-# README has no seeding section.
+# the merge of l3a0/repo-template#26. Three changes are local: this
+# paragraph, the closing note naming repo-template's README.md, since this
+# repo's README has no seeding section, and the `test` environment, which
+# .github/workflows/infra.yml applies the test environment's infrastructure in.
 # .github/labels.json comes unchanged from the same commit. "This template"
 # below means l3a0/repo-template.
 #
 # Apply this template's GitHub-side policy to a repository.
 #
-# Five things live on GitHub rather than in tracked files, so a fresh clone of
+# Six things live on GitHub rather than in tracked files, so a fresh clone of
 # the template carries none of them.
 #
 # 1. The branch ruleset that makes `main` require a pull request, read from
@@ -21,6 +22,7 @@
 # 4. GitHub Pages, with GitHub Actions as its source, which the build board's
 #    reusable workflow deploys to.
 # 5. The github-pages environment, limited to deploying from `main`.
+# 6. The test environment, limited to `main` the same way, with no reviewer.
 #
 # Reading the first two from the repo's own files keeps those files the source
 # of truth.
@@ -31,8 +33,10 @@
 #   scripts/setup-repo.sh l3a0/new-repo
 #   DRY_RUN=1 scripts/setup-repo.sh l3a0/new-repo
 #
-# The ruleset requires two status checks by name, `test` and `docs`, which are
-# the two jobs in .github/workflows/ci.yml. Renaming a job means editing the
+# The ruleset requires three status checks by name: `test` and `docs`, which are
+# the two jobs in .github/workflows/ci.yml, and `infra`, the job in
+# .github/workflows/infra.yml that passes only when its OpenTofu checks pass.
+# Renaming a job means editing the
 # ruleset JSON and re-running this script, or the required check goes missing
 # and a pull request reports a short rollup rather than a failure.
 #
@@ -220,39 +224,52 @@ fi
 # environment an owner already limited, to protected branches or to its own
 # policies, keeps what it has. A policy already there for another branch is
 # left alone too, because removing one is the owner's call.
-if ! env_policy="$(gh api "repos/$repo/environments/github-pages" \
-  --jq '.deployment_branch_policy | if . == null then "none" elif .custom_branch_policies then "custom" else "protected" end' 2>/dev/null)"; then
-  env_policy="absent"
-fi
-case "$env_policy" in
-  absent | none)
-    echo "environment: github-pages, limiting to custom branch policies"
-    run gh api --method PUT "repos/$repo/environments/github-pages" \
-      -F 'deployment_branch_policy[protected_branches]=false' \
-      -F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
-    ;;
-  protected)
-    echo "environment: github-pages already deploys from protected branches only, left as it is"
-    ;;
-  *)
-    echo "environment: github-pages already uses custom branch policies"
-    ;;
-esac
-# An environment limited to protected branches has no policy list, and its
-# own rule already decides which branches deploy.
-if [[ "$env_policy" != "protected" ]]; then
-  if ! branch_policies="$(gh api "repos/$repo/environments/github-pages/deployment-branch-policies" \
-    --jq '.branch_policies[] | select(.type == "branch") | .name' 2>/dev/null)"; then
-    branch_policies=""
+limit_environment_to_main() {
+  local env_name="$1" env_policy branch_policies
+  if ! env_policy="$(gh api "repos/$repo/environments/$env_name" \
+    --jq '.deployment_branch_policy | if . == null then "none" elif .custom_branch_policies then "custom" else "protected" end' 2>/dev/null)"; then
+    env_policy="absent"
   fi
-  if grep -qx main <<<"$branch_policies"; then
-    echo "environment: main already allowed"
-  else
-    echo "environment: allowing main"
-    run gh api --method POST "repos/$repo/environments/github-pages/deployment-branch-policies" \
-      -f name=main -f type=branch >/dev/null
+  case "$env_policy" in
+    absent | none)
+      echo "environment: $env_name, limiting to custom branch policies"
+      run gh api --method PUT "repos/$repo/environments/$env_name" \
+        -F 'deployment_branch_policy[protected_branches]=false' \
+        -F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
+      ;;
+    protected)
+      echo "environment: $env_name already deploys from protected branches only, left as it is"
+      ;;
+    *)
+      echo "environment: $env_name already uses custom branch policies"
+      ;;
+  esac
+  # An environment limited to protected branches has no policy list, and its
+  # own rule already decides which branches deploy.
+  if [[ "$env_policy" != "protected" ]]; then
+    if ! branch_policies="$(gh api "repos/$repo/environments/$env_name/deployment-branch-policies" \
+      --jq '.branch_policies[] | select(.type == "branch") | .name' 2>/dev/null)"; then
+      branch_policies=""
+    fi
+    if grep -qx main <<<"$branch_policies"; then
+      echo "environment: $env_name already allows main"
+    else
+      echo "environment: $env_name, allowing main"
+      run gh api --method POST "repos/$repo/environments/$env_name/deployment-branch-policies" \
+        -f name=main -f type=branch >/dev/null
+    fi
   fi
-fi
+}
+
+limit_environment_to_main github-pages
+
+# --- The test environment ---------------------------------------------------
+# .github/workflows/infra.yml applies infra/test in this environment, and the
+# apply role's trust names it, so only a job on `main` in it reaches the role.
+# It has no reviewer, because the merge that starts the apply is already the
+# owner's approval. The same rule applies: an environment the owner already
+# limited keeps what it has.
+limit_environment_to_main test
 
 # --- Reserved human steps ----------------------------------------------------
 # A pointer rather than a copy. This script is kept and re-run by every repo

@@ -57,6 +57,107 @@ jobs:
       - name: Run the test suite
         run: uv run pytest
 
+  # Runs the suites marked `aws` against the test environment, with the test role. Only
+  # on a push to main. The role trusts any job of this file on main, so neither a pull
+  # request nor the board's job can assume it, and this is the one job here that holds
+  # `id-token: write`, which is what keeps the role to this job. A job given that
+  # permission later reaches the role too. Every action
+  # is pinned to a commit, because any step of a job holding `id-token: write` can mint
+  # its token. The job moves into the publishing workflow once #11 builds it, rather
+  # than gaining a second copy, since two jobs purging the same queues would break both.
+  aws:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Runs take turns, because they share the queues. GitHub keeps one run going and one
+    # waiting, and a newer push replaces the waiting one, whose changes the newer
+    # commit holds.
+    concurrency:
+      group: test-env
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse an empty secret
+        env:
+          AWS_TEST_ROLE_ARN: ${{ secrets.AWS_TEST_ROLE_ARN }}
+        run: |
+          if [ -z "$AWS_TEST_ROLE_ARN" ]; then
+            echo "::error::AWS_TEST_ROLE_ARN is empty. docs/what-a-person-runs.md says where to set it."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_TEST_ROLE_ARN }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      # No cache. The `test` job, whose actions are pinned to tags rather than commits,
+      # saves the cache this job would restore under the same key, which would undo the
+      # pins on the one job holding the test role.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+
+      - name: Install the toolchain and dependencies
+        run: uv sync --dev --locked
+
+      # A cancelled run leaves messages for keys under another run's id, so each run
+      # starts from empty queues. SQS allows one purge of a queue every 60 seconds, so a
+      # case that purges again waits that out.
+      #
+      # A queue that does not exist yet means a merge added a route and infra.yml's apply
+      # has not finished, so the step says so rather than failing on AWS's own error. A
+      # purge refused as already in progress means the run before this one purged under
+      # a minute ago, so the step waits that out once.
+      - name: Purge the test queues
+        shell: bash
+        run: |
+          purge() {
+            local name="$1" url err
+            if ! url="$(aws sqs get-queue-url --queue-name "$name" --query QueueUrl --output text 2>&1)"; then
+              if grep -q NonExistentQueue <<<"$url"; then
+                echo "::error::Queue $name does not exist yet. infra.yml's apply may not have finished creating it. Re-run this job once that apply has ended."
+              else
+                echo "::error::Could not find queue $name."
+                echo "$url" >&2
+              fi
+              return 1
+            fi
+            if ! err="$(aws sqs purge-queue --queue-url "$url" 2>&1)"; then
+              if grep -q PurgeQueueInProgress <<<"$err"; then
+                echo "Queue $name was purged under a minute ago. Waiting 60 seconds to purge again."
+                sleep 60
+                aws sqs purge-queue --queue-url "$url"
+              else
+                echo "::error::Could not purge queue $name."
+                echo "$err" >&2
+                return 1
+              fi
+            fi
+          }
+          for reader in $(jq -r '.[].reader' infra/test/routes.json); do
+            purge "ithildin-test-$reader"
+            purge "ithildin-test-$reader-dlq"
+          done
+          # A purge can still delete messages sent during the minute after it starts, so
+          # the suites wait it out before writing anything.
+          sleep 60
+
+      # With nothing collected, pytest exits 5, so the job fails rather than passing
+      # empty.
+      - name: Run the suites against the test environment
+        run: uv run pytest -m aws
+        env:
+          ITHILDIN_TEST_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+
   # CLAUDE.md requires every .md file to pass markdownlint. Without this job
   # that rule is advice, which is how it sat in the repos this template came
   # from. The ruleset requires this check by name too.

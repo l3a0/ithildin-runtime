@@ -239,14 +239,18 @@ A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease gr
 
 The bucket's lifecycle expires heartbeats and the noncurrent versions of leases, and nothing else. Log lines go to a log store outside this bucket, which [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds.
 
+This describes the runtime's buckets on shadow, paper and live. The test bucket holds only regenerable test blobs, so its lifecycle expires every current version one to two days after it is written and leaves the bucket empty at least three days after the last write, and its policy refuses any retention date more than a day out so the lifecycle can always empty it.
+
 #### Who can change the bucket's settings or delete a version
 
-No credential the runtime holds can delete a version, or change any of these four, and no credential but the owner's can change those four.
+No credential the runtime holds can delete a version, or change any of these four, and on shadow, paper and live no credential but the owner's can change those four.
 
 1. The bucket's policy.
 2. Its versioning.
 3. Its lifecycle.
 4. Its notification configuration.
+
+On the test bucket the test environment's apply credential may change them too, because `.github/workflows/infra.yml` applies the test bucket's settings after each merge that changes `infra/`.
 
 #### What the bucket's policy refuses, and to whom
 
@@ -268,9 +272,16 @@ The bucket's policy makes the nine refusals in this table.
 
 An explicit refusal in a bucket policy overrides any role's own grant, so a role added later is refused without anyone remembering it.
 
+The table's refusals are written once, in the OpenTofu module `infra/modules/bucket/`, which every environment's bucket is meant to come from, and who each statement names is an input. So the suites that run against the test bucket meet the statements production will use. On the test bucket the test role is the runtime's principal, and the test environment's apply credential may change the policy beside the owner. Four details differ from the text above.
+
+1. The module also refuses changes to the bucket's encryption, replication, ownership and public access block to all but those who may change its settings, because it sets those itself.
+2. It refuses a multipart upload on `runs/`, `journal/` and `sim/` at its start rather than at its completion, because a multipart upload's first requests cannot carry `If-None-Match`.
+3. It does not yet carry Rule 4's refusal on the hard caps and the releases, or live's limit on the approved drill role's delete of the switch. The module gains both, with who they name as inputs, before a later environment's bucket stores anything, so the test bucket runs them too. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds those grants.
+4. It accepts only the lifecycle rules a runtime bucket may carry: an expiry under `heartbeats/`, an expiry of noncurrent versions under `leases/`, and the abort of an unfinished upload. A bucket policy cannot stop a lifecycle rule, so the module refuses every other rule. Only a bucket whose every blob is regenerable, such as test's, lifts that check, and it must also cap retention at a day so its lifecycle can empty it.
+
 #### How the release uploads each blob
 
-The release writes every blob with one single-part upload, never a multipart one, so each blob is one request checked against one SHA-256, and the policy marks a multipart start so a stray one fails when it completes rather than halfway.
+The release writes every blob with one single-part upload, never a multipart one, so each blob is one request checked against one SHA-256, and the policy refuses a multipart start on `runs/`, `journal/` and `sim/`, so a stray one never begins there.
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
@@ -479,7 +490,7 @@ Five things follow.
 #### What CI runs on a pull request
 
 CI builds the image on every pull request and runs the tests inside it,
-in the two required checks [How CI runs them](10-quality.md#how-ci-runs-them) describes.
+in the required `test` check and the image check that [How CI runs them](10-quality.md#how-ci-runs-them) describes.
 
 #### Why the guard on publishing is provenance
 
@@ -502,13 +513,15 @@ manual dispatch.
    wheels only, with `uv`'s `--no-build`, so the job that signs runs no
    dependency's build code either.
 
+Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the image and this publishing workflow, the run against the test bucket and queues sits in `.github/workflows/ci.yml`'s `aws` job, on the runner rather than in the image, and only on a push to `main`. When the publishing workflow arrives, that job moves into it as its test job, and the test role's trust moves with it. It moves rather than gaining a second copy, because two jobs purging the same queues would break each other.
+
 #### Which job holds which permission
 
 **Table:** Which job holds each write permission
 
 | Job | `packages: write` | `attestations: write` | `id-token: write` |
 | --- | --- | --- | --- |
-| The test job | No | No | Yes, for the test role alone |
+| The test job, which is `ci.yml`'s `aws` job until the publishing workflow arrives | No | No | Yes, for the test role alone |
 | The publish job | Yes, and it alone | Yes, and it alone | Yes |
 | Each deploy, promotion, plan, apply, VM change and approved drill job | No | No | Yes, each in its own GitHub environment |
 | Every other job | No | No | No. It reads only |
@@ -870,7 +883,7 @@ Eleven environment rules keep the environments apart. Environment rules 1 to 8 f
 
 1. **A merge deploys to shadow, and a healthy shadow promotes to paper.** CI runs the tests on every pull request, with no AWS credential.
 
-   When the owner merges a pull request to `main`, the publishing job of [The release is one container image](#rule-10-the-release-is-one-container-image) rebuilds the image, runs the tests again with the store and queue suites' runs against the test bucket and queues, publishes the image and attests its provenance.
+   When the owner merges a pull request to `main`, the publishing job of [The release is one container image](#rule-10-the-release-is-one-container-image) rebuilds the image, runs the tests again with the store and queue suites' runs against the test bucket and queues, publishes the image and attests its provenance. Until that job exists, the runs against the test bucket and queues sit in `ci.yml`'s `aws` job, on the runner, as [Which jobs build and publish the image](#which-jobs-build-and-publish-the-image) says.
 
    A deploy job then takes these steps.
 
@@ -1048,7 +1061,7 @@ The promotion check and the live drill check each have a second alarm action, an
 
 ##### Which accounts send the email
 
-As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so test and shadow hold neither alarm and need no topic.
+As this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), paper's account holds the promotion check and live's holds the live drill check, so shadow holds neither alarm and needs no topic. Test's account holds one topic, `ithildin-test-alarms`, which carries only its budget alarm, as [Set up the test environment](../what-a-person-runs.md#set-up-the-test-environment) says.
 
 ##### How the email route is set up
 
@@ -1127,7 +1140,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 | Environment | When its drills run |
 | --- | --- |
-| Test | Drills that depend only on code run once, in test |
+| Test | Drills that depend only on code run once, in test, and the drills whose Gate is before [#78](https://github.com/l3a0/ithildin-runtime/issues/78) closes run once before it closes |
 | Shadow | Before paper's gate |
 | Paper | Before paper's gate |
 | Live | Before the owner switches, in a live session started with the kill switch already set. After the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch |
@@ -1154,7 +1167,7 @@ The owner approves every live drill that changes live's state, and only a run th
 
 #### Environment rule 10: how an environment's infrastructure is applied
 
-Each environment's infrastructure is applied by a plan of its own. A bad apply rolls back by a revert commit that applies the previous configuration, which never removes an event rule. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
+Each environment's infrastructure is applied by a plan of its own. This doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) that on shadow, paper and live the bucket's configuration is one the owner applies, because its settings are the owner's alone, apart from the routes, which the apply credential applies. In test both sit in one configuration the apply credential applies, because test lets it change the test bucket's settings. A bad apply rolls back by a revert commit that applies the previous configuration, which on shadow, paper and live never removes an event rule. In test, a route that leaves `infra/test/routes.json` takes its rule and queue with it, because no release runs against test that still needs them. That environment's read-only checks run again after every apply, while live's drills the owner clears or approves keep their monthly turn.
 
 ##### What an apply puts on the host
 
@@ -1177,6 +1190,8 @@ With detail this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime
    Reach to the VM counts as reach to that environment's broker key. That is why it stays behind that approval, and why it is the one exception to the refusals that bind every principal ([A release is checked where it runs](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)). Among those refusals, no role that applies the code may change who can act as the principal that may read a broker credential.
 
    On shadow, which holds no broker key, the apply credential does this.
+
+The test account departs from this list. It holds an apply credential and a test credential, and no plan or VM change credential. Its apply job, `.github/workflows/infra.yml`'s, plans and applies with the apply credential, which carries the plan credential's limits: no `ReadOnlyAccess`, no `ssm:Get*`, and reads listed one by one. Test has no approval between plan and apply, and no job there needs to read without being able to write, so its separate plan credential arrives with the drift check of [#32](https://github.com/l3a0/ithildin-runtime/issues/32). The test credential is the `aws` job's, with the grants [#78](https://github.com/l3a0/ithildin-runtime/issues/78) lists.
 
 ##### Who approves an apply
 

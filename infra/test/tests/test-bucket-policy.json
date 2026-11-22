@@ -1,0 +1,245 @@
+{
+  "Statement": [
+    {
+      "Action": "s3:*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/ithildin-test-ci",
+            "arn:aws:iam::000000000000:role/ithildin-test-apply",
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test",
+        "arn:aws:s3:::ithildin-runtime-test/*"
+      ],
+      "Sid": "RefuseUnlistedPrincipals"
+    },
+    {
+      "Action": "s3:PutObject",
+      "Condition": {
+        "Null": {
+          "s3:if-none-match": "true"
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/runs/*",
+        "arn:aws:s3:::ithildin-runtime-test/journal/*",
+        "arn:aws:s3:::ithildin-runtime-test/sim/*"
+      ],
+      "Sid": "RefuseCreateOnlyWritesWithoutIfNoneMatch"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/runs/*",
+        "arn:aws:s3:::ithildin-runtime-test/journal/*",
+        "arn:aws:s3:::ithildin-runtime-test/sim/*"
+      ],
+      "Sid": "RefuseCreateOnlyDeletes"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/leases/*"
+      ],
+      "Sid": "RefuseLeaseDeletes"
+    },
+    {
+      "Action": "s3:PutObject",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/ithildin-test-ci"
+          ]
+        },
+        "Null": {
+          "s3:if-match": "true",
+          "s3:if-none-match": "true"
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/leases/*"
+      ],
+      "Sid": "RefuseRuntimeLeaseWritesWithNeitherCondition"
+    },
+    {
+      "Action": "s3:PutObject",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/ithildin-test-ci"
+          ]
+        },
+        "Null": {
+          "s3:if-none-match": "true"
+        }
+      },
+      "Effect": "Deny",
+      "NotResource": [
+        "arn:aws:s3:::ithildin-runtime-test/leases/*"
+      ],
+      "Principal": "*",
+      "Sid": "RefuseRuntimeWritesWithoutIfNoneMatch"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/ithildin-test-ci"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/*"
+      ],
+      "Sid": "RefuseRuntimeDeletes"
+    },
+    {
+      "Action": "s3:PutObject",
+      "Condition": {
+        "ArnLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        },
+        "Null": {
+          "s3:if-match": "true"
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/leases/accounts/*"
+      ],
+      "Sid": "RefusePeoplesAccountLeaseWritesWithoutIfMatch"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/accounts/*/switch.json"
+      ],
+      "Sid": "RefuseSwitchDeletes"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/accounts/*/stop.json"
+      ],
+      "Sid": "RefuseLossStopDeletes"
+    },
+    {
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/accounts/*/strategies/*/off.json"
+      ],
+      "Sid": "RefuseOffSwitchDeletes"
+    },
+    {
+      "Action": [
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketVersioning",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketNotification",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutReplicationConfiguration",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutBucketPublicAccessBlock"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::000000000000:role/ithildin-test-apply",
+            "arn:aws:iam::000000000000:role/OrganizationAccountAccessRole"
+          ]
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test"
+      ],
+      "Sid": "RefuseSettingsChanges"
+    },
+    {
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectRetention"
+      ],
+      "Condition": {
+        "NumericGreaterThan": {
+          "s3:object-lock-remaining-retention-days": "1"
+        }
+      },
+      "Effect": "Deny",
+      "Principal": "*",
+      "Resource": [
+        "arn:aws:s3:::ithildin-runtime-test/*"
+      ],
+      "Sid": "RefuseRetentionPastTheCap"
+    }
+  ],
+  "Version": "2012-10-17"
+}
