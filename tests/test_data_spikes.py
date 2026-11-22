@@ -67,6 +67,22 @@ def test_a_high_below_its_open_alone_is_flagged() -> None:
     assert (flag.field, flag.against) == ("high", Decimal("101.0000"))
 
 
+@pytest.mark.parametrize(
+    ("high", "low", "open_", "close", "field", "against"),
+    [
+        ("101.0000", "100.5000", "100.2000", "101.0000", "low", "100.2000"),
+        ("101.0000", "100.5000", "101.0000", "100.2000", "low", "100.2000"),
+        ("100.0000", "100.5000", "100.0000", "100.0000", "high", "100.5000"),
+    ],
+)
+def test_each_comparison_of_the_first_rule_is_made(
+    high: str, low: str, open_: str, close: str, field: str, against: str
+) -> None:
+    odd = bar(0, close, high=high, low=low, open=open_)
+    flags = spike_flags([odd], Decimal(100))
+    assert (field, Decimal(against)) in {(f.field, f.against) for f in flags}
+
+
 def test_a_low_above_its_open_is_flagged() -> None:
     odd = bar(0, "100.0000", high="101.0000", low="100.5000", open="100.2000")
     (flag,) = spike_flags([odd], Decimal(100))
@@ -139,7 +155,10 @@ def test_the_multiple_is_a_positive_decimal() -> None:
 def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
     built_lake: Path, tmp_path: Path
 ) -> None:
-    """Exploratory. GLD reaches 6.59 and USO 5.72, so a multiple at or below 6.59 halts test 1."""
+    """Exploratory, first pinned at ed9d1f7. GLD reaches 6.59 and USO 5.72.
+
+    So a multiple at or below 6.59 flags a GLD bar and halts test 1.
+    """
     from tests.support import lake as lakes
     from tests.test_data_source import FIRST, LAST, close, make
 

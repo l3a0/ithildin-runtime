@@ -69,6 +69,7 @@ from ithildinruntime.core import (
     Bar,
     BarStatus,
     Clock,
+    CodecError,
     Halt,
     InstrumentId,
     Snapshot,
@@ -361,11 +362,16 @@ class LakeSource:
             value = row.get(name)
             if value is None:
                 raise Halt(f"{where} has no {name}")
-            prices[name] = from_received(value)
+            try:
+                prices[name] = from_received(value)
+            except CodecError as error:
+                raise Halt(f"{where} has a {name} {value!r} that is no price: {error}") from None
         volume = row.get("volume")
         if volume is not None and (isinstance(volume, bool) or not isinstance(volume, int)):
             raise Halt(f"{where} has a volume {volume!r} that is no whole number")
+        # marketlake's reader refuses a source_as_of that is no strict date.
         source_as_of = row.get("source_as_of")
+        as_of = date.fromisoformat(source_as_of) if source_as_of else None
         kind = self._kinds.kind(kind_source, day)
         checked = root.files[key]
         return Bar(
@@ -385,7 +391,7 @@ class LakeSource:
             fetched_end_at=fetched_end_at,
             knowable_at=knowable_at,
             source=None if origin == _CAPTURED else row.get("source"),
-            source_as_of=date.fromisoformat(source_as_of) if source_as_of else None,
+            source_as_of=as_of,
             price_kind=kind.price_kind,
             venues=kind.venues,
             delay=kind.delay,

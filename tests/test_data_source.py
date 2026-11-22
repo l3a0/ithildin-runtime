@@ -312,6 +312,12 @@ def test_4_a_bar_with_no_price_halts(lake: Path, tmp_path: Path, name: str) -> N
         make(lake, tmp_path).read(close(LAST))
 
 
+def test_4_a_price_that_is_no_number_halts(lake: Path, tmp_path: Path) -> None:
+    lakes.with_row(lake, "GLD", LAST, close=float("nan"))
+    with pytest.raises(Halt, match="has a close nan that is no price"):
+        make(lake, tmp_path).read(close(LAST))
+
+
 def test_a_decision_time_that_is_not_utc_is_refused(lake: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="a decision time is UTC"):
         make(lake, tmp_path).read(close(LAST).astimezone(lakes.MARKET_TZ))
@@ -520,6 +526,16 @@ def test_10_a_manifest_sha256_that_is_not_hex_halts_and_touches_nothing_outside(
     with pytest.raises(Halt, match="records no SHA-256 for " + key):
         make(lake, tmp_path).read(close(LAST))
     assert victim.read_text() == "kept"
+
+
+def test_10_a_manifest_entry_marketlake_cannot_read_halts_and_leaves_no_root(
+    lake: Path, tmp_path: Path
+) -> None:
+    with (lake / "manifest.jsonl").open("a") as handle:
+        handle.write(json.dumps({"sha256": "0" * 64}) + "\n")
+    with pytest.raises(Halt, match="manifest.jsonl cannot be read"):
+        make(lake, tmp_path).read(close(LAST))
+    assert list((tmp_path / "mirror" / "roots").iterdir()) == []
 
 
 def test_10_a_failed_manifest_download_halts_with_an_older_copy_held(

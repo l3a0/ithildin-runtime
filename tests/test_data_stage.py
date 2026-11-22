@@ -8,7 +8,9 @@ wall clock and returns at once under the history clock.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -25,7 +27,7 @@ from ithildinruntime.core import (
     decode_output,
     output_key,
 )
-from ithildinruntime.data import DataStage, LakeSource, Mirror
+from ithildinruntime.data import DataStage, LakeSource, Mirror, differences
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
@@ -96,7 +98,7 @@ def test_the_stage_stores_the_snapshot_and_names_it_in_its_result(
     assert alarms.reasons == []
 
 
-def test_a_missing_bar_stores_the_snapshot_then_halts_naming_it(lake: Path, tmp_path: Path) -> None:
+def test_a_stale_bar_stores_the_snapshot_then_halts_naming_it(lake: Path, tmp_path: Path) -> None:
     gone = lakes.partition_key("USO", LAST)
     unlist(lake, gone)
     unlist(lake, lakes.partition_key("USO", before(LAST)))
@@ -161,6 +163,27 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     second = made(Item(close(LAST), "data"), Reports())
     assert first.outputs == second.outputs
     assert alarms.reasons == []
+
+
+@pytest.mark.parametrize("name", ["status", "flags"])
+def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> None:
+    from ithildinruntime.core import BarStatus, BlobHeader, OutputFile, SpikeFlag, encode_output
+
+    header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", "c1")
+    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    from ithildinruntime.core import InstrumentId
+
+    gld = InstrumentId("GLD")
+    if name == "status":
+        changed = dataclasses.replace(base, status={gld: BarStatus.STALE})
+    else:
+        flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
+        changed = dataclasses.replace(base, flags={gld: (flag,)})
+
+    def encoded(snap: Snapshot) -> bytes:
+        return encode_output(Snapshot, OutputFile(header, (snap,), False))
+
+    assert differences(encoded(base), encoded(changed)).endswith(f"marketlake: {name}")
 
 
 # 19. The wait.
