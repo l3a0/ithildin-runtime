@@ -1140,7 +1140,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 
 | Environment | When its drills run |
 | --- | --- |
-| Test | Drills that depend only on code run once, in test, and the drills whose Gate is before [#78](https://github.com/l3a0/ithildin-runtime/issues/78) closes run once before it closes |
+| Test | Drills that depend only on code run once, in test, and the drills whose Gate is before [#78](https://github.com/l3a0/ithildin-runtime/issues/78) or [#98](https://github.com/l3a0/ithildin-runtime/issues/98) closes run once before that issue closes |
 | Shadow | Before paper's gate |
 | Paper | Before paper's gate |
 | Live | Before the owner switches, in a live session started with the kill switch already set. After the switch only while no live session is open: on a fixed schedule, and after any apply in the environment's account or any host patch |
