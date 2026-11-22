@@ -131,10 +131,24 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      suite needs no Docker and runs on every local `uv run pytest`. `uv.lock`
      pins moto's wheel by its SHA-256. A probe of moto 5.2.5 found it refuses
      a create on an existing key and a rewrite on a stale tag, and lets one of
-     40 racing creates through. It checks no SHA-256 a write sends and never
-     answers 409. So the suite marks the SHA-256 case as failing on moto, and
-     botocore's stubbed answers show the S3 adapter's handling of S3's own
-     checksum refusal and its 409. The run against the test bucket, which [#88](https://github.com/l3a0/ithildin-runtime/issues/88) holds, covers both.
+     40 racing creates through. A second probe, with 8 processes rewriting one
+     lease on one tag for 20 rounds, let two writers win in 4 of the 20. It
+     checks no SHA-256 a write sends and never answers 409. So the suite marks
+     the SHA-256 case as failing on moto and skips its racing rewrites there,
+     and botocore's stubbed answers show the S3 adapter's handling of S3's own
+     checksum refusal and its 409.
+   - **The store suite on the test bucket** runs in ci.yml's `aws` job, with
+     the test role, on each push to `main`. Every key a case writes sits under
+     `runs/ci/<run>/store/<case>/` or `leases/plans/ci/<run>-<case>-<n>.json`,
+     which the role may create and read, and the suite refuses a key that a
+     test route would hear. The bucket checks the SHA-256, so that case runs
+     there as an ordinary case. Processes racing rewrites of one lease on one
+     tag can draw a 409 from S3, and the case checks that a 409 left nothing
+     behind. A run that drew none ends as an expected failure naming each
+     round's outcomes. The killed writer signs its PUT and stops partway
+     through the body once S3 has answered `100 Continue`. The cases that need
+     a folder, or a delete the role cannot make, run on the folder and moto
+     alone, and the job's `-v` names each case it ran with `[bucket]`.
    - **The queue suite** holds the SQS adapter and the named-pipe adapter
      to what both guarantee. A write reaches the queue of every reader its
      routes name and no other, and the suite loads the generated rules into

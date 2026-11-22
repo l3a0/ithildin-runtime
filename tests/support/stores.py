@@ -8,37 +8,78 @@ moto honours `If-None-Match` and `If-Match`, and a probe on 2026-11-21 saw one
 of 40 racing creates win. It does not check the SHA-256 a write sends, so the
 suite marks that case as failing on moto, strictly, and botocore's stubbed
 answers in tests/test_s3_answers.py show the adapter's handling of S3's own
-refusal. The run against the test environment's bucket, which #88 holds,
-closes both gaps.
+refusal. A probe of moto 5.2.5 on 2026-11-22, with 8 spawned processes
+rewriting one lease on one tag for 20 rounds, let two writers win in 4 of the
+20 rounds, so the suite skips its racing-rewrite case on moto.
+
+The bucket is the test environment's `ithildin-runtime-test`, which ci.yml's
+`aws` job reaches with the test role on a push to main. It checks the SHA-256
+and can answer 409, which closes both of moto's gaps. The test role may create
+and read only under `runs/ci/` and `leases/plans/ci/`, and may delete nothing,
+so `key` and `lease` put every key the suite writes under the run's own id,
+and `remove` and `overwrite` refuse on the bucket. The bucket's client names
+no endpoint and no keys, so nothing here points it anywhere but AWS.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import boto3
 from botocore.config import Config
 
 from ithildinruntime.adapters import FolderStore, S3Store
+from ithildinruntime.core import EventKind, Route
 
 # Credentials for the emulator only. They reach no AWS endpoint, because
-# every client here names the emulator's URL.
+# every client here that passes them names the emulator's URL.
 EMULATOR_KEYS = {"aws_access_key_id": "emulator", "aws_secret_access_key": "emulator"}
 REGION = "us-east-1"
+TEST_BUCKET = "ithildin-runtime-test"
+ROUTES_FILE = Path(__file__).parents[2] / "infra" / "test" / "routes.json"
 
 
 @dataclass(frozen=True)
 class StoreSpec:
+    """One store the suite runs against.
+
+    `kind` is `folder`, `s3` for moto, or `bucket` for the test bucket. `run`
+    and `case` put a case's keys under `runs/ci/<run>/store/<case>/`. A spec
+    without a `run` leaves every key as the test wrote it, which the modules
+    that share `tests/conftest.py`'s fixture rely on.
+    """
+
     kind: str
     root: str | None = None
     endpoint: str | None = None
     bucket: str | None = None
+    run: str | None = None
+    case: str | None = None
 
     @property
     def checks_sha256(self) -> bool:
         """Whether the store itself refuses bytes whose SHA-256 differs. moto does not."""
-        return self.kind == "folder"
+        return self.kind in ("folder", "bucket")
+
+    @property
+    def can_remove(self) -> bool:
+        """Whether `remove` and `overwrite` work. The test role can do neither."""
+        return self.kind != "bucket"
+
+    def key(self, key: str) -> str:
+        """The key a case's `key` is stored under, refused when a test route would hear it."""
+        if self.run is None:
+            return key
+        return _unrouted(f"runs/ci/{self.run}/store/{self.case}/{key}")
+
+    def lease(self, n: int) -> str:
+        """The case's lease number `n`, under the prefix the test role may write leases."""
+        if self.run is None:
+            return f"leases/plans/ci/{n}.json"
+        return _unrouted(f"leases/plans/ci/{self.run}-{self.case}-{n}.json")
 
     def open(self) -> FolderStore | S3Store:
         if self.kind == "folder":
@@ -46,16 +87,17 @@ class StoreSpec:
         return S3Store(self.client(), self.bucket)
 
     def client(self):
+        config = Config(retries={"mode": "standard", "total_max_attempts": 1})
+        if self.kind == "bucket":
+            # The job's own credentials, from the environment.
+            return boto3.client("s3", region_name=REGION, config=config)
         return boto3.client(
-            "s3",
-            endpoint_url=self.endpoint,
-            region_name=REGION,
-            config=Config(retries={"mode": "standard", "total_max_attempts": 1}),
-            **EMULATOR_KEYS,
+            "s3", endpoint_url=self.endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
         )
 
     def remove(self, key: str) -> None:
         """Delete a blob by hand, which no worker can do through the port."""
+        self._refuse_on_the_bucket("delete a blob")
         if self.kind == "folder":
             Path(self.root, key).unlink()
         else:
@@ -63,7 +105,49 @@ class StoreSpec:
 
     def overwrite(self, key: str, data: bytes) -> None:
         """Change a stored blob by hand, around every rule the store keeps."""
+        self._refuse_on_the_bucket("rewrite a blob without a condition")
         if self.kind == "folder":
             Path(self.root, key).write_bytes(data)
         else:
             self.client().put_object(Bucket=self.bucket, Key=key, Body=data)
+
+    def _refuse_on_the_bucket(self, what: str) -> None:
+        if not self.can_remove:
+            raise RuntimeError(f"the test role cannot {what}, so no bucket case may ask to")
+
+
+@cache
+def _routes() -> tuple[Route, ...]:
+    """Every key pattern in infra/test/routes.json, wherever the file's shape puts it."""
+    found: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            for name, inner in value.items():
+                if name == "pattern":
+                    for entry in inner:
+                        if set(entry) != {"wildcard"}:
+                            raise ValueError(
+                                f"routes.json holds a pattern the store suite cannot read: {entry}"
+                            )
+                        found.append(entry["wildcard"])
+                else:
+                    walk(inner)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner)
+
+    walk(json.loads(ROUTES_FILE.read_text()))
+    if not found:
+        raise ValueError(
+            f"{ROUTES_FILE} holds no key pattern, so the store suite cannot check its keys"
+        )
+    return tuple(Route("store-suite", EventKind.CREATED, pattern) for pattern in found)
+
+
+def _unrouted(key: str) -> str:
+    """Refuse a key a test route hears, which would put a message on a queue a suite reads."""
+    for route in _routes():
+        if route.matches(EventKind.CREATED, key):
+            raise ValueError(f"{key} matches the test route {route.key}, so a queue would hear it")
+    return key

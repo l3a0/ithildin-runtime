@@ -152,9 +152,10 @@ jobs:
           sleep 60
 
       # With nothing collected, pytest exits 5, so the job fails rather than passing
-      # empty.
+      # empty. `-v` names each case with its outcome, so the log shows which ran on
+      # the test bucket, where `-ra` alone lists only the cases that did not pass.
       - name: Run the suites against the test environment
-        run: uv run pytest -m aws
+        run: uv run pytest -m aws -v
         env:
           ITHILDIN_TEST_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
 
