@@ -1,0 +1,5 @@
+# Chan's Bollinger band on the price spread between GLD and USO, which
+# acceptance test 1 on issue 4 replicates. docs/architecture/01-introduction-and-goals.md
+# describes it. The data, alpha, risk, cost and portfolio construction modules
+# each add a section of their own, whose form their issues own.
+instruments = ["GLD", "USO"]

@@ -435,9 +435,9 @@ Ten entries define the design's terms.
    backtest it is the whole span.
 7. A component's **listing** is its stages' blobs, listed by decision. Each
    blob's header names the run, the decision, and every input blob it was made
-   from, by key and SHA-256, along with the release's digest and a hash of the
-   configuration, so the listing is the component's record and each entry in
-   it leads back to its inputs.
+   from, by key and SHA-256, along with the release's digest and the hash of
+   each strategy's configuration the blob concerns, so the listing is the
+   component's record and each entry in it leads back to its inputs.
 8. A **decision** is one moment at which a deployment decides, such as close−20
    on one trading day for a daily strategy, or every five minutes through the
    day for a faster one. Its key is the decision time in UTC, written so keys sort in time order. Every stage writes one result
@@ -657,7 +657,7 @@ change` says.
 
 **Each blob names what made it.** Its header names its run, its decision,
 its kind, output or halt, its format version, every input blob by key and
-SHA-256, the release's digest and a hash of the configuration. A reader
+SHA-256, the release's digest and the hash of each strategy's configuration the blob concerns. A stage that belongs to one strategy, such as its alpha stage, names that strategy's hash alone. A stage the deployment's strategies share, such as data's or execution's, names every strategy's, because it reads the account's book, which carries every strategy's positions. So a change to one strategy's file leaves every other strategy's blobs naming the same version. A reader
 checks each input's SHA-256 against the header that named it and halts on
 a mismatch. Nothing irreversible rests on an upstream blob alone: execution
 journals the whole target portfolio it acts on, in a journal entry, before
@@ -1859,6 +1859,19 @@ changing a shared module.
 4. Its alpha model, run as a stage of its own named for the strategy, so two
    strategies' forecasts never share a key.
 5. Its configuration, whose hash every blob it touches records.
+
+The instruments and every tracked setting a strategy's decisions depend on,
+a shared module's setting included, are written in one TOML file per
+strategy, `src/ithildinruntime/strategies/<strategy>.toml`, so its hash, the
+SHA-256 of the file's bytes, covers them all. Each module's section of the
+file, such as `[alpha]` or `[cost]`, has its form set on that module's
+issue. The release carries the files, so they are identical in backtest,
+shadow, paper and live. A deployment names the strategies it runs, and
+`core`'s reader loads only those, so the table's strategy rows carry what
+the reader read, and adding a strategy adds a file and rows, never a change
+to a shared module. A stage that belongs to one strategy is named
+`<component>/<strategy>`, and every other stage is shared by the
+deployment's strategies.
 6. Its alias, up to twelve lower case letters and digits, which its orders' stamp carries. This item is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 A run in shadow, paper and live is one trading day of one deployment. One
@@ -2155,7 +2168,10 @@ finds it there.
    combining forecasts, including what a strategy not deciding at a given
    time contributes, waits for a second strategy. A forecast from an earlier
    decision names the wrong decision, so it halts as [an absent, stale or empty input](#rule-6-an-absent-stale-or-empty-input-halts) does until the rule
-   for combining forecasts is written.
+   for combining forecasts is written. Strategies on different schedules wait
+   for the same rule: every stage halts at a decision whose strategies are not
+   exactly the deployment's, so two strategies share a deployment only while
+   they decide at the same times.
 2. **A halt that holds a shadow or paper account until a person clears
    it**, for every cause but the three [A halt is final for its decision](#rule-7-a-halt-is-final-for-its-decision) names for shadow and paper. Slice 1
    builds the one holding-halt check for every cause, because live holds on
@@ -3444,7 +3460,7 @@ glossing it.
 | **receive loop** | The one event loop in each worker, and in the supervisor, that reads its queue and hands each item, a stage and a decision, to a free handler. [How a component learns of a change](#how-a-component-learns-of-a-change) gives its rules |
 | **handler** | One thread of a worker's pool, which works on one item at a time, independently of the worker's other handlers |
 | **event** | The store's announcement that a blob was created or deleted, which reaches the queue of every component that reads it. An event is a hint, and the blob is the record |
-| **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release and configuration, so the listing is the component's record |
+| **listing** | A component's stages' blobs, listed by decision. Each blob's header names its run, decision, inputs by key and SHA-256, release, and the hash of each strategy's configuration the blob concerns, so the listing is the component's record |
 | **plan** | The blob the supervisor writes once per run, naming the run's mode and its decisions in order |
 | **queue** | The one place a worker listens for events: SQS in shadow, paper and live, and a named pipe in a backtest and in CI. A worker waits on it by long polling the queue and never reads storage on a clock, apart from monitoring's one read under [How a sort runs](halts-and-drills.md#how-a-sort-runs) |
 | **supervisor** | The process that writes a run's plan under the plan's lease, whose event reaches every worker, hears the workers' heartbeats and the kill switch as events, starts each stage's deadline when it hears that stage's last input, writes a halt as a worker's result when the worker fails, and stores a halt of the run on such a failure, whose event reaches every worker. It starts, stops and watches no process, and keeps no state outside storage. A deployment runs several supervisor instances, which take the plan's lease to change the run and compete for the supervisor's queue |
@@ -3515,6 +3531,7 @@ withdrawal or transfer permission and how that was checked.
 | The owner's sign-in to the management account, the IAM user `ithildin-owner` | Its console password, which the owner holds, with an MFA device. It has no access key | The management account. `aws login` keeps a short-lived session on the laptop | The owner's AWS CLI profile for the test account, as its source | Assume the test account's `OrganizationAccountAccessRole`, and sign in through `aws login`. Nothing else |
 | The budget alarm's address | No | The SNS subscription the owner writes by hand on the test account's alarm topic, `ithildin-test-alarms` | AWS Budgets, through the topic | Receive the alarm |
 | `ITHILDIN_TEST_RUN` | No | The `aws` job's environment, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` joined by a hyphen | `tests/aws/` | Name the run's own keys |
+| Each strategy's configuration, `<strategy>.toml` | No. It holds no secret and no cap | `src/ithildinruntime/strategies/`, a tracked folder the release carries | `core`'s strategy reader, at each worker's start, for the strategies its deployment names | Set the strategy's instruments and each module's settings for it. The SHA-256 of its bytes is the hash every blob of the strategy records |
 
 ## Decisions
 
@@ -3883,6 +3900,7 @@ This section lists every decision made on the project, oldest first, one heading
 2. The owner said "ok" to a capture S3 answered and can never store holding the process until a person acts, because a capture cannot be recaptured. Turned down: dropping it with an alarm, as a halt is. The price is a process that holds a host slot until a person acts. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079841319) Governs: `### How a component learns of a change` in design.md.
 3. The owner said "ok" to dropping a halt S3 answered and will not store, such as one whose key holds bytes nothing reads or another result, with an alarm, and recording its reason in the loop's final error. Turned down: holding the process until a person acts, as a capture does. The price is that the halt's own blob is never written, so its reason survives only in the alarm and in the host's restart record. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079841319) Governs: `### How a component learns of a change` in design.md and `### Alarms on operations` in halts-and-drills.md.
 4. The owner said "Yes, split it" to moving the test account's budget alarm drill out of [#78](https://github.com/l3a0/ithildin-runtime/issues/78) into its own issue, [#98](https://github.com/l3a0/ithildin-runtime/issues/98), and closing [#78](https://github.com/l3a0/ithildin-runtime/issues/78) by hand. [#78](https://github.com/l3a0/ithildin-runtime/issues/78)'s environment is applied, its rollback drill passed, and the budget drill cannot start until the month's spend passes 0.01 US dollars, so [#78](https://github.com/l3a0/ithildin-runtime/issues/78) was holding [#88](https://github.com/l3a0/ithildin-runtime/issues/88) and [#91](https://github.com/l3a0/ithildin-runtime/issues/91) back for a step that waits only on the month's spend. Turned down: keeping [#78](https://github.com/l3a0/ithildin-runtime/issues/78) open until the drill passes. The price is that [#88](https://github.com/l3a0/ithildin-runtime/issues/88) and [#91](https://github.com/l3a0/ithildin-runtime/issues/91) can land before the test account's budget alarm has sent its email once, until [#98](https://github.com/l3a0/ithildin-runtime/issues/98)'s drill passes. Relayed from the owner's chat of 2026-11-22, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7080427933). Governs: `### Alarms on operations` and `### How a drill counts toward a gate` in halts-and-drills.md, `##### When each environment runs its drills` in architecture/07-deployment.md and `#### Drill the budget alarm` in what-a-person-runs.md.
+5. The owner ruled that a deployment supports any number of strategies from the start, and that the configuration hash a blob records is one per strategy rather than one per worker. Turned down: one hash per worker, which would write one strategy's hash on another strategy's halt once a worker serves stages of two. The header holds the hashes as a map from each strategy the blob concerns to the SHA-256 of that strategy's file, which is the form [#102](https://github.com/l3a0/ithildin-runtime/issues/102) recommends to the owner and builds. The price is about 90 bytes per strategy in a shared stage's header. [#102](https://github.com/l3a0/ithildin-runtime/issues/102#issuecomment-7082410822) Governs: `### Rule 5: each blob names what made it` and `### Strategies, schedules and decisions` in design.md, and `BlobHeader` in architecture/05-building-blocks.md.
 
 ## Considered and rejected
 

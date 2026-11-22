@@ -140,7 +140,7 @@ def _header(decision_at: datetime = AT, stage: str = "data") -> BlobHeader:
         decision_at=decision_at,
         inputs={},
         release="sha256:release",
-        config_hash="0" * 64,
+        config_hashes={"chan": "0" * 64},
     )
 
 

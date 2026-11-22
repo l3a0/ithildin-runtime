@@ -103,7 +103,7 @@ erDiagram
         string halt_reason
         string halt_cause
         string release
-        string config_hash
+        string config_hashes
         datetime stored_at
     }
     OUTPUT_FILE {

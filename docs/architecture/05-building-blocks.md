@@ -451,7 +451,7 @@ classDiagram
         +datetime decision_at
         +dict inputs
         +str release
-        +str config_hash
+        +dict config_hashes
     }
     class DecisionResult {
         +BlobHeader header
