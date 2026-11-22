@@ -90,7 +90,7 @@ from .reference import (
     load_master,
     load_price_kinds,
 )
-from .spikes import spike_flags
+from .spikes import CONTRADICT, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading"]
 
@@ -226,6 +226,7 @@ class LakeSource:
                     found = spike_flags(held, settings.spike_multiple)
                     if found:
                         flags[instrument] = found
+                    halts.extend(_contradicted(instrument, found))
                     halts.extend(_unstated(instrument, held))
             ledgers = {MANIFEST: root.manifest.sha256}
             ledgers.update({k: c.sha256 for k, c in root.files.items() if not _is_bars(k)})
@@ -430,6 +431,19 @@ class LakeSource:
                 f"past the written lag of {allowed}",
             )
         return BarStatus.FRESH, None
+
+
+def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:
+    """A halt for each flag of the contradiction rule, which no real trade produces.
+
+    A flag of the move rule halts nothing, and monitoring alerts on it.
+    """
+    return [
+        f"{instrument}'s bar for {f.session.isoformat()} has prices that contradict each "
+        f"other: its {f.field} of {f.price} against {f.against}"
+        for f in found
+        if f.rule == CONTRADICT
+    ]
 
 
 def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:

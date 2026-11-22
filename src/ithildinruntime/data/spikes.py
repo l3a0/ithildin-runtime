@@ -1,9 +1,11 @@
 """The spike flag on a daily bar: a record beside a price the data module judges wrong.
 
 This doc's rules are a proposal of #5, which the charter's data engineer owns.
-The flag never replaces the price, which stays as it arrived. A flag halts
-nothing. The owner is alerted, and the decision trades on the price as it
-arrived, so a backtest reads a flagged price as a live decision does.
+The flag never replaces the price, which stays as it arrived. A flag from the
+first rule halts the decision, because no real trade produces one, and
+`source.LakeSource.read` adds that halt. A flag from the second rule halts
+nothing: monitoring alerts the owner, which #11 builds, and the decision trades
+on the price as it arrived. A backtest meets both as a live decision does.
 
 1. **A bar whose prices contradict each other is flagged.** That is a high
    below its open, close or low, a low above them, or any price at or below

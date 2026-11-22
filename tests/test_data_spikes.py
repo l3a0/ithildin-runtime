@@ -3,7 +3,7 @@
 Acceptance test 14 on #5. Each flag sits beside a price that stays as it
 arrived. The measurement over the Chan vintages is exploratory: it was found
 by looking at the data, and it says only how large a move those two series
-reach, so a multiple below it halts test 1 on that series.
+reach, so a multiple below it flags a bar of that series in test 1.
 """
 
 from __future__ import annotations

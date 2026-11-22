@@ -18,6 +18,7 @@ import pytest
 from ithildinruntime.adapters import FolderBucket, FolderStore, HistoryClock, S3Bucket, WallClock
 from ithildinruntime.core import (
     Halt,
+    InstrumentId,
     Mode,
     Retry,
     Snapshot,
@@ -27,7 +28,7 @@ from ithildinruntime.core import (
     decode_output,
     output_key,
 )
-from ithildinruntime.data import DataStage, LakeSource, Mirror, differences
+from ithildinruntime.data import DataStage, LakeSource, Mirror, differences, spikes
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
@@ -95,6 +96,31 @@ def test_the_stage_stores_the_snapshot_and_names_it_in_its_result(
     # The price-kind contract states Yahoo's kind for both vintages, so nothing halts.
     assert result.halt is None
     assert alarms.reasons == []
+
+
+def test_a_contradicting_bar_stores_the_snapshot_with_its_flag_then_halts(
+    lake: Path, tmp_path: Path
+) -> None:
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    made, _, _ = stage(lake, tmp_path)
+    result = made(Item(close(LAST), "data"), Reports())
+    (ref,) = result.outputs
+    stored = decode_output((tmp_path / "store" / ref.key).read_bytes(), Snapshot)
+    assert InstrumentId("GLD") in stored.entries[0].flags
+    assert result.halt is not None and result.halt.cause == ref
+    assert "contradict each other" in result.halt.reason
+
+
+def test_a_move_flag_stores_the_snapshot_with_its_flag_and_halts_nothing(
+    lake: Path, tmp_path: Path
+) -> None:
+    lakes.with_row(lake, "GLD", LAST, open=15.937, high=15.937, low=15.937, close=15.937)
+    made, _, _ = stage(lake, tmp_path, spike_multiple=Decimal(10))
+    result = made(Item(close(LAST), "data"), Reports())
+    (ref,) = result.outputs
+    stored = decode_output((tmp_path / "store" / ref.key).read_bytes(), Snapshot)
+    assert [f.rule for f in stored.entries[0].flags[InstrumentId("GLD")]] == [spikes.MOVE]
+    assert result.halt is None
 
 
 def test_a_stale_bar_stores_the_snapshot_then_halts_naming_it(lake: Path, tmp_path: Path) -> None:

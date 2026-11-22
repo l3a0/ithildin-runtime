@@ -22,10 +22,12 @@ things, in order.
    only the read time, so a restatement by marketlake reads apart from a
    redelivery.
 4. **It judges the stored snapshot.** A missing or stale instrument, or a bar
-   of unstated kind, ends the decision with a halt as data's result that
-   names the stored snapshot, as hard limit 3 asks. A spike flag halts
-   nothing. It stays in the stored snapshot beside the price, the owner is
-   alerted, and the decision trades on the price as it arrived.
+   of unstated kind, or a bar whose prices contradict each other, ends the
+   decision with a halt as data's result that names the stored snapshot, as
+   hard limit 3 asks. A close past the written multiple halts nothing. Its
+   flag stays in the stored snapshot beside the price, monitoring alerts the
+   owner, which #11 builds, and the decision trades on the price as it
+   arrived.
 5. **It returns the result**, which the loop stores last. The result lists
    the snapshot that counts first, and the attempt that differed after it.
 """

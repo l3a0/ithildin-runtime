@@ -29,12 +29,19 @@ _YAHOO = (
     "owner's ruling of 2026-11-22 on #5. quantitative-trading data/vintages.jsonl at 19aadbeb "
     "records vendor chan-mat and source_workbook inputData_ETF.mat and names no kind. Chan's "
     "closes equal Yahoo's on all 1500 sessions{split} and his volume is Yahoo's in hundreds of "
-    "shares. Compared with gld_daily_yahoo_2026-11-22.csv at sha256 "
+    "shares{volume}. Compared with gld_daily_yahoo_2026-11-22.csv at sha256 "
     "b6675ed455acf0174854377f8a51061fb18c0b1bf0a9a0f7632ac557b6fcb4f9 and "
     "uso_daily_yahoo_2026-11-22.csv at sha256 "
     "72bb286f57f637c9ef517b98631a68f7e8f2d7869af4935441b555b11f60d561. Yahoo publishes no "
     "statement of its close so official close is the usual meaning of a Yahoo close for a US ETF"
 )
+_VOLUME = {
+    "gld": (
+        " on 1498 of them: it differs on 2012-03-13 where Chan has 0 and Yahoo 20047000 shares"
+        " and on 2012-03-26 where Chan has 132116 hundreds and Yahoo 13226700 shares"
+    ),
+    "uso": "",
+}
 _SPLIT = {
     "gld": "",
     "uso": " after Yahoo's factor of 8 for USO's one-for-eight reverse split of 2020",
@@ -42,7 +49,7 @@ _SPLIT = {
 KIND_ROWS = [
     f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
     f"official close,consolidated,none,consolidated in hundreds of shares,"
-    f"{_YAHOO.format(split=_SPLIT[name])}"
+    f"{_YAHOO.format(split=_SPLIT[name], volume=_VOLUME[name])}"
     for name in ("gld", "uso")
 ]
 
@@ -104,7 +111,7 @@ def test_two_kind_rows_of_one_source_on_one_session_are_refused(tmp_path: Path) 
 
 
 def test_a_later_kind_row_states_what_an_earlier_one_left_unstated(tmp_path: Path) -> None:
-    """The route that unblocks test 1: the owner names Chan's closes in a new dated row."""
+    """A later dated row states what an earlier one left unstated, where both cover a session."""
     silent = "2026-11-22,s,2020-01-02,2020-12-31,unstated,unstated,unstated,unstated,x"
     named = "2026-12-01,s,2020-07-01,2020-12-31,official close,consolidated,none,all,owner"
     path = tmp_path / "kinds.csv"

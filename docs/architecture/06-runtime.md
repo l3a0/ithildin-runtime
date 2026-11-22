@@ -520,7 +520,7 @@ The figure below is a component-level flowchart of the send stage's steps inside
 flowchart TB
     subgraph prepare["Prepare, once per decision"]
         direction LR
-        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>run the stop and flag tests"] --> a4["Step 4<br/>plan and journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
+        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>run the daily loss stop's test"] --> a4["Step 4<br/>plan and journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
     end
     subgraph each["Send, once per order"]
         direction LR
@@ -1169,6 +1169,7 @@ stateDiagram-v2
     note left of Preparing
         Preparing halts when it finds
         data missing, stale or not ready,
+        a price that contradicts itself,
         an unknown stamped fill,
         an unstamped order,
         a fill with no stamp,
@@ -1229,7 +1230,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and a spike flag. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and a price the contradiction rule flags. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
 
 ### When the run stops
 

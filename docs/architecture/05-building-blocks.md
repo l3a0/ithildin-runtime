@@ -770,7 +770,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated`, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
+A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -787,7 +787,7 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 
 A `Quote` keeps the vendor's stamp as received, the capture time, whether the quote was real time, and its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
 
-A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A flag halts nothing, and the price itself stays as received in its bar.
+A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A flag from the contradiction rule halts the decision once its snapshot is stored, and a flag from the move rule halts nothing. The price itself stays as received in its bar.
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 

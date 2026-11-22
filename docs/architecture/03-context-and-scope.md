@@ -221,11 +221,12 @@ bucket, is a published input, and shadow measures the lag.
 
 #### What is checked before deciding
 
-The data worker runs its own minimum checks before anything decides. Three checks halt or flag a decision.
+The data worker runs its own minimum checks before anything decides. Four checks halt or flag a decision.
 
 1. A missing or stale quote at the decision time halts the decision.
 2. A segment whose SHA-256 does not match its manifest entry halts it too.
-3. A price spike is flagged in the snapshot beside the price. The owner is alerted, and the decision trades on the price as it arrived.
+3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
+4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 
 #### Which read a decision uses
 

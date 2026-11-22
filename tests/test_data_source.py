@@ -183,19 +183,41 @@ def test_1_a_snapshot_at_the_close_holds_each_bar_as_received(
         assert all(held[d] == from_received(float(rows[d])) for d in held)
 
 
-def test_1_a_spike_flag_reaches_the_snapshot_beside_the_unchanged_price(
+def test_1_a_contradiction_flag_halts_beside_the_unchanged_price(
     lake: Path, tmp_path: Path
 ) -> None:
+    """No real trade prints a high below its close, so the decision halts."""
     lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
-    reading = make(lake, tmp_path).read(close(LAST))
-    # A flag halts nothing, so the decision goes on to trade on the price.
-    assert reading.halts == ()
+    src = make(lake, tmp_path)
+    reading = src.read(close(LAST))
     snap = reading.snapshot
     assert snap.bars[GLD]["1d"][-1].high == Decimal("150")
     assert [(f.session, f.field, f.rule) for f in snap.flags[GLD]] == [
         (LAST, "high", spikes.CONTRADICT)
     ]
     assert GLD in snap.flags and USO not in snap.flags
+    assert reading.halts == (
+        f"GLD's bar for {LAST.isoformat()} has prices that contradict each other: "
+        "its high of 150.0 against 159.72",
+    )
+    with pytest.raises(Halt, match="contradict each other"):
+        src.snapshot(close(LAST))
+
+
+def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
+    lake: Path, tmp_path: Path
+) -> None:
+    """A close a tenth of the one before is flagged by the move rule alone."""
+    lakes.with_row(lake, "GLD", LAST, open=15.937, high=15.937, low=15.937, close=15.937)
+    src = make(lake, tmp_path, spike_multiple=Decimal(10))
+    reading = src.read(close(LAST))
+    assert reading.halts == ()
+    assert [(f.session, f.field, f.rule) for f in reading.snapshot.flags[GLD]] == [
+        (LAST, "close", spikes.MOVE)
+    ]
+    snap = src.snapshot(close(LAST))
+    assert snap.bars[GLD]["1d"][-1].close == Decimal("15.937")
+    assert snap.flags[GLD][0].rule == spikes.MOVE
 
 
 def test_1_the_ports_snapshot_halts_where_a_stored_snapshot_would(
@@ -297,6 +319,7 @@ def test_4_an_imported_bar_with_fetch_stamps_is_known_from_its_end(
     newest = make(lake, tmp_path).read(close(LAST)).snapshot.bars[GLD]["1d"][-1]
     assert newest.session == LAST and newest.knowable_at == close(LAST)
     assert newest.fetched == later and newest.fetched_end == later
+    assert newest.fetched_end_at == close(LAST) + timedelta(days=3)
 
 
 def test_4_a_captured_bar_reads_its_kind_from_the_capture_row(lake: Path, tmp_path: Path) -> None:
