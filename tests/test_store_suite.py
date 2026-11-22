@@ -88,6 +88,23 @@ def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
     assert sorted((r.kind, r.key) for r in stores._routes(path)) == sorted(
         (r.kind, r.key) for r in routes
     )
+    # A delete route hears a key the bucket's expiry removes, so its keys are refused too.
+    with pytest.raises(ValueError, match=r"c/\*"):
+        stores._unrouted("c/key.json", path)
+    assert stores._unrouted("d/key.json", path) == "d/key.json"
+
+    # A rule may list several kinds and several key patterns, and each pair is a route.
+    wide = json.loads(json.dumps(rules))
+    wide["rules"][0]["pattern"]["detail-type"] = ["Object Created", "Object Deleted"]
+    wide["rules"][0]["pattern"]["detail"]["object"]["key"] = [
+        {"wildcard": "e/*"},
+        {"wildcard": "f/*"},
+    ]
+    wide_path = tmp_path / "routes-wide.json"
+    wide_path.write_text(json.dumps(wide))
+    assert {(r.kind, r.key) for r in stores._routes(wide_path)} >= {
+        (kind, key) for kind in (EventKind.CREATED, EventKind.REMOVED) for key in ("e/*", "f/*")
+    }
 
     def with_keys(entries: list) -> dict:
         changed = json.loads(json.dumps(rules))
@@ -102,6 +119,7 @@ def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
 
     for body, words in (
         (with_key({"prefix": "runs/"}), "cannot read"),
+        (with_key({"wildcard": "a/*", "prefix": "a/"}), "cannot read"),
         (with_keys([]), "cannot read"),
         (
             {
@@ -117,6 +135,7 @@ def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
         (with_pattern([{"wildcard": "a/*"}]), "cannot read"),
         (with_pattern({"source": ["aws.s3"]}), "cannot read"),
         ({"queues": [{"reader": "smoke"}], "rules": []}, "holds no key pattern"),
+        ([{"pattern": [{"wildcard": "a/*"}]}], "holds no rules"),
     ):
         path = tmp_path / f"routes-{words.replace(' ', '-')}.json"
         path.write_text(json.dumps(body))

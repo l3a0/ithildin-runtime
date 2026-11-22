@@ -139,7 +139,10 @@ def _routes(path: Path = ROUTES_FILE) -> tuple[Route, ...]:
     the store suite cannot read, so it refuses the file rather than skip a route.
     """
     found: list[Route] = []
-    for rule in json.loads(path.read_text()).get("rules", []):
+    document = json.loads(path.read_text())
+    if not isinstance(document, dict):
+        raise ValueError(f"{path} holds no rules, so the store suite cannot check its keys")
+    for rule in document.get("rules", []):
         pattern = rule.get("pattern") if isinstance(rule, dict) else None
         try:
             kinds = pattern["detail-type"]
@@ -162,9 +165,13 @@ def _routes(path: Path = ROUTES_FILE) -> tuple[Route, ...]:
     return tuple(found)
 
 
-def _unrouted(key: str) -> str:
-    """Refuse a key a test route hears, which would put a message on a queue a suite reads."""
-    for route in _routes():
-        if route.matches(EventKind.CREATED, key):
+def _unrouted(key: str, path: Path = ROUTES_FILE) -> str:
+    """Refuse a key a test route hears, which would put a message on a queue a suite reads.
+
+    A route of either kind counts. A delete route hears a key too, when the
+    bucket's one-day expiry removes it.
+    """
+    for route in _routes(path):
+        if route.matches(route.kind, key):
             raise ValueError(f"{key} matches the test route {route.key}, so a queue would hear it")
     return key
