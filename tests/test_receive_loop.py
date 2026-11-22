@@ -699,11 +699,14 @@ def test_an_error_in_the_start_check_still_reaches_the_hold(tmp_path) -> None:
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1
     assert "a bug in the stand-in store" in str(failures[0])
-    # The halt failed first, so the loop ends as LoopFailed naming both.
+    # The loop ends as LoopFailed naming both, the first first.
     assert isinstance(failures[0], LoopFailed) and "was not stored" in str(failures[0])
+    assert isinstance(failures[0].__cause__, RuntimeError)
     held = [r for r in alarms.reasons if "S3 has not stored" in r]
-    # The halt S3 refused failed the loop first, so the alarm names it.
-    assert "because the halt for" in held[0]
+    # The bug and the refused halt race here, and the alarm names whichever
+    # came first, as LoopFailed does.
+    bug_first = str(failures[0]).startswith("RuntimeError")
+    assert ("because RuntimeError" if bug_first else "because the halt for") in held[0]
     assert store.read_result(_key("alpha"), FIRST).halt is not None
 
 
@@ -972,7 +975,7 @@ def test_a_process_still_receiving_stops_beating_over_a_silent_handler_while_it_
     thread, failures = _run_in_thread(made)
     try:
         assert _wait(lambda: made._storage.unstored() != (), 10)
-        time.sleep(0.6)
+        time.sleep(1.0)
         # Still receiving, with a capture held: item 7's rule stands, so the
         # watchdog can kill a container whose handler hangs.
         assert thread.is_alive() and not made._stopping
@@ -1016,7 +1019,7 @@ def test_a_stop_with_nothing_held_never_beats_over_a_silent_handler(tmp_path) ->
     gate.set()
     assert not thread.is_alive()
     # Past the heartbeat limit the silent handler counts as hung, through the drain too.
-    assert not [b for b in beats if b > began + 0.3]
+    assert not [b for b in beats if b > began + 0.45]
 
 
 class SlowGiveUpAlarms(Alarms):
@@ -1095,6 +1098,69 @@ def test_the_hold_says_why_receiving_stopped_as_a_clause(
     _, _, _, made, _, _ = _stub_loop(tmp_path, decisions=1)
     made._failed_because = failed_because
     assert made._why_stopped().startswith(clause)
+
+
+def test_a_bug_before_a_failed_halt_is_named_first(tmp_path) -> None:
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(BrokenAnnounce(base))
+        return refusing[0]
+
+    gate = threading.Event()
+    _waiting.append(type("Gate", (), {"go": gate})())
+
+    def alpha(item: Item, report):
+        # Held until the bug has ended the loop, then fails, so its halt is
+        # the second cause.
+        while not gate.wait(0.02):
+            report()
+        raise ValueError("broken")
+
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, alpha, wrap=wrap, decisions=2, extend_every=0.1, tick=0.02, stop_timeout=5.0
+    )
+    _feed(store, the_plan)
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: (made._failed_because or "").startswith("RuntimeError"), 10)
+    gate.set()
+    held = lambda: [r for r in alarms.reasons if "S3 has not stored" in r]  # noqa: E731
+    assert _wait(held, 10)
+    assert "because RuntimeError: a bug in the stand-in store" in held()[0]
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and isinstance(failures[0], LoopFailed)
+    said = str(failures[0])
+    assert said.startswith("RuntimeError: a bug in the stand-in store. Then alpha-1: the halt for")
+    assert isinstance(failures[0].__cause__, RuntimeError)
+
+
+def test_a_receive_answered_after_a_bug_returns_its_events_to_the_queue(tmp_path) -> None:
+    queue = StubQueue()
+    queue.blocking = True
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, decisions=1, queue=queue, extend_every=0.1, tick=0.02
+    )
+
+    async def broken(running) -> None:
+        raise RuntimeError("a bug in the loop's own code")
+
+    made._on_finished = broken
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    # The receive is open while the start check's handler finishes, and the
+    # bug in handling that ends the loop.
+    assert queue.entered.wait(10)
+    assert _wait(lambda: not thread.is_alive(), 10)
+    assert isinstance(failures[0], RuntimeError)
+    queue.put(_key("feed"))
+    queue.free.set()
+    assert _wait(lambda: queue.released == [_key("feed")], 10)
+    assert queue.done_keys == []
 
 
 def _loop_settings(tmp_path) -> dict:

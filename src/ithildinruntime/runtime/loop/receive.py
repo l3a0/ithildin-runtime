@@ -57,18 +57,21 @@ How the loop runs, in order.
    container with a hung handler, except while item 9 holds. Extending a
    message runs beside the beat, so a slow queue call never holds the
    heartbeat back.
-8. **Ending drains the pool.** However the loop ends, by `stop` or by a
-   failure, it stops receiving and gives each handler the stop timeout to
-   finish, beating by item 7's rule. A message whose handler did not finish
-   goes back to the queue. A handler still working when the stop timeout
-   passes ends with the process, as in a crash, and its decision is done
-   again after the restart, unless item 9 keeps the process alive.
+8. **Ending drains the pool.** However the loop ends, by `stop`, by a
+   failure or by a bug, it stops receiving and gives each handler the stop
+   timeout to finish. It beats by item 7's rule, or by item 9's once
+   something is held. A message whose handler did not finish goes back to
+   the queue, and so does one a receive answers after the loop stopped. A
+   handler still working when the stop timeout passes ends with the
+   process, as in a crash, and its decision is done again after the
+   restart, unless item 9 keeps the process alive.
 9. **A process that holds what S3 has not stored stays alive.** After the
    drain it retries each halt it could not store and each capture the
    storage contract holds every `extend_every`, quietly, since the first
-   refusal alarmed. It beats whatever its handlers do, so the host's watchdog
-   does not kill it, and it alarms naming each blob and why receiving
-   stopped, again until the alert channel takes it. This doc proposes that a
+   refusal alarmed. From the moment receiving stops it beats whatever its
+   handlers do, so the host's watchdog does not kill it, and it alarms
+   naming each blob and why receiving stopped, again until the alert
+   channel takes it. This doc proposes that a
    halt S3 answered and will not store, such as one whose key holds another
    result, is dropped with an alarm giving its reason. A capture is never
    dropped. `run` returns or raises only once nothing is held. The price is
@@ -234,6 +237,8 @@ class ReceiveLoop:
         self._stopping = False
         self._failure: BaseException | None = None
         self._failed_because: str | None = None
+        # What ended the loop, in the order it happened, for LoopFailed.
+        self._causes: list[str] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._inbox: asyncio.Queue | None = None
         self._ready = threading.Event()
@@ -271,18 +276,18 @@ class ReceiveLoop:
         try:
             asyncio.run(self._main())
         except Exception as error:
-            if self._failure is None and not self._dropped:
+            # A halt is dropped only after a failure, so a bug alone is raised
+            # as it is.
+            if self._failure is None:
                 raise
-            # A bug after a failure, or with a halt dropped, still ends as
-            # LoopFailed naming all of them, for the host's restart record.
-            reason = f"{type(error).__name__}: {error}"
-            if self._failure is not None:
-                reason = f"{self._failed_because or self._failure}. Then {reason}"
+            # A bug and a failure both end as LoopFailed naming each in the
+            # order it happened, for the host's restart record.
+            reason = ". Then ".join(self._causes)
             if self._dropped:
                 reason += ". Halts not stored: " + "; ".join(self._dropped)
             raise LoopFailed(reason) from error
         if self._failure is not None:
-            reason = self._failed_because or str(self._failure)
+            reason = ". Then ".join(self._causes) or str(self._failure)
             if self._dropped:
                 reason += ". Halts not stored: " + "; ".join(self._dropped)
             raise LoopFailed(reason) from self._failure
@@ -310,7 +315,10 @@ class ReceiveLoop:
         """End the loop with `LoopFailed`, from the event loop's thread."""
         if self._failure is None:
             self._failure = error
-            self._failed_because = what
+            self._causes.append(what or str(error))
+            # A bug may have ended the loop first, and the first cause stands.
+            if self._failed_because is None:
+                self._failed_because = what
         self._stopping = True
         assert self._inbox is not None
         self._inbox.put_nowait(("stop", None))
@@ -356,8 +364,10 @@ class ReceiveLoop:
             # A bug, which ends the loop as a failure does, and which the
             # hold's alarm names.
             self._stopping = True
+            bug = f"{type(error).__name__}: {error}"
+            self._causes.append(bug)
             if self._failed_because is None:
-                self._failed_because = f"{type(error).__name__}: {error}"
+                self._failed_because = bug
             raise
         finally:
             ticker.cancel()
