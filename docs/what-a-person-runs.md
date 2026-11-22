@@ -395,12 +395,16 @@ The test environment is the bucket, queues and roles that CI's `aws` job runs th
 
 #### Reach the test account
 
-Every command below runs as `OrganizationAccountAccessRole`, which AWS Organizations creates in each account it creates, and which the test bucket's policy admits. One way is an AWS CLI profile in `~/.aws/config` that assumes the role from the management account's credential, used with `export AWS_PROFILE=<profile>`.
+Every command below runs as `OrganizationAccountAccessRole`, which AWS Organizations creates in each account it creates, and which the test bucket's policy admits. AWS refuses to let a root sign-in assume a role, so the role is reached from an IAM user in the management account, `ithildin-owner`.
+
+1. The user holds two grants and no access key. One is `sts:AssumeRole` on the test account's `OrganizationAccountAccessRole`, and the other is AWS's managed `SignInLocalDevelopmentAccess`, which `aws login` needs. The owner sets its console password and MFA device in the IAM console.
+2. `aws login --profile ithildin-owner` signs it in from the laptop, through the browser, with no long-lived secret on disk.
+3. An AWS CLI profile in `~/.aws/config` assumes the role from it, used with `export AWS_PROFILE=<profile>`.
 
 ```ini
 [profile <profile>]
 role_arn = arn:aws:iam::<test account id>:role/OrganizationAccountAccessRole
-source_profile = <management account profile>
+source_profile = ithildin-owner
 region = us-east-1
 ```
 
