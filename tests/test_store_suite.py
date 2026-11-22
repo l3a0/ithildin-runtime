@@ -33,10 +33,13 @@ from ithildinruntime.core import (
     BlobMissing,
     ChecksumMismatch,
     Conflict,
+    EventKind,
     KeyExists,
+    Route,
     StaleTag,
     sha256_of,
 )
+from ithildinruntime.runtime.loop import QueueSettings, routes_file
 from tests.support.stores import TEST_BUCKET, StoreSpec
 
 # The key a case uses, which `spec.key` puts under the case's own prefix.
@@ -77,17 +80,43 @@ def test_a_key_a_test_route_would_hear_is_refused() -> None:
 def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
     from tests.support import stores
 
-    # The shape #91 gives the file, with queues and rules listed apart.
-    rules = {
-        "queues": [{"reader": "alpha", "visibility_timeout_seconds": 30}],
-        "rules": [{"name": "alpha-0", "reader": "alpha", "pattern": [{"wildcard": "a/*/b"}]}],
-    }
+    # The file `routes_file` writes, each rule's pattern as `event_pattern` builds it.
+    routes = [Route("alpha", EventKind.CREATED, "a/*/b"), Route("alpha", EventKind.REMOVED, "c/*")]
+    rules = json.loads(routes_file(routes, {"alpha": QueueSettings(30, 3)}, "bucket"))
     path = tmp_path / "routes-rules.json"
     path.write_text(json.dumps(rules))
-    assert [route.key for route in stores._routes(path)] == ["a/*/b"]
+    assert sorted((r.kind, r.key) for r in stores._routes(path)) == sorted(
+        (r.kind, r.key) for r in routes
+    )
+
+    def with_keys(entries: list) -> dict:
+        changed = json.loads(json.dumps(rules))
+        changed["rules"][0]["pattern"]["detail"]["object"]["key"] = entries
+        return changed
+
+    def with_key(entry: object) -> dict:
+        return with_keys([entry])
+
+    def with_pattern(pattern: object) -> dict:
+        return {"rules": [{"name": "a", "reader": "a", "pattern": pattern}]}
+
     for body, words in (
-        ([{"pattern": [{"prefix": "runs/"}]}], "cannot read"),
-        ([{"reader": "smoke"}], "holds no key pattern"),
+        (with_key({"prefix": "runs/"}), "cannot read"),
+        (with_keys([]), "cannot read"),
+        (
+            {
+                "rules": [
+                    {
+                        **rules["rules"][0],
+                        "pattern": {**rules["rules"][0]["pattern"], "detail-type": []},
+                    }
+                ]
+            },
+            "cannot read",
+        ),
+        (with_pattern([{"wildcard": "a/*"}]), "cannot read"),
+        (with_pattern({"source": ["aws.s3"]}), "cannot read"),
+        ({"queues": [{"reader": "smoke"}], "rules": []}, "holds no key pattern"),
     ):
         path = tmp_path / f"routes-{words.replace(' ', '-')}.json"
         path.write_text(json.dumps(body))
