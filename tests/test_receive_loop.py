@@ -254,10 +254,12 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     thread, failures = _run_in_thread(made)
 
     def holding() -> list[str]:
-        return [r for r in alarms.reasons if "stopped receiving" in r]
+        return [r for r in alarms.reasons if "S3 has not stored" in r]
 
     assert _wait(holding, 10)
     assert _key("alpha") in holding()[0]
+    assert "because the halt for" in holding()[0] and "alpha-1 holds 1 blob " in holding()[0]
+    assert "unless the host kills it first, which loses them" in holding()[0]
     if ends == "raises":
         # The handler's own error is sent even though its halt is not stored.
         assert any("did not handle: ValueError: broken" in r for r in alarms.reasons)
@@ -314,10 +316,11 @@ def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -
     thread, failures = _run_in_thread(made)
     assert _wait(lambda: (folder.root / _key("alpha")).exists(), 10)
     made.stop()
-    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
     assert _holds_alive(thread, beats)
-    holding = [r for r in alarms.reasons if "stopped receiving" in r]
+    holding = [r for r in alarms.reasons if "S3 has not stored" in r]
     assert len(holding) == 1 and capture in holding[0]
+    assert "because it was asked to stop" in holding[0]
     assert not (folder.root / capture).exists()
     refusing[0].down = False
     thread.join(10)
@@ -325,11 +328,55 @@ def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -
     assert (folder.root / capture).exists() and made._storage.unstored() == ()
 
 
-def test_a_handler_that_outlives_the_stop_timeout_is_waited_for_and_its_capture_kept(
+def test_a_handler_past_the_stop_timeout_ends_with_the_process_and_the_drain_beats(
     tmp_path,
 ) -> None:
     import time
 
+    started = threading.Event()
+    finished = threading.Event()
+
+    def alpha(item: Item, report):
+        # Works past the stop timeout, reporting as it goes.
+        started.set()
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            report()
+            time.sleep(0.02)
+        finished.set()
+        raise Halt("the stand-in finished too late to matter")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        stop_timeout=0.8,
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert started.wait(10)
+    stopped = time.monotonic()
+    made.stop()
+    thread.join(5)
+    ended = time.monotonic()
+    # The drain gave the handler the stop timeout, and no more, since it held
+    # nothing yet. Its decision is done again after the restart.
+    assert not thread.is_alive() and not failures and not finished.is_set()
+    assert 0.7 < ended - stopped < 2.0
+    # The beat went on through the drain while the handler reported.
+    during = [b for b in beats if stopped <= b <= ended]
+    gaps = [later - earlier for earlier, later in zip([stopped, *during], during, strict=False)]
+    assert gaps and max(gaps) < 0.4
+    assert not any("S3 has not stored" in r for r in alarms.reasons)
+
+
+def test_after_a_failure_a_handler_finishing_within_the_stop_timeout_has_its_capture_kept(
+    tmp_path,
+) -> None:
     from ithildinruntime.core import StageKind, output_key
 
     refusing: list = []
@@ -338,47 +385,46 @@ def test_a_handler_that_outlives_the_stop_timeout_is_waited_for_and_its_capture_
         refusing.append(Refusing(base, creates=("/alpha/capture.json",)))
         return refusing[0]
 
+    queue = StubQueue()
     holder: dict = {}
     capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
     started = threading.Event()
+    go = threading.Event()
 
     def alpha(item: Item, report):
-        # Works past the stop timeout, reporting as it goes, then captures.
         started.set()
-        end = time.monotonic() + 1.5
-        while time.monotonic() < end:
+        while not go.wait(0.02):
             report()
-            time.sleep(0.02)
         holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
         raise AssertionError("put should halt while S3 refuses the capture")
 
-    beats: list[float] = []
+    beats: list = []
     folder, the_plan, store, made, _, alarms = _stub_loop(
         tmp_path,
         alpha,
         wrap=wrap,
         decisions=1,
+        queue=queue,
         extend_every=0.1,
         tick=0.02,
-        stop_timeout=0.8,
-        beat=lambda: beats.append(time.monotonic()),
+        stop_timeout=5.0,
+        beat=lambda: beats.append(None),
     )
     holder["store"] = made._storage
     _feed(store, the_plan)
     thread, failures = _run_in_thread(made)
     assert started.wait(10)
-    stopped = time.monotonic()
-    made.stop()
-    assert _wait(lambda: any(capture in r for r in alarms.reasons if "stopped receiving" in r), 10)
-    # The beat went on through the drain and the wait, while the handler reported.
-    during = [b for b in beats if b >= stopped]
-    gaps = [later - earlier for earlier, later in zip([stopped, *during], during, strict=False)]
-    # A drain longer than this gap shows a beat missing from it.
-    assert gaps and max(gaps) < 0.4
-    assert thread.is_alive() and not (folder.root / capture).exists()
+    # The queue fails while the handler works, so the loop stops receiving.
+    queue.error = KeyError("ReceiptHandle")
+    assert _wait(lambda: any("KeyError" in r for r in alarms.reasons), 10)
+    go.set()
+    holding = lambda: [r for r in alarms.reasons if "S3 has not stored" in r]  # noqa: E731
+    assert _wait(lambda: holding(), 10) and capture in holding()[0]
+    assert "KeyError" in holding()[0]
+    assert _holds_alive(thread, beats) and not failures
     refusing[0].down = False
     thread.join(10)
-    assert not thread.is_alive() and not failures
+    assert not thread.is_alive() and len(failures) == 1
     assert (folder.root / capture).exists() and made._storage.unstored() == ()
 
 
@@ -413,13 +459,15 @@ def test_a_held_halt_that_s3_answers_but_cannot_store_is_dropped_with_its_reason
     )
     _feed(store, the_plan)
     thread, failures = _run_in_thread(made)
-    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
     refusing[0].garble = True
     thread.join(10)
     assert not thread.is_alive()
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     dropped = [r for r in alarms.reasons if "could not be stored" in r]
     assert len(dropped) == 1 and _key("alpha") in dropped[0] and "broken" in dropped[0]
+    # LoopFailed carries it too, for the host's restart record.
+    assert "Halts not stored" in str(failures[0]) and "broken" in str(failures[0])
 
 
 def test_a_held_halt_whose_key_comes_to_hold_another_result_alarms_with_its_reason(
@@ -439,7 +487,7 @@ def test_a_held_halt_whose_key_comes_to_hold_another_result_alarms_with_its_reas
     )
     _feed(store, the_plan)
     thread, failures = _run_in_thread(made)
-    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
     # Another writer, such as the supervisor, stores its own halt at the key.
     stage = made._table.stage("alpha")
     theirs = made._halt_result(stage, Item(FIRST, "alpha"), Halt("the supervisor halted it"))
@@ -450,6 +498,7 @@ def test_a_held_halt_whose_key_comes_to_hold_another_result_alarms_with_its_reas
     assert store.read_result(_key("alpha"), FIRST).halt.reason == "the supervisor halted it"
     found = [r for r in alarms.reasons if "found another result" in r]
     assert len(found) == 1 and "broken" in found[0]
+    assert "which stands: the supervisor halted it" in found[0]
 
 
 class FailingAlarms(Alarms):
@@ -461,7 +510,7 @@ class FailingAlarms(Alarms):
         self.refused = 0
 
     def alarm(self, reason: str) -> None:
-        if self.down and "stopped receiving" in reason:
+        if self.down and "S3 has not stored" in reason:
             self.refused += 1
             raise ConnectionError("the alert channel is down")
         super().alarm(reason)
@@ -494,11 +543,11 @@ def test_the_hold_sends_its_alarm_again_until_the_channel_takes_it(tmp_path) -> 
     assert _wait(lambda: alarms.refused >= 2, 10)
     assert _holds_alive(thread, beats)
     alarms.down = False
-    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
     refusing[0].down = False
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1
-    assert len([r for r in alarms.reasons if "stopped receiving" in r]) == 1
+    assert len([r for r in alarms.reasons if "S3 has not stored" in r]) == 1
 
 
 def test_a_beat_that_raises_never_ends_the_hold(tmp_path) -> None:
@@ -519,7 +568,7 @@ def test_a_beat_that_raises_never_ends_the_hold(tmp_path) -> None:
     )
     _feed(store, the_plan)
     thread, failures = _run_in_thread(made)
-    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
     __import__("time").sleep(0.5)
     assert thread.is_alive() and not failures
     refusing[0].down = False
@@ -547,8 +596,53 @@ def test_one_halt_s3_still_refuses_does_not_hold_back_another(tmp_path) -> None:
     # S3 still refuses the halt the process holds first, and takes the other.
     still, other = made._held_keys()
     refusing[0].only = still
-    assert _wait(lambda: (folder.root / other).exists(), 10)
-    assert thread.is_alive() and made._held_keys() == [still]
+    assert _wait(lambda: made._held_keys() == [still], 10)
+    assert thread.is_alive() and (folder.root / other).exists()
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+
+
+class SlowAlarms(Alarms):
+    """An alert channel that takes 0.6 seconds over the hold's alarm."""
+
+    def alarm(self, reason: str) -> None:
+        if "S3 has not stored" in reason:
+            __import__("time").sleep(0.6)
+        super().alarm(reason)
+
+
+def test_a_slow_alert_channel_never_holds_the_holds_beat_back(tmp_path) -> None:
+    import time
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(RefusingResults(base))
+        return refusing[0]
+
+    def alpha(item: Item, report):
+        raise ValueError("broken")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        alarms=SlowAlarms(),
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
+    __import__("time").sleep(0.3)
+    first = min(b for b in beats if b >= beats[-1] - 1.5)
+    during = [b for b in beats if b >= first]
+    gaps = [later - earlier for earlier, later in zip(during, during[1:], strict=False)]
+    assert gaps and max(gaps) < 0.4
     refusing[0].down = False
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1

@@ -501,6 +501,39 @@ def test_a_decision_result_is_created_once_and_the_stored_one_is_returned(
     assert storage.read_result(key, AT) == ours
 
 
+class UnreadableKey(Flaky):
+    """Takes every create, and answers a read of a key it holds as `read` says."""
+
+    def __init__(self, store, read: Exception) -> None:
+        super().__init__(store)
+        self.read = read
+
+    def get(self, key):
+        raise self.read
+
+
+@pytest.mark.parametrize(
+    "read",
+    [StoreUnavailable("k", "503 SlowDown"), BlobMissing("k", "404 Not Found")],
+    ids=["no-answer", "missing"],
+)
+def test_a_result_tried_once_whose_key_cannot_be_read_is_unavailable_and_quiet(
+    spec: StoreSpec, read: Exception
+) -> None:
+    """A process retrying a halt it holds keeps it, and the first try's alarm stands alone."""
+    key = core.result_key("ci", RUN, AT, "alpha")
+    base = spec.open()
+    ours = DecisionResult(_header(stage="alpha"), (BlobRef("a", "0" * 64),), None)
+    _storage(base)[0].put_result(key, ours)
+    storage, _, alarms = _storage(UnreadableKey(base, read))
+    halt = core.HaltRecord("the supervisor halted the decision", None, (), (), ())
+    with pytest.raises(StoreUnavailable):
+        storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt), once=True)
+    assert alarms.reasons == []
+    with pytest.raises(Halt):
+        storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt))
+
+
 # The reader's checks
 
 

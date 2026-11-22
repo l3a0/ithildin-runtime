@@ -1576,12 +1576,12 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
    lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) asks of a process that holds a capture. A process whose loop ends for any other reason does the same, such as one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms. Such a process works in four steps.
-   1. It waits for each handler still reporting progress, since that handler may yet hold a capture.
+   1. It gives each handler the stop timeout to finish, as item 7 says. A handler still working after that ends with the process, as a crash does, and its decision is done again after the restart.
    2. It retries every halt and capture it holds once each interval, quietly, since the first refusal alarmed.
    3. It beats while it holds one, whatever its handlers do, so the host's watchdog leaves it, and alarms naming each blob and why receiving stopped. That alarm is sent again until the alert channel takes it, because it alone tells a holding process from a healthy one.
    4. It exits for the host to restart once S3 has stored them all.
 
-   A halt S3 answered and still will not store, such as one whose key holds bytes nothing reads or another result, is not held. Its reason goes out in an alarm. A capture is never dropped this way, since it cannot be recaptured, so one that S3 answered and cannot store holds the process until a person acts. A host that kills a holding process, such as at the unit's stop timeout, loses what it holds, and the alarm says so. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets the unit's stop timeout and maps the host's stop to the loop's.
+   This doc proposes that a halt S3 answered and still will not store, such as one whose key holds bytes nothing reads or another result, is not held. Its reason goes out in an alarm and in the loop's failure, which the host's restart record keeps. A capture is never dropped this way, since it cannot be recaptured, so one that S3 answered and cannot store holds the process until a person acts. A host that kills a holding process, such as at the unit's stop timeout, loses what it holds, and the alarm says so. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets the unit's stop timeout and maps the host's stop to the loop's.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
    every blob write, journal append and broker call it finishes. No handler waits
    for a held lease, as [Who may send](#rule-9-who-may-send-the-accounts-lease) says, so a lease never holds a handler
@@ -1594,7 +1594,7 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    therefore carries a timeout shorter than that limit.
 7. **Stopping drains the pool.** When the host stops the container, the loop
    stops receiving and lets each handler finish within the unit's stop
-   timeout, beating while every busy handler reports. A message whose handler did not finish returns to the queue, and the process then waits for a handler still reporting, as item 5 says,
+   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way. A message whose handler did not finish returns to the queue,
    and an execution send stage left unfinished is taken over as [Who takes over a dead send
    stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
 8. **The pool's size is configuration.** The deployment's config sets it

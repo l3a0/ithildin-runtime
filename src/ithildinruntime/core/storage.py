@@ -309,9 +309,11 @@ class Storage:
         caller reads what is stored, such as the supervisor's halt, which is
         final for the decision.
 
-        `once` tries the write once with no pause, for a process retrying a
-        halt it holds. S3 refusing it or not answering then raises
-        `StoreUnavailable` and sends no alarm, since the first try sent one.
+        `once` tries the write, and the read of a key that already holds a
+        blob, once each with no pause, for a process retrying a halt it holds.
+        S3 refusing either or not answering then raises `StoreUnavailable`
+        and sends no alarm, since the first try sent one, and so does a key
+        refused as existing and then read as missing.
         """
         data = encode(result)
         try:
@@ -324,8 +326,10 @@ class Storage:
             raise self._outage(f"S3 did not store {late.key}", late) from None
         except _Differs:
             pass
-        stored = self._read(key)
+        stored = self._read(key, once)
         if stored is None:
+            if once:
+                raise StoreUnavailable(key, "refused as existing and then read as missing")
             raise self._halt(f"{key} was refused as existing and then read as missing")
         try:
             return decode(stored, DecisionResult)
@@ -543,7 +547,7 @@ class Storage:
 
         return self._retrying(key, call, once)
 
-    def _read(self, key: str) -> bytes | None:
+    def _read(self, key: str, once: bool = False) -> bytes | None:
         def call() -> bytes | None:
             try:
                 return self._store.get(key)
@@ -551,8 +555,10 @@ class Storage:
                 return None
 
         try:
-            return self._retrying(key, call, False)
+            return self._retrying(key, call, once)
         except _Deadline as late:
+            if once:
+                raise StoreUnavailable(late.key, late.answer) from None
             raise self._outage(f"S3 did not answer a read of {late.key}", late) from None
 
     def _retrying[R](self, key: str, call: Callable[[], R], once: bool) -> R:

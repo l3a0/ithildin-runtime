@@ -57,21 +57,22 @@ How the loop runs, in order.
    container with a hung handler, except while item 9 holds. Extending a
    message runs beside the beat, so a slow queue call never holds the
    heartbeat back.
-8. **Stopping drains the pool.** `stop` ends receiving and gives each handler
-   the stop timeout to finish, beating by item 7's rule. A message whose
-   handler did not finish goes back to the queue.
-9. **A process that holds what S3 has not stored stays alive.** However the
-   loop ends, by `stop` or by a failure, it waits for each handler still
-   reporting progress, which may yet hold a capture. It retries each halt it
-   could not store and each capture the storage contract holds every
-   `extend_every`, quietly, since the first refusal alarmed. While it holds
-   one it beats whatever its handlers do, so the host's watchdog does not
-   kill it, and it alarms naming each blob and why receiving stopped, again
-   until the alert channel takes it. A halt S3 answered and will not store,
-   such as one whose key holds another result, is dropped with an alarm
-   giving its reason. A capture is never dropped. `run` returns or raises
-   only once nothing is held and no handler is reporting. The price is a
-   process that holds a host slot without receiving through an outage, and
+8. **Ending drains the pool.** However the loop ends, by `stop` or by a
+   failure, it stops receiving and gives each handler the stop timeout to
+   finish, beating by item 7's rule. A message whose handler did not finish
+   goes back to the queue. A handler still working when the stop timeout
+   passes ends with the process, as in a crash, and its decision is done
+   again after the restart, unless item 9 keeps the process alive.
+9. **A process that holds what S3 has not stored stays alive.** After the
+   drain it retries each halt it could not store and each capture the
+   storage contract holds every `extend_every`, quietly, since the first
+   refusal alarmed. It beats whatever its handlers do, so the host's watchdog
+   does not kill it, and it alarms naming each blob and why receiving
+   stopped, again until the alert channel takes it. This doc proposes that a
+   halt S3 answered and will not store, such as one whose key holds another
+   result, is dropped with an alarm giving its reason. A capture is never
+   dropped. `run` returns or raises only once nothing is held. The price is
+   a process that holds a host slot without receiving through an outage, and
    one whose hung handler is not killed while it holds them.
 
 Every limit is measured on the timer's monotonic reading.
@@ -144,7 +145,7 @@ class Handler(Protocol):
 class LoopFailed(Exception):
     """A halt the loop could not store, or a queue it could not read or answer.
 
-    The loop raises it once S3 has stored what the process holds.
+    The loop raises it once nothing is held, as `ReceiveLoop.run` says.
     """
 
 
@@ -251,6 +252,9 @@ class ReceiveLoop:
         # Each halt the loop could not store, by key, which the process holds
         # until S3 stores it.
         self._unstored_halts: dict[str, DecisionResult] = {}
+        self._hold_alarmed = False
+        # What each halt dropped from the hold said, for LoopFailed.
+        self._dropped: list[str] = []
 
     # Running and stopping
 
@@ -258,12 +262,16 @@ class ReceiveLoop:
         """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored,
         or a queue could not be read or answered.
 
-        Either way it returns only once S3 has stored every halt and capture
-        this process holds.
+        Either way it returns only once each handler has had the stop timeout
+        to finish and nothing is held: S3 has stored every halt and capture
+        this process holds, apart from a halt S3 answered and will not store,
+        which is dropped with an alarm.
         """
         asyncio.run(self._main())
         if self._failure is not None:
             reason = self._failed_because or str(self._failure)
+            if self._dropped:
+                reason += ". Halts not stored: " + "; ".join(self._dropped)
             raise LoopFailed(reason) from self._failure
 
     def stop(self) -> None:
@@ -332,10 +340,10 @@ class ReceiveLoop:
             ticker.cancel()
             if receiver is not None:
                 receiver.cancel()
-            if self._failure is None:
-                await self._drain()
-            # Whichever way the loop ends, the process lives until S3 has
-            # stored what it holds.
+            # Whichever way the loop ends, each handler gets the stop timeout
+            # to finish, and then the process lives until S3 has stored what
+            # it holds.
+            await self._drain()
             await self._hold()
             self._handlers_pool.shutdown(wait=False, cancel_futures=True)
             self._receiving.shutdown(wait=False, cancel_futures=True)
@@ -347,15 +355,6 @@ class ReceiveLoop:
             halts = list(self._unstored_halts)
         return halts + [ref.key for ref in self._storage.unstored()]
 
-    def _progressing(self) -> list[_Running]:
-        """The handlers still running that have reported within the heartbeat limit."""
-        now = self._timer.monotonic()
-        return [
-            r
-            for r in self._running.values()
-            if not r.done and now - r.last_report <= self._heartbeat_limit
-        ]
-
     def _beat_if_reporting(self) -> None:
         """Beat only while every busy handler has reported within the heartbeat limit."""
         now = self._timer.monotonic()
@@ -366,38 +365,44 @@ class ReceiveLoop:
     async def _hold(self) -> None:
         """Retry and beat until S3 has stored every halt and capture this process holds.
 
-        A handler still reporting progress may yet hold one, so the hold waits
-        for it too. While something is held the process beats whatever its
-        handlers do, and otherwise only by the ticker's rule.
+        While something is held the process beats whatever its handlers do.
+        The alarm and each try run on the io threads, so neither holds the
+        beat back.
         """
-        alarmed = False
-        while (held := self._held_keys()) or self._progressing():
-            if held and not alarmed:
-                alarmed = self._alarm_holding(held)
-            work = self._in_io(self._store_held)
+        while self._held_keys():
+            work = self._in_io(self._try_held)
             end = self._timer.monotonic() + self._extend_every
             # Beat while the try runs, then wait out the rest of the interval
-            # unless nothing is held and no handler is left to wait for.
-            while not work.done() or (
-                self._timer.monotonic() < end and (self._held_keys() or self._progressing())
-            ):
-                if self._held_keys():
-                    self._beat_quietly()
-                else:
-                    self._beat_if_reporting()
+            # unless the try stored everything.
+            while not work.done() or (self._timer.monotonic() < end and self._held_keys()):
+                self._beat_quietly()
                 if not work.done():
                     await asyncio.wait({work}, timeout=self._tick)
                 else:
                     await asyncio.sleep(min(self._tick, max(0.0, end - self._timer.monotonic())))
 
+    def _try_held(self) -> None:
+        """Send the hold's alarm until the channel takes it, then try each held blob once."""
+        held = self._held_keys()
+        if held and not self._hold_alarmed:
+            self._hold_alarmed = self._alarm_holding(held)
+        self._store_held()
+
+    def _why_stopped(self) -> str:
+        if self._failed_because is not None:
+            why = self._failed_because.removeprefix(f"{self._worker}: ")
+            return why.removeprefix(f"{self._worker} ")
+        return "it was asked to stop"
+
     def _alarm_holding(self, held: list[str]) -> bool:
         """Say the process holds what S3 has not stored, and whether the alarm went out."""
-        why = f" after it {self._failed_because}" if self._failed_because else ""
+        blobs = "blob" if len(held) == 1 else "blobs"
         try:
             self._alerts.alarm(
-                f"{self._worker} stopped receiving{why}, and holds {len(held)} blobs not yet "
-                f"stored: {', '.join(held)}. It keeps retrying them, and exits once they are "
-                "stored, unless the host kills it first, which loses them"
+                f"{self._worker} holds {len(held)} {blobs} S3 has not stored: "
+                f"{', '.join(held)}. It stopped receiving because {self._why_stopped()}. "
+                "It keeps retrying them, and exits once they are stored, unless the host "
+                "kills it first, which loses them"
             )
         except Exception:
             # Sent again on the next try, since this alarm alone tells a
@@ -417,24 +422,30 @@ class ReceiveLoop:
             except StoreUnavailable:
                 continue
             except Exception as error:
-                # S3 answered, and no retry changes its answer, so the halt is
-                # not held. Its reason goes out in the alarm.
+                # S3 answered, such as with bytes no codec reads at the key,
+                # and no retry changes its answer, so the halt is not held.
+                # Its reason goes out in the alarm.
                 self._drop_halt(key, halt, f"could not be stored: {type(error).__name__}: {error}")
                 continue
             if stored != halt:
-                self._drop_halt(key, halt, "found another result at its key, which stands")
+                theirs = stored.halt.reason if stored.halt is not None else "an output"
+                found = f"found another result at its key, which stands: {theirs}"
+                self._drop_halt(key, halt, found)
                 continue
             with self._stored_lock:
                 self._unstored_halts.pop(key, None)
 
     def _drop_halt(self, key: str, halt: DecisionResult, what: str) -> None:
         reason = halt.halt.reason if halt.halt is not None else ""
+        said = f"{self._worker}'s halt for {key} {what}. Its reason: {reason}"
         with self._stored_lock:
             self._unstored_halts.pop(key, None)
+            # LoopFailed names each, so the host's restart record keeps the
+            # reason when the alarm cannot be sent.
+            self._dropped.append(said)
         try:
-            self._alerts.alarm(f"{self._worker}'s halt for {key} {what}. Its reason: {reason}")
+            self._alerts.alarm(said)
         except Exception:
-            # The loop still ends with LoopFailed, naming the key.
             pass
 
     def _beat_quietly(self) -> None:
@@ -449,7 +460,11 @@ class ReceiveLoop:
         pending = [r for r in self._running.values() if not r.done]
         end = self._timer.monotonic() + self._stop_timeout
         while pending and self._timer.monotonic() < end:
-            self._beat_if_reporting()
+            if self._held_keys():
+                # Item 9's rule, while the drain runs too.
+                self._beat_quietly()
+            else:
+                self._beat_if_reporting()
             await asyncio.sleep(min(0.05, self._tick))
             pending = [r for r in pending if not r.done]
         for running in self._running.values():
