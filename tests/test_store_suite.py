@@ -42,6 +42,7 @@ from tests.support.stores import TEST_BUCKET, StoreSpec
 # The key a case uses, which `spec.key` puts under the case's own prefix.
 CASE_KEY = "runs/ci/2026-11-02/20261102T204000Z/alpha/forecasts.json"
 
+# Named apart from conftest's buckets, which share the same moto server.
 _buckets = itertools.count()
 
 
@@ -57,10 +58,41 @@ def spec(request: pytest.FixtureRequest, tmp_path) -> StoreSpec:
     if request.param == "folder":
         return StoreSpec("folder", root=str(tmp_path / "store"), run="local", case=case)
     endpoint = request.getfixturevalue("emulator")
-    bucket = f"store-suite-{next(_buckets)}"
+    bucket = f"store-suite-own-{next(_buckets)}"
     made = StoreSpec("s3", endpoint=endpoint, bucket=bucket, run="local", case=case)
     made.client().create_bucket(Bucket=bucket)
     return made
+
+
+def test_a_key_a_test_route_would_hear_is_refused() -> None:
+    """A store key under a route's pattern would put a message on a queue a suite reads."""
+    spec = StoreSpec("folder", root="unused", run="local", case="case")
+    with pytest.raises(ValueError, match=r"runs/ci/\*/smoke/\*"):
+        spec.key("smoke/a.json")
+    assert spec.key("alpha/a.json") == "runs/ci/local/store/case/alpha/a.json"
+
+
+def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
+    from tests.support import stores
+
+    for body, words in (
+        ([{"pattern": [{"prefix": "runs/"}]}], "cannot read"),
+        ([{"reader": "smoke"}], "holds no key pattern"),
+    ):
+        path = tmp_path / f"routes-{words.replace(' ', '-')}.json"
+        path.write_text(json.dumps(body))
+        with pytest.raises(ValueError, match=words):
+            stores._routes(path)
+
+
+def test_the_bucket_client_ignores_an_endpoint_the_environment_sets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A green bucket run cannot come from an endpoint a variable points elsewhere."""
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("AWS_ENDPOINT_URL_S3", "http://127.0.0.1:1")
+    spec = StoreSpec("bucket", bucket=TEST_BUCKET, run="local", case="case")
+    assert spec.client().meta.endpoint_url == "https://s3.amazonaws.com"
 
 
 def _create(store, key: str, data: bytes) -> str:
@@ -193,10 +225,25 @@ def test_a_rewrite_returns_the_new_tag(spec: StoreSpec) -> None:
     assert third not in (first, second)
 
 
+def _outcome(error: Exception) -> str:
+    """A child's unexpected error by type and message, which names S3's status and code."""
+    return f"{type(error).__name__}: {error}"
+
+
+def _stop(writers) -> None:
+    """Wait for each child, and end any still running, so a failed case cannot hang the job."""
+    for writer in writers:
+        writer.join(timeout=60)
+        if writer.is_alive():
+            writer.terminate()
+
+
 def _race(spec: StoreSpec, n: int, start, results) -> None:
     store = spec.open()
     data = f"writer {n}".encode()
-    start.wait()
+    if not start.wait(timeout=60):
+        results.put((n, "never started"))
+        return
     try:
         store.create(spec.key(CASE_KEY), data, sha256_of(data))
     except KeyExists:
@@ -204,7 +251,7 @@ def _race(spec: StoreSpec, n: int, start, results) -> None:
     except Conflict:
         results.put((n, "conflicted"))
     except Exception as error:  # noqa: BLE001, so the parent fails on what the child met
-        results.put((n, type(error).__name__))
+        results.put((n, _outcome(error)))
     else:
         results.put((n, "stored"))
 
@@ -213,13 +260,17 @@ def test_two_processes_racing_one_create_leave_one_winner(spec: StoreSpec) -> No
     context = multiprocessing.get_context("spawn")
     start = context.Event()
     results = context.Queue()
-    writers = [context.Process(target=_race, args=(spec, n, start, results)) for n in range(6)]
-    for writer in writers:
-        writer.start()
-    start.set()
-    outcomes = dict(results.get(timeout=60) for _ in writers)
-    for writer in writers:
-        writer.join(timeout=60)
+    writers = [
+        context.Process(target=_race, args=(spec, n, start, results), daemon=True) for n in range(6)
+    ]
+    try:
+        for writer in writers:
+            writer.start()
+        start.set()
+        outcomes = dict(results.get(timeout=60) for _ in writers)
+    finally:
+        start.set()
+        _stop(writers)
     winners = [n for n, outcome in outcomes.items() if outcome == "stored"]
     assert len(winners) == 1, outcomes
     losers = {outcome for n, outcome in outcomes.items() if n != winners[0]}
@@ -236,7 +287,7 @@ def _rewrite(spec: StoreSpec, n: int, inbox, barrier, results) -> None:
     """Rewrite the case's lease on each tag the parent sends, together with every other writer."""
     store = spec.open()
     lease = spec.lease(1)
-    while (job := inbox.get()) is not None:
+    while (job := inbox.get(timeout=120)) is not None:
         round_, tag = job
         data = f"round {round_} writer {n}".encode()
         barrier.wait()
@@ -247,7 +298,7 @@ def _rewrite(spec: StoreSpec, n: int, inbox, barrier, results) -> None:
         except Conflict:
             results.put((round_, n, "conflicted", None))
         except Exception as error:  # noqa: BLE001, so the parent fails on what the child met
-            results.put((round_, n, type(error).__name__, None))
+            results.put((round_, n, _outcome(error), None))
         else:
             results.put((round_, n, "stored", new))
 
@@ -270,13 +321,13 @@ def test_processes_racing_one_rewrite_leave_one_winner(spec: StoreSpec) -> None:
     results = context.Queue()
     inboxes = [context.Queue() for _ in range(REWRITERS)]
     writers = [
-        context.Process(target=_rewrite, args=(spec, n, inboxes[n], barrier, results))
+        context.Process(target=_rewrite, args=(spec, n, inboxes[n], barrier, results), daemon=True)
         for n in range(REWRITERS)
     ]
-    for writer in writers:
-        writer.start()
     rounds = []
     try:
+        for writer in writers:
+            writer.start()
         for round_ in range(1, ROUNDS + 1):
             for inbox in inboxes:
                 inbox.put((round_, tag))
@@ -294,8 +345,8 @@ def test_processes_racing_one_rewrite_leave_one_winner(spec: StoreSpec) -> None:
     finally:
         for inbox in inboxes:
             inbox.put(None)
-        for writer in writers:
-            writer.join(timeout=60)
+        barrier.abort()
+        _stop(writers)
     conflicts = sum(outcomes.count("conflicted") for outcomes in rounds)
     if spec.kind == "bucket" and conflicts == 0:
         pytest.xfail(
@@ -318,12 +369,14 @@ def test_a_read_during_a_write_sees_no_blob_or_the_whole_blob(spec: StoreSpec) -
             except BlobMissing:
                 seen.append(0)
 
-    thread = threading.Thread(target=read)
+    thread = threading.Thread(target=read, daemon=True)
     thread.start()
-    store.create(key, data, sha256_of(data))
-    time.sleep(0.2)
-    done.set()
-    thread.join()
+    try:
+        store.create(key, data, sha256_of(data))
+        time.sleep(0.2)
+    finally:
+        done.set()
+        thread.join(timeout=60)
     assert set(seen) <= {0, len(data)}
     assert seen[-1] == len(data)
 
@@ -342,18 +395,23 @@ data = b"x" * 4096
 folder.FolderStore(sys.argv[1]).create(sys.argv[2], data, sha256_of(data))
 """
 
-# The S3 writer signs its PUT with the store's own client, then sends it by hand with
-# `Expect: 100-continue`, so it can stop partway through the body. Its headers carry the
-# test role's session token on the bucket, and the job's log is public, so it prints
-# "written" once S3 has answered 100 Continue, and nothing else, on success or failure.
+# The S3 writer has `S3Store.create` sign its PUT, so the request carries the adapter's own
+# headers, then sends it by hand with `Expect: 100-continue`, so it can stop partway through
+# the body. On the bucket its headers carry the test role's session token, and the job's log
+# is public. So it prints "written" once S3 has answered 100 Continue, or one fixed line
+# saying where it stopped, naming only a status code or an exception's type, and on the
+# bucket its stderr goes nowhere.
 _KILLED_S3_WRITER = """
 import os, sys, time
+quiet = True
 try:
-    import base64, http.client, json, urllib.parse
+    import http.client, json, urllib.parse
+    from ithildinruntime.adapters import S3Store
     from ithildinruntime.core import sha256_of
     from tests.support.stores import StoreSpec
 
     spec = StoreSpec(**json.loads(sys.argv[1]))
+    quiet = spec.kind == "bucket"
     key = sys.argv[2]
     client = spec.client()
     signed = {}
@@ -367,11 +425,8 @@ try:
 
     client.meta.events.register("before-send.s3.PutObject", keep)
     data = b"x" * 8192
-    checksum = base64.b64encode(bytes.fromhex(sha256_of(data))).decode()
     try:
-        client.put_object(
-            Bucket=spec.bucket, Key=key, Body=data, IfNoneMatch="*", ChecksumSHA256=checksum
-        )
+        S3Store(client, spec.bucket).create(key, data, sha256_of(data))
     except Signed:
         pass
     url = urllib.parse.urlsplit(signed["url"])
@@ -385,13 +440,19 @@ try:
         connection.putheader(name, value)
     connection.endheaders()
     reply = connection.sock.makefile("rb")
-    if not reply.readline().startswith(b"HTTP/1.1 100 "):
+    status = reply.readline()
+    if not status.startswith(b"HTTP/1.1 100 "):
+        code = status[9:12] if status[9:12].isdigit() else b"none"
+        print(f"stopped: S3 answered {code.decode()} rather than 100 Continue", flush=True)
         os._exit(1)
     while reply.readline() not in (b"\\r\\n", b"\\n", b""):
         pass
     connection.send(data[:4096])
-except BaseException:
-    os._exit(1)
+except BaseException as error:
+    print(f"stopped: {type(error).__name__}", flush=True)
+    if quiet:
+        os._exit(1)
+    raise
 print("written", flush=True)
 time.sleep(600)
 """
@@ -406,14 +467,14 @@ def test_a_writer_killed_partway_through_leaves_no_blob(spec: StoreSpec) -> None
     writer = subprocess.Popen(
         [sys.executable, "-c", textwrap.dedent(args[0]), *args[1:]],
         stdout=subprocess.PIPE,
-        stderr=None if spec.kind == "folder" else subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL if spec.kind == "bucket" else None,
         cwd=os.getcwd(),
         env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
     )
     try:
-        assert writer.stdout.readline().strip() == b"written", (
-            "the writer stopped before its store took the first half of the body, "
-            "so nothing was killed partway"
+        line = writer.stdout.readline().strip()
+        assert line == b"written", (
+            f"the writer exited before its store took the first half of the body: {line!r}"
         )
     finally:
         writer.send_signal(signal.SIGKILL)

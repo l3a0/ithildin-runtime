@@ -18,7 +18,8 @@ and can answer 409, which closes both of moto's gaps. The test role may create
 and read only under `runs/ci/` and `leases/plans/ci/`, and may delete nothing,
 so `key` and `lease` put every key the suite writes under the run's own id,
 and `remove` and `overwrite` refuse on the bucket. The bucket's client names
-no endpoint and no keys, so nothing here points it anywhere but AWS.
+no endpoint and no keys, ignores any endpoint the environment or a shared
+config file sets, and refuses one outside AWS, so nothing points it elsewhere.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import json
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
@@ -47,8 +49,8 @@ class StoreSpec:
     """One store the suite runs against.
 
     `kind` is `folder`, `s3` for moto, or `bucket` for the test bucket. `run`
-    and `case` put a case's keys under `runs/ci/<run>/store/<case>/`. A spec
-    without a `run` leaves every key as the test wrote it, which the modules
+    and `case` put a case's keys under `runs/ci/<run>/store/<case>/`. On a spec
+    without a `run`, `key` leaves a key as the test wrote it, which the modules
     that share `tests/conftest.py`'s fixture rely on.
     """
 
@@ -77,8 +79,6 @@ class StoreSpec:
 
     def lease(self, n: int) -> str:
         """The case's lease number `n`, under the prefix the test role may write leases."""
-        if self.run is None:
-            return f"leases/plans/ci/{n}.json"
         return _unrouted(f"leases/plans/ci/{self.run}-{self.case}-{n}.json")
 
     def open(self) -> FolderStore | S3Store:
@@ -87,10 +87,23 @@ class StoreSpec:
         return S3Store(self.client(), self.bucket)
 
     def client(self):
-        config = Config(retries={"mode": "standard", "total_max_attempts": 1})
+        retries = {"mode": "standard", "total_max_attempts": 1}
         if self.kind == "bucket":
-            # The job's own credentials, from the environment.
-            return boto3.client("s3", region_name=REGION, config=config)
+            # The job's own credentials, from the environment, and AWS's own endpoint
+            # whatever AWS_ENDPOINT_URL or a config file says. Ten seconds to connect and
+            # thirty to read bound a case on a slow S3 well inside the job's limit.
+            config = Config(
+                retries=retries,
+                ignore_configured_endpoint_urls=True,
+                connect_timeout=10,
+                read_timeout=30,
+            )
+            client = boto3.client("s3", region_name=REGION, config=config)
+            host = urlsplit(client.meta.endpoint_url).hostname or ""
+            if not host.endswith(".amazonaws.com"):
+                raise RuntimeError(f"the test bucket's client points at {host}, not AWS")
+            return client
+        config = Config(retries=retries)
         return boto3.client(
             "s3", endpoint_url=self.endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
         )
@@ -117,7 +130,7 @@ class StoreSpec:
 
 
 @cache
-def _routes() -> tuple[Route, ...]:
+def _routes(path: Path = ROUTES_FILE) -> tuple[Route, ...]:
     """Every key pattern in infra/test/routes.json, wherever the file's shape puts it."""
     found: list[str] = []
 
@@ -137,11 +150,9 @@ def _routes() -> tuple[Route, ...]:
             for inner in value:
                 walk(inner)
 
-    walk(json.loads(ROUTES_FILE.read_text()))
+    walk(json.loads(path.read_text()))
     if not found:
-        raise ValueError(
-            f"{ROUTES_FILE} holds no key pattern, so the store suite cannot check its keys"
-        )
+        raise ValueError(f"{path} holds no key pattern, so the store suite cannot check its keys")
     return tuple(Route("store-suite", EventKind.CREATED, pattern) for pattern in found)
 
 
