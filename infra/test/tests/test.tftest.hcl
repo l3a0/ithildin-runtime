@@ -210,28 +210,28 @@ run "each_rule_matches_its_own_keys_on_the_test_bucket_and_targets_its_readers_q
   }
 
   assert {
-    condition = alltrue([for r in local.routes_file.rules : module.routes.rules[r.name] == {
-      name        = "ithildin-test-${r.name}"
-      arn         = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-${r.name}"
-      target_rule = "ithildin-test-${r.name}"
-      target      = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-${r.reader}"
-      event_pattern = {
-        source        = ["aws.s3"]
-        "detail-type" = [r.kind]
-        detail = {
-          bucket = { name = ["ithildin-runtime-test"] }
-          object = { key = r.pattern }
-        }
-      }
-    }])
-    error_message = "A rule is not named ithildin-test- and its entry's name, does not match its entry's kind and keys on the test bucket, or is not aimed at its reader's queue."
+    condition = alltrue([for r in local.routes_file.rules : jsonencode(module.routes.rules[r.name]) == jsonencode({
+      name          = "ithildin-test-${r.name}"
+      arn           = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-${r.name}"
+      target_rule   = "ithildin-test-${r.name}"
+      target        = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-${r.reader}"
+      event_pattern = r.pattern
+    })])
+    error_message = "A rule is not named ithildin-test- and its entry's name, does not carry its entry's pattern as written, or is not aimed at its reader's queue."
   }
 
-  # The smoke check writes under this pattern, so it is pinned here as a literal rather
-  # than read back from the file.
+  # The smoke check writes under this pattern, so its whole rule is pinned here as a
+  # literal rather than read back from the file.
   assert {
-    condition     = module.routes.rules["smoke-483ea2f8cd44"].event_pattern.detail.object.key == [{ wildcard = "runs/ci/*/smoke/*" }]
-    error_message = "The smoke route's rule does not match the keys the smoke check writes."
+    condition = jsonencode(module.routes.rules["smoke-483ea2f8cd44"].event_pattern) == jsonencode({
+      source        = ["aws.s3"]
+      "detail-type" = ["Object Created"]
+      detail = {
+        bucket = { name = ["ithildin-runtime-test"] }
+        object = { key = [{ wildcard = "runs/ci/*/smoke/*" }] }
+      }
+    })
+    error_message = "The smoke route's rule does not match S3's Object Created events for the keys the smoke check writes on the test bucket."
   }
 }
 

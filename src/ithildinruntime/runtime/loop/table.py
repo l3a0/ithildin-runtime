@@ -156,19 +156,22 @@ def event_pattern(route: Route, bucket: str) -> dict[str, Any]:
     It matches `aws.s3` as the source, because EventBridge refuses a custom
     event whose source starts with `aws.`, so nobody can put a forged S3 event
     on the bus that a rule would pass on.
+
+    This is the one place a rule's pattern is built. The moto side of the queue
+    suite builds its rules from it, and `routes_file` writes it for an
+    environment's infrastructure, which applies it as written. `Route.name`
+    hashes the reader, the kind and the key, and not the rest of this pattern,
+    so a change to the rest renames no rule. A release that changes it gives
+    its rules new names by another route.
     """
     return {
         "source": ["aws.s3"],
         "detail-type": [str(route.kind)],
         "detail": {
             "bucket": {"name": [bucket]},
-            "object": {"key": _key_pattern(route)},
+            "object": {"key": [{"wildcard": route.key}]},
         },
     }
-
-
-def _key_pattern(route: Route) -> list[dict[str, str]]:
-    return [{"wildcard": route.key}]
 
 
 @dataclass(frozen=True)
@@ -191,13 +194,14 @@ class QueueSettings:
             raise ValueError(f"receive count {count!r} is not 1 to 1000")
 
 
-def routes_file(rules: Iterable[Route], queues: Mapping[str, QueueSettings]) -> str:
+def routes_file(rules: Iterable[Route], queues: Mapping[str, QueueSettings], bucket: str) -> str:
     """The routes file an environment's infrastructure reads, as its exact text.
 
     It holds two lists. `queues` has one entry per reader, which becomes a
     queue and its dead-letter queue. `rules` has one entry per route, which
-    becomes an EventBridge rule named by `Route.name` and aimed at its
-    reader's queue. Both are sorted, so one set of routes writes one text.
+    becomes an EventBridge rule named by `Route.name`, matching its
+    `event_pattern` on the environment's `bucket` and aimed at its reader's
+    queue. Both are sorted, so one set of routes writes one text.
 
     Every route's reader needs an entry in `queues`, and every entry needs a
     route, because a queue no rule feeds would sit empty and look healthy.
@@ -221,8 +225,7 @@ def routes_file(rules: Iterable[Route], queues: Mapping[str, QueueSettings]) -> 
             {
                 "name": r.name,
                 "reader": r.reader,
-                "kind": str(r.kind),
-                "pattern": _key_pattern(r),
+                "pattern": event_pattern(r, bucket),
             }
             for r in rules
         ],

@@ -107,7 +107,7 @@ def test_the_routes_file_holds_one_queue_per_reader_and_one_rule_per_route() -> 
     two = Route("book", EventKind.REMOVED, "runs/ci/*/stop.json")
     other = Route("alpha", EventKind.CREATED, "runs/ci/*/feed/result.json")
     queues = {"book": settings, "alpha": QueueSettings(31, 4)}
-    document = json.loads(routes_file([two, one, other, one], queues))
+    document = json.loads(routes_file([two, one, other, one], queues, "b"))
     assert document == {
         "queues": [
             {"reader": "alpha", "visibility_timeout_seconds": 31, "max_receive_count": 4},
@@ -117,21 +117,38 @@ def test_the_routes_file_holds_one_queue_per_reader_and_one_rule_per_route() -> 
             {
                 "name": route.name,
                 "reader": route.reader,
-                "kind": str(route.kind),
-                "pattern": event_pattern(route, "b")["detail"]["object"]["key"],
+                "pattern": event_pattern(route, "b"),
             }
             for route in (other, one, two)
         ],
     }
     # One set of routes writes one text, whatever order they arrive in.
-    assert routes_file([one, other, two], queues) == routes_file([two, one, other], queues)
+    assert routes_file([one, other, two], queues, "b") == routes_file(
+        [two, one, other], queues, "b"
+    )
+
+
+def test_two_routes_on_one_key_sort_by_kind() -> None:
+    # Routes arrive through a set, whose order follows the hash seed, so twenty pairs
+    # leave a sort that ignores the kind about one chance in a million of passing.
+    settings = {"book": QueueSettings(visibility_timeout_seconds=30, max_receive_count=3)}
+    pairs = [
+        (Route("book", EventKind.REMOVED, f"k{n:02}"), Route("book", EventKind.CREATED, f"k{n:02}"))
+        for n in range(20)
+    ]
+    text = routes_file([r for pair in pairs for r in pair], settings, "b")
+    assert text == routes_file([r for pair in pairs for r in reversed(pair)], settings, "b")
+    kinds = [r["pattern"]["detail-type"][0] for r in json.loads(text)["rules"]]
+    assert kinds == ["Object Created", "Object Deleted"] * 20
 
 
 def test_the_test_environments_file_holds_the_stand_in_table_and_the_smoke_route() -> None:
     document = json.loads(test_environment.text())
-    found = {(r["reader"], r["kind"], r["pattern"][0]["wildcard"]) for r in document["rules"]}
-    assert found == {(r.reader, str(r.kind), r.key) for r in routes(TABLE, "ci")} | {
-        ("smoke", "Object Created", "runs/ci/*/smoke/*")
+    found = {(r["reader"], json.dumps(r["pattern"], sort_keys=True)) for r in document["rules"]}
+    smoke = Route("smoke", EventKind.CREATED, "runs/ci/*/smoke/*")
+    assert found == {
+        (r.reader, json.dumps(event_pattern(r, "ithildin-runtime-test"), sort_keys=True))
+        for r in (*routes(TABLE, "ci"), smoke)
     }
     assert [q["reader"] for q in document["queues"]] == ["alpha", "book", "risk", "smoke"]
 
@@ -140,14 +157,14 @@ def test_the_routes_file_refuses_a_route_with_no_queue_and_a_queue_with_no_route
     settings = QueueSettings(visibility_timeout_seconds=30, max_receive_count=3)
     route = Route("alpha", EventKind.CREATED, "runs/ci/*/feed/result.json")
     with pytest.raises(ValueError, match="no queue settings for alpha"):
-        routes_file([route], {})
+        routes_file([route], {}, "b")
     with pytest.raises(ValueError, match="no route feeds the queue of risk"):
-        routes_file([route], {"alpha": settings, "risk": settings})
+        routes_file([route], {"alpha": settings, "risk": settings}, "b")
 
 
 @pytest.mark.parametrize(
     ("timeout", "count"),
-    [(-1, 3), (43_201, 3), (30, 0), (30, 1_001), (30.0, 3), (30, True)],
+    [(-1, 3), (43_201, 3), (30, 0), (30, 1_001), (30.0, 3), (True, 3), (30, True)],
 )
 def test_queue_settings_refuse_what_sqs_does_not_take(timeout, count) -> None:
     with pytest.raises(ValueError):

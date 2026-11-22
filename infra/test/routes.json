@@ -25,72 +25,184 @@
     {
       "name": "alpha-29888b8cd48e",
       "reader": "alpha",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/feed/result.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/feed/result.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "book-54eba3127b27",
       "reader": "book",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/alpha/result.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/alpha/result.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "book-ab4e249d5889",
       "reader": "book",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/book/result.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/book/result.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "book-b2ab60123b9f",
       "reader": "book",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/risk/result.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/risk/result.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "book-8ad2112f06aa",
       "reader": "book",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/stop.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/stop.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "risk-5d65847bc100",
       "reader": "risk",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/feed/result.json"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/feed/result.json"
+              }
+            ]
+          }
         }
-      ]
+      }
     },
     {
       "name": "smoke-483ea2f8cd44",
       "reader": "smoke",
-      "kind": "Object Created",
-      "pattern": [
-        {
-          "wildcard": "runs/ci/*/smoke/*"
+      "pattern": {
+        "source": [
+          "aws.s3"
+        ],
+        "detail-type": [
+          "Object Created"
+        ],
+        "detail": {
+          "bucket": {
+            "name": [
+              "ithildin-runtime-test"
+            ]
+          },
+          "object": {
+            "key": [
+              {
+                "wildcard": "runs/ci/*/smoke/*"
+              }
+            ]
+          }
         }
-      ]
+      }
     }
   ]
 }

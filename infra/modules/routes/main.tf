@@ -1,15 +1,18 @@
 # For each queue it is given: the reader's queue, its dead-letter queue, and a queue
 # policy that admits only the reader's own rules. For each rule: an EventBridge rule on
-# the default bus that matches the bucket's events of the rule's kind by its key
-# pattern, and a target aimed at its reader's queue. A rule leaves with its entry in
-# `rules`, and a queue with its reader's entry in `queues`, on the next apply.
+# the default bus with the rule's pattern, and a target aimed at its reader's queue. A
+# rule leaves with its entry in `rules`, and a queue with its reader's entry in
+# `queues`, on the next apply.
 #
 # The test environment calls it with infra/test/routes.json, which
-# tests/support/routes_file.py writes from `routes_file` in runtime.loop. On shadow,
-# paper and live rules only grow, as design.md's "Rules only grow, and a release checks
-# them" says, so a caller there passes every rule any earlier release named, and never
-# removes one. A rule's name changes whenever its pattern or its target does, so a
-# changed route adds a rule rather than narrowing one.
+# tests/support/routes_file.py writes from `routes_file` in runtime.loop. Each rule's
+# pattern is `event_pattern` in runtime.loop, written whole, so the module applies it as
+# written and builds none of its own. It checks only that the pattern matches S3's own
+# events on its bucket, for a kind a route hears. On shadow, paper and live rules only
+# grow, as design.md's "Rules only grow, and a release checks them" says, so a caller
+# there passes every rule any earlier release named, and never removes one. A rule's
+# name changes whenever its reader, kind or key does, so a changed route adds a rule
+# rather than narrowing one.
 #
 # Queues use SSE-SQS, SQS's managed encryption. EventBridge's troubleshooting page says
 # an encrypted target queue needs a customer-managed KMS key, and does not name SSE-SQS
@@ -64,7 +67,6 @@ variable "rules" {
   type = list(object({
     name    = string
     reader  = string
-    kind    = string
     pattern = any
   }))
   nullable = false
@@ -75,8 +77,20 @@ variable "rules" {
   }
 
   validation {
-    condition     = alltrue([for r in var.rules : contains(["Object Created", "Object Deleted"], r.kind)])
-    error_message = "Each rule hears Object Created or Object Deleted, never anything else."
+    condition = alltrue([for r in var.rules : contains(
+      [jsonencode(["Object Created"]), jsonencode(["Object Deleted"])],
+      jsonencode(try(r.pattern["detail-type"], null))
+    )])
+    error_message = "Each rule's pattern hears Object Created or Object Deleted, never anything else."
+  }
+
+  # Only S3 itself can put an event whose source is aws.s3 on the bus.
+  validation {
+    condition = alltrue([for r in var.rules :
+      jsonencode(try(r.pattern.source, null)) == jsonencode(["aws.s3"])
+      && jsonencode(try(r.pattern.detail.bucket.name, null)) == jsonencode([var.bucket])
+    ])
+    error_message = "A rule's pattern does not match S3's own events on this module's bucket."
   }
 
   # EventBridge refuses a rule name over 64 characters, or one holding anything but
@@ -89,6 +103,12 @@ variable "rules" {
   validation {
     condition     = alltrue([for r in var.rules : contains([for q in var.queues : q.reader], r.reader)])
     error_message = "A rule names a reader that has no queue."
+  }
+
+  # A queue no rule feeds would get a policy whose list of admitted rules is empty.
+  validation {
+    condition     = alltrue([for q in var.queues : contains([for r in var.rules : r.reader], q.reader)])
+    error_message = "A queue's reader has no rule, so nothing would feed it."
   }
 }
 
@@ -152,15 +172,8 @@ resource "aws_sqs_queue_redrive_allow_policy" "dead_letter" {
 resource "aws_cloudwatch_event_rule" "this" {
   for_each = local.rules
 
-  name = "${var.name_prefix}-${each.key}"
-  event_pattern = jsonencode({
-    source        = ["aws.s3"]
-    "detail-type" = [each.value.kind]
-    detail = {
-      bucket = { name = [var.bucket] }
-      object = { key = each.value.pattern }
-    }
-  })
+  name          = "${var.name_prefix}-${each.key}"
+  event_pattern = jsonencode(each.value.pattern)
 }
 
 resource "aws_cloudwatch_event_target" "this" {

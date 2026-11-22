@@ -101,6 +101,6 @@ module "routes" {
 }
 
 output "queues" {
-  description = "Each route's queue and dead-letter queue name, by reader."
+  description = "Each reader's queue and dead-letter queue name, by reader."
   value       = module.routes.queues
 }

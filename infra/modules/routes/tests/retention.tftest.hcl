@@ -27,8 +27,7 @@ variables {
   rules = [{
     name    = "smoke-000000000000"
     reader  = "smoke"
-    kind    = "Object Created"
-    pattern = [{ prefix = "runs/" }]
+    pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ prefix = "runs/" }] } } }
   }]
 }
 

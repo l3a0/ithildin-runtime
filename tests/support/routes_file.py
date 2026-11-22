@@ -16,6 +16,8 @@ from ithildinruntime.core import EventKind, Route
 from ithildinruntime.runtime.loop import QueueSettings, routes, routes_file
 from tests.support.queues import DEPLOYMENT, TABLE
 
+BUCKET = "ithildin-runtime-test"
+
 PATH = Path(__file__).parents[2] / "infra" / "test" / "routes.json"
 COMMAND = "uv run python -m tests.support.routes_file"
 
@@ -33,7 +35,7 @@ QUEUES = {
 
 def text() -> str:
     """The file's exact text."""
-    return routes_file((*routes(TABLE, DEPLOYMENT), SMOKE), QUEUES)
+    return routes_file((*routes(TABLE, DEPLOYMENT), SMOKE), QUEUES, BUCKET)
 
 
 if __name__ == "__main__":

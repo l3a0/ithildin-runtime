@@ -1,6 +1,8 @@
 # What the module builds from a queues list and a rules list, and what it refuses: a
-# rule whose reader has no queue, a rule name EventBridge would refuse, a kind no route
-# hears, and two entries that would make one resource.
+# rule whose reader has no queue, a queue no rule feeds, a rule name EventBridge would
+# refuse, a pattern for a kind no route hears, another source or another bucket, and
+# two entries that would make one resource. Each run
+# that expects a refusal passes inputs that break that one check alone.
 
 mock_provider "aws" {
   mock_resource "aws_sqs_queue" {
@@ -49,9 +51,9 @@ variables {
     { reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 },
   ]
   rules = [
-    { name = "book-000000000002", reader = "book", kind = "Object Deleted", pattern = [{ wildcard = "b/*" }] },
-    { name = "book-000000000001", reader = "book", kind = "Object Created", pattern = [{ wildcard = "a/*" }] },
-    { name = "smoke-000000000000", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "s/*" }] },
+    { name = "book-000000000002", reader = "book", pattern = { source = ["aws.s3"], "detail-type" = ["Object Deleted"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "b/*" }] } } } },
+    { name = "book-000000000001", reader = "book", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "a/*" }] } } } },
+    { name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } },
   ]
 }
 
@@ -86,8 +88,12 @@ run "a_reader_with_several_rules_gets_one_queue_that_admits_each_of_them" {
   }
 
   assert {
-    condition     = output.rules["book-000000000002"].event_pattern["detail-type"] == ["Object Deleted"]
-    error_message = "A rule does not match the kind its entry names."
+    condition = jsonencode(output.rules["book-000000000002"].event_pattern) == jsonencode({
+      source        = ["aws.s3"]
+      "detail-type" = ["Object Deleted"]
+      detail        = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "b/*" }] } }
+    })
+    error_message = "A rule does not carry its entry's pattern as written."
   }
 
   assert {
@@ -100,7 +106,11 @@ run "a_rule_whose_reader_has_no_queue_is_refused" {
   command = plan
 
   variables {
-    rules = [{ name = "risk-000000000000", reader = "risk", kind = "Object Created", pattern = [{ wildcard = "r/*" }] }]
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules = [
+      { name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } },
+      { name = "risk-000000000000", reader = "risk", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "r/*" }] } } } },
+    ]
   }
 
   expect_failures = [var.rules]
@@ -111,7 +121,8 @@ run "a_rule_name_over_64_characters_is_refused" {
 
   # "example-" is 8 characters, so a name of 57 makes 65.
   variables {
-    rules = [{ name = "smoke-${join("", [for i in range(51) : "a"])}", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "s/*" }] }]
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke-${join("", [for i in range(51) : "a"])}", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
   }
 
   expect_failures = [var.rules]
@@ -121,7 +132,8 @@ run "a_rule_name_of_64_characters_is_taken" {
   command = plan
 
   variables {
-    rules = [{ name = "smoke-${join("", [for i in range(50) : "a"])}", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "s/*" }] }]
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke-${join("", [for i in range(50) : "a"])}", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
   }
 }
 
@@ -129,7 +141,8 @@ run "a_kind_no_route_hears_is_refused" {
   command = plan
 
   variables {
-    rules = [{ name = "smoke-000000000000", reader = "smoke", kind = "other", pattern = [{ wildcard = "s/*" }] }]
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["other"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
   }
 
   expect_failures = [var.rules]
@@ -139,9 +152,10 @@ run "two_rules_with_one_name_are_refused" {
   command = plan
 
   variables {
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
     rules = [
-      { name = "smoke-000000000000", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "s/*" }] },
-      { name = "smoke-000000000000", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "t/*" }] },
+      { name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } },
+      { name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "t/*" }] } } } },
     ]
   }
 
@@ -156,8 +170,51 @@ run "two_queues_with_one_reader_are_refused" {
       { reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 },
       { reader = "smoke", visibility_timeout_seconds = 31, max_receive_count = 3 },
     ]
-    rules = [{ name = "smoke-000000000000", reader = "smoke", kind = "Object Created", pattern = [{ wildcard = "s/*" }] }]
+    rules = [{ name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
   }
 
   expect_failures = [var.queues]
+}
+
+run "a_queue_no_rule_feeds_is_refused" {
+  command = plan
+
+  variables {
+    rules = [{ name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "a_rule_name_with_a_character_eventbridge_refuses_is_refused" {
+  command = plan
+
+  variables {
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke/000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "a_pattern_on_another_bucket_is_refused" {
+  command = plan
+
+  variables {
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke-000000000000", reader = "smoke", pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["other-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "a_pattern_on_another_source_is_refused" {
+  command = plan
+
+  variables {
+    queues = [{ reader = "smoke", visibility_timeout_seconds = 30, max_receive_count = 3 }]
+    rules  = [{ name = "smoke-000000000000", reader = "smoke", pattern = { source = ["custom.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ wildcard = "s/*" }] } } } }]
+  }
+
+  expect_failures = [var.rules]
 }

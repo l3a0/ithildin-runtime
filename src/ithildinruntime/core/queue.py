@@ -97,11 +97,13 @@ class Route:
 
     @property
     def name(self) -> str:
-        """The rule's name, which changes whenever its pattern or its target changes.
+        """The rule's name, which changes whenever its reader, kind or key changes.
 
         design.md's `### How a component learns of a change` keeps a rule's name
         only while its pattern and target stay the same, so a later release adds
-        a rule rather than narrowing one.
+        a rule rather than narrowing one. The rest of a rule's pattern, which
+        `runtime.loop`'s `event_pattern` builds, is outside this name, so a
+        release that changes it renames its rules by another route.
         """
         digest = hashlib.sha256(f"{self.reader}\n{self.kind}\n{self.key}".encode()).hexdigest()
         return f"{self.reader}-{digest[:12]}"
