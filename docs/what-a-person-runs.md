@@ -414,7 +414,7 @@ OpenTofu's AWS provider cannot read an `aws login` session through that profile,
 
 The order matters. Each step needs the one before it.
 
-1. Create the AWS organization, with a new, empty management account that holds nothing else, and the test account as its first member, with centralized root access on.
+1. Create the AWS organization, with a new, empty management account that holds nothing else, and the test account as its first member, with centralized root access on. Then, signed in to the management account's console, open Cost Explorer in Billing and Cost Management once, which turns it on for the organization. No API can turn it on, and until it is on AWS refuses the bootstrap's budget with "is a linked account".
 2. Set the repository's OIDC subject template to include `repo`, `context` and `job_workflow_ref`, with `gh api -X PUT repos/l3a0/ithildin-runtime/actions/oidc/customization/sub -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'`. Read it back with `gh api repos/l3a0/ithildin-runtime/actions/oidc/customization/sub` and check that `use_immutable_subject` still reads `true`. The board deploys through OIDC too, so dispatch it with `gh workflow run board.yml --repo l3a0/ithildin-runtime` and check that the run deploys.
 3. Create the state bucket under a name of the owner's choosing, with `aws s3api create-bucket --bucket <state bucket>`. A new bucket comes encrypted and with public access blocked, and the bootstrap turns its versioning on.
 4. Write the backend's file outside the repository, with `mkdir -p ~/.config/ithildin-runtime` and then `printf 'bucket = "%s"\n' <state bucket> > ~/.config/ithildin-runtime/test.tfbackend`.
