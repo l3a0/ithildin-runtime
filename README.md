@@ -24,7 +24,8 @@ its tests show it works.
   and every drill.
 - [infra/](infra/) holds the test environment's OpenTofu configuration, which
   [.github/workflows/infra.yml](.github/workflows/infra.yml) checks on every pull
-  request that changes it and applies after each merge that changes it.
+  request, as the required `infra` check, and applies after each merge that
+  changes it.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.

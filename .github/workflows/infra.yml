@@ -1,8 +1,10 @@
 # Checks and applies the test environment's configuration under infra/.
 #
-# On a pull request that changes infra/ or this file: tofu fmt, validate and tofu test
-# against a mock provider, with no AWS credential. On such a push to main, or a manual
-# dispatch from main: plan and apply infra/test in the `test` GitHub environment, with
+# On every pull request: tofu fmt, validate and tofu test against a mock provider, with
+# no AWS credential, and the `infra` job that the ruleset on main requires. They run
+# whether or not the pull request changes infra/, because a required check that no
+# workflow starts blocks the merge. On a push to main that changes infra/ or this file,
+# or a manual dispatch from main: plan and apply infra/test in the `test` GitHub environment, with
 # the apply role infra/test/bootstrap creates. The bootstrap itself
 # is the owner's to apply, from the laptop, as docs/what-a-person-runs.md says.
 #
@@ -26,10 +28,6 @@ on:
       - "!infra/**/*.md"
       - ".github/workflows/infra.yml"
   pull_request:
-    paths:
-      - "infra/**"
-      - "!infra/**/*.md"
-      - ".github/workflows/infra.yml"
   # Re-applies main's configuration with no code change, after a lock is cleared or a
   # bootstrap apply. The
   # apply job runs only on main, and the apply role trusts this file on main in the test
@@ -102,6 +100,28 @@ jobs:
         run: tofu -chdir="infra/$CONFIG" test
         env:
           CONFIG: ${{ matrix.config }}
+
+  # The one check of this workflow that the ruleset on main requires. A matrix job reports
+  # one check per entry, under names that change with the matrix, so the ruleset names
+  # this job instead. It runs even when a job it needs failed, so it reports the failure
+  # rather than going missing.
+  infra:
+    name: infra
+    if: always()
+    needs: [fmt, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "a check this job needs ended $result: $RESULTS" >&2
+              exit 1
+            fi
+          done
 
   apply:
     name: tofu apply (test)

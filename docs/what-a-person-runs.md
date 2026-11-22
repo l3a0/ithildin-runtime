@@ -416,7 +416,7 @@ The order matters. Each step needs the one before it.
 6. Subscribe an address to the alarm topic and confirm it, by the steps in [Confirm an alarm email subscription](#confirm-an-alarm-email-subscription), with `<topic ARN>` the alarm topic's ARN and `<region>` `us-east-1`. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state.
 7. Apply the environment from the same branch, with `tofu -chdir=infra/test init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test apply`.
 8. Run the delivery check below. If no event arrives, stop and do not merge, and read the rule's metrics as that check says, because the fix for the likeliest cause has a monthly price the owner decides on. The environment applied so far can stay in place, unused, until the owner decides.
-9. Run `scripts/setup-repo.sh l3a0/ithildin-runtime`, which creates the `test` GitHub environment, limited to `main` with no reviewer.
+9. Run `scripts/setup-repo.sh l3a0/ithildin-runtime`, which creates the `test` GitHub environment, limited to `main` with no reviewer, and adds the `infra` check to the checks a merge to `main` requires. Until the build's pull request merges, no other pull request can pass that check, because only the build's branch holds the workflow that reports it. Once it merges, an open pull request reports the check after its next push, such as a rebase onto `main`.
 10. Set the three repository secrets the workflows read, with `gh secret set AWS_TEST_ROLE_ARN`, `gh secret set AWS_TEST_APPLY_ROLE_ARN` and `gh secret set TF_STATE_BUCKET_TEST`. Each command asks for its value, so none enters the shell's history. `tofu -chdir=infra/test/bootstrap output` prints the two ARNs again.
 
 Applying before the merge means the first `aws` run on `main` finds the environment already there, and a failed delivery reaches the owner before anything merges.
@@ -463,14 +463,14 @@ An apply that fails or is cancelled halfway can leave the state locked, and the 
 
 Run this once, after the first merge that applies `infra/test`, and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), as [How a drill counts toward a gate](halts-and-drills.md#how-a-drill-counts-toward-a-gate) says.
 
-1. Merge a pull request that changes the smoke route's `visibility_timeout_seconds` from 30 to 31 in two places: `infra/test/routes.json`, and the `visibility_timeout = 30` that `infra/test/tests/test.tftest.hcl` pins. Changing only the routes file fails `tofu test`, and then no apply runs.
+1. Merge a pull request that changes the smoke route's `visibility_timeout_seconds` from 30 to 31 in two places: `infra/test/routes.json`, and the `visibility_timeout = 30` that `infra/test/tests/test.tftest.hcl` pins. Changing only the routes file fails `tofu test`, and the required `infra` check then blocks the merge.
 2. Check that the merge's `Infra` run ran its `tofu apply (test)` job, and that the job's summary lists `module.routes.aws_sqs_queue.this[…]` as an `update` of `visibility_timeout_seconds`. The summary hides each key, so the route's name does not appear.
 3. Read the value with `aws sqs get-queue-attributes --queue-url $(aws sqs get-queue-url --queue-name ithildin-test-smoke --query QueueUrl --output text) --attribute-names VisibilityTimeout`, and expect 31.
 4. Merge the revert of that pull request, and expect step 2's job to have run again and step 3's read to show 30.
 
 #### Drill the budget alarm
 
-Run this once and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), naming who saw the email and when, such as "the owner". The issue is public, so the record summarises what each command showed and never names the address, the account id, an ARN or a queue URL. It waits on the owner's ruling on whether the budget counts usage before AWS credits, because credits can hold the month's spend at zero, and then the drill cannot start.
+Run this once and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), naming who saw the email and when, such as "the owner". The issue is public, so the record summarises what each command showed and never names the address, the account id, an ARN or a queue URL. The budget counts usage before AWS credits, so credits on the account do not hold the month's spend at zero and keep the drill from starting.
 
 1. Wait until `aws budgets describe-budget --account-id <test account id> --budget-name ithildin-test-monthly` shows `CalculatedSpend.ActualSpend` above 0.01 US dollars.
 2. In a checkout of `main`, run step 5's `init`, then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket> -var budget_limit=0.01`.

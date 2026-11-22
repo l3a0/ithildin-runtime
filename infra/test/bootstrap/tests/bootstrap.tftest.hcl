@@ -225,6 +225,11 @@ run "the_budget_alarm_is_five_dollars_a_month_to_its_topic" {
   }
 
   assert {
+    condition     = aws_budgets_budget.monthly.cost_types[0].include_credit == false
+    error_message = "The budget subtracts AWS credits, so credits can hold its spend at zero and the alarm never fires."
+  }
+
+  assert {
     condition = jsonencode([for n in aws_budgets_budget.monthly.notification : {
       comparison_operator = n.comparison_operator
       threshold           = n.threshold

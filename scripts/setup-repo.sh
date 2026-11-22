@@ -33,8 +33,10 @@
 #   scripts/setup-repo.sh l3a0/new-repo
 #   DRY_RUN=1 scripts/setup-repo.sh l3a0/new-repo
 #
-# The ruleset requires two status checks by name, `test` and `docs`, which are
-# the two jobs in .github/workflows/ci.yml. Renaming a job means editing the
+# The ruleset requires three status checks by name: `test` and `docs`, which are
+# the two jobs in .github/workflows/ci.yml, and `infra`, the job in
+# .github/workflows/infra.yml that passes only when its OpenTofu checks pass.
+# Renaming a job means editing the
 # ruleset JSON and re-running this script, or the required check goes missing
 # and a pull request reports a short rollup rather than a failure.
 #

@@ -83,6 +83,10 @@ resource "aws_iam_openid_connect_provider" "github" {
 # test account's one alarm topic, and the owner subscribes an address to the topic by hand and confirms it, as
 # docs/what-a-person-runs.md's "Confirm an alarm email subscription" says. So the
 # address enters no tracked file and no OpenTofu state, as with every other alarm email.
+#
+# The budget counts usage before AWS credits. By default AWS Budgets subtracts credits,
+# so an account holding credits would read a spend of zero until they ran out, and the
+# alarm could not fire.
 resource "aws_sns_topic" "alarms" {
   name = "ithildin-test-alarms"
 }
@@ -109,6 +113,10 @@ resource "aws_budgets_budget" "monthly" {
   limit_amount = var.budget_limit
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
+
+  cost_types {
+    include_credit = false
+  }
 
   notification {
     comparison_operator       = "GREATER_THAN"
