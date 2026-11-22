@@ -9,6 +9,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [The commands](#the-commands)
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
+  - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
 
@@ -376,7 +377,7 @@ An alarm's email subscription sends nothing until it is confirmed. The owner con
 
 Every command below runs under the owner's credential, signed in to the account that holds the topic. `<region>` is the region the topic's ARN names. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state, as [How the email route is set up](architecture/07-deployment.md#how-the-email-route-is-set-up) says.
 
-1. Subscribe the address with `aws sns subscribe --region <region> --topic-arn <topic ARN> --protocol email --notification-endpoint <address>`, where `<topic ARN>` is the account's alarm topic. It prints `pending confirmation` in place of the subscription's ARN, and SNS emails the address a confirmation link.
+1. Subscribe the address with `aws sns subscribe --region <region> --topic-arn <topic ARN> --protocol email --notification-endpoint <address>`, where `<topic ARN>` is the account's alarm topic, which on the test account is `ithildin-test-alarms`. It prints `pending confirmation` in place of the subscription's ARN, and SNS emails the address a confirmation link.
 2. Copy the emailed link's address without following it, and take the value of its `Token` parameter. AWS's [Subscribe](https://docs.aws.amazon.com/sns/latest/api/API_Subscribe.html) page says a token is valid for two days, and the [email notifications](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html) page says SNS deletes a subscription still unconfirmed after 48 hours, so a token older than that means starting again at step 1.
 3. Run `aws sns confirm-subscription --region <region> --topic-arn <topic ARN> --token <token> --authenticate-on-unsubscribe true`, as AWS's [ConfirmSubscription](https://docs.aws.amazon.com/sns/latest/api/API_ConfirmSubscription.html) page describes. It prints the subscription's ARN.
 4. Run `aws sns get-subscription-attributes --region <region> --subscription-arn <subscription ARN>` and check that `ConfirmationWasAuthenticated` reads `true`. If it does not, the subscription was confirmed by the link instead. Remove it with `aws sns unsubscribe --region <region> --subscription-arn <subscription ARN>` and start again at step 1.
@@ -384,3 +385,113 @@ Every command below runs under the owner's credential, signed in to the account 
 To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first. Then find the old subscription's ARN with `aws sns list-subscriptions-by-topic --region <region> --topic-arn <topic ARN>` and remove it with `aws sns unsubscribe`, so the topic always has at least one confirmed subscription. Last, run the drill row for an email subscription on that account. The same `aws sns unsubscribe` command ends a subscription on purpose.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.
+
+### Set up the test environment
+
+The test environment is the bucket, queues and roles that CI's `aws` job runs the store and queue suites against, in real S3 and SQS. [#78](https://github.com/l3a0/ithildin-runtime/issues/78) holds the plan it was built from, and [What an environment holds](architecture/07-deployment.md#what-an-environment-holds) says what test is for. The configuration sits under `infra/`.
+
+1. `infra/test/bootstrap/` holds what CI needs before it can run: the state bucket, GitHub's OIDC provider, the apply role, the test role, and a budget alarm with the account's alarm topic. The owner applies it.
+2. `infra/test/` holds the test bucket and the queues and rules `infra/test/routes.json` lists. `.github/workflows/infra.yml` applies it after each merge that changes `infra/` or the workflow, and on a manual dispatch from `main`. The owner applies it once by hand, before the merge that adds it.
+
+#### Reach the test account
+
+Every command below runs as `OrganizationAccountAccessRole`, which AWS Organizations creates in each account it creates, and which the test bucket's policy admits. AWS refuses to let a root sign-in assume a role, so the role is reached from an IAM user in the management account, `ithildin-owner`.
+
+1. The user holds two grants and no access key. One is `sts:AssumeRole` on the test account's `OrganizationAccountAccessRole`, and the other is AWS's managed `SignInLocalDevelopmentAccess`, which `aws login` needs. The owner sets its console password and MFA device in the IAM console.
+2. `aws login --profile ithildin-owner` signs it in from the laptop, through the browser, with no long-lived secret on disk.
+3. An AWS CLI profile in `~/.aws/config` assumes the role from it, used with `export AWS_PROFILE=<profile>`.
+
+```ini
+[profile <profile>]
+role_arn = arn:aws:iam::<test account id>:role/OrganizationAccountAccessRole
+source_profile = ithildin-owner
+region = us-east-1
+```
+
+OpenTofu's AWS provider cannot read an `aws login` session through that profile, so run OpenTofu with the role's short-lived keys in the shell's environment, with `eval "$(aws configure export-credentials --profile <profile> --format env)"`. The keys last an hour, never enter a file, and the AWS CLI commands below work with them too.
+
+#### Set it up, before the merge that adds it
+
+The order matters. Each step needs the one before it.
+
+1. Create the AWS organization, with a new, empty management account that holds nothing else, and the test account as its first member, with centralized root access on. Then, signed in to the management account's console, open Cost Explorer in Billing and Cost Management once, which turns it on for the organization. No API can turn it on, and until it is on AWS refuses the bootstrap's budget with "is a linked account".
+2. Set the repository's OIDC subject template to include `repo`, `context` and `job_workflow_ref`, with `gh api -X PUT repos/l3a0/ithildin-runtime/actions/oidc/customization/sub -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'`. Read it back with `gh api repos/l3a0/ithildin-runtime/actions/oidc/customization/sub` and check that `use_immutable_subject` still reads `true`. The board deploys through OIDC too, so dispatch it with `gh workflow run board.yml --repo l3a0/ithildin-runtime` and check that the run deploys.
+3. Create the state bucket under a name of the owner's choosing, with `aws s3api create-bucket --bucket <state bucket>`. A new bucket comes encrypted and with public access blocked, and the bootstrap turns its versioning on.
+4. Write the backend's file outside the repository, with `mkdir -p ~/.config/ithildin-runtime` and then `printf 'bucket = "%s"\n' <state bucket> > ~/.config/ithildin-runtime/test.tfbackend`.
+5. Apply the bootstrap from the build's branch, with `tofu -chdir=infra/test/bootstrap init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket>`. The apply prints the two roles' ARNs and the alarm topic's ARN.
+6. Subscribe an address to the alarm topic and confirm it, by the steps in [Confirm an alarm email subscription](#confirm-an-alarm-email-subscription), with `<topic ARN>` the alarm topic's ARN and `<region>` `us-east-1`. The address is typed only at the command line, so it enters no tracked file and no OpenTofu state.
+7. Apply the environment from the same branch, with `tofu -chdir=infra/test init -backend-config=$HOME/.config/ithildin-runtime/test.tfbackend` and then `tofu -chdir=infra/test apply`.
+8. Run the delivery check below. If no event arrives, stop and do not merge, and read the rule's metrics as that check says, because the fix for the likeliest cause has a monthly price the owner decides on. The environment applied so far can stay in place, unused, until the owner decides.
+9. Run `scripts/setup-repo.sh l3a0/ithildin-runtime`, which creates the `test` GitHub environment, limited to `main` with no reviewer, and adds the `infra` check to the checks a merge to `main` requires. Until the build's pull request merges, no other pull request can pass that check, because only the build's branch holds the workflow that reports it. Once it merges, an open pull request reports the check after its next push, such as a rebase onto `main`.
+10. Set the three repository secrets the workflows read, with `gh secret set AWS_TEST_ROLE_ARN`, `gh secret set AWS_TEST_APPLY_ROLE_ARN` and `gh secret set TF_STATE_BUCKET_TEST`. Each command asks for its value, so none enters the shell's history. `tofu -chdir=infra/test/bootstrap output` prints the two ARNs again.
+
+Applying before the merge means the first `aws` run on `main` finds the environment already there, and a failed delivery reaches the owner before anything merges.
+
+Two checks follow the merge.
+
+1. The merge's own `Infra` run is the apply role's first real plan, because steps 5 and 7 ran as the owner's role. Check that it ends with no changes to apply. A grant the apply role lacks fails that run with AWS's "access denied" naming the action, while the environment steps 5 to 7 applied keeps running. The fix is to add the grant in `infra/test/bootstrap/roles.tf`, merge it, and re-apply the bootstrap from `main` as step 5 says. That merge's own `Infra` run fails the same way, because the grant is not applied yet, so after the bootstrap apply re-run it with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main` and check that its `tofu apply (test)` summary reads "No changes."
+2. In a checkout of `main`, run step 5's `init` and then `tofu -chdir=infra/test/bootstrap plan -var state_bucket=<state bucket>`, and expect no changes. Step 5 applied the bootstrap from the build's branch, and no workflow compares it with what merged.
+
+After every apply of the bootstrap, this rollback's and the budget drill's included, check that the alarm topic still has its subscription, with `aws sns list-subscriptions-by-topic --topic-arn <alarm topic ARN>`, and expect one confirmed email subscription. A change that replaces the topic drops it, because the subscription lives outside OpenTofu state. If there is none, repeat step 6.
+
+#### Check that an event reaches its queue
+
+The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`. A write under `runs/` must carry `If-None-Match`, or the bucket refuses it.
+
+1. Write a key with `aws s3api put-object --bucket ithildin-runtime-test --key runs/ci/owner-check-$(date -u +%Y%m%dT%H%M%SZ)/smoke/check.json --body "$(mktemp)" --if-none-match '*'`. The AWS CLI takes a body only from a file, and `mktemp` makes an empty one.
+2. Find the queue with `aws sqs get-queue-url --queue-name ithildin-test-smoke`.
+3. Receive with `aws sqs receive-message --queue-url <queue URL> --wait-time-seconds 20`, up to three times. One message names the key in its `detail.object.key`.
+
+If no message arrives, wait five minutes after the write, because EventBridge's counts reach CloudWatch a minute or more after the event. Then read the rule's three counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-smoke --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once each with `TriggeredRules`, `Invocations` and `FailedInvocations`. The `date -v-1H` form is macOS's.
+
+CloudWatch answers a metric with no data with no datapoint rather than with zero.
+
+- **`TriggeredRules` has no datapoint, or zero:** the rule never matched, so the bucket's EventBridge notifications or the route's pattern is at fault, and the queue's encryption is not.
+- **`FailedInvocations` counts the write:** EventBridge matched and could not deliver. The likeliest cause is that it cannot send to a queue under SQS's own encryption, and the fix is a customer-managed KMS key at about 1 US dollar a month in every environment's account. That is the owner's decision.
+- **`TriggeredRules` and `Invocations` count the write and `FailedInvocations` has no datapoint:** the event was delivered and the receive missed it. Receive again, and read the queue's `ApproximateNumberOfMessages` with `aws sqs get-queue-attributes`.
+
+The key's current version expires one to two days after the write, and the bucket is empty at least three days after the last write.
+
+#### Clear a lock a failed apply leaves
+
+An apply that fails or is cancelled halfway can leave the state locked, and the next apply then waits five minutes and fails with a message that names the lock's id.
+
+1. Check in [the Infra workflow's runs](https://github.com/l3a0/ithildin-runtime/actions/workflows/infra.yml) that no apply is still running.
+2. Clear the lock from the laptop with `tofu -chdir=infra/test force-unlock <lock id>`, after the same `init` as step 7 above.
+3. Re-apply `main`'s current configuration with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main`. Re-running an old failed run would apply that run's older commit, and undo what merged after it.
+
+#### Roll back a bad apply
+
+- **`infra/test`:** revert the merge that changed it, in a pull request. The revert's merge starts an apply of the earlier configuration. A route the revert removes takes its rule and queues with it, as [Environment rule 10](architecture/07-deployment.md#environment-rule-10-how-an-environments-infrastructure-is-applied) says of test.
+- **`infra/test/bootstrap`:** no workflow applies it. Revert the bad change in a pull request, and once it merges, run step 5's `init` and `apply` again from `main`, from the laptop. Rolling back from an older commit alone would leave `main` holding the bad change, and the next apply from `main` would put it back. The revert's own `Infra` run happens under the bad bootstrap, so re-run it afterwards with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main` and check that its `tofu apply (test)` summary reads "No changes."
+
+#### Drill the rollback
+
+Run this once, after the first merge that applies `infra/test`, and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), as [How a drill counts toward a gate](halts-and-drills.md#how-a-drill-counts-toward-a-gate) says.
+
+1. Merge a pull request that changes the smoke route's `visibility_timeout_seconds` from 30 to 31 in two places: `infra/test/routes.json`, and the `visibility_timeout = 30` that `infra/test/tests/test.tftest.hcl` pins. Changing only the routes file fails `tofu test`, and the required `infra` check then blocks the merge.
+2. Check that the merge's `Infra` run ran its `tofu apply (test)` job, and that the job's summary lists `module.routes.aws_sqs_queue.this[…]` as an `update` of `visibility_timeout_seconds`. The summary hides each key, so the route's name does not appear.
+3. Read the value with `aws sqs get-queue-attributes --queue-url $(aws sqs get-queue-url --queue-name ithildin-test-smoke --query QueueUrl --output text) --attribute-names VisibilityTimeout`, and expect 31.
+4. Merge the revert of that pull request, and expect step 2's job to have run again and step 3's read to show 30.
+
+#### Drill the budget alarm
+
+Run this once and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), naming who saw the email and when, such as "the owner". The issue is public, so the record summarises what each command showed and never names the address, the account id, an ARN or a queue URL. The budget counts usage before AWS credits, so credits on the account do not hold the month's spend at zero and keep the drill from starting.
+
+1. Wait until `aws budgets describe-budget --account-id <test account id> --budget-name ithildin-test-monthly` shows `CalculatedSpend.ActualSpend` above 0.01 US dollars.
+2. In a checkout of `main`, run step 5's `init`, then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket> -var budget_limit=0.01`.
+3. Wait up to a day for the email at the confirmed address. If none arrives, read `aws sns list-subscriptions-by-topic --topic-arn <alarm topic ARN>` and the topic's `NumberOfNotificationsFailed` metric in CloudWatch, and record the drill as failed.
+4. Whether or not the email arrived, put the limit back with the same `apply` without `-var budget_limit=0.01`, and check the subscription as the setup section says.
+5. Read `aws budgets describe-notifications-for-budget --account-id <test account id> --budget-name ithildin-test-monthly` until the notification's state reads `OK`, for up to a day. AWS Budgets refreshes its figures a few times a day. Record the drill as failed while it still reads `ALARM`.
+
+#### Retire the test environment
+
+The bucket module carries OpenTofu's `prevent_destroy`, and other environments will call it, so retiring test removes the bucket from test's state rather than editing the module. In this order:
+
+1. Merge a pull request that removes the `aws` job from `ci.yml` and the `apply` job from `infra.yml`, so nothing writes to the bucket or applies to it again.
+2. Wait until the lifecycle has emptied the bucket of its current versions, noncurrent versions and delete markers, which takes at least three days. `aws s3api list-object-versions --bucket ithildin-runtime-test --max-items 1` shows no `Versions` and no `DeleteMarkers` once it has. Until then, wait a day and check again.
+3. Remove the bucket's resources from test's state, with `tofu -chdir=infra/test state list` and then `tofu -chdir=infra/test state rm` on each address under `module.bucket`. Then delete the empty bucket with `aws s3api delete-bucket --bucket ithildin-runtime-test`.
+4. Destroy the rest of test, the queues and rules, with `tofu -chdir=infra/test destroy`.
+5. The state bucket also carries `prevent_destroy`. Remove it from the bootstrap's state with `tofu -chdir=infra/test/bootstrap state rm aws_s3_bucket.state aws_s3_bucket_versioning.state`, and destroy the rest with `tofu -chdir=infra/test/bootstrap destroy -var state_bucket=<state bucket>`. The bootstrap's state stays in the bucket until the next step deletes it.
+6. Empty the state bucket of every version and delete it, with `aws s3api delete-objects` on each version `aws s3api list-object-versions` names, and then `aws s3api delete-bucket`.
+7. Delete the three secrets with `gh secret delete`, and the `test` GitHub environment under the repository's Settings.

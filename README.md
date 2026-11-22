@@ -22,6 +22,10 @@ its tests show it works.
   tool the owner and the operator run, and how an alarm leads to a command.
 - [docs/halts-and-drills.md](docs/halts-and-drills.md) holds the steps of a sort
   and every drill.
+- [infra/](infra/) holds the test environment's OpenTofu configuration, which
+  [.github/workflows/infra.yml](.github/workflows/infra.yml) checks on every pull
+  request, as the required `infra` check, and applies after each merge that
+  changes it.
 - The issue tracker holds the scope of everything unbuilt.
 - The [build board](https://l3a0.github.io/ithildin-runtime/) shows what is
   in flight and what to take next, rebuilt from the tracker.
@@ -41,3 +45,15 @@ uv run pytest
 
 markdownlint has no Python package, so it runs in CI rather than locally. The
 prose checks it cannot do run in the test suite.
+
+The cases marked `aws` run against the test environment in AWS, so the default
+run leaves them out and only `ci.yml`'s `aws` job runs them, on a push to `main`.
+The OpenTofu checks need OpenTofu 1.13 and no AWS credential.
+
+```bash
+tofu fmt -check -recursive infra/
+tofu -chdir=infra/test/bootstrap init -backend=false && tofu -chdir=infra/test/bootstrap test
+tofu -chdir=infra/test init -backend=false && tofu -chdir=infra/test test
+tofu -chdir=infra/modules/bucket init -backend=false && tofu -chdir=infra/modules/bucket test
+tofu -chdir=infra/modules/routes init -backend=false && tofu -chdir=infra/modules/routes test
+```

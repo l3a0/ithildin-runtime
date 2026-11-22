@@ -45,7 +45,12 @@ testpaths = ["tests"]
 # Puts the repo root on the path, so a test can import both the package under
 # src/ and the helpers under tests/support/.
 pythonpath = ["."]
-addopts = "-ra"
+# The `aws` cases run only in ci.yml's push-only `aws` job, which passes `-m aws`. A
+# later -m on the command line replaces this one.
+addopts = "-ra -m 'not aws'"
+markers = [
+    "aws: runs against the test environment in AWS, in ci.yml's aws job only",
+]
 
 [tool.ruff]
 target-version = "py312"
