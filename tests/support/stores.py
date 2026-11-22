@@ -131,34 +131,47 @@ class StoreSpec:
 
 @cache
 def _routes(path: Path = ROUTES_FILE) -> tuple[Route, ...]:
-    """Every key pattern in infra/test/routes.json, wherever the file's shape puts it."""
-    found: list[str] = []
+    """Every route in infra/test/routes.json, read from each rule's EventBridge pattern.
 
-    def walk(value: object) -> None:
-        if isinstance(value, dict):
-            for name, inner in value.items():
-                if name == "pattern":
-                    for entry in inner:
-                        if set(entry) != {"wildcard"}:
-                            raise ValueError(
-                                f"routes.json holds a pattern the store suite cannot read: {entry}"
-                            )
-                        found.append(entry["wildcard"])
-                else:
-                    walk(inner)
-        elif isinstance(value, list):
-            for inner in value:
-                walk(inner)
-
-    walk(json.loads(path.read_text()))
+    `routes_file` in `runtime.loop` writes each rule's `pattern` as `event_pattern`
+    builds it: its kinds under `detail-type` and its key patterns as `wildcard`
+    entries under `detail.object.key`. Anything else in a rule's pattern is one
+    the store suite cannot read, so it refuses the file rather than skip a route.
+    """
+    found: list[Route] = []
+    document = json.loads(path.read_text())
+    if not isinstance(document, dict):
+        raise ValueError(f"{path} holds no rules, so the store suite cannot check its keys")
+    for rule in document.get("rules", []):
+        pattern = rule.get("pattern") if isinstance(rule, dict) else None
+        try:
+            kinds = pattern["detail-type"]
+            keys = pattern["detail"]["object"]["key"]
+        except (KeyError, TypeError):
+            raise ValueError(
+                f"routes.json holds a pattern the store suite cannot read: {pattern}"
+            ) from None
+        if not isinstance(kinds, list) or not isinstance(keys, list) or not kinds or not keys:
+            raise ValueError(f"routes.json holds a pattern the store suite cannot read: {pattern}")
+        for entry in keys:
+            if not isinstance(entry, dict) or set(entry) != {"wildcard"}:
+                raise ValueError(
+                    f"routes.json holds a pattern the store suite cannot read: {entry}"
+                )
+            for kind in kinds:
+                found.append(Route("store-suite", EventKind(kind), entry["wildcard"]))
     if not found:
         raise ValueError(f"{path} holds no key pattern, so the store suite cannot check its keys")
-    return tuple(Route("store-suite", EventKind.CREATED, pattern) for pattern in found)
+    return tuple(found)
 
 
-def _unrouted(key: str) -> str:
-    """Refuse a key a test route hears, which would put a message on a queue a suite reads."""
-    for route in _routes():
-        if route.matches(EventKind.CREATED, key):
+def _unrouted(key: str, path: Path = ROUTES_FILE) -> str:
+    """Refuse a key a test route hears, which would put a message on a queue a suite reads.
+
+    A route of either kind counts. A delete route hears a key too, when the
+    bucket's one-day expiry removes it.
+    """
+    for route in _routes(path):
+        if route.matches(route.kind, key):
             raise ValueError(f"{key} matches the test route {route.key}, so a queue would hear it")
     return key
