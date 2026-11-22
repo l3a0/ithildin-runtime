@@ -10,8 +10,8 @@ pass forecasts and books.
 
 Each runs its own receive loop on a thread, over the folder and named pipes
 or over S3 and SQS on moto's server, with the routes generated from the
-stand-in table. That is the same table the routes file for the test
-environment's queues will be generated from.
+stand-in table. The routes file for the test environment's queues is generated
+from the same table, by `tests/support/routes_file.py`.
 """
 
 from __future__ import annotations

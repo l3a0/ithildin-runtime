@@ -14,6 +14,7 @@ own stage's row, since each stage's inputs belong to its module's issue.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ from typing import Any
 
 from ithildinruntime.core import EventKind, Route, StageKind, result_key
 
-__all__ = ["Hears", "Stage", "Table", "event_pattern", "routes"]
+__all__ = ["Hears", "QueueSettings", "Stage", "Table", "event_pattern", "routes", "routes_file"]
 
 # A decision time no plan holds, used only to check a stage's name builds a key.
 _ANY_DECISION = datetime(2000, 1, 3, tzinfo=UTC)
@@ -161,6 +162,69 @@ def event_pattern(route: Route, bucket: str) -> dict[str, Any]:
         "detail-type": [str(route.kind)],
         "detail": {
             "bucket": {"name": [bucket]},
-            "object": {"key": [{"wildcard": route.key}]},
+            "object": {"key": _key_pattern(route)},
         },
     }
+
+
+def _key_pattern(route: Route) -> list[dict[str, str]]:
+    return [{"wildcard": route.key}]
+
+
+@dataclass(frozen=True)
+class QueueSettings:
+    """One reader's queue: how long a received message stays hidden, and how often.
+
+    A message received `max_receive_count` times without being deleted moves to
+    the reader's dead-letter queue on its next receive. SQS takes a visibility
+    timeout of 0 to 43,200 seconds and a receive count of 1 to 1,000.
+    """
+
+    visibility_timeout_seconds: int
+    max_receive_count: int
+
+    def __post_init__(self) -> None:
+        timeout, count = self.visibility_timeout_seconds, self.max_receive_count
+        if type(timeout) is not int or not 0 <= timeout <= 43_200:
+            raise ValueError(f"visibility timeout {timeout!r} is not 0 to 43200 seconds")
+        if type(count) is not int or not 1 <= count <= 1_000:
+            raise ValueError(f"receive count {count!r} is not 1 to 1000")
+
+
+def routes_file(rules: Iterable[Route], queues: Mapping[str, QueueSettings]) -> str:
+    """The routes file an environment's infrastructure reads, as its exact text.
+
+    It holds two lists. `queues` has one entry per reader, which becomes a
+    queue and its dead-letter queue. `rules` has one entry per route, which
+    becomes an EventBridge rule named by `Route.name` and aimed at its
+    reader's queue. Both are sorted, so one set of routes writes one text.
+
+    Every route's reader needs an entry in `queues`, and every entry needs a
+    route, because a queue no rule feeds would sit empty and look healthy.
+    """
+    rules = sorted(set(rules), key=lambda r: (r.reader, r.key, r.kind))
+    readers = {r.reader for r in rules}
+    if missing := sorted(readers - set(queues)):
+        raise ValueError(f"no queue settings for {', '.join(missing)}, whose routes need a queue")
+    if unfed := sorted(set(queues) - readers):
+        raise ValueError(f"no route feeds the queue of {', '.join(unfed)}")
+    document = {
+        "queues": [
+            {
+                "reader": reader,
+                "visibility_timeout_seconds": queues[reader].visibility_timeout_seconds,
+                "max_receive_count": queues[reader].max_receive_count,
+            }
+            for reader in sorted(readers)
+        ],
+        "rules": [
+            {
+                "name": r.name,
+                "reader": r.reader,
+                "kind": str(r.kind),
+                "pattern": _key_pattern(r),
+            }
+            for r in rules
+        ],
+    }
+    return json.dumps(document, indent=2) + "\n"

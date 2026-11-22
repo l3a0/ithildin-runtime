@@ -442,7 +442,7 @@ The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`
 2. Find the queue with `aws sqs get-queue-url --queue-name ithildin-test-smoke`.
 3. Receive with `aws sqs receive-message --queue-url <queue URL> --wait-time-seconds 20`, up to three times. One message names the key in its `detail.object.key`.
 
-If no message arrives, wait five minutes after the write, because EventBridge's counts reach CloudWatch a minute or more after the event. Then read the rule's three counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-smoke --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once each with `TriggeredRules`, `Invocations` and `FailedInvocations`. The `date -v-1H` form is macOS's.
+If no message arrives, wait five minutes after the write, because EventBridge's counts reach CloudWatch a minute or more after the event. Then read the rule's three counts for the last hour, with `aws cloudwatch get-metric-statistics --namespace AWS/Events --dimensions Name=RuleName,Value=ithildin-test-$(jq -r '.rules[] | select(.reader == "smoke") | .name' infra/test/routes.json) --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ) --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) --period 3600 --statistics Sum --metric-name <name>`, once each with `TriggeredRules`, `Invocations` and `FailedInvocations`. Run it from a checkout of `main`, because the rule's name is `ithildin-test-` and the smoke rule's `name` in the routes file. The `date -v-1H` form is macOS's.
 
 CloudWatch answers a metric with no data with no datapoint rather than with zero.
 
@@ -462,14 +462,14 @@ An apply that fails or is cancelled halfway can leave the state locked, and the 
 
 #### Roll back a bad apply
 
-- **`infra/test`:** revert the merge that changed it, in a pull request. The revert's merge starts an apply of the earlier configuration. A route the revert removes takes its rule and queues with it, as [Environment rule 10](architecture/07-deployment.md#environment-rule-10-how-an-environments-infrastructure-is-applied) says of test.
+- **`infra/test`:** revert the merge that changed it, in a pull request. The revert's merge starts an apply of the earlier configuration. A rule the revert removes from the `rules` list of `infra/test/routes.json` goes with it, and so do the queues of a reader it removes from the `queues` list, as [Environment rule 10](architecture/07-deployment.md#environment-rule-10-how-an-environments-infrastructure-is-applied) says of test.
 - **`infra/test/bootstrap`:** no workflow applies it. Revert the bad change in a pull request, and once it merges, run step 5's `init` and `apply` again from `main`, from the laptop. Rolling back from an older commit alone would leave `main` holding the bad change, and the next apply from `main` would put it back. The revert's own `Infra` run happens under the bad bootstrap, so re-run it afterwards with `gh workflow run infra.yml --repo l3a0/ithildin-runtime --ref main` and check that its `tofu apply (test)` summary reads "No changes."
 
 #### Drill the rollback
 
 Run this once, after the first merge that applies `infra/test`, and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), as [How a drill counts toward a gate](halts-and-drills.md#how-a-drill-counts-toward-a-gate) says.
 
-1. Merge a pull request that changes the smoke route's `visibility_timeout_seconds` from 30 to 31 in two places: `infra/test/routes.json`, and the `visibility_timeout = 30` that `infra/test/tests/test.tftest.hcl` pins. Changing only the routes file fails `tofu test`, and the required `infra` check then blocks the merge.
+1. Merge a pull request that changes the smoke queue's visibility timeout from 30 to 31. It changes the smoke entry of `QUEUES` in `tests/support/routes_file.py`, rewrites `infra/test/routes.json` with `uv run python -m tests.support.routes_file`, and changes the `visibility_timeout == 30` that `infra/test/tests/test.tftest.hcl` pins. A hand edit of the routes file fails the required `test` check, because a test there compares the file with what the generator writes. A new file without the new pin fails `tofu test`, and the required `infra` check then blocks the merge.
 2. Check that the merge's `Infra` run ran its `tofu apply (test)` job, and that the job's summary lists `module.routes.aws_sqs_queue.this[…]` as an `update` of `visibility_timeout_seconds`. The summary hides each key, so the route's name does not appear.
 3. Read the value with `aws sqs get-queue-attributes --queue-url $(aws sqs get-queue-url --queue-name ithildin-test-smoke --query QueueUrl --output text) --attribute-names VisibilityTimeout`, and expect 31.
 4. Merge the revert of that pull request, and expect step 2's job to have run again and step 3's read to show 30.

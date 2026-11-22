@@ -17,7 +17,16 @@ from ithildinruntime.core import (
     parse_event,
     result_key,
 )
-from ithildinruntime.runtime.loop import Hears, Stage, Table, event_pattern, routes
+from ithildinruntime.runtime.loop import (
+    Hears,
+    QueueSettings,
+    Stage,
+    Table,
+    event_pattern,
+    routes,
+    routes_file,
+)
+from tests.support import routes_file as test_environment
 from tests.support.queues import DEPLOYMENT, FIRST, RUN, TABLE
 
 D = StageKind.DETERMINISTIC
@@ -82,6 +91,72 @@ def test_the_rule_pattern_matches_s3_as_the_source_and_the_environments_bucket()
             "object": {"key": [{"wildcard": "runs/ci/*/feed/result.json"}]},
         },
     }
+
+
+def test_the_committed_routes_file_is_what_the_generator_writes() -> None:
+    committed = test_environment.PATH.read_text()
+    assert committed == test_environment.text(), (
+        f"{test_environment.PATH.name} differs from what the generator writes. "
+        f"Rewrite it with `{test_environment.COMMAND}`, and commit the result."
+    )
+
+
+def test_the_routes_file_holds_one_queue_per_reader_and_one_rule_per_route() -> None:
+    settings = QueueSettings(visibility_timeout_seconds=30, max_receive_count=3)
+    one = Route("book", EventKind.CREATED, "runs/ci/*/alpha/result.json")
+    two = Route("book", EventKind.REMOVED, "runs/ci/*/stop.json")
+    other = Route("alpha", EventKind.CREATED, "runs/ci/*/feed/result.json")
+    queues = {"book": settings, "alpha": QueueSettings(31, 4)}
+    document = json.loads(routes_file([two, one, other, one], queues))
+    assert document == {
+        "queues": [
+            {"reader": "alpha", "visibility_timeout_seconds": 31, "max_receive_count": 4},
+            {"reader": "book", "visibility_timeout_seconds": 30, "max_receive_count": 3},
+        ],
+        "rules": [
+            {
+                "name": route.name,
+                "reader": route.reader,
+                "kind": str(route.kind),
+                "pattern": event_pattern(route, "b")["detail"]["object"]["key"],
+            }
+            for route in (other, one, two)
+        ],
+    }
+    # One set of routes writes one text, whatever order they arrive in.
+    assert routes_file([one, other, two], queues) == routes_file([two, one, other], queues)
+
+
+def test_the_test_environments_file_holds_the_stand_in_table_and_the_smoke_route() -> None:
+    document = json.loads(test_environment.text())
+    found = {(r["reader"], r["kind"], r["pattern"][0]["wildcard"]) for r in document["rules"]}
+    assert found == {(r.reader, str(r.kind), r.key) for r in routes(TABLE, "ci")} | {
+        ("smoke", "Object Created", "runs/ci/*/smoke/*")
+    }
+    assert [q["reader"] for q in document["queues"]] == ["alpha", "book", "risk", "smoke"]
+
+
+def test_the_routes_file_refuses_a_route_with_no_queue_and_a_queue_with_no_route() -> None:
+    settings = QueueSettings(visibility_timeout_seconds=30, max_receive_count=3)
+    route = Route("alpha", EventKind.CREATED, "runs/ci/*/feed/result.json")
+    with pytest.raises(ValueError, match="no queue settings for alpha"):
+        routes_file([route], {})
+    with pytest.raises(ValueError, match="no route feeds the queue of risk"):
+        routes_file([route], {"alpha": settings, "risk": settings})
+
+
+@pytest.mark.parametrize(
+    ("timeout", "count"),
+    [(-1, 3), (43_201, 3), (30, 0), (30, 1_001), (30.0, 3), (30, True)],
+)
+def test_queue_settings_refuse_what_sqs_does_not_take(timeout, count) -> None:
+    with pytest.raises(ValueError):
+        QueueSettings(visibility_timeout_seconds=timeout, max_receive_count=count)
+
+
+@pytest.mark.parametrize(("timeout", "count"), [(0, 1), (43_200, 1_000)])
+def test_queue_settings_take_sqss_limits(timeout, count) -> None:
+    QueueSettings(visibility_timeout_seconds=timeout, max_receive_count=count)
 
 
 @pytest.mark.parametrize(

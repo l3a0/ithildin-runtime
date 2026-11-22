@@ -143,7 +143,7 @@ jobs:
               fi
             fi
           }
-          for reader in $(jq -r '.[].reader' infra/test/routes.json); do
+          for reader in $(jq -r '.queues[].reader' infra/test/routes.json); do
             purge "ithildin-test-$reader"
             purge "ithildin-test-$reader-dlq"
           done
