@@ -8,15 +8,22 @@ pass forecasts and books.
 3. `book` reads both and its own result for the decision before, so it keeps
    the plan's order.
 
-Each runs its own receive loop on a thread, over the folder and named pipes
-or over S3 and SQS on moto's server, with the routes generated from the
-stand-in table. The routes file for the test environment's queues is generated
-from the same table, by `tests/support/routes_file.py`.
+Each runs its own receive loop on a thread, over the folder and named pipes,
+over S3 and SQS on moto's server, or over the test environment's bucket and
+queues in AWS. On moto the routes are generated from the stand-in table, and
+the routes file for the test environment's queues is generated from the same
+table, by `tests/support/routes_file.py`.
+
+On moto each case makes its own bucket and queues. In AWS every case shares
+the test bucket and the test queues, so each case's keys sit under a run and
+an hour of their own, which `Case` holds. A read of a queue keeps the case's
+own keys and deletes every other message, which is an earlier case's.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import threading
 import time
@@ -24,11 +31,13 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from ithildinruntime.adapters import Faults, FolderStore, PipeQueue, S3Store, SqsQueue
 from ithildinruntime.core import (
@@ -46,6 +55,7 @@ from ithildinruntime.core import (
     event_body,
     output_key,
     result_key,
+    run_stop_key,
 )
 from ithildinruntime.core.records import _Record
 from ithildinruntime.runtime.loop import (
@@ -57,7 +67,7 @@ from ithildinruntime.runtime.loop import (
     event_pattern,
     routes,
 )
-from tests.support.stores import EMULATOR_KEYS, REGION
+from tests.support.stores import EMULATOR_KEYS, REGION, TEST_BUCKET
 
 DEPLOYMENT = "ci"
 RUN = "2026-11-02"
@@ -75,6 +85,15 @@ TABLE = Table(
     hears=(Hears("book", EventKind.CREATED, "runs/{deployment}/*/stop.json"),),
 )
 COMPONENTS = ("feed", "alpha", "risk", "book")
+# The components that hear a route. `feed` hears none, so the test environment
+# has no queue for it.
+READERS = tuple(sorted({route.reader for route in routes(TABLE, DEPLOYMENT)}))
+TEST_QUEUE_PREFIX = "ithildin-test"
+
+# How long a case waits for S3's event to reach a queue, the smoke check's bound.
+# design.md says S3's delivery takes "usually seconds and sometimes a minute or
+# longer". A bound costs its full length only when a case fails.
+DELIVERY_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -82,17 +101,83 @@ class Value(_Record):
     number: int
 
 
-def plan(decisions: int) -> Plan:
+def plan(decisions: int, run: str = RUN, first: datetime = FIRST) -> Plan:
     return Plan(
         format=1,
         deployment=DEPLOYMENT,
-        run=RUN,
+        run=run,
         mode=Mode.PAPER,
         release=RELEASE,
         decisions=tuple(
-            PlanDecision(FIRST + timedelta(minutes=n), ("standin",)) for n in range(decisions)
+            PlanDecision(first + timedelta(minutes=n), ("standin",)) for n in range(decisions)
         ),
     )
+
+
+@dataclass(frozen=True)
+class Case:
+    """Where one case's keys sit: a run, and the hour its decisions start in.
+
+    A case's decisions are a minute apart from `first`, so they all fall in
+    `first`'s hour, and `mine` tells its keys from every other case's in the
+    same run. The run's stop key is the run's own rather than a decision's, and
+    only the first case writes it, so it counts as that case's.
+    """
+
+    run: str = RUN
+    first: datetime = FIRST
+
+    def plan(self, decisions: int) -> Plan:
+        if not 1 <= decisions <= 60:
+            raise ValueError(f"a case's {decisions} decisions do not fit in its hour")
+        return plan(decisions, self.run, self.first)
+
+    def at(self, n: int = 0) -> datetime:
+        return self.first + timedelta(minutes=n)
+
+    def result(self, stage: str, n: int = 0) -> str:
+        return result_key(DEPLOYMENT, self.run, self.at(n), stage)
+
+    def mine(self, key: str) -> bool:
+        hour = f"runs/{DEPLOYMENT}/{self.run}/{self.first:%Y%m%dT%H}"
+        return key.startswith(hour) or key == run_stop_key(DEPLOYMENT, self.run)
+
+
+# The day every run's date counts from. The key builders accept only a date as
+# a key's run part, so a run's number and attempt become one.
+EPOCH = date(2000, 1, 1)
+
+
+def run_case(number: int, attempt: int, index: int) -> Case:
+    """The keys of case `index` in attempt `attempt` of the workflow's run `number`.
+
+    The run is EPOCH plus `number` × 100 + `attempt` days, and the case's first
+    decision is that date's midnight UTC plus `index` hours. So no two numbers,
+    attempts, cases or decisions write one key, while the attempt stays under
+    100, the index under 24 and a case's decisions under 60.
+    """
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise ValueError(f"a run's number {number!r} is not a count from 1")
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or not 1 <= attempt <= 99:
+        raise ValueError(f"a run's attempt {attempt!r} is not 1 to 99")
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < 24:
+        raise ValueError(f"a case's index {index!r} is not 0 to 23")
+    day = EPOCH + timedelta(days=number * 100 + attempt)
+    return Case(day.isoformat(), datetime(day.year, day.month, day.day, index, tzinfo=UTC))
+
+
+def case_from_environment(index: int) -> Case:
+    """Case `index`'s keys in this run of ci.yml, from what GitHub sets in every step."""
+    read = {}
+    for name in ("GITHUB_RUN_NUMBER", "GITHUB_RUN_ATTEMPT"):
+        value = os.environ.get(name, "")
+        if not value.isdigit():
+            raise RuntimeError(
+                f"{name} is {value!r}, so the case has no keys of its own. "
+                "GitHub sets it in ci.yml's aws job, the one place these cases run."
+            )
+        read[name] = int(value)
+    return run_case(read["GITHUB_RUN_NUMBER"], read["GITHUB_RUN_ATTEMPT"], index)
 
 
 class SystemTimer:
@@ -128,11 +213,11 @@ def storage(store, alarms: Alarms) -> Storage:
     )
 
 
-def header(stage: str, at: datetime, inputs: dict[str, str]) -> BlobHeader:
+def header(stage: str, at: datetime, inputs: dict[str, str], run: str = RUN) -> BlobHeader:
     return BlobHeader(
         format=1,
         deployment=DEPLOYMENT,
-        run=RUN,
+        run=run,
         stage=stage,
         kind="deterministic",
         decision_at=at,
@@ -142,8 +227,10 @@ def header(stage: str, at: datetime, inputs: dict[str, str]) -> BlobHeader:
     )
 
 
-def read_value(store: Storage, stage: str, at: datetime) -> tuple[int, dict[str, str]]:
-    key = result_key(DEPLOYMENT, RUN, at, stage)
+def read_value(
+    store: Storage, stage: str, at: datetime, run: str = RUN
+) -> tuple[int, dict[str, str]]:
+    key = result_key(DEPLOYMENT, run, at, stage)
     result = store.read_result(key, at)
     assert result is not None, f"{key} was read before it was stored"
     (listed,) = result.outputs
@@ -152,10 +239,15 @@ def read_value(store: Storage, stage: str, at: datetime) -> tuple[int, dict[str,
 
 
 def write_value(
-    store: Storage, item: Item, number: int, inputs: dict[str, str], report: Callable[[], None]
+    store: Storage,
+    item: Item,
+    number: int,
+    inputs: dict[str, str],
+    report: Callable[[], None],
+    run: str = RUN,
 ) -> DecisionResult:
-    key = output_key(DEPLOYMENT, RUN, item.decision_at, item.stage, "value")
-    head = header(item.stage, item.decision_at, inputs)
+    key = output_key(DEPLOYMENT, run, item.decision_at, item.stage, "value")
+    head = header(item.stage, item.decision_at, inputs, run)
     data = encode_output(Value, OutputFile(head, (Value(number),), False))
     stored = store.put(StageKind.DETERMINISTIC, key, data)
     report()
@@ -181,6 +273,7 @@ def handlers(
 ) -> dict[str, Callable]:
     """The stand-in stages' handlers, each pausing a random moment to shuffle them."""
     decisions = [d.at for d in the_plan.decisions]
+    run = the_plan.run
     lock = threading.Lock()
 
     def pause() -> None:
@@ -192,39 +285,39 @@ def handlers(
     def feed(item: Item, report: Callable[[], None]) -> DecisionResult:
         calls.add(item)
         pause()
-        return write_value(store, item, decisions.index(item.decision_at) + 1, {}, report)
+        return write_value(store, item, decisions.index(item.decision_at) + 1, {}, report, run)
 
     def alpha(item: Item, report: Callable[[], None]) -> DecisionResult:
         calls.add(item)
-        number, inputs = read_value(store, "feed", item.decision_at)
+        number, inputs = read_value(store, "feed", item.decision_at, run)
         pause()
-        return write_value(store, item, number * 2, inputs, report)
+        return write_value(store, item, number * 2, inputs, report, run)
 
     def risk(item: Item, report: Callable[[], None]) -> DecisionResult:
         calls.add(item)
-        number, inputs = read_value(store, "feed", item.decision_at)
+        number, inputs = read_value(store, "feed", item.decision_at, run)
         pause()
-        return write_value(store, item, number + 10, inputs, report)
+        return write_value(store, item, number + 10, inputs, report, run)
 
     def book(item: Item, report: Callable[[], None]) -> DecisionResult:
         calls.add(item)
-        a, from_alpha = read_value(store, "alpha", item.decision_at)
-        r, from_risk = read_value(store, "risk", item.decision_at)
+        a, from_alpha = read_value(store, "alpha", item.decision_at, run)
+        r, from_risk = read_value(store, "risk", item.decision_at, run)
         inputs = {**from_alpha, **from_risk}
         index = decisions.index(item.decision_at)
         before = 0
         if index:
-            before, earlier = read_value(store, "book", decisions[index - 1])
+            before, earlier = read_value(store, "book", decisions[index - 1], run)
             inputs.update(earlier)
         pause()
-        return write_value(store, item, before + a + r, inputs, report)
+        return write_value(store, item, before + a + r, inputs, report, run)
 
     return {"feed": feed, "alpha": alpha, "risk": risk, "book": book}
 
 
 def every_result(the_plan: Plan) -> list[str]:
     return [
-        result_key(DEPLOYMENT, RUN, d.at, stage.name)
+        result_key(DEPLOYMENT, the_plan.run, d.at, stage.name)
         for d in the_plan.decisions
         for stage in TABLE.stages
     ]
@@ -383,16 +476,36 @@ def run_folder(
     return folder_blobs(folder.root), calls
 
 
-# S3, EventBridge and SQS on moto's server
+# S3, EventBridge and SQS, on moto's server or in the test environment
+
+
+@dataclass(frozen=True)
+class Message:
+    """One message a case read: its event's key, its body, its handle and when SQS took it."""
+
+    key: str
+    body: dict
+    handle: str
+    sent_ms: int
+
+    def delay(self) -> float:
+        """Seconds from the event's time, in whole seconds, to SQS taking its message."""
+        at = datetime.fromisoformat(self.body["time"].replace("Z", "+00:00"))
+        return self.sent_ms / 1000 - at.timestamp()
 
 
 @dataclass
 class Cloud:
-    """One bucket, a queue for each stand-in component, and the generated rules."""
+    """One bucket, a queue for each reader, and the rules that route to them.
 
-    endpoint: str
+    `endpoint` is moto's server, or None for the test environment in AWS, whose
+    bucket, queues and rules infra/test applies from infra/test/routes.json.
+    """
+
+    endpoint: str | None
     bucket: str
     urls: dict[str, str]
+    case: Case = field(default_factory=Case)
 
     @classmethod
     def make(cls, endpoint: str, name: str, visibility: int = 30) -> Cloud:
@@ -422,6 +535,37 @@ class Cloud:
             events.put_targets(Rule=rule, Targets=[{"Id": "queue", "Arn": arns[route.reader]}])
         return cls(endpoint, name, urls)
 
+    @classmethod
+    def test_environment(cls, case: Case) -> Cloud:
+        """The test bucket and each reader's test queue, which every case shares."""
+        sqs = client("sqs", None)
+        urls = {}
+        for reader in READERS:
+            name = f"{TEST_QUEUE_PREFIX}-{reader}"
+            try:
+                urls[reader] = sqs.get_queue_url(QueueName=name)["QueueUrl"]
+            except ClientError as error:
+                if "NonExistentQueue" not in str(error):
+                    raise
+                raise RuntimeError(
+                    f"Queue {name} does not exist. If this merge changed "
+                    "infra/test/routes.json, infra.yml's apply may not have finished."
+                ) from None
+        return cls(None, TEST_BUCKET, urls, case)
+
+    @property
+    def on_aws(self) -> bool:
+        return self.endpoint is None
+
+    @property
+    def settle(self) -> float:
+        """How long a case reads on to show that nothing else arrives.
+
+        On moto a delivery takes well under a second. In AWS a late delivery
+        has as long as the delivery bound.
+        """
+        return DELIVERY_SECONDS if self.on_aws else 0.5
+
     def store(self) -> S3Store:
         return S3Store(
             client(
@@ -436,31 +580,116 @@ class Cloud:
         sqs = client("sqs", self.endpoint, Config(read_timeout=wait + 2))
         return SqsQueue(sqs, self.urls[component], visibility_timeout=visibility, wait_seconds=wait)
 
-    def messages(self, component: str) -> list[dict]:
-        """Every message waiting on a component's queue, taken off it for a minute."""
+    def receive(self, component: str, wait: int = 1) -> list[Message]:
+        """One receive from a component's queue, deleting every message of another case.
+
+        The case's own messages come back hidden for a minute, so the caller
+        deletes or returns them.
+        """
         sqs = client("sqs", self.endpoint)
-        found: list[dict] = []
-        while True:
-            reply = sqs.receive_message(
-                QueueUrl=self.urls[component],
-                MaxNumberOfMessages=10,
-                WaitTimeSeconds=1,
-                VisibilityTimeout=60,
+        url = self.urls[component]
+        reply = sqs.receive_message(
+            QueueUrl=url,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=wait,
+            VisibilityTimeout=60,
+            AttributeNames=["SentTimestamp"],
+        )
+        mine = []
+        for raw in reply.get("Messages", []):
+            body = json.loads(raw["Body"])
+            key = body.get("detail", {}).get("object", {}).get("key", "")
+            if self.case.mine(key):
+                sent = int(raw.get("Attributes", {}).get("SentTimestamp", "0"))
+                mine.append(Message(key, body, raw["ReceiptHandle"], sent))
+            else:
+                sqs.delete_message(QueueUrl=url, ReceiptHandle=raw["ReceiptHandle"])
+        return mine
+
+    def delete(self, component: str, messages: list[Message]) -> None:
+        sqs = client("sqs", self.endpoint)
+        for message in messages:
+            sqs.delete_message(QueueUrl=self.urls[component], ReceiptHandle=message.handle)
+
+    def give_back(self, component: str, messages: list[Message]) -> None:
+        """Make messages visible again at once, as if nothing had received them."""
+        sqs = client("sqs", self.endpoint)
+        for message in messages:
+            sqs.change_message_visibility(
+                QueueUrl=self.urls[component], ReceiptHandle=message.handle, VisibilityTimeout=0
             )
-            batch = reply.get("Messages", [])
-            if not batch:
-                return found
-            found.extend(json.loads(m["Body"]) for m in batch)
 
-    def keys(self) -> set[str]:
-        s3 = client("s3", self.endpoint)
-        listed = s3.list_objects_v2(Bucket=self.bucket).get("Contents", [])
-        return {item["Key"] for item in listed}
+    def messages(self, component: str) -> list[dict]:
+        """The case's messages waiting on a component's queue, deleted as they are read."""
+        found: list[dict] = []
+        while batch := self.receive(component):
+            self.delete(component, batch)
+            found.extend(m.body for m in batch)
+        return found
+
+    def keys_on(self, component: str) -> list[str]:
+        return [m["detail"]["object"]["key"] for m in self.messages(component)]
+
+    def wait_for(self, component: str, keys: set[str], timeout: float = DELIVERY_SECONDS) -> bool:
+        """Wait until a queue has held every one of `keys`, leaving each message on it.
+
+        Each message is received once and then made visible again, so the wait
+        spends one of the queue's three receives on it. A queue's count of
+        messages cannot stand in, because in AWS it counts every case's.
+        """
+        seen: set[str] = set()
+        held: list[Message] = []
+        end = time.monotonic() + timeout
+        try:
+            while time.monotonic() < end and not keys <= seen:
+                for message in self.receive(component):
+                    held.append(message)
+                    seen.add(message.key)
+        finally:
+            self.give_back(component, held)
+        return keys <= seen
+
+    def drain(self, component: str, keys: set[str], timeout: float = DELIVERY_SECONDS) -> bool:
+        """Delete a queue's messages for `keys` as they arrive, as a purge would.
+
+        A purge clears every case's messages, and SQS allows one a minute,
+        which the job's own purge has just spent.
+        """
+        seen: set[str] = set()
+        end = time.monotonic() + timeout
+        while time.monotonic() < end and not keys <= seen:
+            batch = self.receive(component)
+            self.delete(component, batch)
+            seen.update(m.key for m in batch)
+        return keys <= seen
 
 
-def client(service: str, endpoint: str, config: Config | None = None):
-    return boto3.client(
-        service, endpoint_url=endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
+def client(service: str, endpoint: str | None, config: Config | None = None):
+    """A client for moto's server, or with no endpoint one for AWS itself.
+
+    The AWS client takes the job's own credentials from the environment, and
+    AWS's endpoint whatever AWS_ENDPOINT_URL or a config file says, and refuses
+    a host outside AWS, as the store suite's bucket client does. So a green run
+    on the test queues cannot come from an emulator.
+    """
+    if endpoint is not None:
+        return boto3.client(
+            service, endpoint_url=endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
+        )
+    own = Config(ignore_configured_endpoint_urls=True, connect_timeout=10, read_timeout=30)
+    made = boto3.client(service, region_name=REGION, config=own.merge(config) if config else own)
+    host = urlsplit(made.meta.endpoint_url).hostname or ""
+    if not host.endswith(".amazonaws.com"):
+        raise RuntimeError(f"the test environment's {service} client points at {host}, not AWS")
+    return made
+
+
+def missing(reader: str, keys: list[str] | set[str], seconds: float) -> str:
+    """What a case says when an event it waits for never reaches a queue."""
+    return (
+        f"{reader}'s queue received nothing for {', '.join(sorted(keys))} in {seconds} "
+        "seconds. If this merge changed infra/test/routes.json, infra.yml's apply may "
+        "not have finished."
     )
 
 
@@ -482,10 +711,17 @@ def wait_for_file(path: Path | str, timeout: float) -> bool:
     return False
 
 
-def hang_alpha(endpoint: str, bucket: str, url: str, marker: str) -> None:
-    """Run an alpha loop whose handler never ends, in a process the test kills."""
-    cloud = Cloud(endpoint, bucket, {"alpha": url})
-    the_plan = plan(1)
+def hang_alpha(
+    endpoint: str | None, bucket: str, url: str, marker: str, run: str, first: str
+) -> None:
+    """Run an alpha loop whose handler never ends, in a process the test kills.
+
+    A spawned child inherits the environment, so in the test environment it
+    reaches AWS with the job's own credentials.
+    """
+    case = Case(run, datetime.fromisoformat(first))
+    cloud = Cloud(endpoint, bucket, {"alpha": url}, case)
+    the_plan = case.plan(1)
     alarms = Alarms()
     store = storage(cloud.store(), alarms)
 

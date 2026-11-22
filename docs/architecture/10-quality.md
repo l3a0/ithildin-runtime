@@ -158,8 +158,8 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      the emulator rather than routing by hand. An event can arrive twice,
      late, out of order or not at all, and a reader still handles each
      decision once, in the plan's order, by checking its keys when it wakes
-     and when it starts. Dropping events while a reader is down, by purging
-     its queue in the emulator and by the folder adapter's seeded fault,
+     and when it starts. Dropping events while a reader is down, by taking
+     them off its queue on SQS and by the folder adapter's seeded fault,
      shows the recovery CI runs is the one live runs. A writer killed between
      its write and the folder adapter's delivery announces again when it
      restarts. The SQS adapter runs through moto's server, the same emulator
@@ -169,13 +169,12 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      queue and honours a visibility of 0, so the suite needs no Docker, and
      `uv.lock` pins moto by its wheel's SHA-256. Events repeated, delayed,
      reordered and dropped at random come from the folder adapter's seeded
-     fault, so that case runs over the folder. On SQS the suite repeats an
-     event while its decision is in a handler, and purges a reader's queue
-     while it is down. The routes file for the test environment's queues,
-     `infra/test/routes.json`, is generated from the suite's own table by
-     `tests/support/routes_file.py`, and a test fails when the committed copy
-     differs from what it writes. The run against those queues on each push
-     to `main` is [#91](https://github.com/l3a0/ithildin-runtime/issues/91)'s. The queue port's `done` deletes a message, `extend` lengthens
+     fault, so that case runs over the folder. On moto the suite repeats an
+     event while its decision is in a handler, and receives and deletes a
+     reader's events while it is down. The routes file for the test
+     environment's queues, `infra/test/routes.json`, is generated from the
+     suite's own table by `tests/support/routes_file.py`, and a test fails
+     when the committed copy differs from what it writes. The queue port's `done` deletes a message, `extend` lengthens
      its visibility timeout, and `release` returns it at once with
      visibility 0. The named-pipe adapter implements `extend` and `release`
      as no-ops, because a pipe hands each message to one reader once and
@@ -186,6 +185,34 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      heartbeat. The loop's extend, delete and return path, a message whose
      handler is killed returning to the queue included, runs against the
      SQS emulator.
+   - **The queue suite on the test queues** runs in ci.yml's `aws` job, with
+     the test role, on each push to `main`, and checks what moto only
+     imitates: S3's own delivery through EventBridge to queues encrypted
+     with SSE-SQS, a reader that several rules feed, the real visibility
+     timeout, and the real delay from a write to its message. Every case
+     that both queues guarantee runs there, and so do the SQS cases, with
+     four differences.
+     1. Every case shares the test bucket and queues. So each case's keys
+        sit under a run date built from the workflow's run number and
+        attempt, in an hour of the case's own, and every read of a queue
+        keeps the case's keys and deletes any other message, which an
+        earlier case left.
+     2. The case for events dropped while a reader is down receives and
+        deletes them, on moto too, rather than purging. SQS allows one purge
+        of a queue a minute, and the job's own purge has just spent it.
+     3. The case that repeats an event while its decision is in a handler
+        skips, because S3 cannot be made to repeat one and the test role may
+        not send a message.
+     4. Every wait for a delivery allows 60 seconds, the smoke check's
+        bound, and a check that nothing else arrives reads every queue of
+        the case together for as long. The delivery case prints the median
+        and largest delay from each event's time to SQS taking its message.
+
+     The queues' own visibility timeout is 30 seconds on both sides, so the
+     cases that need 2 seconds pass it on each receive and extend, as the
+     SQS adapter does. The suite's clients there ignore any endpoint the
+     environment sets and refuse a host outside AWS, as the store suite's
+     bucket client does. The job's `-v` names each case it ran with `[aws]`.
    - **The broker suite** holds every `Broker` adapter to the methods
      `OrderPath` calls: a submit with a client order id where the broker keeps one, a find of an order from its intent that answers the broker's id, not found or more than one, whether its list was whole and each paired row as a `BrokerOrder`, a list of every order since a time across all its pages, a lookup by the broker's order id that returns a `BrokerOrder`, with the client order id where the broker keeps one, a cancel by the broker's order id, fills
      with their own ids, positions, open orders, the read [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names for cash, the broker's records through `activities`, the clock, a
