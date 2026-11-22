@@ -145,11 +145,19 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      its queue in the emulator and by the folder adapter's seeded fault,
      shows the recovery CI runs is the one live runs. A writer killed between
      its write and the folder adapter's delivery announces again when it
-     restarts. The SQS adapter runs through a local emulator that sends S3's
-     events to EventBridge and SQS, named and pinned by digest when
-     [#81](https://github.com/l3a0/ithildin-runtime/issues/81) picks it, and
-     against the test environment's bucket and queues on each push to
-     `main`. The queue port's `done` deletes a message, `extend` lengthens
+     restarts. The SQS adapter runs through moto's server, the same emulator
+     the store suite starts inside the test run, which sends S3's events to
+     EventBridge and on to SQS. A probe of moto 5.2.5 found it matches a
+     `wildcard` pattern on the event's key, delivers only to the rule's own
+     queue and honours a visibility of 0, so the suite needs no Docker, and
+     `uv.lock` pins moto by its wheel's SHA-256. Events repeated, delayed,
+     reordered and dropped at random come from the folder adapter's seeded
+     fault, so that case runs over the folder. On SQS the suite repeats an
+     event while its decision is in a handler, and purges a reader's queue
+     while it is down. The run against the test
+     environment's queues on each push to `main`, with the routes file
+     generated from the suite's own table, is
+     [#91](https://github.com/l3a0/ithildin-runtime/issues/91)'s. The queue port's `done` deletes a message, `extend` lengthens
      its visibility timeout, and `release` returns it at once with
      visibility 0. The named-pipe adapter implements `extend` and `release`
      as no-ops, because a pipe hands each message to one reader once and

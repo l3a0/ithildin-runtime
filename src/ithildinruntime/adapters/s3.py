@@ -141,6 +141,9 @@ class S3Store:
         )
         return reply["ETag"]
 
+    def announce(self, key: str) -> None:
+        """S3 announced the blob when it stored it, so a second announcement is skipped."""
+
     def _call(
         self,
         key: str,
@@ -150,9 +153,11 @@ class S3Store:
     ) -> R:
         try:
             return call()
-        except ParamValidationError:
-            # A call botocore refuses before sending is a bug here, never an outage.
-            raise
+        except ParamValidationError as error:
+            # A call botocore refuses before sending is a bug here, never an
+            # outage, so it is no store refusal to retry. It leaves the adapter
+            # as Python's own error, so no botocore type reaches a caller.
+            raise TypeError(f"botocore refused the call before sending it: {error}") from None
         except (ClientError, BotoCoreError) as error:
             raise _refusal(key, error, on_precondition, on_missing) from None
 

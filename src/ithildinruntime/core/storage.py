@@ -224,10 +224,11 @@ class _AlarmFailed(Exception):
 class Storage:
     """The storage contract every worker writes and reads through.
 
-    `timer` is the wall-time port a deadline reads, and `pause` waits between
-    tries, so a test fakes both. `alerts` sends the alarm for a later capture
-    stored at its attempt key, and for every halt raised because S3 would not
-    answer, since no halt blob reaches monitoring while S3 is down.
+    `timer` is the time port whose monotonic reading a deadline measures, and
+    `pause` waits between tries, so a test fakes both. `alerts` sends the
+    alarm for a later capture stored at its attempt key, and for every halt
+    raised because S3 would not answer, since no halt blob reaches monitoring
+    while S3 is down.
     `owner_step` names the broker's interface, which such a halt gives the
     owner as the step to take. One `Storage` serves every handler of a worker,
     so it keeps each held capture behind a lock.
@@ -301,27 +302,53 @@ class Storage:
                 f"{held.trying} was not stored: {type(error).__name__}: {error}"
             ) from error
 
-    def put_result(self, key: str, result: DecisionResult) -> DecisionResult:
+    def put_result(self, key: str, result: DecisionResult, *, once: bool = False) -> DecisionResult:
         """Create a decision's result, and return the result its key holds.
 
         A key that already holds another result is not an error here. The
         caller reads what is stored, such as the supervisor's halt, which is
         final for the decision.
+
+        `once` tries the write, and the read of a key that already holds a
+        blob, once each with no pause, for a process retrying a halt it holds.
+        S3 refusing either or not answering then raises `StoreUnavailable`
+        and sends no alarm, since the first try sent one, and so does a key
+        refused as existing and then read as missing.
         """
         data = encode(result)
         try:
-            self._place(StageKind.CAPTURING, _Held(key, data, sha256_of(data), None, key), True)
+            self._place(
+                StageKind.CAPTURING, _Held(key, data, sha256_of(data), None, key), True, once
+            )
         except _Deadline as late:
+            if once:
+                raise StoreUnavailable(late.key, late.answer) from None
             raise self._outage(f"S3 did not store {late.key}", late) from None
         except _Differs:
             pass
-        stored = self._read(key)
+        stored = self._read(key, once)
         if stored is None:
+            if once:
+                raise StoreUnavailable(key, "refused as existing and then read as missing")
             raise self._halt(f"{key} was refused as existing and then read as missing")
         try:
             return decode(stored, DecisionResult)
         except CodecError as error:
             raise self._halt(f"{key} holds no decision result the codec reads: {error}") from None
+
+    def announce(self, key: str) -> bool:
+        """Announce a stored blob again, once, and say whether the store took the call.
+
+        A restarted writer announces its newest result, because it may have
+        died between storing it and the folder's delivery. An event is only a
+        reason to wake, so a store that refuses the call costs a reader time
+        and nothing else, and the writer does not retry it.
+        """
+        try:
+            self._store.announce(key)
+        except StoreError:
+            return False
+        return True
 
     def unstored(self) -> tuple[BlobRef, ...]:
         """Each capture this process holds that S3 has not stored, by key and SHA-256.
@@ -391,6 +418,14 @@ class Storage:
         )
 
     # Reading
+
+    def exists(self, key: str) -> bool:
+        """Whether `key` holds a blob, which a reader checks before it starts a decision.
+
+        A store that does not answer by the deadline halts, as every read does,
+        so an outage never reads as a missing blob.
+        """
+        return self._read(key) is not None
 
     def read_result(self, key: str, decision_at: datetime) -> DecisionResult | None:
         """The decision result at `key`, or `None` while the stage has written none.
@@ -512,7 +547,7 @@ class Storage:
 
         return self._retrying(key, call, once)
 
-    def _read(self, key: str) -> bytes | None:
+    def _read(self, key: str, once: bool = False) -> bytes | None:
         def call() -> bytes | None:
             try:
                 return self._store.get(key)
@@ -520,19 +555,24 @@ class Storage:
                 return None
 
         try:
-            return self._retrying(key, call, False)
+            return self._retrying(key, call, once)
         except _Deadline as late:
+            if once:
+                raise StoreUnavailable(late.key, late.answer) from None
             raise self._outage(f"S3 did not answer a read of {late.key}", late) from None
 
     def _retrying[R](self, key: str, call: Callable[[], R], once: bool) -> R:
-        start = self._timer.now()
+        # Elapsed time is read on the monotonic clock, so a wall clock stepped
+        # back never stretches the deadline.
+        start = self._timer.monotonic()
+        deadline = self._retry.deadline.total_seconds()
         pause = self._retry.pause
         while True:
             try:
                 return call()
             except (StoreUnavailable, ChecksumMismatch) as error:
                 answer = f"{type(error).__name__}: {error.answer}"
-            if once or self._timer.now() - start >= self._retry.deadline:
+            if once or self._timer.monotonic() - start >= deadline:
                 raise _Deadline(key, answer)
             self._pause(pause)
             pause = min(pause * 2, self._retry.longest_pause)

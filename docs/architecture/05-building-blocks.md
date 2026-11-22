@@ -104,7 +104,7 @@ flowchart TB
     subgraph adapters["Adapters, which each worker's entry point builds"]
         lakesrc["marketlake reader<br/>over the local mirror"]
         clock["History clock or wall clock"]
-        timer["Timer<br/>reads wall time, and tests fake it"]
+        timer["Timer<br/>reads wall time and a monotonic clock, and tests fake it"]
         broker["Simulated or paper broker"]
         store["Blob store<br/>S3, or a memory-backed folder"]
         alertsink["Alerts and heartbeat"]
@@ -556,14 +556,30 @@ classDiagram
     class Timer {
         <<Protocol>>
         +now() datetime
-        +after(seconds) Event
+        +monotonic() float
+        +after(seconds) object
     }
     class Queue {
         <<Protocol>>
-        +receive() Event
+        +receive(limit) list
         +done(Event)
         +extend(Event)
         +release(Event)
+    }
+    class Event {
+        +str bucket
+        +str key
+        +EventKind kind
+        +str or None etag
+        +str or None sequencer
+        +str handle
+    }
+    class Route {
+        +str reader
+        +EventKind kind
+        +str key
+        +str name
+        +matches(EventKind, key) bool
     }
     class Broker {
         <<Protocol>>
@@ -601,14 +617,17 @@ classDiagram
         +head(key) StoredBlob
         +list(prefix, after) list
         +replace_if_match(key, data, sha256, etag) str
+        +announce(key)
     }
     class Storage {
         -BlobStore store
         -Alerts alerts
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
+        +exists(key) bool
         +read_result(key, decision_at) DecisionResult
         +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
+        +announce(key) bool
         +retry_held() list
         +unstored() list
         +halt_record(Halt) HaltRecord
@@ -1000,7 +1019,7 @@ flowchart TB
     brokers["execution.brokers<br/>simulated, Alpaca through its SDK"]
     monitoring["monitoring"]
     runtime["runtime<br/>worker entry points, modes"]
-    loop["runtime.loop<br/>the receive loop"]
+    loop["runtime.loop<br/>the receive loop and the stage table"]
     supervisor["runtime.supervisor<br/>the supervisor"]
     tool["runtime.ithildin<br/>the ithildin tool"]
 
@@ -1066,6 +1085,7 @@ An arrow means "may import". The diagram draws four rules.
 2. **Only `runtime` imports the modules together.**
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
    - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports nothing from `ithildinruntime` but `core`, so the supervisor reaches no worker module through it.
+   - The table that declares each stage's kind and inputs, and the function that generates the routes from it, live in `runtime.loop` beside the loop, because the supervisor reads the table too. Each worker's entry point adds its own stage's row. The `Route` type and its key matcher live in `core`, because the folder adapter matches routes to deliver its events.
    - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract and queue and the `journal` package cover, apart from that file:
      - the local release file, in memory-backed storage on its VM;
      - the plan's lease, whose conditional writes carry the run's status;

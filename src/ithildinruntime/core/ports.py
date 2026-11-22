@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from .queue import Event
 from .records import (
     Ack,
     Book,
@@ -40,16 +41,11 @@ __all__ = [
     "Clock",
     "CostModel",
     "DataSource",
-    "Event",
     "Queue",
     "RiskGate",
     "RiskModel",
     "Timer",
 ]
-
-
-class Event(Protocol):
-    """What a queue or a timer hands a worker. #81 gives it its fields."""
 
 
 class DataSource(Protocol):
@@ -71,21 +67,42 @@ class Clock(Protocol):
 
 
 class Timer(Protocol):
-    """Wall time for deadlines and heartbeats, faked in tests."""
+    """Time for deadlines and heartbeats, faked in tests.
+
+    `now` is wall time, which keys a heartbeat. `monotonic` is the reading every
+    deadline and limit measures elapsed time on, in seconds, because a wall
+    clock the time service steps back would stretch a deadline. #11 types the
+    event `after` hands back when it builds the deadlines.
+    """
 
     def now(self) -> datetime: ...
 
-    def after(self, seconds: float) -> Event: ...
+    def monotonic(self) -> float: ...
+
+    def after(self, seconds: float) -> object: ...
 
 
 class Queue(Protocol):
-    def receive(self) -> Event: ...
+    """A component's queue, which the receive loop alone reads.
 
-    def done(self, event: Event) -> None: ...
+    A call the queue does not carry out raises `QueueUnavailable`.
+    """
 
-    def extend(self, event: Event) -> None: ...
+    def receive(self, limit: int) -> Sequence[Event]:
+        """Wait for up to `limit` events, and return what arrived, which may be none."""
+        ...
 
-    def release(self, event: Event) -> None: ...
+    def done(self, event: Event) -> None:
+        """Delete the message, so no reader sees it again."""
+        ...
+
+    def extend(self, event: Event) -> None:
+        """Hide the message from every other reader for the queue's timeout from now."""
+        ...
+
+    def release(self, event: Event) -> None:
+        """Return the message to the queue at once, for any reader."""
+        ...
 
 
 class Broker(Protocol):
@@ -158,6 +175,14 @@ class BlobStore(Protocol):
 
     def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
         """Rewrite a blob only while it carries `etag`, and return the new tag."""
+        ...
+
+    def announce(self, key: str) -> None:
+        """Announce a stored blob again, as a restarted writer does for its newest result.
+
+        The folder delivers the event to each reader its routes name. S3 skips
+        it, because S3 announced the blob when it stored it.
+        """
         ...
 
 

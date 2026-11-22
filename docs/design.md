@@ -649,8 +649,9 @@ sends anything beyond its write. An event names the blob its reader
 should read: a decision result, the plan, the run's halt or stop, or the
 kill switch. A starting worker drains its queue and then checks its keys
 once, so nothing written while it was down goes unread. A woken worker
-checks every decision it has not finished rather than only the one an
-event names, so a repeated, late or out-of-order event costs nothing.
+checks more than the one decision an event names, so a repeated, late or
+out-of-order event costs nothing, as `### How a component learns of a
+change` says.
 
 ### Rule 5: each blob names what made it
 
@@ -816,7 +817,7 @@ is restarted or replaced, while the component's other instances
 carry on. A worker, meaning the component, has failed only when its
 stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
 input appears, so waiting on a slow upstream worker never counts against
-it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. On a failure the supervisor writes the halt as that worker's
+it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. A worker that has stopped receiving and holds a halt or a capture S3 has not stored beats whatever its handlers do, as that section says. On a failure the supervisor writes the halt as that worker's
 result, naming its restart records and every output file it finds
 under the decision's prefix, so no stored capture is left unlisted. It
 stores a halt of the whole run, writes a halt as every stage's result
@@ -1471,12 +1472,12 @@ sends its events to EventBridge, as AWS's
 [S3 and EventBridge page](https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html)
 describes. One function in `runtime` turns the table that declares every
 worker's inputs, and the control blobs every component hears, into routes:
-a reader, a prefix and an event kind. Execution's routes include the writes
+a reader, a key pattern and an event kind. Execution's routes include the writes
 under `leases/accounts/`, so a lease's release reaches its queue. The routes generate one EventBridge
 rule each, which copies each matching event to that reader's SQS queue, and
 the same routes drive the memory-backed folder adapter. Each rule's pattern
 matches `aws.s3` as the source, the event's kind, the environment's bucket
-and the prefix, because EventBridge refuses a custom event whose source
+and the key pattern, because EventBridge refuses a custom event whose source
 starts with `aws.`, so nobody can put a forged S3 event on the bus that a
 rule would pass on.
 
@@ -1549,8 +1550,11 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    SDK's HTTP session is not documented as safe to share.
 2. **An item is a stage and a decision, not a message.** The loop turns
    each message, once it passes the checks below, into the stage and
-   decision it concerns, except the kill switch's event, which becomes an item of its own, as item 8 says, and a sort's, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes. On waking and on starting it also adds every
-   decision it has not finished, in the plan's order. One instance never
+   decision it concerns, except the kill switch's event, which becomes an item of its own, as item 8 says, and a sort's, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes. On starting it also adds every
+   decision it has not finished, in the plan's order, again until one such
+   check meets no store that did not answer, and on waking it checks
+   as far as `An event is a hint, and the keys come from the plan` below
+   says. One instance never
    runs an item twice at once, so the loop deletes a message whose item is
    already in a handler.
 3. **The loop receives only for free handlers.** It asks SQS for at most as
@@ -1558,7 +1562,10 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    waits hidden inside a busy instance while another instance could take
    it. While a handler works, the loop extends its message's visibility
    timeout, and it deletes the message once the handler's result is stored.
-   A message whose instance dies returns to the queue for another.
+   A message whose instance dies, or whose extend fails, returns to the
+   queue for another, which may start the same decision again. The
+   create-only result keeps the first result stored, and a stage that writes
+   outside rests on its own claim and on [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s lease on the account.
 4. **Stages that read the journal keep the plan's order.** Execution's two
    stages and monitoring's reconcile read a book the decision before
    changed, so a handler starts decision N of one of them only once the same
@@ -1570,21 +1577,26 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    decision and alarms, and the loop deletes its message, so the other
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
-   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process exits and the host restarts it, as
-   [Each blob names what made it](#rule-5-each-blob-names-what-made-it) says.
+   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) asks of a process that holds a capture. A process whose loop ends for any other reason does the same, such as one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms. Such a process works in four steps.
+   1. It gives each handler the stop timeout to finish, as item 7 says. A handler still working after that ends with the process, as a crash does, and its decision is done again after the restart.
+   2. It retries every halt and capture it holds once each interval, quietly, since the first refusal alarmed.
+   3. It beats while it holds one, whatever its handlers do, so the host's watchdog leaves it, and alarms naming each blob and why receiving stopped. That alarm is sent again until the alert channel takes it, because it alone tells a holding process from a healthy one.
+   4. It exits for the host to restart once S3 has stored them all.
+
+   A halt S3 answered and still will not store, such as one whose key holds bytes nothing reads or another result, is not held. Its reason goes out in an alarm and in the loop's failure, which the host's restart record keeps. A capture is never dropped this way, since it cannot be recaptured, so one that S3 answered and cannot store holds the process until a person acts. A host that kills a holding process, such as at the unit's stop timeout, loses what it holds, and the alarm says so. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets the unit's stop timeout and maps the host's stop to the loop's.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
    every blob write, journal append and broker call it finishes. No handler waits
    for a held lease, as [Who may send](#rule-9-who-may-send-the-accounts-lease) says, so a lease never holds a handler
    long enough to stop its reports. The loop
    touches the worker's heartbeat file only while every busy handler has
    reported within the heartbeat limit, so a hung handler lets the host's
-   watchdog kill the container, and [who takes over a lease](#rule-9-who-takes-over-a-lease) and [who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) apply. The loop
+   watchdog kill the container, and [who takes over a lease](#rule-9-who-takes-over-a-lease) and [who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) apply. The one exception is a process that holds a halt or a capture S3 has not stored, whether it is still receiving or has stopped, as item 5 says. It beats whatever its handlers do, so the price is that a hung handler there is not killed until S3 stores what the process holds. A hung handler still stops renewing its lease, so another instance can take the lease over once it expires. The loop
    renews a lease only for a handler that is still reporting, so a hung
    handler never keeps the account's lease alive. Every broker and S3 call
    therefore carries a timeout shorter than that limit.
 7. **Stopping drains the pool.** When the host stops the container, the loop
    stops receiving and lets each handler finish within the unit's stop
-   timeout. A message whose handler did not finish returns to the queue,
+   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way. A message whose handler did not finish returns to the queue,
    and an execution send stage left unfinished is taken over as [Who takes over a dead send
    stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
 8. **The pool's size is configuration.** The deployment's config sets it
@@ -1625,11 +1637,17 @@ says they are not guaranteed to arrive in order. So an event can repeat,
 arrive late, arrive out of order, or, in a backtest or CI or while its
 reader is down, not arrive at all. A worker treats an event only as a reason
 to wake. It drops one whose bucket is not its environment's or whose key
-lies outside a prefix its routes give it, and it reads only keys it builds
-from the plan and the table, never a key taken from the event. On waking,
-and once when it starts, it checks every decision it has not finished, in
-the plan's order, so a repeated, late, reordered or lost event costs nothing
-but time. It reads anything that touches money again right before it acts.
+matches no key pattern its routes give it, and it reads only keys it builds
+from the plan and the table, never a key taken from the event. When it
+starts, it checks every decision it has not finished, in the plan's order,
+and checks again until one check meets no store that did not answer.
+On waking, it checks the decision the event names and
+each stage's decisions in the plan's order as far as the first one not
+ready, because checking every unfinished decision on every wake costs a read
+for each of them, about 400 a wake on a day of decisions a minute apart. A
+decision behind one not ready is checked once that one is stored, a halt
+included, so a repeated, late, reordered or lost event costs nothing but
+time. It reads anything that touches money again right before it acts.
 
 **An absence is a deadline, not a poll.** No event announces that something
 did not happen: a worker that hung, a result never written, a heartbeat that
@@ -1789,11 +1807,12 @@ Execution's send stage reads it before every send, to check the cutoff for
 the strategy's orders, as `### Strategies, schedules and decisions` says.
 Under the history clock that reading is the decision time, so a backtest
 never meets the cutoff, and a drill sets a test clock past it instead. The
-supervisor is apart from the three. It reads wall time for deadlines in
+supervisor is apart from the three. It reads real time for deadlines in
 every mode, because a deadline guards against a hung process rather than
 shaping what a strategy sees, and it reads it through a timer port of its
-own, always wall time and faked in tests, so a deadline never reads the
-history clock and never bypasses a port. Apart from those places, a worker reads wall time only through the same timer port, to key its heartbeat and, in execution, monitoring and portfolio construction, to set the deadlines of `### How a component learns of a change`, none of which, apart from portfolio construction's, shapes what a strategy sees. Portfolio construction's deadline is the one for a late forecast under hard limit 3's written age, and it can turn a strategy's late forecast into no change. This doc proposes, with [#54](https://github.com/l3a0/ithildin-runtime/issues/54), that in a backtest or a replay the timer adapter handed to portfolio construction never expires it unless a test injects the lateness. Then a slow model in a backtest never reads as no change. Every writer also takes a record's own time from `Clock`: each journal entry's `built_at`, as `### How a component learns of a change` says, and each capture's read time, as [Rule 1: clock times in headers and captures](#rule-1-clock-times-in-headers-and-captures) says. Those times are written down and never decide what a strategy sees. Otherwise the workers move on only when messages arrive.
+own, faked in tests, so a deadline never reads the history clock and never
+bypasses a port. The port gives wall time and a monotonic reading, and every
+deadline measures elapsed time on the monotonic one. Apart from those places, a worker reads time only through the same timer port: wall time to key its heartbeat and, in execution, monitoring and portfolio construction, the monotonic reading for the deadlines of `### How a component learns of a change`, none of which, apart from portfolio construction's, shapes what a strategy sees. Portfolio construction's deadline is the one for a late forecast under hard limit 3's written age, and it can turn a strategy's late forecast into no change. This doc proposes, with [#54](https://github.com/l3a0/ithildin-runtime/issues/54), that in a backtest or a replay the timer adapter handed to portfolio construction never expires it unless a test injects the lateness. Then a slow model in a backtest never reads as no change. Every writer also takes a record's own time from `Clock`: each journal entry's `built_at`, as `### How a component learns of a change` says, and each capture's read time, as [Rule 1: clock times in headers and captures](#rule-1-clock-times-in-headers-and-captures) says. Those times are written down and never decide what a strategy sees. Otherwise the workers move on only when messages arrive.
 
 A halt ends its decision, and the span goes on to the next decision, which
 halts again if its cause is still there. A failure stops the whole run.
@@ -2068,8 +2087,9 @@ time. An instance holds the lease only from re-reading the journal for one
 order until the journal holds the broker's answer, as [Who may send](#rule-9-who-may-send-the-accounts-lease)
 says, so the others never wait long. The instance running a send stage extends its
 message's visibility timeout while it works, so the message returns to the
-queue only once that instance dies, and [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
-says who then takes the send stage over. Within one portfolio, more execution instances
+queue only once that instance dies or an extend fails. [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage)
+says who then takes a dead send stage over, and the send stage's claim
+leaves a live one to the instance already running it. Within one portfolio, more execution instances
 buy failover rather than throughput, because sends still go one at a time,
 and throughput comes from more portfolios, each sending on its own
 account.
@@ -3853,6 +3873,15 @@ This section lists every decision made on the project, oldest first, one heading
 1. The owner ruled that the test account's budget counts usage before AWS credits, so credits on the account cannot hold its spend at zero and keep the alarm from firing. The owner said "ok" to the recommendation to set `cost_types` with `include_credit = false`. The price is nothing. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### Alarms on operations` in halts-and-drills.md and `#### Drill the budget alarm` in what-a-person-runs.md.
 2. The owner ruled that no alarm reads test's measure of load, the count of `aws` runs cancelled because a newer push replaced them, and a person reads it instead, as the one exception to building load alarms at the first load. The owner said "k" to that recommendation. The price is that a rewrite is noticed late, in an environment that holds nothing that cannot be made again. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### How CI runs them` in architecture/10-quality.md.
 3. The owner ruled that a failing `tofu fmt`, `tofu validate` or `tofu test` blocks a merge to `main`, against the recommendation to leave those checks unrequired. The owner's words were "block a merge". So `.github/workflows/infra.yml` runs them on every pull request, and its `infra` job, which passes only when they pass, is a check `.github/rulesets/default.json` requires. The price is six short jobs on each pull request, and an open pull request reports the check only after a push that follows the merge adding it. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### How CI runs them` in architecture/10-quality.md and `#### Set it up, before the merge that adds it` in what-a-person-runs.md.
+4. The owner answered "keep trying" to whether a process may exit while it holds captures S3 has not stored. The [recommendation it answered](https://github.com/l3a0/ithildin-runtime/pull/92#issuecomment-7070342067) was to stop receiving, keep retrying the halt and the captures, and let the heartbeat stop only once no capture is held. The question covered any process, so the hold covers every way the receive loop ends. Turned down: exiting and leaving the supervisor to journal each capture as lost. The price is a process that holds a host slot without receiving through an outage. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### Rule 1: a write S3 refuses or does not answer` and `### How a component learns of a change` in design.md.
+5. The owner said "ok" to a woken worker checking the decision its event names and each stage's decisions in the plan's order as far as the first one not ready. Turned down: checking every unfinished decision on every wake, about 400 reads a wake on a day of decisions a minute apart. The price is that a decision behind one not ready waits until that one is stored, a halt included. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
+6. The owner said "ok" to 60 seconds, twice the host's heartbeat limit, as how long a worker's queue may refuse every receive before the worker stops receiving. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
+
+### 2026-11-22
+
+1. The owner said "ok" to a process that holds a halt or a capture S3 has not stored beating whatever its handlers do, a hung handler included, whether it is still receiving or has stopped. A hung handler still stops renewing its lease, so another instance can take the account over once the lease expires. Turned down: stopping the beat for a hung handler while the process holds, which lets the host's watchdog kill it and lose what it holds. The price is that a hung handler there is not killed until S3 stores what the process holds. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079841319), corrected [on #81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079922181) to the question's whole scope. Governs: `### How a component learns of a change` in design.md and `#### How the host catches a frozen worker` in architecture/07-deployment.md.
+2. The owner said "ok" to a capture S3 answered and can never store holding the process until a person acts, because a capture cannot be recaptured. Turned down: dropping it with an alarm, as a halt is. The price is a process that holds a host slot until a person acts. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079841319) Governs: `### How a component learns of a change` in design.md.
+3. The owner said "ok" to dropping a halt S3 answered and will not store, such as one whose key holds bytes nothing reads or another result, with an alarm, and recording its reason in the loop's final error. Turned down: holding the process until a person acts, as a capture does. The price is that the halt's own blob is never written, so its reason survives only in the alarm and in the host's restart record. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7079841319) Governs: `### How a component learns of a change` in design.md and `### Alarms on operations` in halts-and-drills.md.
 
 ## Considered and rejected
 

@@ -310,7 +310,7 @@ Execution's units, and capture's once this platform runs it, are the exception u
 
 #### How the host catches a frozen worker
 
-A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale, because systemd's own watchdog cannot see a process inside a container. The worker's receive loop touches that file only while every busy handler is making progress.
+A watchdog on the host watches each worker's local heartbeat file with the kernel's file change events and kills a worker's container whose file is thirty seconds stale, because systemd's own watchdog cannot see a process inside a container. The worker's receive loop touches that file only while every busy handler is making progress. A worker that holds a halt or a capture S3 has not stored, whether it is still receiving or has stopped, touches it whatever its handlers do, as [How a component learns of a change](../design.md#how-a-component-learns-of-a-change) says, so a hung handler there is not killed until S3 stores what it holds.
 
 #### What happens when a container fails or is killed
 

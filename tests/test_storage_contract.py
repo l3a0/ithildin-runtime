@@ -45,10 +45,14 @@ OWNER_STEP = "check the broker's console for open orders"
 class FakeTimer:
     def __init__(self) -> None:
         self.at = AT
+        self.elapsed = 0.0
         self.pauses: list[float] = []
 
     def now(self) -> datetime:
         return self.at
+
+    def monotonic(self) -> float:
+        return self.elapsed
 
     def after(self, seconds: float) -> object:
         raise NotImplementedError
@@ -56,6 +60,7 @@ class FakeTimer:
     def pause(self, seconds: float) -> None:
         self.pauses.append(seconds)
         self.at += timedelta(seconds=seconds)
+        self.elapsed += seconds
 
 
 class Alarms:
@@ -496,6 +501,41 @@ def test_a_decision_result_is_created_once_and_the_stored_one_is_returned(
     assert storage.read_result(key, AT) == ours
 
 
+class UnreadableKey(Flaky):
+    """Takes every create, and answers a read of a key it holds as `read` says."""
+
+    def __init__(self, store, read: Exception) -> None:
+        super().__init__(store)
+        self.read = read
+
+    def get(self, key):
+        raise self.read
+
+
+@pytest.mark.parametrize(
+    "read",
+    [StoreUnavailable("k", "503 SlowDown"), BlobMissing("k", "404 Not Found")],
+    ids=["no-answer", "missing"],
+)
+def test_a_result_tried_once_whose_key_cannot_be_read_is_unavailable_and_quiet(
+    spec: StoreSpec, read: Exception
+) -> None:
+    """A process retrying a halt it holds keeps it, and the first try's alarm stands alone."""
+    key = core.result_key("ci", RUN, AT, "alpha")
+    base = spec.open()
+    ours = DecisionResult(_header(stage="alpha"), (BlobRef("a", "0" * 64),), None)
+    _storage(base)[0].put_result(key, ours)
+    storage, timer, alarms = _storage(UnreadableKey(base, read))
+    halt = core.HaltRecord("the supervisor halted the decision", None, (), (), ())
+    began = timer.monotonic()
+    with pytest.raises(StoreUnavailable):
+        storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt), once=True)
+    # One try each, with no pause between them.
+    assert alarms.reasons == [] and timer.monotonic() == began
+    with pytest.raises(Halt):
+        storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt))
+
+
 # The reader's checks
 
 
@@ -704,3 +744,40 @@ def test_a_deterministic_output_takes_no_attempt_keys(spec: StoreSpec) -> None:
     storage, _, _ = _storage(spec.open())
     with pytest.raises(ValueError):
         storage.put(StageKind.DETERMINISTIC, _snapshot_key(), b"x", attempt=_attempt())
+
+
+def test_a_wall_clock_stepped_back_does_not_stretch_the_deadline(spec: StoreSpec) -> None:
+    """The deadline reads the monotonic clock, so a stepped wall clock moves it nowhere."""
+    flaky = Flaky(spec.open())
+    storage, timer, _ = _storage(flaky)
+    flaky.down = True
+    pause = timer.pause
+
+    def pause_and_step_back(seconds: float) -> None:
+        if len(timer.pauses) > 50:
+            raise AssertionError("the wall clock stepped back kept the deadline away")
+        pause(seconds)
+        timer.at -= timedelta(minutes=10)
+
+    storage._pause = pause_and_step_back
+    with pytest.raises(Halt):
+        storage.put(StageKind.CAPTURING, _snapshot_key(), b"snapshot", attempt=_attempt())
+    assert RETRY.deadline.total_seconds() <= timer.elapsed < RETRY.deadline.total_seconds() + 8
+
+
+def test_announce_says_whether_the_store_took_the_call() -> None:
+    class Refusing:
+        def announce(self, key: str) -> None:
+            raise StoreUnavailable(key, "no answer")
+
+    class Taking:
+        def __init__(self) -> None:
+            self.keys: list[str] = []
+
+        def announce(self, key: str) -> None:
+            self.keys.append(key)
+
+    taking = Taking()
+    assert _storage(taking)[0].announce("runs/ci/x/result.json") is True
+    assert taking.keys == ["runs/ci/x/result.json"]
+    assert _storage(Refusing())[0].announce("runs/ci/x/result.json") is False
