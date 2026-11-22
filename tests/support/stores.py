@@ -28,19 +28,18 @@ import json
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
 
 from ithildinruntime.adapters import FolderStore, S3Store
 from ithildinruntime.core import EventKind, Route
+from tests.support.aws import REGION, TEST_BUCKET, aws_client
 
 # Credentials for the emulator only. They reach no AWS endpoint, because
 # every client here that passes them names the emulator's URL.
 EMULATOR_KEYS = {"aws_access_key_id": "emulator", "aws_secret_access_key": "emulator"}
-REGION = "us-east-1"
-TEST_BUCKET = "ithildin-runtime-test"
+__all__ = ["EMULATOR_KEYS", "REGION", "ROUTES_FILE", "TEST_BUCKET", "StoreSpec"]
 ROUTES_FILE = Path(__file__).parents[2] / "infra" / "test" / "routes.json"
 
 
@@ -89,20 +88,7 @@ class StoreSpec:
     def client(self):
         retries = {"mode": "standard", "total_max_attempts": 1}
         if self.kind == "bucket":
-            # The job's own credentials, from the environment, and AWS's own endpoint
-            # whatever AWS_ENDPOINT_URL or a config file says. Ten seconds to connect and
-            # thirty to read bound a case on a slow S3 well inside the job's limit.
-            config = Config(
-                retries=retries,
-                ignore_configured_endpoint_urls=True,
-                connect_timeout=10,
-                read_timeout=30,
-            )
-            client = boto3.client("s3", region_name=REGION, config=config)
-            host = urlsplit(client.meta.endpoint_url).hostname or ""
-            if not host.endswith(".amazonaws.com"):
-                raise RuntimeError(f"the test bucket's client points at {host}, not AWS")
-            return client
+            return aws_client("s3", Config(retries=retries))
         config = Config(retries=retries)
         return boto3.client(
             "s3", endpoint_url=self.endpoint, region_name=REGION, config=config, **EMULATOR_KEYS

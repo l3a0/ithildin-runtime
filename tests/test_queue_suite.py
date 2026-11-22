@@ -1,23 +1,40 @@
 """The queue suite: the named pipe fed by the folder, and SQS fed by S3 through EventBridge.
 
 docs/architecture/10-quality.md's `### How CI runs them` lists what it holds.
-Each case that both queues guarantee runs once over the folder and its named
-pipes, and once over S3, EventBridge and SQS on moto's server, with the rules
-generated from the stand-in table loaded into the emulator rather than routed
-by hand. The cases a pipe cannot keep, extending, deleting and returning a
-message, run on SQS alone.
+Each case that both queues guarantee runs over the folder and its named pipes,
+over S3, EventBridge and SQS on moto's server, with the rules generated from
+the stand-in table loaded into the emulator rather than routed by hand, and,
+marked `aws`, over the test environment's bucket and queues. The cases a pipe
+cannot keep, extending, deleting and returning a message, run on SQS alone.
 
 Events repeated, delayed, reordered and dropped at random come from the
-folder's seeded `Faults`, so those cases run over the folder alone. The run
-against the test environment's queues on each push to `main` is #91's.
+folder's seeded `Faults`, so those cases run over the folder alone, and so do
+the pipe's own cases.
+
+On the test queues, which ci.yml's `aws` job reaches on each push to `main`:
+
+1. Every case shares the bucket and the queues, so each case's keys sit under
+   the run's date and an hour of the case's own, which `_AWS_CASES` numbers,
+   and every read keeps the case's own keys and deletes the rest.
+2. The case for events dropped while a reader is down receives and deletes
+   them, on moto too, because SQS allows one purge a minute and the job's own
+   purge has just spent it.
+3. The case that repeats an event while its decision is in a handler skips,
+   because S3 cannot be made to repeat one and the test role may not send.
+4. Every wait for a delivery allows `q.DELIVERY_SECONDS`, and every check that
+   nothing else arrives reads on for as long. Once one wait has ended with no
+   delivery, every later case fails at once with its line.
+5. The delivery case prints how long S3's events took to reach their queues.
 """
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import json
 import multiprocessing
 import os
+import statistics
 import threading
 import time
 from pathlib import Path
@@ -26,29 +43,75 @@ import pytest
 
 from ithildinruntime.adapters import Faults
 from ithildinruntime.adapters.pipe import PipeQueue, send
-from ithildinruntime.core import EventKind, QueueUnavailable, event_body, output_key, result_key
+from ithildinruntime.core import (
+    EventKind,
+    QueueUnavailable,
+    event_body,
+    output_key,
+    result_key,
+    run_stop_key,
+)
 from ithildinruntime.runtime.loop import Item
 from tests.support import queues as q
 
 _names = itertools.count()
 
+# The cases that run on the test queues, each numbered by its place here, which
+# gives it the hour its keys sit in. Add a case here before marking it `aws`.
+_AWS_CASES = (
+    "test_a_write_reaches_every_reader_its_routes_name_and_no_other",
+    "test_events_dropped_while_a_reader_is_down_are_recovered_when_it_starts",
+    "test_s3_skips_an_announcement_because_it_announced_the_blob_itself",
+    "test_a_message_whose_item_is_in_a_handler_is_not_run_twice",
+    "test_the_loop_never_holds_more_messages_than_it_has_free_handlers",
+    "test_a_hung_handler_stops_the_heartbeat",
+    "test_a_handler_slower_than_the_visibility_timeout_keeps_its_message_hidden",
+    "test_stopping_returns_an_unfinished_message_at_once",
+    "test_a_message_whose_instance_dies_returns_to_the_queue",
+    "test_the_sqs_events_parse_like_the_folders",
+)
 
-@pytest.fixture
-def cloud(emulator: str) -> q.Cloud:
-    return q.Cloud.make(emulator, f"queue-suite-{next(_names)}", visibility=30)
+_AWS = pytest.param("aws", marks=pytest.mark.aws)
 
 
-@pytest.fixture(params=["folder", "sqs"])
+def _make_cloud(request: pytest.FixtureRequest, kind: str) -> q.Cloud:
+    if kind == "sqs":
+        return q.Cloud.make(request.getfixturevalue("emulator"), f"queue-suite-{next(_names)}")
+    name = request.node.originalname
+    if name not in _AWS_CASES:
+        pytest.fail(f"{name} runs on the test queues, so _AWS_CASES must give it an hour")
+    if (earlier := q.undelivered()) is not None:
+        # Every case waits on the same deliveries, so one more would only spend
+        # its own bound before failing for the same reason.
+        pytest.fail(f"An earlier case received no delivery, so this one did not wait: {earlier}")
+    try:
+        return q.Cloud.test_environment(q.case_from_environment(_AWS_CASES.index(name)))
+    except (RuntimeError, ValueError) as error:
+        pytest.fail(str(error))
+
+
+@pytest.fixture(params=["sqs", _AWS])
+def cloud(request: pytest.FixtureRequest) -> q.Cloud:
+    return _make_cloud(request, request.param)
+
+
+@pytest.fixture(params=["folder", "sqs", _AWS])
 def side(request: pytest.FixtureRequest, tmp_path: Path) -> Side:
     if request.param == "folder":
         return FolderSide(q.Folder(tmp_path / "store", tmp_path / "queues"))
-    return CloudSide(request.getfixturevalue("cloud"))
+    return CloudSide(_make_cloud(request, request.param))
 
 
 class Side:
-    """One of the two pairs of a store and its queues, as a case drives it."""
+    """One pair of a store and its queues, as a case drives it."""
 
     bucket: str
+    case: q.Case
+    # The components with a queue on this side.
+    readers: tuple[str, ...]
+    on_aws = False
+    # How long a case reads on to show that nothing else arrives.
+    settle = 0.5
 
     def store(self):
         raise NotImplementedError
@@ -57,8 +120,17 @@ class Side:
         raise NotImplementedError
 
     def heard(self, component: str) -> list[str]:
-        """The keys of every event waiting for a component."""
+        """The keys of the case's events waiting for a component, taken off its queue."""
         raise NotImplementedError
+
+    def heard_together(self, seconds: float, enough=lambda heard: False) -> dict[str, list[str]]:
+        """Read every reader's queue in turn, for `seconds` or until `enough` holds."""
+        heard: dict[str, list[str]] = {reader: [] for reader in self.readers}
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not enough(heard):
+            for reader in self.readers:
+                heard[reader] += self.heard(reader)
+        return heard
 
     def repeat(self, key: str) -> None:
         """Deliver a stored blob's event again, as a store repeats one."""
@@ -72,6 +144,8 @@ class FolderSide(Side):
     def __init__(self, folder: q.Folder) -> None:
         self.folder = folder
         self.bucket = folder.bucket
+        self.case = q.Case()
+        self.readers = q.COMPONENTS
         self.pipes: dict[str, PipeQueue] = {}
 
     def store(self):
@@ -100,6 +174,12 @@ class CloudSide(Side):
     def __init__(self, cloud: q.Cloud) -> None:
         self.cloud = cloud
         self.bucket = cloud.bucket
+        self.case = cloud.case
+        self.readers = tuple(cloud.urls)
+        self.on_aws = cloud.on_aws
+        self.settle = cloud.settle
+        # Seconds from each event S3 sent to SQS taking its message.
+        self.delays: list[float] = []
 
     def store(self):
         return self.cloud.store()
@@ -108,7 +188,10 @@ class CloudSide(Side):
         return self.cloud.queue(component)
 
     def heard(self, component: str) -> list[str]:
-        return [m["detail"]["object"]["key"] for m in self.cloud.messages(component)]
+        batch = self.cloud.receive(component)
+        self.cloud.delete(component, batch)
+        self.delays.extend(m.delay() for m in batch)
+        return [m.key for m in batch]
 
     def repeat(self, key: str) -> None:
         # The test role holds no SendMessage, so on the test queues this case
@@ -133,37 +216,54 @@ AT = q.FIRST
 # A write reaches the queue of every reader its routes name, and no other.
 
 
-def test_a_write_reaches_every_reader_its_routes_name_and_no_other(side: Side) -> None:
-    for component in q.COMPONENTS:
+def test_a_write_reaches_every_reader_its_routes_name_and_no_other(
+    side: Side, capsys: pytest.CaptureFixture
+) -> None:
+    for component in side.readers:
         side.queue(component)
     store = side.store()
+    case = side.case
     written = {
-        result_key(q.DEPLOYMENT, q.RUN, AT, "feed"): {"alpha", "risk"},
-        result_key(q.DEPLOYMENT, q.RUN, AT, "alpha"): {"book"},
-        result_key(q.DEPLOYMENT, q.RUN, AT, "risk"): {"book"},
-        result_key(q.DEPLOYMENT, q.RUN, AT, "book"): {"book"},
-        f"runs/{q.DEPLOYMENT}/{q.RUN}/stop.json": {"book"},
-        output_key(q.DEPLOYMENT, q.RUN, AT, "feed", "value"): set(),
-        result_key("other", q.RUN, AT, "feed"): set(),
+        case.result("feed"): {"alpha", "risk"},
+        case.result("alpha"): {"book"},
+        case.result("risk"): {"book"},
+        case.result("book"): {"book"},
+        run_stop_key(q.DEPLOYMENT, case.run): {"book"},
+        output_key(q.DEPLOYMENT, case.run, case.at(), "feed", "value"): set(),
     }
+    if not side.on_aws:
+        # The test role writes only under runs/ci/, so this key is the folder's and moto's.
+        written[result_key("other", case.run, case.at(), "feed")] = set()
     for key in written:
         _write(store, key)
     expected = {
-        component: sorted(k for k, readers in written.items() if component in readers)
-        for component in q.COMPONENTS
+        reader: sorted(k for k, readers in written.items() if reader in readers)
+        for reader in side.readers
     }
-    heard: dict[str, list[str]] = {component: [] for component in q.COMPONENTS}
-    end = time.monotonic() + 10
-    while time.monotonic() < end and any(len(heard[c]) < len(expected[c]) for c in q.COMPONENTS):
-        for component in q.COMPONENTS:
-            heard[component].extend(side.heard(component))
-    # A settle, then one more read, so a late delivery to a reader the routes
-    # do not name shows.
-    time.sleep(0.5)
-    for component in q.COMPONENTS:
-        heard[component] = sorted(heard[component] + side.heard(component))
+
+    def every_one(heard: dict[str, list[str]]) -> bool:
+        return all(set(expected[r]) <= set(heard[r]) for r in side.readers)
+
+    heard = side.heard_together(q.DELIVERY_SECONDS, every_one)
+    for reader in side.readers:
+        unheard = set(expected[reader]) - set(heard[reader])
+        assert not unheard, q.missing(reader, unheard, q.DELIVERY_SECONDS)
+    # Every expected event has arrived, so one to a reader the routes do not name
+    # has had as long. Every queue is read on for one more window, together.
+    late = side.heard_together(side.settle)
     side.close()
+    # S3 and EventBridge deliver at least once, so a key heard twice by its own
+    # reader is no fault. A key heard by any other reader is.
+    heard = {reader: sorted(set(heard[reader] + late[reader])) for reader in side.readers}
     assert heard == expected
+    if side.on_aws:
+        delays = side.delays
+        with capsys.disabled():
+            print(
+                f"\nS3 to SQS, over {len(delays)} messages: median "
+                f"{statistics.median(delays):.1f} s, largest {max(delays):.1f} s. "
+                "An event's time is in whole seconds."
+            )
 
 
 # An event can arrive twice, late, out of order or not at all, and a reader
@@ -273,46 +373,35 @@ def _feed_results(side: Side, the_plan) -> None:
     feed = q.handlers(store, the_plan, q.Calls())["feed"]
     for decision in the_plan.decisions:
         item = Item(decision.at, "feed")
-        store.put_result(result_key(q.DEPLOYMENT, q.RUN, decision.at, "feed"), feed(item, _no))
+        key = result_key(q.DEPLOYMENT, the_plan.run, decision.at, "feed")
+        store.put_result(key, feed(item, _no))
 
 
 def _no() -> None:
     pass
 
 
-def _waiting(cloud: q.Cloud, component: str, count: int, timeout: float = 10) -> bool:
-    """Wait until a queue holds `count` messages, without taking any off it."""
-    sqs = q.client("sqs", cloud.endpoint)
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        attributes = sqs.get_queue_attributes(
-            QueueUrl=cloud.urls[component], AttributeNames=["ApproximateNumberOfMessages"]
-        )["Attributes"]
-        if int(attributes["ApproximateNumberOfMessages"]) >= count:
-            return True
-        time.sleep(0.05)
-    return False
-
-
 def test_events_dropped_while_a_reader_is_down_are_recovered_when_it_starts(
     side: Side,
 ) -> None:
-    the_plan = q.plan(3)
+    the_plan = side.case.plan(3)
+    _feed_results(side, the_plan)
     if isinstance(side, FolderSide):
         # No reader holds alpha's pipe, so the folder drops its events.
-        _feed_results(side, the_plan)
         assert not (side.folder.pipes / "alpha.pipe").exists()
     else:
-        _feed_results(side, the_plan)
-        # Purge only once every event has arrived, so none arrives after it.
-        assert _waiting(side.cloud, "alpha", len(the_plan.decisions))
-        q.client("sqs", side.cloud.endpoint).purge_queue(QueueUrl=side.cloud.urls["alpha"])
+        # Take each event off alpha's queue as it arrives, so none waits for the loop.
+        # A purge would clear every case's messages, and SQS allows one a minute.
+        feeds = {side.case.result("feed", n) for n in range(len(the_plan.decisions))}
+        assert side.cloud.drain("alpha", feeds), q.missing("alpha", feeds, q.DELIVERY_SECONDS)
     calls, alarms = q.Calls(), q.Alarms()
     alpha = _alpha_alone(side, the_plan, calls, alarms)
-    root_keys = [result_key(q.DEPLOYMENT, q.RUN, d.at, "alpha") for d in the_plan.decisions]
+    root_keys = [side.case.result("alpha", n) for n in range(len(the_plan.decisions))]
     store = side.store()
     with q.running({"alpha": alpha}) as running:
-        assert running.wait_for(lambda: all(_exists(store, k) for k in root_keys), 20)
+        assert running.wait_for(
+            lambda: all(_exists(store, k) for k in root_keys), q.DELIVERY_SECONDS
+        )
     side.close()
     assert sorted(calls.counts) == [Item(d.at, "alpha") for d in the_plan.decisions]
 
@@ -364,13 +453,14 @@ def test_a_writer_killed_before_delivery_announces_its_result_when_it_restarts(
 
 def test_s3_skips_an_announcement_because_it_announced_the_blob_itself(cloud: q.Cloud) -> None:
     store = cloud.store()
-    key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
+    key = cloud.case.result("feed")
     _write(store, key)
-    assert _waiting(cloud, "alpha", 1)
+    assert cloud.wait_for("alpha", {key}), q.missing("alpha", [key], q.DELIVERY_SECONDS)
     store.announce(key)
-    # A settle, so an announcement S3 sent late would be on the queue.
-    time.sleep(0.5)
-    assert [m["detail"]["object"]["key"] for m in cloud.messages("alpha")] == [key]
+    # Read on, so an announcement S3 sent late would be on the queue.
+    side = CloudSide(cloud)
+    side.readers = ("alpha",)
+    assert side.heard_together(cloud.settle) == {"alpha": [key]}
 
 
 # What both queues guarantee, run through the receive loop.
@@ -464,15 +554,17 @@ def _gated_alpha(side: Side, the_plan, gate: Gate, alarms: q.Alarms, **settings)
 
 
 def test_a_message_whose_item_is_in_a_handler_is_not_run_twice(side: Side) -> None:
-    the_plan = q.plan(1)
+    if side.on_aws:
+        pytest.skip("S3 cannot be made to repeat an event, and the test role may not send one")
+    the_plan = side.case.plan(1)
     gate, alarms = Gate(), q.Alarms()
     alpha = _gated_alpha(side, the_plan, gate, alarms)
-    feed_key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
-    done_key = result_key(q.DEPLOYMENT, q.RUN, AT, "alpha")
+    feed_key = side.case.result("feed")
+    done_key = side.case.result("alpha")
     store = side.store()
     with q.running({"alpha": alpha}) as running:
         _feed_results(side, the_plan)
-        assert gate.started.wait(10)
+        assert gate.started.wait(q.DELIVERY_SECONDS)
         side.repeat(feed_key)
         side.repeat(feed_key)
         time.sleep(1.5)
@@ -480,31 +572,36 @@ def test_a_message_whose_item_is_in_a_handler_is_not_run_twice(side: Side) -> No
         assert running.wait_for(lambda: _exists(store, done_key), 10)
         time.sleep(0.5)
     if isinstance(side, CloudSide):
-        assert side.cloud.messages("alpha") == []
+        assert side.cloud.keys_on("alpha") == []
     side.close()
-    assert gate.calls.counts == {Item(AT, "alpha"): 1}
+    assert gate.calls.counts == {Item(side.case.at(), "alpha"): 1}
 
 
 def test_the_loop_never_holds_more_messages_than_it_has_free_handlers(side: Side) -> None:
-    the_plan = q.plan(6)
+    the_plan = side.case.plan(6)
     gate, alarms = Gate(), q.Alarms()
     counting = Counting(side.queue("alpha"))
     alpha = _gated_alpha(side, the_plan, gate, alarms, queue=counting, pool_size=2)
     store = side.store()
-    keys = [result_key(q.DEPLOYMENT, q.RUN, d.at, "alpha") for d in the_plan.decisions]
+    keys = [side.case.result("alpha", n) for n in range(len(the_plan.decisions))]
     with q.running({"alpha": alpha}) as running:
         _feed_results(side, the_plan)
-        time.sleep(1.5)
+        feeds = [side.case.result("feed", n) for n in range(len(the_plan.decisions))]
+        assert running.wait_for(lambda: gate.calls.counts.total() >= 2, q.DELIVERY_SECONDS), (
+            q.missing("alpha", feeds, q.DELIVERY_SECONDS)
+        )
+        # Both handlers are held at the gate, so no third decision may start.
+        time.sleep(0.5)
         assert gate.calls.counts.total() == 2
         gate.go.set()
-        assert running.wait_for(lambda: all(_exists(store, k) for k in keys), 20)
+        assert running.wait_for(lambda: all(_exists(store, k) for k in keys), q.DELIVERY_SECONDS)
     side.close()
     assert counting.most <= 2 and max(counting.limits) <= 2
     assert set(gate.calls.counts.values()) == {1}
 
 
 def test_a_hung_handler_stops_the_heartbeat(side: Side) -> None:
-    the_plan = q.plan(2)
+    the_plan = side.case.plan(2)
     beats: list[float] = []
     hung, alarms = Gate(report=False), q.Alarms()
     alpha = _gated_alpha(
@@ -516,94 +613,283 @@ def test_a_hung_handler_stops_the_heartbeat(side: Side) -> None:
         heartbeat_limit=0.3,
         beat=lambda: beats.append(time.monotonic()),
     )
-    with q.running({"alpha": alpha}):
+    with q.running({"alpha": alpha}) as running:
         time.sleep(0.5)
         assert beats, "an idle loop beats"
         _feed_results(side, the_plan)
-        assert hung.started.wait(10)
+        assert hung.started.wait(q.DELIVERY_SECONDS), q.missing(
+            "alpha", [side.case.result("feed")], q.DELIVERY_SECONDS
+        )
         time.sleep(1.0)
         stopped_at = time.monotonic()
         time.sleep(1.0)
         assert not [b for b in beats if b > stopped_at], "a hung handler kept the heartbeat"
         hung.go.set()
-        time.sleep(1.0)
-        assert [b for b in beats if b > stopped_at + 1.0], "the heartbeat came back"
+        # The handler reads and writes the store before it reports, which on S3
+        # takes longer than on the folder.
+        assert running.wait_for(
+            lambda: any(b > stopped_at + 1.0 for b in beats), q.DELIVERY_SECONDS
+        ), "the heartbeat came back"
     side.close()
 
 
 # What only SQS keeps: extending, deleting and returning a message.
 
 
+# Each queue's own visibility timeout is 30 seconds, here as in the test
+# environment, so a case that needs a short one passes it on each receive and
+# each extend, as `SqsQueue` does.
+
+
 def test_a_handler_slower_than_the_visibility_timeout_keeps_its_message_hidden(
-    emulator: str,
+    cloud: q.Cloud,
 ) -> None:
-    cloud = q.Cloud.make(emulator, f"queue-suite-{next(_names)}", visibility=2)
     side = CloudSide(cloud)
-    the_plan = q.plan(1)
+    the_plan = cloud.case.plan(1)
     gate, alarms = Gate(), q.Alarms()
     settings = {"extend_every": 0.5}
     # Both instances start before the feed's result exists, so neither finds
     # the decision by its keys, and only the message can hand it to one.
     first = _gated_alpha(side, the_plan, gate, alarms, queue=cloud.queue("alpha", 2), **settings)
     second = _gated_alpha(side, the_plan, gate, alarms, queue=cloud.queue("alpha", 2), **settings)
-    done_key = result_key(q.DEPLOYMENT, q.RUN, AT, "alpha")
+    done_key = cloud.case.result("alpha")
     store = cloud.store()
     with q.running({"first": first, "second": second}) as running:
         _feed_results(side, the_plan)
-        assert gate.started.wait(10)
+        assert gate.started.wait(q.DELIVERY_SECONDS), q.missing(
+            "alpha", [cloud.case.result("feed")], q.DELIVERY_SECONDS
+        )
         # Three visibility timeouts pass while the handler works.
         time.sleep(6)
         gate.go.set()
-        assert running.wait_for(lambda: _exists(store, done_key), 10)
-        time.sleep(0.5)
-    assert gate.calls.counts == {Item(AT, "alpha"): 1}
-    assert cloud.messages("alpha") == []
+        assert running.wait_for(lambda: _exists(store, done_key), q.DELIVERY_SECONDS)
+    # Past one more visibility timeout with both loops stopped, so a message left
+    # undeleted is back on the queue rather than received again.
+    time.sleep(2.5)
+    assert gate.calls.counts == {Item(cloud.case.at(), "alpha"): 1}
+    assert cloud.keys_on("alpha") == []
 
 
 def test_stopping_returns_an_unfinished_message_at_once(cloud: q.Cloud) -> None:
     side = CloudSide(cloud)
-    the_plan = q.plan(1)
+    the_plan = cloud.case.plan(1)
     stuck, alarms = Gate(), q.Alarms()
     first = _gated_alpha(side, the_plan, stuck, alarms, stop_timeout=0.2)
-    feed_key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
+    feed_key = cloud.case.result("feed")
     try:
         with q.running({"first": first}):
             _feed_results(side, the_plan)
-            assert stuck.started.wait(10)
-        # The queue hides a message for 30 seconds, so only the loop's release
+            assert stuck.started.wait(q.DELIVERY_SECONDS), q.missing(
+                "alpha", [feed_key], q.DELIVERY_SECONDS
+            )
+        # The loop's receive hides a message for 30 seconds, so only its release
         # brings it back this soon.
-        assert [m["detail"]["object"]["key"] for m in cloud.messages("alpha")] == [feed_key]
+        assert cloud.keys_on("alpha") == [feed_key]
     finally:
         stuck.go.set()
 
 
-def test_a_message_whose_instance_dies_returns_to_the_queue(emulator: str, tmp_path) -> None:
-    cloud = q.Cloud.make(emulator, f"queue-suite-{next(_names)}", visibility=2)
+def test_a_message_whose_instance_dies_returns_to_the_queue(cloud: q.Cloud, tmp_path) -> None:
     side = CloudSide(cloud)
-    the_plan = q.plan(1)
+    case = cloud.case
+    the_plan = case.plan(1)
     marker = tmp_path / "started"
     context = multiprocessing.get_context("spawn")
     child = context.Process(
-        target=q.hang_alpha, args=(cloud.endpoint, cloud.bucket, cloud.urls["alpha"], str(marker))
+        target=q.hang_alpha,
+        args=(
+            cloud.endpoint,
+            cloud.bucket,
+            cloud.urls["alpha"],
+            str(marker),
+            case.run,
+            case.first.isoformat(),
+        ),
     )
     child.start()
     try:
         assert q.wait_for_file(marker, 60), "the child's loop never started"
         _feed_results(side, the_plan)
-        assert q.wait_for_file(marker.with_suffix(".item"), 30)
+        assert q.wait_for_file(marker.with_suffix(".item"), q.DELIVERY_SECONDS), q.missing(
+            "alpha", [case.result("feed")], q.DELIVERY_SECONDS
+        )
         # The child extends its message while its handler works, so after two
         # visibility timeouts the message is still its own.
         time.sleep(4)
-        assert cloud.messages("alpha") == []
+        assert cloud.keys_on("alpha") == []
         os.kill(child.pid, 9)
         child.join(10)
     finally:
         if child.is_alive():
             child.kill()
-    # Nothing extends the message once its instance is dead, so it returns.
-    feed_key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
-    time.sleep(2.5)
-    assert [m["detail"]["object"]["key"] for m in cloud.messages("alpha")] == [feed_key]
+    # Nothing extends the message once its instance is dead, so it returns within
+    # the 2 seconds of its last extend. It is already on the queue, so no
+    # delivery bound applies, and 10 seconds is the 2 with room for a slow read.
+    feed_key = case.result("feed")
+    returned: list[str] = []
+    end = time.monotonic() + 10
+    while time.monotonic() < end and feed_key not in returned:
+        returned += cloud.keys_on("alpha")
+    assert returned == [feed_key], "the dead instance's message did not return within 10 seconds"
+
+
+# Where a case's keys sit on the test queues.
+
+
+def test_no_two_runs_attempts_cases_or_decisions_share_a_key() -> None:
+    keys = set()
+    tuples = 0
+    for number in (1, 2, 3, 99, 100, 101, 5000):
+        for attempt in (1, 2, 98, 99):
+            for index in (0, 1, 22, 23):
+                case = q.run_case(number, attempt, index)
+                for n in (0, 1, 30, 59):
+                    keys.add(case.result("feed", n))
+                    tuples += 1
+    assert len(keys) == tuples
+
+
+def test_a_case_reads_its_own_keys_and_no_other_cases() -> None:
+    first, second = q.run_case(7, 1, 0), q.run_case(7, 1, 1)
+    retry = q.run_case(7, 2, 0)
+    assert first.run == "2001-12-02" and first.first.hour == 0 and second.first.hour == 1
+    assert first.mine(first.result("book", 59))
+    assert first.mine(run_stop_key(q.DEPLOYMENT, first.run))
+    assert not first.mine(second.result("feed"))
+    assert not first.mine(retry.result("feed"))
+    assert not first.mine(f"runs/ci/{first.run}/smoke/x.json")
+    with pytest.raises(ValueError, match="hour"):
+        first.plan(61)
+
+
+@pytest.mark.parametrize(
+    ("number", "attempt", "index", "said"),
+    [
+        (0, 1, 0, "number"),
+        (True, 1, 0, "number"),
+        (1, 0, 0, "attempt"),
+        (1, 100, 0, "attempt"),
+        (1, 1, 24, "index"),
+        (1, 1, -1, "index"),
+    ],
+)
+def test_a_run_outside_the_scheme_is_refused(
+    number: int, attempt: int, index: int, said: str
+) -> None:
+    with pytest.raises(ValueError, match=said):
+        q.run_case(number, attempt, index)
+
+
+def test_a_case_holds_from_one_decision_to_sixty() -> None:
+    assert len(q.Case().plan(60).decisions) == 60
+    for decisions in (0, 61, True):
+        with pytest.raises(ValueError, match="hour"):
+            q.Case().plan(decisions)
+
+
+def test_run_numbers_repeat_their_dates_only_after_a_period() -> None:
+    period = q.RUN_PERIOD
+    assert q.run_case(period + 5, 1, 0) == q.run_case(5, 1, 0)
+    assert len({q.run_case(n, 1, 0).run for n in range(period - 50, period + 50)}) == 100
+    # The largest number and attempt still give a date.
+    assert q.run_case(period - 1, 99, 23).first.year < 9999
+
+
+@pytest.mark.parametrize("missing", ["GITHUB_RUN_NUMBER", "GITHUB_RUN_ATTEMPT"])
+def test_a_case_outside_a_github_run_says_so(monkeypatch, missing: str) -> None:
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "12")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.delenv(missing)
+    with pytest.raises(RuntimeError, match=missing):
+        q.case_from_environment(0)
+
+
+def test_a_case_in_a_github_run_takes_its_number_attempt_and_index(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_RUN_NUMBER", "12")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "3")
+    assert q.case_from_environment(2) == q.run_case(12, 3, 2)
+
+
+def test_every_case_on_the_test_queues_has_an_hour_of_its_own() -> None:
+    """Every case that takes `side` or `cloud` runs on the test queues, so each needs an hour."""
+    assert len(set(_AWS_CASES)) == len(_AWS_CASES) <= 24
+    sided = {
+        name
+        for name, case in globals().items()
+        if name.startswith("test_")
+        and callable(case)
+        and {"side", "cloud"} & set(inspect.signature(case).parameters)
+    }
+    assert sided == set(_AWS_CASES)
+
+
+def test_the_test_environments_client_ignores_an_endpoint_the_environment_sets(
+    monkeypatch,
+) -> None:
+    """A green run on the test queues cannot come from an endpoint a variable points elsewhere."""
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "none")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "none")
+    for service in ("s3", "sqs"):
+        made = q.client(service, None)
+        assert made.meta.endpoint_url.endswith(".amazonaws.com")
+
+
+def test_the_test_environments_client_refuses_a_host_outside_aws(monkeypatch) -> None:
+    from tests.support import aws
+
+    real = aws.boto3.client
+
+    def elsewhere(*args, **kwargs):
+        return real(*args, endpoint_url="http://127.0.0.1:1", **kwargs)
+
+    monkeypatch.setattr(aws.boto3, "client", elsewhere)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "none")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "none")
+    with pytest.raises(RuntimeError, match="not AWS"):
+        q.client("sqs", None)
+
+
+def _shared(emulator: str, case: q.Case) -> tuple[q.Cloud, object]:
+    """A queue on moto that cases share, as the test environment's are, and a client to fill it."""
+    made = q.Cloud.make(emulator, f"queue-suite-{next(_names)}")
+    shared = q.Cloud(emulator, made.bucket, made.urls, case, shared=True)
+    return shared, q.client("sqs", emulator)
+
+
+def _send(sqs, url: str, key: str) -> None:
+    body = {"time": "2026-01-01T00:00:00Z", "detail": {"object": {"key": key}}}
+    sqs.send_message(QueueUrl=url, MessageBody=json.dumps(body))
+
+
+def test_a_read_of_a_shared_queue_keeps_the_cases_keys_and_deletes_the_rest(
+    emulator: str,
+) -> None:
+    case, other = q.run_case(7, 1, 1), q.run_case(7, 1, 0)
+    cloud, sqs = _shared(emulator, case)
+    url = cloud.urls["alpha"]
+    _send(sqs, url, other.result("feed"))
+    _send(sqs, url, case.result("feed"))
+    assert cloud.keys_on("alpha") == [case.result("feed")]
+    left = sqs.receive_message(QueueUrl=url, WaitTimeSeconds=1, VisibilityTimeout=0)
+    assert left.get("Messages", []) == []
+
+
+def test_a_read_of_a_shared_queue_reads_past_a_batch_of_other_cases(emulator: str) -> None:
+    case, other = q.run_case(7, 1, 7), q.run_case(7, 1, 6)
+    cloud, sqs = _shared(emulator, case)
+    for n in range(10):
+        _send(sqs, cloud.urls["alpha"], other.result("feed", n))
+    _send(sqs, cloud.urls["alpha"], case.result("feed"))
+    assert cloud.keys_on("alpha") == [case.result("feed")]
+
+
+def test_a_read_of_a_cases_own_queue_keeps_every_message(emulator: str) -> None:
+    """On moto a misrouted message is the case's, so the delivery case can see it."""
+    made = q.Cloud.make(emulator, f"queue-suite-{next(_names)}")
+    sqs = q.client("sqs", emulator)
+    _send(sqs, made.urls["alpha"], "runs/other/2026-11-02/x/feed/result.json")
+    assert made.keys_on("alpha") == ["runs/other/2026-11-02/x/feed/result.json"]
 
 
 # The pipe itself.
@@ -669,10 +955,19 @@ def test_a_folder_that_announces_needs_the_queue_folder(tmp_path: Path) -> None:
 
 def test_the_sqs_events_parse_like_the_folders(cloud: q.Cloud) -> None:
     store = cloud.store()
-    key = result_key(q.DEPLOYMENT, q.RUN, AT, "feed")
+    key = cloud.case.result("feed")
     _write(store, key)
-    assert _waiting(cloud, "alpha", 1)
-    (event,) = cloud.queue("alpha").receive(10)
+    queue = cloud.queue("alpha")
+    found = []
+    end = time.monotonic() + q.DELIVERY_SECONDS
+    while not found and time.monotonic() < end:
+        for event in queue.receive(10):
+            # An earlier case's message is deleted with the case's own.
+            if event.key == key:
+                found.append(event)
+            queue.done(event)
+    assert found, q.missing("alpha", [key], q.DELIVERY_SECONDS)
+    (event,) = found
     assert (event.bucket, event.key, event.kind) == (cloud.bucket, key, EventKind.CREATED)
     assert event.etag and event.sequencer
     body = json.loads(event_body(cloud.bucket, key, EventKind.CREATED, "t", "s"))
