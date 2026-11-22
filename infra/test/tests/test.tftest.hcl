@@ -131,7 +131,7 @@ run "each_route_takes_its_settings_from_the_routes_file_and_admits_only_its_rule
       smoke = {
         retention             = 3600
         dead_letter_retention = 3600
-        visibility_timeout    = 31
+        visibility_timeout    = 30
         sse                   = true
         dead_letter_sse       = true
         max_receive_count     = 3
