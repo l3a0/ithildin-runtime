@@ -743,9 +743,25 @@ def _kinds(first: date, last: date) -> PriceKinds:
 
 
 def test_16_a_bar_of_unstated_kind_halts_after_the_snapshot(lake: Path, tmp_path: Path) -> None:
-    reading = make(lake, tmp_path).read(close(LAST))
+    # A contract with no row for the source, so every field reads unstated.
+    reading = make(lake, tmp_path, kinds=PriceKinds(())).read(close(LAST))
     assert reading.snapshot.bars[GLD]["1d"][-1].price_kind == "unstated"
     assert any("GLD's bar" in r and "unstated price kind" in r for r in reading.halts)
+
+
+def test_16_the_tracked_contract_states_yahoos_kind_for_both_vintages(
+    lake: Path, tmp_path: Path
+) -> None:
+    reading = make(lake, tmp_path).read(close(LAST))
+    assert reading.halts == ()
+    for instrument in (GLD, USO):
+        for bar in reading.snapshot.bars[instrument]["1d"]:
+            assert (bar.price_kind, bar.venues, bar.delay, bar.volume_counted) == (
+                "official close",
+                "consolidated",
+                "none",
+                "consolidated in hundreds of shares",
+            )
 
 
 @pytest.mark.parametrize("silent", ["price_kind", "venues", "delay", "volume_counted"])

@@ -92,9 +92,8 @@ def test_the_stage_stores_the_snapshot_and_names_it_in_its_result(
     stored = decode_output(data, Snapshot)
     assert stored.header.stage == "data" and stored.header.kind == "capturing"
     assert len(stored.entries[0].bars) == 2
-    # Chan's vintages state no price kind, so the stored snapshot ends in a halt.
-    assert result.halt is not None and result.halt.cause == ref
-    assert "unstated price kind" in result.halt.reason
+    # The price-kind contract states Yahoo's kind for both vintages, so nothing halts.
+    assert result.halt is None
     assert alarms.reasons == []
 
 
