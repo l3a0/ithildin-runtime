@@ -52,6 +52,20 @@ def test_every_tracked_strategy_file_loads() -> None:
         )
 
 
+def test_no_checkout_changes_a_strategy_files_line_endings() -> None:
+    # The hash is of the bytes, so a checkout that converts line endings would
+    # record a hash that names no committed file.
+    paths = [f"{STRATEGIES.relative_to(ROOT).as_posix()}/{n}" for n in _tracked_strategy_files()]
+    shown = subprocess.run(
+        ["git", "check-attr", "text", "--", *paths],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert len(shown) == len(paths) and all(line.endswith(": text: unset") for line in shown)
+
+
 def test_chans_band_declares_gld_and_uso() -> None:
     (chan,) = load_strategies(STRATEGIES, [CHAN])
     assert chan.instruments == ("GLD", "USO")
@@ -125,13 +139,28 @@ def test_a_plain_date_and_a_utc_datetime_are_allowed() -> None:
     assert section["also"].tzinfo is UTC
 
 
-def test_a_section_is_read_only() -> None:
-    section = parse_strategy("chan", b'instruments = ["GLD"]\n[alpha]\nk = [1, 2]\n').section(
-        "alpha"
-    )
+def test_a_string_a_bool_and_an_integer_read_back_as_written() -> None:
+    data = b'instruments = ["GLD"]\n[alpha]\nflag = true\nmode = "close"\nlookback = 20\n'
+    section = parse_strategy("chan", data).section("alpha")
+    assert type(section["flag"]) is bool and section["flag"] is True
+    assert section["mode"] == "close"
+    assert type(section["lookback"]) is int and section["lookback"] == 20
+
+
+def test_the_sections_are_read_only() -> None:
+    strategy = parse_strategy("chan", b'instruments = ["GLD"]\n[alpha]\nk = [1, 2]\n')
+    section = strategy.section("alpha")
     with pytest.raises(TypeError):
         section["k"] = 3  # type: ignore[index]
+    with pytest.raises(TypeError):
+        strategy.sections["cost"] = {}  # type: ignore[index]
     assert section["k"] == (1, 2)
+
+
+def test_an_empty_table_inside_a_section_reads_as_absent() -> None:
+    data = b'instruments = ["GLD"]\n[cost]\nfixed = 1\n[cost.GLD]\n[cost.USO]\nrate = 0.01\n'
+    cost = parse_strategy("chan", data).section("cost")
+    assert set(cost) == {"fixed", "USO"}
 
 
 # Every refusal halts, naming the strategy and the file, section or key.
@@ -158,6 +187,7 @@ GOOD = b'instruments = ["GLD"]\n'
         (GOOD + b"[risk]\nmax_age = nan\n", "risk.max_age = NaN"),
         (GOOD + b"[risk]\nmax_age = 1e400\n", "risk.max_age = 1E+400"),
         (GOOD + b"[risk]\nk = 1" + b"0" * 39 + b"\n", "which the codec refuses"),
+        (GOOD + b"[alpha]\nk = [{}]\n", "holds an empty table in alpha.k"),
         (GOOD + b"[data]\nat = 15:40:00\n", "data.at = 15:40:00, a local time"),
         (GOOD + b"[data]\nat = 2026-11-02T15:40:00\n", "a local datetime with no offset"),
         (GOOD + b"[data]\nat = 2026-11-02T15:40:00-05:00\n", "whose offset is not UTC's"),
@@ -179,7 +209,8 @@ GOOD = b'instruments = ["GLD"]\n'
         "minus-infinite",
         "not-a-number",
         "past-the-magnitude",
-        "past-the-digits",
+        "past-the-bounds",
+        "empty-table-in-a-list",
         "local-time",
         "local-datetime",
         "offset-not-z",
@@ -197,8 +228,20 @@ def test_the_reader_halts_naming_the_strategy_and_file(data, named) -> None:
 
 @pytest.mark.parametrize(
     "data",
-    [GOOD, GOOD + b"[cost]\n", GOOD + b"[alpha]\nk = 1\n"],
-    ids=["missing", "empty", "another-section"],
+    [
+        GOOD,
+        GOOD + b"[cost]\n",
+        GOOD + b"[cost]\n[cost.GLD]\n",
+        GOOD + b"[cost]\nterms = {}\n",
+        GOOD + b"[alpha]\nk = 1\n",
+    ],
+    ids=[
+        "missing",
+        "empty",
+        "only-an-empty-table",
+        "only-an-empty-inline-table",
+        "another-section",
+    ],
 )
 def test_a_missing_or_empty_section_halts_when_asked_for(data) -> None:
     strategy = parse_strategy("chan", data)
@@ -223,17 +266,22 @@ def test_a_name_the_key_builder_refuses_halts(name) -> None:
         (["../chan"], "cannot be part of a key"),
         (["chan", "chan"], "strategy chan is named more than once"),
         (["broken"], "strategy broken's configuration strategies/broken.toml is not TOML"),
+        (["unreadable"], "strategy unreadable's configuration"),
     ],
-    ids=["no-names", "no-file", "bad-name", "named-twice", "malformed"],
+    ids=["no-names", "no-file", "bad-name", "named-twice", "malformed", "unreadable"],
 )
 def test_loading_halts_naming_the_strategy(tmp_path, names, named) -> None:
     folder = tmp_path / "strategies"
     folder.mkdir()
     (folder / "chan.toml").write_bytes(GOOD)
     (folder / "broken.toml").write_bytes(b"instruments = [")
+    # A folder where the file should be cannot be read as one.
+    (folder / "unreadable.toml").mkdir()
     with pytest.raises(Halt) as caught:
         load_strategies(folder, names)
     assert named in caught.value.reason
+    if names == ["unreadable"]:
+        assert "cannot be read" in caught.value.reason
 
 
 def test_loading_refuses_one_name_given_as_a_string(tmp_path) -> None:
@@ -270,6 +318,26 @@ def test_the_table_refuses_a_strategy_declared_twice() -> None:
     twice = parse_strategy("chan", b'instruments = ["GLD"]\n# another file\n')
     with pytest.raises(ValueError, match="strategy chan is declared twice"):
         Table(stages=(Stage("data", D),), strategies=(CHAN_CONFIG, twice))
+
+
+def test_the_table_refuses_what_is_not_a_strategys_configuration() -> None:
+    with pytest.raises(TypeError, match="is not a strategy's configuration"):
+        Table(stages=(Stage("data", D),), strategies=("chan",))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("stages", "strategies"),
+    [
+        ((Stage("alpha/chan", D),), (CHAN_CONFIG, OTHER)),
+        ((Stage("execution/send", D), Stage("alpha/send", D, strategy="send")), None),
+    ],
+    ids=["a-strategys-stage-declared-shared", "a-strategy-named-like-a-shared-stage"],
+)
+def test_the_table_refuses_a_shared_stage_named_for_a_strategy(stages, strategies) -> None:
+    if strategies is None:
+        strategies = (CHAN_CONFIG, parse_strategy("send", GOOD))
+    with pytest.raises(ValueError, match="is named for strategy (chan|send), so it names"):
+        Table(stages=stages, strategies=strategies)
 
 
 def test_the_table_refuses_a_stage_of_a_strategy_it_does_not_declare() -> None:
@@ -317,8 +385,9 @@ def _header(hashes) -> BlobHeader:
         ({"chan": "0" * 63}, "not a lower case hex SHA-256"),
         ({"chan": "A" * 64}, "not a lower case hex SHA-256"),
         ({"chan": "c1"}, "not a lower case hex SHA-256"),
+        ([("chan", "0" * 64)], "at least one strategy"),
     ],
-    ids=["empty", "slash", "dots", "short", "upper-case", "not-hex"],
+    ids=["empty", "slash", "dots", "short", "upper-case", "not-hex", "not-a-mapping"],
 )
 def test_the_header_refuses_hashes_it_cannot_name(hashes, named) -> None:
     with pytest.raises(ValueError, match=named):

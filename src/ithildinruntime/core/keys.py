@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta
 
-from .names import is_name
+from .names import is_name, is_sha256
 from .records import Mode
 
 __all__ = [
@@ -65,7 +65,6 @@ _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._]*")
 _OUTPUT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _RESERVED = re.compile(r"result|claim|broker-read-[0-9]+")
 _DIGEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]*")
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 _RUN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{4}-[0-9]{2}-[0-9]{2})?")
 
 
@@ -96,7 +95,7 @@ def _stage(value: str) -> str:
 
 
 def _sha256(value: str) -> str:
-    if not isinstance(value, str) or not _SHA256.fullmatch(value):
+    if not is_sha256(value):
         raise ValueError(f"{value!r} is not a lowercase hex SHA-256")
     return value
 

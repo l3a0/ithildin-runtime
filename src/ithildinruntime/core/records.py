@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,7 +26,7 @@ from typing import Annotated, NewType
 
 from .codec import Places, encode
 from .halt import Halt
-from .names import is_name
+from .names import is_name, is_sha256
 
 __all__ = [
     "Ack",
@@ -74,8 +73,6 @@ __all__ = [
 ]
 
 InstrumentId = NewType("InstrumentId", str)
-
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 # The places each kind of decimal declares, which never shrink in a later
 # release. tests/test_core_types.py pins each one.
@@ -449,7 +446,7 @@ class BlobHeader(_Record):
         for strategy, digest in self.config_hashes.items():
             if not is_name(strategy):
                 raise ValueError(f"strategy {strategy!r} cannot be part of a key")
-            if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            if not is_sha256(digest):
                 raise ValueError(
                     f"strategy {strategy}'s configuration hash {digest!r} is not a lower case "
                     "hex SHA-256"

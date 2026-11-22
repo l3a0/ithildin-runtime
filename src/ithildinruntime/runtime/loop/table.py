@@ -121,6 +121,15 @@ class Table:
                     f"stage {stage.name} belongs to strategy {stage.strategy}, "
                     "which the table does not declare"
                 )
+            # A stage's name and its strategy say the same thing, so neither
+            # may say it alone. A shared stage named for a declared strategy
+            # would record every strategy's hash on that strategy's blobs.
+            parts = stage.name.split("/")
+            if stage.strategy is None and len(parts) == 2 and parts[1] in strategies:
+                raise ValueError(
+                    f"stage {stage.name} is named for strategy {parts[1]}, "
+                    "so it names that strategy"
+                )
             for other in by_name:
                 # A route matches a stage's result by its name at the end of a
                 # key, so no name may end with another stage's whole name.

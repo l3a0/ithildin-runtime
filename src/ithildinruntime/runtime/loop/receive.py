@@ -79,6 +79,12 @@ How the loop runs, in order.
    returns or raises only once nothing is held. The price is
    a process that holds a host slot without receiving through an outage, and
    one whose hung handler is not killed while it holds them.
+10. **A stage runs only at a decision of every strategy the table declares.**
+    Before a handler runs, the loop halts the stage at a decision whose
+    strategies are not exactly the table's, naming the strategies left out or
+    extra. A handler's result whose configuration hashes differ from the ones
+    the table gives its stage is stored as a halt, with an alarm, as item 6
+    says of any error a handler did not handle.
 
 Every limit is measured on the timer's monotonic reading.
 """

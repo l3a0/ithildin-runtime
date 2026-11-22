@@ -62,7 +62,9 @@ class StrategyConfig:
 
     `config_hash` is the SHA-256 of the file's bytes, in lower case hex.
     `sections` maps each section's name to its settings, read-only, with
-    every empty section left out.
+    every empty table left out at every depth. A TOML table reads as a
+    read-only mapping, an array as a tuple, a float as a `Decimal`, an integer
+    as an `int`, and a datetime in UTC.
     """
 
     name: str
@@ -86,8 +88,9 @@ def parse_strategy(name: str, data: bytes, *, source: str | None = None) -> Stra
     """Read one strategy's configuration from the bytes of its file.
 
     It takes bytes rather than a path, so a research sweep can hand bytes of
-    its own and their hash names them. `source` names the file in a halt, and
-    defaults to `<name>.toml`.
+    its own and their hash names them. Such a caller stores those bytes where
+    its run's record can find them by that hash, since no release carries
+    them. `source` names the file in a halt, and defaults to `<name>.toml`.
     """
     where = source or f"{name}.toml"
     if not is_name(name):
@@ -111,7 +114,7 @@ def parse_strategy(name: str, data: bytes, *, source: str | None = None) -> Stra
         if not isinstance(value, dict):
             raise refuse(f"holds {key} as a {type(value).__name__}, not a section")
         settings = _frozen(value, key, refuse)
-        if settings:
+        if settings is not None:
             sections[key] = settings
     return StrategyConfig(
         name=name,
@@ -167,11 +170,24 @@ def _instruments(value: object, refuse) -> tuple[InstrumentId, ...]:
 
 
 def _frozen(value: object, where: str, refuse) -> object:
-    """A section's value, read-only, after the checks on numbers and times."""
+    """A section's value, read-only, after the checks on numbers and times.
+
+    An empty table, at any depth, reads as absent and returns `None`, so a
+    blank `[cost.GLD]` never reads as terms present for GLD, and a section
+    holding only blank tables reads as missing.
+    """
     if isinstance(value, dict):
-        return MappingProxyType({k: _frozen(v, f"{where}.{k}", refuse) for k, v in value.items()})
+        kept = {}
+        for k, v in value.items():
+            frozen = _frozen(v, f"{where}.{k}", refuse)
+            if frozen is not None:
+                kept[k] = frozen
+        return MappingProxyType(kept) if kept else None
     if isinstance(value, list):
-        return tuple(_frozen(v, f"{where}[{n}]", refuse) for n, v in enumerate(value))
+        items = tuple(_frozen(v, f"{where}[{n}]", refuse) for n, v in enumerate(value))
+        if any(item is None for item in items):
+            raise refuse(f"holds an empty table in {where}, which reads as nothing")
+        return items
     if isinstance(value, bool | str):
         return value
     if isinstance(value, int | Decimal):
@@ -186,6 +202,9 @@ def _frozen(value: object, where: str, refuse) -> object:
             raise refuse(f"holds {where} = {value.isoformat()}, a local datetime with no offset")
         if offset != timedelta(0):
             raise refuse(f"holds {where} = {value.isoformat()}, whose offset is not UTC's")
+        # CPython's tomllib already gives `Z` and a zero offset `datetime.UTC`.
+        # This keeps every time the reader returns in that one zone if another
+        # parser does not.
         return value.replace(tzinfo=UTC)
     if isinstance(value, time):
         raise refuse(

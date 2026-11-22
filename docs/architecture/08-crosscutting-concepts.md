@@ -113,6 +113,7 @@ erDiagram
         datetime decision_at
         string name
         string inputs
+        string config_hashes
         datetime stored_at
     }
     JOURNAL_ENTRY {
