@@ -19,11 +19,15 @@ mock_provider "aws" {
 variables {
   name_prefix = "example"
   bucket      = "example-bucket"
-  routes = [{
+  queues = [{
     reader                     = "smoke"
-    pattern                    = [{ prefix = "runs/" }]
     visibility_timeout_seconds = 30
     max_receive_count          = 3
+  }]
+  rules = [{
+    name    = "smoke-000000000000"
+    reader  = "smoke"
+    pattern = { source = ["aws.s3"], "detail-type" = ["Object Created"], detail = { bucket = { name = ["example-bucket"] }, object = { key = [{ prefix = "runs/" }] } } }
   }]
 }
 

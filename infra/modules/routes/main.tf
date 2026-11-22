@@ -1,16 +1,23 @@
-# For each route it is given: a queue, its dead-letter queue, an EventBridge rule on
-# the default bus that matches the bucket's Object Created events by the route's key
-# pattern, and a queue policy that admits only that rule. A route that leaves the list
-# takes its rule and queues with it on the next apply.
+# For each queue it is given: the reader's queue, its dead-letter queue, and a queue
+# policy that admits only the reader's own rules. For each rule: an EventBridge rule on
+# the default bus with the rule's pattern, and a target aimed at its reader's queue. A
+# rule leaves with its entry in `rules`, and a queue with its reader's entry in
+# `queues`, on the next apply.
 #
-# The test environment calls it with infra/test/routes.json alone, which #81's
-# generator writes. On shadow, paper and live rules only grow, as design.md's "Rules
-# only grow, and a release checks them" says, so a caller there passes every route any
-# earlier release named, and never removes one.
+# The test environment calls it with infra/test/routes.json, which
+# tests/support/routes_file.py writes from `routes_file` in runtime.loop. Each rule's
+# pattern is `event_pattern` in runtime.loop, written whole, so the module applies it as
+# written and builds none of its own. It checks only that the pattern matches S3's own
+# events on its bucket, for a kind a route hears. On shadow, paper and live rules only
+# grow, as design.md's "Rules only grow, and a release checks them" says, so a caller
+# there passes every rule any earlier release named, and never removes one. A rule's
+# name changes whenever its reader, kind or key does, so a changed route adds a rule
+# rather than narrowing one.
 #
 # Queues use SSE-SQS, SQS's managed encryption. EventBridge's troubleshooting page says
 # an encrypted target queue needs a customer-managed KMS key, and does not name SSE-SQS
-# either way, so the first delivery check is what shows it works.
+# either way. The smoke check's delivery case showed EventBridge delivering S3's event
+# to an SSE-SQS queue on main at 891df5c, in run 45030575106.
 
 terraform {
   required_version = "~> 1.13"
@@ -30,29 +37,78 @@ variable "name_prefix" {
 }
 
 variable "bucket" {
-  description = "The bucket whose Object Created events the rules match."
+  description = "The bucket whose object events the rules match."
   type        = string
   nullable    = false
 }
 
-variable "routes" {
-  description = "The routes, as the routes file lists them."
+variable "queues" {
+  description = "One entry per reader, as the routes file's `queues` list holds them."
   type = list(object({
     reader                     = string
-    pattern                    = any
     visibility_timeout_seconds = number
     max_receive_count          = number
   }))
   nullable = false
 
   validation {
-    condition     = alltrue([for r in var.routes : can(regex("^[a-z0-9][a-z0-9-]{0,38}$", r.reader))])
-    error_message = "Each route's reader is 1 to 39 lowercase letters, digits and hyphens."
+    condition     = alltrue([for q in var.queues : can(regex("^[a-z0-9][a-z0-9-]{0,38}$", q.reader))])
+    error_message = "Each queue's reader is 1 to 39 lowercase letters, digits and hyphens."
   }
 
   validation {
-    condition     = length(distinct([for r in var.routes : r.reader])) == length(var.routes)
-    error_message = "Two routes name the same reader."
+    condition     = length(distinct([for q in var.queues : q.reader])) == length(var.queues)
+    error_message = "Two queues name the same reader."
+  }
+}
+
+variable "rules" {
+  description = "One entry per route, as the routes file's `rules` list holds them."
+  type = list(object({
+    name    = string
+    reader  = string
+    pattern = any
+  }))
+  nullable = false
+
+  validation {
+    condition     = length(distinct([for r in var.rules : r.name])) == length(var.rules)
+    error_message = "Two rules carry the same name."
+  }
+
+  validation {
+    condition = alltrue([for r in var.rules : contains(
+      [jsonencode(["Object Created"]), jsonencode(["Object Deleted"])],
+      jsonencode(try(r.pattern["detail-type"], null))
+    )])
+    error_message = "Each rule's pattern hears Object Created or Object Deleted, never anything else."
+  }
+
+  # Only S3 itself can put an event whose source is aws.s3 on the bus.
+  validation {
+    condition = alltrue([for r in var.rules :
+      jsonencode(try(r.pattern.source, null)) == jsonencode(["aws.s3"])
+      && jsonencode(try(r.pattern.detail.bucket.name, null)) == jsonencode([var.bucket])
+    ])
+    error_message = "A rule's pattern does not match S3's own events on this module's bucket."
+  }
+
+  # EventBridge refuses a rule name over 64 characters, or one holding anything but
+  # letters, digits, dots, hyphens and underscores.
+  validation {
+    condition     = alltrue([for r in var.rules : can(regex("^[.\\-_A-Za-z0-9]{1,64}$", "${var.name_prefix}-${r.name}"))])
+    error_message = "A rule's full name, the prefix, a hyphen and its name, is over 64 characters or holds a character EventBridge refuses."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : contains([for q in var.queues : q.reader], r.reader)])
+    error_message = "A rule names a reader that has no queue."
+  }
+
+  # A queue no rule feeds would get a policy whose list of admitted rules is empty.
+  validation {
+    condition     = alltrue([for q in var.queues : contains([for r in var.rules : r.reader], q.reader)])
+    error_message = "A queue's reader has no rule, so nothing would feed it."
   }
 }
 
@@ -77,11 +133,12 @@ variable "dead_letter_retention_seconds" {
 }
 
 locals {
-  routes = { for r in var.routes : r.reader => r }
+  queues = { for q in var.queues : q.reader => q }
+  rules  = { for r in var.rules : r.name => r }
 }
 
 resource "aws_sqs_queue" "dead_letter" {
-  for_each = local.routes
+  for_each = local.queues
 
   name                      = "${var.name_prefix}-${each.key}-dlq"
   message_retention_seconds = var.dead_letter_retention_seconds
@@ -89,7 +146,7 @@ resource "aws_sqs_queue" "dead_letter" {
 }
 
 resource "aws_sqs_queue" "this" {
-  for_each = local.routes
+  for_each = local.queues
 
   name                       = "${var.name_prefix}-${each.key}"
   message_retention_seconds  = var.message_retention_seconds
@@ -103,7 +160,7 @@ resource "aws_sqs_queue" "this" {
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "dead_letter" {
-  for_each = local.routes
+  for_each = local.queues
 
   queue_url = aws_sqs_queue.dead_letter[each.key].id
   redrive_allow_policy = jsonencode({
@@ -113,47 +170,44 @@ resource "aws_sqs_queue_redrive_allow_policy" "dead_letter" {
 }
 
 resource "aws_cloudwatch_event_rule" "this" {
-  for_each = local.routes
+  for_each = local.rules
 
-  name = "${var.name_prefix}-${each.key}"
-  event_pattern = jsonencode({
-    source        = ["aws.s3"]
-    "detail-type" = ["Object Created"]
-    detail = {
-      bucket = { name = [var.bucket] }
-      object = { key = each.value.pattern }
-    }
-  })
+  name          = "${var.name_prefix}-${each.key}"
+  event_pattern = jsonencode(each.value.pattern)
 }
 
 resource "aws_cloudwatch_event_target" "this" {
-  for_each = local.routes
+  for_each = local.rules
 
   rule = aws_cloudwatch_event_rule.this[each.key].name
-  arn  = aws_sqs_queue.this[each.key].arn
+  arn  = aws_sqs_queue.this[each.value.reader].arn
 }
 
 resource "aws_sqs_queue_policy" "this" {
-  for_each = local.routes
+  for_each = local.queues
 
   queue_url = aws_sqs_queue.this[each.key].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid       = "AdmitOnlyThisRoutesRule"
+      Sid       = "AdmitOnlyThisReadersRules"
       Effect    = "Allow"
       Principal = { Service = "events.amazonaws.com" }
       Action    = "sqs:SendMessage"
       Resource  = aws_sqs_queue.this[each.key].arn
-      Condition = { ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.this[each.key].arn } }
+      Condition = {
+        ArnEquals = {
+          "aws:SourceArn" = sort([for name, r in local.rules : aws_cloudwatch_event_rule.this[name].arn if r.reader == each.key])
+        }
+      }
     }]
   })
 }
 
 output "queues" {
-  description = "Each route's queue and dead-letter queue name, by reader."
+  description = "Each reader's queue and dead-letter queue name, by reader."
   value = {
-    for reader in keys(local.routes) : reader => {
+    for reader in keys(local.queues) : reader => {
       queue       = aws_sqs_queue.this[reader].name
       dead_letter = aws_sqs_queue.dead_letter[reader].name
     }
@@ -161,9 +215,9 @@ output "queues" {
 }
 
 output "queue_settings" {
-  description = "Each route's queue settings and queue policy, read from the resources, by reader, which the tests read."
+  description = "Each reader's queue settings and queue policy, read from the resources, by reader, which the tests read."
   value = {
-    for reader in keys(local.routes) : reader => {
+    for reader in keys(local.queues) : reader => {
       retention             = aws_sqs_queue.this[reader].message_retention_seconds
       dead_letter_retention = aws_sqs_queue.dead_letter[reader].message_retention_seconds
       visibility_timeout    = aws_sqs_queue.this[reader].visibility_timeout_seconds
@@ -171,7 +225,6 @@ output "queue_settings" {
       dead_letter_sse       = aws_sqs_queue.dead_letter[reader].sqs_managed_sse_enabled
       max_receive_count     = jsondecode(aws_sqs_queue.this[reader].redrive_policy).maxReceiveCount
       dead_letter_target    = jsondecode(aws_sqs_queue.this[reader].redrive_policy).deadLetterTargetArn
-      rule_target           = aws_cloudwatch_event_target.this[reader].arn
       queue_arn             = aws_sqs_queue.this[reader].arn
       queue_policy          = jsondecode(aws_sqs_queue_policy.this[reader].policy)
       policy_queue_url      = aws_sqs_queue_policy.this[reader].queue_url
@@ -181,7 +234,15 @@ output "queue_settings" {
   }
 }
 
-output "event_patterns" {
-  description = "Each route's EventBridge pattern, by reader, which the tests read."
-  value       = { for reader, rule in aws_cloudwatch_event_rule.this : reader => rule.event_pattern }
+output "rules" {
+  description = "Each rule's name, pattern, ARN and target, read from the resources, by the routes file's name, which the tests read."
+  value = {
+    for name in keys(local.rules) : name => {
+      name          = aws_cloudwatch_event_rule.this[name].name
+      arn           = aws_cloudwatch_event_rule.this[name].arn
+      event_pattern = jsondecode(aws_cloudwatch_event_rule.this[name].event_pattern)
+      target_rule   = aws_cloudwatch_event_target.this[name].rule
+      target        = aws_cloudwatch_event_target.this[name].arn
+    }
+  }
 }

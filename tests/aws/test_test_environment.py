@@ -33,16 +33,15 @@ import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from tests.support.aws import DELIVERY_SECONDS, REGION, TEST_BUCKET, TEST_QUEUE_PREFIX
+
 pytestmark = pytest.mark.aws
 
-REGION = "us-east-1"
-BUCKET = "ithildin-runtime-test"
-QUEUE_PREFIX = "ithildin-test"
+BUCKET = TEST_BUCKET
+QUEUE_PREFIX = TEST_QUEUE_PREFIX
 ROUTES = json.loads((Path(__file__).parents[2] / "infra" / "test" / "routes.json").read_text())
+READERS = [queue["reader"] for queue in ROUTES["queues"]]
 SMOKE = "smoke"
-
-# How long an event may take to reach its queue before the case fails.
-DELIVERY_SECONDS = 60
 
 _CONFIG = Config(region_name=REGION, retries={"mode": "standard", "total_max_attempts": 3})
 
@@ -81,23 +80,41 @@ def _queue_url(sqs, name: str) -> str:
     return sqs.get_queue_url(QueueName=name)["QueueUrl"]
 
 
+def _receive(sqs, url: str, wait: int) -> list[str]:
+    """One receive from a queue, deleting what arrives, as the keys its events name."""
+    answer = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=10, WaitTimeSeconds=wait)
+    keys = []
+    for message in answer.get("Messages", []):
+        event = json.loads(message["Body"])
+        keys.append(event["detail"]["object"]["key"])
+        sqs.delete_message(QueueUrl=url, ReceiptHandle=message["ReceiptHandle"])
+    return keys
+
+
 def _keys_on(sqs, name: str, wait: float, until: str | None = None) -> list[str]:
     """Receive from a queue, deleting what arrives, until `until` arrives or `wait` passes."""
     url = _queue_url(sqs, name)
     keys: list[str] = []
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
-        answer = sqs.receive_message(
-            QueueUrl=url,
-            MaxNumberOfMessages=10,
-            WaitTimeSeconds=min(20, max(1, int(deadline - time.monotonic()))),
-        )
-        for message in answer.get("Messages", []):
-            event = json.loads(message["Body"])
-            keys.append(event["detail"]["object"]["key"])
-            sqs.delete_message(QueueUrl=url, ReceiptHandle=message["ReceiptHandle"])
+        keys += _receive(sqs, url, min(20, max(1, int(deadline - time.monotonic()))))
         if until is not None and until in keys:
             return keys
+    return keys
+
+
+def _keys_on_each(sqs, names: list[str], wait: float) -> dict[str, list[str]]:
+    """Receive from several queues in turn for one window of `wait` seconds, by queue.
+
+    Each receive waits a second, so every queue is read about once in each pass, and
+    the window costs `wait` seconds however many queues there are.
+    """
+    urls = {name: _queue_url(sqs, name) for name in names}
+    keys: dict[str, list[str]] = {name: [] for name in names}
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        for name, url in urls.items():
+            keys[name] += _receive(sqs, url, 1)
     return keys
 
 
@@ -122,19 +139,22 @@ def test_a_create_lands_once_and_its_event_reaches_its_route(s3, sqs, run):
     )
 
 
-OTHER_ROUTES = [route["reader"] for route in ROUTES if route["reader"] != SMOKE]
+OTHER_READERS = [reader for reader in READERS if reader != SMOKE]
 
 
 @pytest.mark.skipif(
-    not OTHER_ROUTES,
-    reason="infra/test/routes.json holds the smoke route alone until #81's generator adds more",
+    not OTHER_READERS,
+    reason="infra/test/routes.json names no reader but the smoke route's",
 )
 def test_a_smoke_write_reaches_no_other_route(s3, sqs, run):
     key = _key(run, "no-other-route")
     s3.put_object(Bucket=BUCKET, Key=key, Body=b"{}", IfNoneMatch="*")
     assert key in _keys_on(sqs, f"{QUEUE_PREFIX}-{SMOKE}", DELIVERY_SECONDS, until=key)
-    for reader in OTHER_ROUTES:
-        assert key not in _keys_on(sqs, f"{QUEUE_PREFIX}-{reader}", DELIVERY_SECONDS, until=key)
+    # The smoke queue's event has arrived, so another route's would have had as long.
+    # Every other queue is read for one more window, together rather than in turn.
+    others = _keys_on_each(sqs, [f"{QUEUE_PREFIX}-{r}" for r in OTHER_READERS], DELIVERY_SECONDS)
+    reached = sorted(name for name, keys in others.items() if key in keys)
+    assert not reached, f"{key} reached {', '.join(reached)}, which no route of theirs names."
 
 
 def test_a_retention_date_within_the_cap_lands_with_a_checksum(s3, run):

@@ -1,8 +1,10 @@
 """S3's answers that moto cannot be made to give, through botocore's stubbed replies.
 
 moto checks no SHA-256 and never answers 409, so these show what the S3
-adapter does with each answer S3 itself gives. The run against the test
-environment's bucket, which #88 holds, shows S3 giving them.
+adapter does with each answer S3 itself gives. The store suite's run against
+the test environment's bucket, in ci.yml's `aws` job on a push to main, shows
+S3 giving its checksum refusal, and its racing-rewrite case names the rounds
+when S3 gives no 409.
 """
 
 from __future__ import annotations
