@@ -3542,6 +3542,7 @@ withdrawal or transfer permission and how that was checked.
 | The owner's sign-in to the management account, the IAM user `ithildin-owner` | Its console password, which the owner holds, with an MFA device. It has no access key | The management account. `aws login` keeps a short-lived session on the laptop | The owner's AWS CLI profile for the test account, as its source | Assume the test account's `OrganizationAccountAccessRole`, and sign in through `aws login`. Nothing else |
 | The budget alarm's address | No | The SNS subscription the owner writes by hand on the test account's alarm topic, `ithildin-test-alarms` | AWS Budgets, through the topic | Receive the alarm |
 | `ITHILDIN_TEST_RUN` | No | The `aws` job's environment, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` joined by a hyphen | `tests/aws/` | Name the run's own keys |
+| `GITHUB_RUN_NUMBER` and `GITHUB_RUN_ATTEMPT` | No | Every step of the `aws` job, set by GitHub | `tests/support/queues.py`, for the queue suite | Name each queue suite case's keys, as a run date the key builders accept |
 | Each strategy's configuration, `<strategy>.toml` | No. It holds no secret and no cap | `src/ithildinruntime/strategies/`, a tracked folder the release carries | `core`'s strategy reader, at each worker's start, for the strategies its deployment names | Set the strategy's instruments and each module's settings for it. The SHA-256 of its bytes is the hash every blob of the strategy records |
 
 ## Decisions
