@@ -815,7 +815,7 @@ is restarted or replaced, while the component's other instances
 carry on. A worker, meaning the component, has failed only when its
 stage misses its deadline or when none of its instances is healthy. Its deadline runs from the moment its last needed
 input appears, so waiting on a slow upstream worker never counts against
-it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. On a failure the supervisor writes the halt as that worker's
+it. A worker that hangs answers no message, so a watchdog on the host kills its container when its local heartbeat file is thirty seconds stale, as `### How a component learns of a change` says, and the host restarts it. A worker that has stopped receiving and holds a halt or a capture S3 has not stored beats whatever its handlers do, as that section says. On a failure the supervisor writes the halt as that worker's
 result, naming its restart records and every output file it finds
 under the decision's prefix, so no stored capture is left unlisted. It
 stores a halt of the whole run, writes a halt as every stage's result
@@ -1552,7 +1552,7 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    decision it has not finished, in the plan's order, again until one such
    check meets no store that did not answer, and on waking it checks
    as far as `An event is a hint, and the keys come from the plan` below
-   proposes. One instance never
+   says. One instance never
    runs an item twice at once, so the loop deletes a message whose item is
    already in a handler.
 3. **The loop receives only for free handlers.** It asks SQS for at most as
@@ -1575,20 +1575,26 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    decision and alarms, and the loop deletes its message, so the other
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
-   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive. It retries the halt and every capture it holds, beats so the host's watchdog leaves it, and alarms once naming each blob. It exits for the host to restart only once S3 has stored them all, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) says. A process that ends for any other reason holds on the same way, and so does one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms.
+   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) asks of a process that holds a capture. A process whose loop ends for any other reason does the same, such as one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms. Such a process works in four steps.
+   1. It waits for each handler still reporting progress, since that handler may yet hold a capture.
+   2. It retries every halt and capture it holds once each interval, quietly, since the first refusal alarmed.
+   3. It beats while it holds one, whatever its handlers do, so the host's watchdog leaves it, and alarms naming each blob and why receiving stopped. That alarm is sent again until the alert channel takes it, because it alone tells a holding process from a healthy one.
+   4. It exits for the host to restart once S3 has stored them all.
+
+   A halt S3 answered and still will not store, such as one whose key holds bytes nothing reads or another result, is not held. Its reason goes out in an alarm. A capture is never dropped this way, since it cannot be recaptured, so one that S3 answered and cannot store holds the process until a person acts. A host that kills a holding process, such as at the unit's stop timeout, loses what it holds, and the alarm says so. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets the unit's stop timeout and maps the host's stop to the loop's.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
    every blob write, journal append and broker call it finishes. No handler waits
    for a held lease, as [Who may send](#rule-9-who-may-send-the-accounts-lease) says, so a lease never holds a handler
    long enough to stop its reports. The loop
    touches the worker's heartbeat file only while every busy handler has
    reported within the heartbeat limit, so a hung handler lets the host's
-   watchdog kill the container, and [who takes over a lease](#rule-9-who-takes-over-a-lease) and [who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) apply. The loop
+   watchdog kill the container, and [who takes over a lease](#rule-9-who-takes-over-a-lease) and [who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) apply. The one exception is a process that has stopped receiving and holds a halt or a capture S3 has not stored, as item 5 says. It beats whatever its handlers do, so the price is that a hung handler there is not killed until S3 stores what the process holds. A hung handler still stops renewing its lease, so another instance can take the lease over once it expires. The loop
    renews a lease only for a handler that is still reporting, so a hung
    handler never keeps the account's lease alive. Every broker and S3 call
    therefore carries a timeout shorter than that limit.
 7. **Stopping drains the pool.** When the host stops the container, the loop
    stops receiving and lets each handler finish within the unit's stop
-   timeout. A message whose handler did not finish returns to the queue,
+   timeout, beating while every busy handler reports. A message whose handler did not finish returns to the queue, and the process then waits for a handler still reporting, as item 5 says,
    and an execution send stage left unfinished is taken over as [Who takes over a dead send
    stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
 8. **The pool's size is configuration.** The deployment's config sets it
@@ -3848,9 +3854,9 @@ This section lists every decision made on the project, oldest first, one heading
 
 ### 2026-11-21
 
-1. The owner ruled that a process holding a halt or a capture S3 has not stored does not exit. However its receive loop ends, it stops receiving, retries each one, beats and alarms once, and exits only once S3 has stored them all. The owner's words were "keep trying". Turned down: exiting and leaving the supervisor to journal each capture as lost. The price is a process that holds a host slot without receiving through an outage. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### Rule 1: a write S3 refuses or does not answer` and `### How a component learns of a change` in design.md.
-2. The owner ruled that a woken worker checks the decision its event names and each stage's decisions in the plan's order as far as the first one not ready. The owner said "ok". Turned down: checking every unfinished decision on every wake, about 400 reads a wake on a day of decisions a minute apart. The price is that a decision behind one not ready waits until that one is stored, a halt included. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
-3. The owner ruled that a worker whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, stops receiving and alarms. The owner said "ok". [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
+1. The owner answered "keep trying" to whether a process may exit while it holds captures S3 has not stored. The [recommendation it answered](https://github.com/l3a0/ithildin-runtime/pull/92#issuecomment-7070342067) was to stop receiving, keep retrying the halt and the captures, and let the heartbeat stop only once no capture is held. The question covered any process, so the hold covers every way the receive loop ends. Turned down: exiting and leaving the supervisor to journal each capture as lost. The price is a process that holds a host slot without receiving through an outage. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### Rule 1: a write S3 refuses or does not answer` and `### How a component learns of a change` in design.md.
+2. The owner said "ok" to a woken worker checking the decision its event names and each stage's decisions in the plan's order as far as the first one not ready. Turned down: checking every unfinished decision on every wake, about 400 reads a wake on a day of decisions a minute apart. The price is that a decision behind one not ready waits until that one is stored, a halt included. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
+3. The owner said "ok" to 60 seconds, twice the host's heartbeat limit, as how long a worker's queue may refuse every receive before the worker stops receiving. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
 
 ## Considered and rejected
 

@@ -302,17 +302,25 @@ class Storage:
                 f"{held.trying} was not stored: {type(error).__name__}: {error}"
             ) from error
 
-    def put_result(self, key: str, result: DecisionResult) -> DecisionResult:
+    def put_result(self, key: str, result: DecisionResult, *, once: bool = False) -> DecisionResult:
         """Create a decision's result, and return the result its key holds.
 
         A key that already holds another result is not an error here. The
         caller reads what is stored, such as the supervisor's halt, which is
         final for the decision.
+
+        `once` tries the write once with no pause, for a process retrying a
+        halt it holds. S3 refusing it or not answering then raises
+        `StoreUnavailable` and sends no alarm, since the first try sent one.
         """
         data = encode(result)
         try:
-            self._place(StageKind.CAPTURING, _Held(key, data, sha256_of(data), None, key), True)
+            self._place(
+                StageKind.CAPTURING, _Held(key, data, sha256_of(data), None, key), True, once
+            )
         except _Deadline as late:
+            if once:
+                raise StoreUnavailable(late.key, late.answer) from None
             raise self._outage(f"S3 did not store {late.key}", late) from None
         except _Differs:
             pass
