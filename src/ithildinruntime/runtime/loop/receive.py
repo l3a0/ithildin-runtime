@@ -410,10 +410,17 @@ class ReceiveLoop:
         self._store_held()
 
     def _why_stopped(self) -> str:
-        if self._failed_because is not None:
-            why = self._failed_because.removeprefix(f"{self._worker}: ")
-            return why.removeprefix(f"{self._worker} ")
-        return "it was asked to stop"
+        """Why receiving stopped, as a clause that reads after "because"."""
+        if self._failed_because is None:
+            return "it was asked to stop"
+        why = self._failed_because.removeprefix(f"{self._worker}: ")
+        why = why.removeprefix(f"{self._worker} ")
+        if why.startswith("stopped receiving: "):
+            why = why.removeprefix("stopped receiving: ")
+            return why if why.startswith("the queue ") else f"its queue raised {why}"
+        if why.startswith("could not "):
+            return f"it {why}"
+        return why
 
     def _alarm_holding(self, held: list[str]) -> bool:
         """Say the process holds what S3 has not stored, and whether the alarm went out."""

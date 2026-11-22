@@ -525,11 +525,13 @@ def test_a_result_tried_once_whose_key_cannot_be_read_is_unavailable_and_quiet(
     base = spec.open()
     ours = DecisionResult(_header(stage="alpha"), (BlobRef("a", "0" * 64),), None)
     _storage(base)[0].put_result(key, ours)
-    storage, _, alarms = _storage(UnreadableKey(base, read))
+    storage, timer, alarms = _storage(UnreadableKey(base, read))
     halt = core.HaltRecord("the supervisor halted the decision", None, (), (), ())
+    began = timer.monotonic()
     with pytest.raises(StoreUnavailable):
         storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt), once=True)
-    assert alarms.reasons == []
+    # One try each, with no pause between them.
+    assert alarms.reasons == [] and timer.monotonic() == began
     with pytest.raises(Halt):
         storage.put_result(key, DecisionResult(_header(stage="alpha"), (), halt))
 

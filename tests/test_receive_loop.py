@@ -328,9 +328,11 @@ def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -
     assert (folder.root / capture).exists() and made._storage.unstored() == ()
 
 
+@pytest.mark.parametrize("ends", ["stop", "queue-fails"])
 def test_a_handler_past_the_stop_timeout_ends_with_the_process_and_the_drain_beats(
-    tmp_path,
+    tmp_path, ends: str
 ) -> None:
+    """A stop and a failure each give a handler the stop timeout, and no more."""
     import time
 
     started = threading.Event()
@@ -347,10 +349,12 @@ def test_a_handler_past_the_stop_timeout_ends_with_the_process_and_the_drain_bea
         raise Halt("the stand-in finished too late to matter")
 
     beats: list[float] = []
+    queue = StubQueue()
     folder, the_plan, store, made, _, alarms = _stub_loop(
         tmp_path,
         alpha,
         decisions=1,
+        queue=queue,
         extend_every=0.1,
         tick=0.02,
         stop_timeout=0.8,
@@ -360,12 +364,16 @@ def test_a_handler_past_the_stop_timeout_ends_with_the_process_and_the_drain_bea
     thread, failures = _run_in_thread(made)
     assert started.wait(10)
     stopped = time.monotonic()
-    made.stop()
+    if ends == "stop":
+        made.stop()
+    else:
+        queue.error = KeyError("ReceiptHandle")
     thread.join(5)
     ended = time.monotonic()
     # The drain gave the handler the stop timeout, and no more, since it held
     # nothing yet. Its decision is done again after the restart.
-    assert not thread.is_alive() and not failures and not finished.is_set()
+    assert not thread.is_alive() and not finished.is_set()
+    assert len(failures) == (0 if ends == "stop" else 1)
     assert 0.7 < ended - stopped < 2.0
     # The beat went on through the drain while the handler reported.
     during = [b for b in beats if stopped <= b <= ended]
@@ -420,7 +428,8 @@ def test_after_a_failure_a_handler_finishing_within_the_stop_timeout_has_its_cap
     go.set()
     holding = lambda: [r for r in alarms.reasons if "S3 has not stored" in r]  # noqa: E731
     assert _wait(lambda: holding(), 10) and capture in holding()[0]
-    assert "KeyError" in holding()[0]
+    assert "because its queue raised KeyError" in holding()[0]
+    assert "because alpha-1" not in holding()[0]
     assert _holds_alive(thread, beats) and not failures
     refusing[0].down = False
     thread.join(10)
