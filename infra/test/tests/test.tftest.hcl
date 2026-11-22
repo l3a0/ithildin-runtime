@@ -25,13 +25,121 @@ mock_provider "aws" {
   }
 }
 
-# The dead-letter queue gets an ARN of its own, so a rule aimed at it fails the check
-# that the rule targets its queue.
+# Each queue, dead-letter queue and rule gets an ARN of its own, named as AWS would name
+# it, so a rule aimed at another reader's queue, a redrive to another dead-letter queue,
+# or a policy admitting another reader's rule fails the checks below. A rule the routes
+# file adds needs an override here too, or it keeps the mock's ARN and those checks
+# fail.
+override_resource {
+  target = module.routes.aws_sqs_queue.this["alpha"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-alpha"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-alpha"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.dead_letter["alpha"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-alpha-dlq"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-alpha-dlq"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.this["book"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-book"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-book"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.dead_letter["book"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-book-dlq"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-book-dlq"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.this["risk"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-risk"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-risk"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.dead_letter["risk"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-risk-dlq"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-risk-dlq"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_sqs_queue.this["smoke"]
+  values = {
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-smoke"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-smoke"
+  }
+}
+
 override_resource {
   target = module.routes.aws_sqs_queue.dead_letter["smoke"]
   values = {
-    arn = "arn:aws:sqs:us-east-1:000000000000:mock-dlq"
-    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/mock-dlq"
+    arn = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-smoke-dlq"
+    id  = "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-smoke-dlq"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["alpha-29888b8cd48e"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-alpha-29888b8cd48e"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["book-54eba3127b27"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-book-54eba3127b27"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["book-ab4e249d5889"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-book-ab4e249d5889"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["book-b2ab60123b9f"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-book-b2ab60123b9f"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["book-8ad2112f06aa"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-book-8ad2112f06aa"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["risk-5d65847bc100"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-risk-5d65847bc100"
+  }
+}
+
+override_resource {
+  target = module.routes.aws_cloudwatch_event_rule.this["smoke-483ea2f8cd44"]
+  values = {
+    arn = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-smoke-483ea2f8cd44"
   }
 }
 
@@ -93,29 +201,52 @@ run "the_test_bucket_empties_itself" {
   }
 }
 
-run "each_route_matches_its_own_keys_on_the_test_bucket" {
+run "each_rule_matches_its_own_keys_on_the_test_bucket_and_targets_its_readers_queue" {
   command = plan
 
   assert {
-    condition = jsondecode(module.routes.event_patterns["smoke"]) == {
+    condition     = jsonencode(keys(module.routes.rules)) == jsonencode(sort([for r in local.routes_file.rules : r.name]))
+    error_message = "The module did not make one rule for each entry of routes.json's rules."
+  }
+
+  assert {
+    condition = alltrue([for r in local.routes_file.rules : jsonencode(module.routes.rules[r.name]) == jsonencode({
+      name          = "ithildin-test-${r.name}"
+      arn           = "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-${r.name}"
+      target_rule   = "ithildin-test-${r.name}"
+      target        = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-${r.reader}"
+      event_pattern = r.pattern
+    })])
+    error_message = "A rule is not named ithildin-test- and its entry's name, does not carry its entry's pattern as written, or is not aimed at its reader's queue."
+  }
+
+  # The smoke check writes under this pattern, so its whole rule is pinned here as a
+  # literal rather than read back from the file.
+  assert {
+    condition = jsonencode(module.routes.rules["smoke-483ea2f8cd44"].event_pattern) == jsonencode({
       source        = ["aws.s3"]
       "detail-type" = ["Object Created"]
       detail = {
         bucket = { name = ["ithildin-runtime-test"] }
         object = { key = [{ wildcard = "runs/ci/*/smoke/*" }] }
       }
-    }
-    error_message = "The smoke route's rule does not match Object Created events for its keys on the test bucket."
-  }
-
-  assert {
-    condition     = module.routes.queues["smoke"] == { queue = "ithildin-test-smoke", dead_letter = "ithildin-test-smoke-dlq" }
-    error_message = "The smoke route's queues are not named ithildin-test-smoke and ithildin-test-smoke-dlq."
+    })
+    error_message = "The smoke route's rule does not match S3's Object Created events for the keys the smoke check writes on the test bucket."
   }
 }
 
-run "each_route_takes_its_settings_from_the_routes_file_and_admits_only_its_rule" {
+run "each_reader_has_its_queues_with_the_routes_files_settings_and_admits_only_its_rules" {
   command = plan
+
+  assert {
+    condition = module.routes.queues == {
+      for q in local.routes_file.queues : q.reader => {
+        queue       = "ithildin-test-${q.reader}"
+        dead_letter = "ithildin-test-${q.reader}-dlq"
+      }
+    }
+    error_message = "A reader's queues are not named ithildin-test-<reader> and ithildin-test-<reader>-dlq, or a reader in routes.json has none."
+  }
 
   assert {
     condition = {
@@ -128,54 +259,60 @@ run "each_route_takes_its_settings_from_the_routes_file_and_admits_only_its_rule
         max_receive_count     = v.max_receive_count
       }
       } == {
-      smoke = {
+      for q in local.routes_file.queues : q.reader => {
         retention             = 3600
         dead_letter_retention = 3600
-        visibility_timeout    = 30
+        visibility_timeout    = q.visibility_timeout_seconds
         sse                   = true
         dead_letter_sse       = true
-        max_receive_count     = 3
+        max_receive_count     = q.max_receive_count
       }
     }
-    error_message = "A route's queues do not carry routes.json's visibility timeout and receive count, one hour's retention, and SSE-SQS."
+    error_message = "A reader's queues do not carry routes.json's visibility timeout and receive count, one hour's retention, and SSE-SQS."
   }
 
-  # The mock gives every queue the same ARN apart from the dead-letter queue's, so this
-  # checks the shape: the rule sends to the queue, not the dead-letter queue, the queue
-  # redrives to its dead-letter queue, and the queue's policy admits EventBridge only
-  # for that rule.
+  # The rollback drill in docs/what-a-person-runs.md changes this value, so the drill's
+  # pull request changes it here too.
   assert {
-    condition     = module.routes.queue_settings["smoke"].rule_target == "arn:aws:sqs:us-east-1:000000000000:mock"
-    error_message = "The smoke rule does not target the smoke queue."
-  }
-
-  assert {
-    condition     = module.routes.queue_settings["smoke"].dead_letter_target == "arn:aws:sqs:us-east-1:000000000000:mock-dlq"
-    error_message = "The smoke queue's redrive does not point at its dead-letter queue."
+    condition     = module.routes.queue_settings["smoke"].visibility_timeout == 30
+    error_message = "The smoke queue's visibility timeout is not 30 seconds."
   }
 
   assert {
-    condition = module.routes.queue_settings["smoke"].queue_policy.Statement == [{
-      Sid       = "AdmitOnlyThisRoutesRule"
-      Effect    = "Allow"
-      Principal = { Service = "events.amazonaws.com" }
-      Action    = "sqs:SendMessage"
-      Resource  = "arn:aws:sqs:us-east-1:000000000000:mock"
-      Condition = { ArnEquals = { "aws:SourceArn" = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
-    }]
-    error_message = "The smoke queue's policy admits more than EventBridge sending for the smoke rule."
+    condition = alltrue([for q in local.routes_file.queues :
+      module.routes.queue_settings[q.reader].dead_letter_target == "arn:aws:sqs:us-east-1:000000000000:ithildin-test-${q.reader}-dlq"
+    ])
+    error_message = "A reader's queue does not redrive to its own dead-letter queue."
   }
 
   assert {
-    condition     = module.routes.queue_settings["smoke"].policy_queue_url == "https://sqs.us-east-1.amazonaws.com/000000000000/mock"
-    error_message = "The smoke queue's policy is attached to another queue."
+    condition = alltrue([for q in local.routes_file.queues :
+      jsonencode(module.routes.queue_settings[q.reader].queue_policy.Statement) == jsonencode([{
+        Sid       = "AdmitOnlyThisReadersRules"
+        Effect    = "Allow"
+        Principal = { Service = "events.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = "arn:aws:sqs:us-east-1:000000000000:ithildin-test-${q.reader}"
+        Condition = { ArnEquals = { "aws:SourceArn" = sort([
+          for r in local.routes_file.rules : "arn:aws:events:us-east-1:000000000000:rule/ithildin-test-${r.name}" if r.reader == q.reader
+        ]) } }
+      }])
+    ])
+    error_message = "A reader's queue policy admits more than EventBridge sending for that reader's own rules."
   }
 
   assert {
-    condition = (
-      module.routes.queue_settings["smoke"].redrive_allow_queue == "https://sqs.us-east-1.amazonaws.com/000000000000/mock-dlq"
-      && module.routes.queue_settings["smoke"].redrive_allow == { redrivePermission = "byQueue", sourceQueueArns = ["arn:aws:sqs:us-east-1:000000000000:mock"] }
-    )
-    error_message = "The smoke dead-letter queue does not admit redrives from the smoke queue alone."
+    condition = alltrue([for q in local.routes_file.queues :
+      module.routes.queue_settings[q.reader].policy_queue_url == "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-${q.reader}"
+    ])
+    error_message = "A reader's queue policy is attached to another queue."
+  }
+
+  assert {
+    condition = alltrue([for q in local.routes_file.queues :
+      module.routes.queue_settings[q.reader].redrive_allow_queue == "https://sqs.us-east-1.amazonaws.com/000000000000/ithildin-test-${q.reader}-dlq"
+      && module.routes.queue_settings[q.reader].redrive_allow == { redrivePermission = "byQueue", sourceQueueArns = ["arn:aws:sqs:us-east-1:000000000000:ithildin-test-${q.reader}"] }
+    ])
+    error_message = "A reader's dead-letter queue does not admit redrives from that reader's queue alone."
   }
 }

@@ -43,6 +43,10 @@ locals {
   test_role  = "arn:aws:iam::${local.account_id}:role/ithildin-test-ci"
   apply_role = "arn:aws:iam::${local.account_id}:role/ithildin-test-apply"
   owner_role = "arn:aws:iam::${local.account_id}:role/OrganizationAccountAccessRole"
+
+  # tests/support/routes_file.py writes this file, and tests/test_routes.py fails when
+  # the committed copy differs from what it writes.
+  routes_file = jsondecode(file("${path.module}/routes.json"))
 }
 
 module "bucket" {
@@ -90,12 +94,13 @@ module "routes" {
 
   name_prefix                   = "ithildin-test"
   bucket                        = module.bucket.name
-  routes                        = jsondecode(file("${path.module}/routes.json"))
+  queues                        = local.routes_file.queues
+  rules                         = local.routes_file.rules
   message_retention_seconds     = 3600
   dead_letter_retention_seconds = 3600
 }
 
 output "queues" {
-  description = "Each route's queue and dead-letter queue name, by reader."
+  description = "Each reader's queue and dead-letter queue name, by reader."
   value       = module.routes.queues
 }

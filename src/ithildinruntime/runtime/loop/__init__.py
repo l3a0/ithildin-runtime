@@ -5,16 +5,18 @@ supervisor reaches no worker module through it.
 """
 
 from .receive import Handler, Item, LoopFailed, ReceiveLoop
-from .table import Hears, Stage, Table, event_pattern, routes
+from .table import Hears, QueueSettings, Stage, Table, event_pattern, routes, routes_file
 
 __all__ = [
     "Handler",
     "Hears",
     "Item",
     "LoopFailed",
+    "QueueSettings",
     "ReceiveLoop",
     "Stage",
     "Table",
     "event_pattern",
     "routes",
+    "routes_file",
 ]

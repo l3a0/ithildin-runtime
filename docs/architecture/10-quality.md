@@ -171,10 +171,11 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
      reordered and dropped at random come from the folder adapter's seeded
      fault, so that case runs over the folder. On SQS the suite repeats an
      event while its decision is in a handler, and purges a reader's queue
-     while it is down. The run against the test
-     environment's queues on each push to `main`, with the routes file
-     generated from the suite's own table, is
-     [#91](https://github.com/l3a0/ithildin-runtime/issues/91)'s. The queue port's `done` deletes a message, `extend` lengthens
+     while it is down. The routes file for the test environment's queues,
+     `infra/test/routes.json`, is generated from the suite's own table by
+     `tests/support/routes_file.py`, and a test fails when the committed copy
+     differs from what it writes. The run against those queues on each push
+     to `main` is [#91](https://github.com/l3a0/ithildin-runtime/issues/91)'s. The queue port's `done` deletes a message, `extend` lengthens
      its visibility timeout, and `release` returns it at once with
      visibility 0. The named-pipe adapter implements `extend` and `release`
      as no-ops, because a pipe hands each message to one reader once and
