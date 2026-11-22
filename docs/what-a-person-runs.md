@@ -408,6 +408,8 @@ source_profile = ithildin-owner
 region = us-east-1
 ```
 
+OpenTofu's AWS provider cannot read an `aws login` session through that profile, so run OpenTofu with the role's short-lived keys in the shell's environment, with `eval "$(aws configure export-credentials --profile <profile> --format env)"`. The keys last an hour, never enter a file, and the AWS CLI commands below work with them too.
+
 #### Set it up, before the merge that adds it
 
 The order matters. Each step needs the one before it.
@@ -436,7 +438,7 @@ After every apply of the bootstrap, this rollback's and the budget drill's inclu
 
 The smoke route's queue receives the event of every key under `runs/ci/*/smoke/`. A write under `runs/` must carry `If-None-Match`, or the bucket refuses it.
 
-1. Write a key with `aws s3api put-object --bucket ithildin-runtime-test --key runs/ci/owner-check-$(date -u +%Y%m%dT%H%M%SZ)/smoke/check.json --body /dev/null --if-none-match '*'`.
+1. Write a key with `aws s3api put-object --bucket ithildin-runtime-test --key runs/ci/owner-check-$(date -u +%Y%m%dT%H%M%SZ)/smoke/check.json --body "$(mktemp)" --if-none-match '*'`. The AWS CLI takes a body only from a file, and `mktemp` makes an empty one.
 2. Find the queue with `aws sqs get-queue-url --queue-name ithildin-test-smoke`.
 3. Receive with `aws sqs receive-message --queue-url <queue URL> --wait-time-seconds 20`, up to three times. One message names the key in its `detail.object.key`.
 
