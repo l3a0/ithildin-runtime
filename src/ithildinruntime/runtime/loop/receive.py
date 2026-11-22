@@ -40,11 +40,12 @@ How the loop runs, in order.
 6. **A handler's failure stays in its item.** A handler that raises writes a
    halt as its stage's result for that decision, and one whose error it did
    not handle also alarms, naming the worker, the stage, the decision and the
-   error. The other handlers go on. A halt that cannot be stored ends the
-   loop with `LoopFailed`, and the host restarts the process. So does any
-   error from the queue other than `QueueUnavailable`, and a queue that has
-   refused every receive for longer than `deaf_after`, because a loop that
-   can no longer receive must not go on beating. Each queue failure alarms
+   error. The other handlers go on. A halt that cannot be stored ends
+   receiving, and the loop raises `LoopFailed` once item 9 lets it, so the
+   host restarts the process. So does any error from the queue other than
+   `QueueUnavailable`, and a queue that has refused every receive for longer
+   than `deaf_after`, because a loop that can no longer receive must not go
+   on beating as if it worked. Each queue failure alarms
    first. The refusals count from the first one since the queue last
    answered or every handler was last busy, so a pool busy for a while and
    then refused once goes on. A queue that has answered nothing for longer
@@ -58,6 +59,15 @@ How the loop runs, in order.
 8. **Stopping drains the pool.** `stop` ends receiving and gives each handler
    the stop timeout to finish. A message whose handler did not finish goes
    back to the queue.
+
+9. **A process that holds what S3 has not stored stays alive.** However the
+   loop ends, by `stop` or by a failure, it first keeps retrying each halt it
+   could not store and each capture the storage contract holds, every
+   `extend_every`, and beats while it does, so the host's watchdog does not
+   kill it. Its first try alarms once, naming each blob. `run` returns or
+   raises only once S3 has stored them all. The price is a process that
+   holds a host slot without receiving through an outage, and one whose hung
+   handler no longer stops the heartbeat while it holds them.
 
 Every limit is measured on the timer's monotonic reading.
 """
@@ -229,12 +239,19 @@ class ReceiveLoop:
         # Set when the full check met a store that did not answer, so the
         # ticker runs it again until one completes.
         self._recheck = False
+        # Each halt the loop could not store, by key, which the process holds
+        # until S3 stores it.
+        self._unstored_halts: dict[str, DecisionResult] = {}
 
     # Running and stopping
 
     def run(self) -> None:
         """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored,
-        or a queue could not be read or answered."""
+        or a queue could not be read or answered.
+
+        Either way it returns only once S3 has stored every halt and capture
+        this process holds.
+        """
         asyncio.run(self._main())
         if self._failure is not None:
             reason = self._failed_because or str(self._failure)
@@ -308,16 +325,66 @@ class ReceiveLoop:
                 receiver.cancel()
             if self._failure is None:
                 await self._drain()
-            # One last try for each capture still held, whichever way the loop ends.
-            if self._storage.unstored():
-                try:
-                    await self._in_io(self._storage.retry_held)
-                except Exception:
-                    pass
+            # Whichever way the loop ends, the process lives until S3 has
+            # stored what it holds.
+            await self._hold()
             self._handlers_pool.shutdown(wait=False, cancel_futures=True)
             self._receiving.shutdown(wait=False, cancel_futures=True)
             self._io.shutdown(wait=False, cancel_futures=True)
             self._answers.shutdown(wait=False, cancel_futures=True)
+
+    def _held_keys(self) -> list[str]:
+        with self._stored_lock:
+            halts = list(self._unstored_halts)
+        return halts + [ref.key for ref in self._storage.unstored()]
+
+    async def _hold(self) -> None:
+        """Retry and beat until S3 has stored every halt and capture this process holds."""
+        alarmed = False
+        while held := self._held_keys():
+            if not alarmed:
+                alarmed = True
+                try:
+                    self._alerts.alarm(
+                        f"{self._worker} stopped receiving and holds {len(held)} blobs S3 "
+                        f"has not stored: {', '.join(held)}. It keeps retrying them, and "
+                        "exits once S3 stores them"
+                    )
+                except Exception:
+                    # The halt's own alarm, or the storage contract's, has gone out.
+                    pass
+            work = self._in_io(self._store_held)
+            end = self._timer.monotonic() + self._extend_every
+            # Beat while the try runs, then wait out the rest of the interval
+            # unless the try stored everything.
+            while not work.done() or (self._timer.monotonic() < end and self._held_keys()):
+                self._beat_quietly()
+                if not work.done():
+                    await asyncio.wait({work}, timeout=self._tick)
+                else:
+                    await asyncio.sleep(min(self._tick, max(0.0, end - self._timer.monotonic())))
+
+    def _store_held(self) -> None:
+        # Neither call raises for a blob S3 still refuses, which stays held
+        # and is tried again.
+        self._storage.retry_held()
+        with self._stored_lock:
+            waiting = dict(self._unstored_halts)
+        for key, halt in waiting.items():
+            try:
+                self._storage.put_result(key, halt)
+            except Exception:
+                continue
+            with self._stored_lock:
+                self._unstored_halts.pop(key, None)
+
+    def _beat_quietly(self) -> None:
+        try:
+            self._beat()
+        except Exception:
+            # A beat that fails leaves the file stale, which the host's
+            # watchdog reads as a hung worker.
+            pass
 
     async def _drain(self) -> None:
         pending = [r for r in self._running.values() if not r.done]
@@ -714,20 +781,24 @@ class ReceiveLoop:
             self._storage.put_result(self._key(item), result)
         except Exception as error:
             if result.halt is not None:
+                self._keep_halt(item, result)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
             halt = Halt(
                 f"{self._worker} could not store the result of stage {item.stage} at decision "
                 f"{decision_part(item.decision_at)}: {type(error).__name__}: {error}"
             )
+            fallback = self._halt_result(stage, item, halt, self._own_outputs(item, result))
             try:
-                self._storage.put_result(
-                    self._key(item),
-                    self._halt_result(stage, item, halt, self._own_outputs(item, result)),
-                )
+                self._storage.put_result(self._key(item), fallback)
             except Exception as second:
+                self._keep_halt(item, fallback)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from second
         with self._stored_lock:
             self._stored.add((item.stage, item.decision_at))
+
+    def _keep_halt(self, item: Item, halt: DecisionResult) -> None:
+        with self._stored_lock:
+            self._unstored_halts[self._key(item)] = halt
 
     def _halt_result(
         self, stage: Stage, item: Item, halt: Halt, found: Sequence = ()
@@ -753,12 +824,7 @@ class ReceiveLoop:
             now = self._timer.monotonic()
             busy = [r for r in self._running.values() if not r.done]
             if all(now - r.last_report <= self._heartbeat_limit for r in busy):
-                try:
-                    self._beat()
-                except Exception:
-                    # A beat that fails leaves the file stale, which the host's
-                    # watchdog reads as a hung worker.
-                    pass
+                self._beat_quietly()
             for running in busy:
                 due = now - running.extended >= self._extend_every
                 if running.messages and due and not running.extending:

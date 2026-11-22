@@ -170,13 +170,14 @@ def test_a_result_for_another_item_is_stored_as_a_halt(tmp_path, stage, minutes,
 
 
 class RefusingResults:
-    """A store that takes every write but an alpha result."""
+    """A store that takes every write but an alpha result, until a case lets it."""
 
     def __init__(self, store) -> None:
         self._store = store
+        self.down = True
 
     def create(self, key, data, sha256):
-        if key.endswith("/alpha/result.json"):
+        if self.down and key.endswith("/alpha/result.json"):
             raise StoreUnavailable(key, "503 SlowDown")
         return self._store.create(key, data, sha256)
 
@@ -184,17 +185,7 @@ class RefusingResults:
         return getattr(self._store, name)
 
 
-def test_a_halt_that_cannot_be_stored_ends_the_loop(tmp_path) -> None:
-    alarms = Alarms()
-
-    def alpha(item: Item, report):
-        raise ValueError("broken")
-
-    folder, the_plan, store, made, pipe = _alpha_loop(
-        tmp_path, alpha, alarms, store_wrapper=RefusingResults, decisions=1
-    )
-    made._storage._retry = Retry(timedelta(seconds=0.2), 0.05, 0.05)
-    _feed(storage(folder.store(), alarms), the_plan)
+def _run_in_thread(made: ReceiveLoop) -> tuple[threading.Thread, list[BaseException]]:
     failures: list[BaseException] = []
 
     def run() -> None:
@@ -205,11 +196,116 @@ def test_a_halt_that_cannot_be_stored_ends_the_loop(tmp_path) -> None:
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    thread.join(20)
-    pipe.close()
+    return thread, failures
+
+
+def _wait(check, timeout: float) -> bool:
+    import time
+
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if check():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _holds_alive(thread: threading.Thread, beats: list) -> bool:
+    """Whether the loop's thread lives and beats on for half a second."""
+    import time
+
+    before = len(beats)
+    time.sleep(0.5)
+    return thread.is_alive() and len(beats) > before
+
+
+@pytest.mark.parametrize("ends", ["raises", "returns-a-result"])
+def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
+    tmp_path, ends: str
+) -> None:
+    """A handler's own halt, and the halt that replaces a result S3 refused, are both held."""
+    refusing: list = []
+    holder: dict = {}
+
+    def wrap(base):
+        refusing.append(RefusingResults(base))
+        return refusing[0]
+
+    def alpha(item: Item, report):
+        if ends == "raises":
+            raise ValueError("broken")
+        return handlers(holder["store"], holder["plan"], Calls())["alpha"](item, report)
+
+    beats: list = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        beat=lambda: beats.append(None),
+    )
+    holder.update(store=store, plan=the_plan)
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+
+    def holding() -> list[str]:
+        return [r for r in alarms.reasons if "stopped receiving" in r]
+
+    assert _wait(holding, 10)
+    assert _key("alpha") in holding()[0]
+    # Alive and beating, so the host's watchdog leaves it, while S3 refuses the halt.
+    assert _holds_alive(thread, beats) and not failures
+    assert not (folder.root / _key("alpha")).exists()
+    refusing[0].down = False
+    thread.join(10)
     assert not thread.is_alive()
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     assert "alpha/result.json" in str(failures[0])
+    assert "alpha-1" in str(failures[0]) and "was not stored" in str(failures[0])
+    assert store.read_result(_key("alpha"), FIRST).halt is not None
+    assert len(holding()) == 1
+
+
+def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -> None:
+    from ithildinruntime.core import StageKind, output_key
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(Refusing(base, creates=("/alpha/capture.json",)))
+        return refusing[0]
+
+    holder: dict = {}
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+        raise AssertionError("put should halt while S3 refuses the capture")
+
+    beats: list = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        beat=lambda: beats.append(None),
+    )
+    holder["store"] = made._storage
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: (folder.root / _key("alpha")).exists(), 10)
+    made.stop()
+    assert _wait(lambda: any("stopped receiving" in r for r in alarms.reasons), 10)
+    assert _holds_alive(thread, beats)
+    assert not (folder.root / capture).exists()
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and not failures
+    assert (folder.root / capture).exists() and made._storage.unstored() == ()
 
 
 def _loop_settings(tmp_path) -> dict:
@@ -904,22 +1000,6 @@ def test_an_error_from_a_release_other_than_an_unavailable_queue_ends_the_loop(
     failures = _run_until_it_fails(made, fill_the_pool_then_send_one_more)
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
-
-
-def test_a_halt_that_cannot_be_stored_names_the_worker_in_loop_failed(tmp_path) -> None:
-    alarms = Alarms()
-
-    def alpha(item: Item, report):
-        raise ValueError("broken")
-
-    folder, the_plan, store, made, pipe = _alpha_loop(
-        tmp_path, alpha, alarms, store_wrapper=RefusingResults, decisions=1
-    )
-    made._storage._retry = Retry(timedelta(seconds=0.2), 0.05, 0.05)
-    _feed(storage(folder.store(), alarms), the_plan)
-    failures = _run_until_it_fails(made)
-    pipe.close()
-    assert "alpha-1" in str(failures[0]) and "was not stored" in str(failures[0])
 
 
 def test_a_deaf_queue_alarms_on_time_while_a_backlog_keeps_the_pool_full(tmp_path) -> None:

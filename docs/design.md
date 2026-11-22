@@ -1575,8 +1575,7 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    decision and alarms, and the loop deletes its message, so the other
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
-   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process exits and the host restarts it, as
-   [Each blob names what made it](#rule-5-each-blob-names-what-made-it) says.
+   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive. It retries the halt and every capture it holds, beats so the host's watchdog leaves it, and alarms once naming each blob. It exits for the host to restart only once S3 has stored them all, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) says. A process that ends for any other reason holds on the same way, and so does one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms.
 6. **A hung handler stops the heartbeat.** Each handler reports progress at
    every blob write, journal append and broker call it finishes. No handler waits
    for a held lease, as [Who may send](#rule-9-who-may-send-the-accounts-lease) says, so a lease never holds a handler
@@ -1634,7 +1633,7 @@ matches no key pattern its routes give it, and it reads only keys it builds
 from the plan and the table, never a key taken from the event. When it
 starts, it checks every decision it has not finished, in the plan's order,
 and checks again until one check meets no store that did not answer.
-On waking, this doc proposes that it checks the decision the event names and
+On waking, it checks the decision the event names and
 each stage's decisions in the plan's order as far as the first one not
 ready, because checking every unfinished decision on every wake costs a read
 for each of them, about 400 a wake on a day of decisions a minute apart. A
@@ -3846,6 +3845,12 @@ This section lists every decision made on the project, oldest first, one heading
 ### 2026-11-11
 
 1. The owner ruled that a decision time outside its session halts the whole plan, which for a backtest is its whole span. A time stated as minutes before the close moves with an early close, and a clock time after an early close is dropped. Any other time outside its session halts, such as a clock time after the regular close, a time before the open, or minutes before an early close that reach back before the open. The owner said "Okay." to the recommendation to keep the halt. Turned down: skipping that decision, which would leave a strategy silently never trading. The price is that one strategy's wrong time stops every strategy that day, or a backtest's whole span, until its schedule is fixed. Relayed from the owner's chat of 2026-11-11, on [#22](https://github.com/l3a0/ithildin-runtime/issues/22#issuecomment-6785743198). Governs: `### Strategies, schedules and decisions` in design.md.
+
+### 2026-11-21
+
+1. The owner ruled that a process holding a halt or a capture S3 has not stored does not exit. However its receive loop ends, it stops receiving, retries each one, beats and alarms once, and exits only once S3 has stored them all. The owner's words were "keep trying". Turned down: exiting and leaving the supervisor to journal each capture as lost. The price is a process that holds a host slot without receiving through an outage. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### Rule 1: a write S3 refuses or does not answer` and `### How a component learns of a change` in design.md.
+2. The owner ruled that a woken worker checks the decision its event names and each stage's decisions in the plan's order as far as the first one not ready. The owner said "ok". Turned down: checking every unfinished decision on every wake, about 400 reads a wake on a day of decisions a minute apart. The price is that a decision behind one not ready waits until that one is stored, a halt included. [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
+3. The owner ruled that a worker whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, stops receiving and alarms. The owner said "ok". [#81](https://github.com/l3a0/ithildin-runtime/issues/81#issuecomment-7072565863) Governs: `### How a component learns of a change` in design.md.
 
 ## Considered and rejected
 
