@@ -690,7 +690,186 @@ def test_an_error_in_the_start_check_still_reaches_the_hold(tmp_path) -> None:
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1
     assert "a bug in the stand-in store" in str(failures[0])
+    held = [r for r in alarms.reasons if "S3 has not stored" in r]
+    # The halt S3 refused failed the loop first, so the alarm names it.
+    assert "because the halt for" in held[0]
     assert store.read_result(_key("alpha"), FIRST).halt is not None
+
+
+class SlowAnnounce(RefusingResults):
+    """Refuses an alpha result, and takes 1.5 seconds over an announce, which then raises."""
+
+    def announce(self, key):
+        __import__("time").sleep(1.5)
+        raise RuntimeError("a bug in the stand-in store")
+
+
+def test_the_beat_goes_on_while_the_loop_waits_on_its_own_work_after_a_failure(
+    tmp_path,
+) -> None:
+    import time
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(SlowAnnounce(base))
+        return refusing[0]
+
+    def alpha(item: Item, report):
+        raise ValueError("broken")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=2,
+        extend_every=0.1,
+        tick=0.02,
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    _feed(store, the_plan)
+    # The second decision's result is stored, so the start announces it, slowly.
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    began = time.monotonic()
+    thread, failures = _run_in_thread(made)
+    holding = lambda: [r for r in alarms.reasons if "S3 has not stored" in r]  # noqa: E731
+    assert _wait(holding, 10)
+    # The halt failed while the loop waited on the announce, and the beat went on.
+    assert "because the halt for" in holding()[0]
+    time.sleep(0.2)
+    window = [b for b in beats if b >= began]
+    gaps = [later - earlier for earlier, later in zip([began, *window], window, strict=False)]
+    assert gaps and max(gaps) < 0.4
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+
+
+def test_the_drain_beats_while_a_halt_is_held_beside_a_handler_that_does_not_report(
+    tmp_path,
+) -> None:
+    import time
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(RefusingResults(base))
+        return refusing[0]
+
+    gate = threading.Event()
+
+    def alpha(item: Item, report):
+        if item.decision_at != FIRST:
+            # Waits without reporting, as a hung handler does.
+            gate.wait(20)
+        raise ValueError("broken")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=2,
+        extend_every=0.1,
+        tick=0.02,
+        heartbeat_limit=0.2,
+        stop_timeout=1.0,
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    try:
+        # The first decision's halt is held, so the loop failed and drains
+        # while the second handler hangs.
+        assert _wait(lambda: _key("alpha") in made._held_keys(), 10)
+        held_at = time.monotonic()
+        time.sleep(1.2)
+        window = [b for b in beats if b >= held_at]
+        gaps = [later - earlier for earlier, later in zip([held_at, *window], window, strict=False)]
+        assert gaps and max(gaps) < 0.4
+    finally:
+        gate.set()
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+
+
+class GarblingBrokenAnnounce(Garbling):
+    def announce(self, key):
+        raise RuntimeError("a bug in the stand-in store")
+
+
+def test_a_bug_that_ends_the_loop_keeps_a_dropped_halts_reason_in_its_failure(tmp_path) -> None:
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(GarblingBrokenAnnounce(base))
+        return refusing[0]
+
+    def alpha(item: Item, report):
+        raise ValueError("broken")
+
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, alpha, wrap=wrap, decisions=2, extend_every=0.1, tick=0.02
+    )
+    _feed(store, the_plan)
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
+    refusing[0].garble = True
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+    assert isinstance(failures[0], LoopFailed)
+    said = str(failures[0])
+    assert "a bug in the stand-in store" in said and "Halts not stored" in said and "broken" in said
+
+
+class CaptureAndBrokenAnnounce(Refusing):
+    def announce(self, key):
+        raise RuntimeError("a bug in the stand-in store")
+
+
+def test_a_hold_after_a_bug_names_the_bug(tmp_path) -> None:
+    from ithildinruntime.core import StageKind, output_key
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(CaptureAndBrokenAnnounce(base, creates=("/alpha/capture.json",)))
+        return refusing[0]
+
+    holder: dict = {}
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        if item.decision_at == FIRST:
+            holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+        return handlers(holder["base"], holder["plan"], Calls())["alpha"](item, report)
+
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, alpha, wrap=wrap, decisions=2, extend_every=0.1, tick=0.02
+    )
+    holder.update(store=made._storage, base=store, plan=the_plan)
+    _feed(store, the_plan)
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    thread, failures = _run_in_thread(made)
+    held = lambda: [r for r in alarms.reasons if "S3 has not stored" in r]  # noqa: E731
+    assert _wait(held, 10)
+    # No stop and no failure of its own: the bug is why receiving stopped.
+    assert "because RuntimeError: a bug in the stand-in store" in held()[0]
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and isinstance(failures[0], RuntimeError)
 
 
 def _loop_settings(tmp_path) -> dict:

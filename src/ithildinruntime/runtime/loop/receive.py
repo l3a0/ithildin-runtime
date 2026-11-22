@@ -255,6 +255,7 @@ class ReceiveLoop:
         self._hold_alarmed = False
         # What each halt dropped from the hold said, for LoopFailed.
         self._dropped: list[str] = []
+        self._sending: list[asyncio.Future] = []
 
     # Running and stopping
 
@@ -267,7 +268,15 @@ class ReceiveLoop:
         this process holds, apart from a halt S3 answered and will not store,
         which is dropped with an alarm.
         """
-        asyncio.run(self._main())
+        try:
+            asyncio.run(self._main())
+        except Exception as error:
+            if self._dropped:
+                dropped = "; ".join(self._dropped)
+                raise LoopFailed(
+                    f"{type(error).__name__}: {error}. Halts not stored: {dropped}"
+                ) from error
+            raise
         if self._failure is not None:
             reason = self._failed_because or str(self._failure)
             if self._dropped:
@@ -313,6 +322,9 @@ class ReceiveLoop:
         self._answers = ThreadPoolExecutor(2, f"{self._worker}-answer")
         self._receiving = ThreadPoolExecutor(1, f"{self._worker}-receive")
         self._slots = asyncio.Condition()
+        # One task beats from the start until the hold ends, so no wait on
+        # the loop's own work, from a check to the drain, holds the beat back.
+        beater = asyncio.create_task(self._beater())
         ticker = asyncio.create_task(self._ticker())
         receiver: asyncio.Task | None = None
         try:
@@ -336,6 +348,12 @@ class ReceiveLoop:
                     await self._check(full=False)
                 elif kind == "recheck":
                     await self._check(full=True)
+        except Exception as error:
+            # A bug, which ends the loop as a failure does, and which the
+            # hold's alarm names.
+            if self._failed_because is None:
+                self._failed_because = f"{type(error).__name__}: {error}"
+            raise
         finally:
             ticker.cancel()
             if receiver is not None:
@@ -345,6 +363,10 @@ class ReceiveLoop:
             # it holds.
             await self._drain()
             await self._hold()
+            if self._sending:
+                # Each alarm the loop sent on its way out goes before the exit.
+                await asyncio.wait(self._sending, timeout=self._stop_timeout)
+            beater.cancel()
             self._handlers_pool.shutdown(wait=False, cancel_futures=True)
             self._receiving.shutdown(wait=False, cancel_futures=True)
             self._io.shutdown(wait=False, cancel_futures=True)
@@ -375,7 +397,6 @@ class ReceiveLoop:
             # Beat while the try runs, then wait out the rest of the interval
             # unless the try stored everything.
             while not work.done() or (self._timer.monotonic() < end and self._held_keys()):
-                self._beat_quietly()
                 if not work.done():
                     await asyncio.wait({work}, timeout=self._tick)
                 else:
@@ -460,11 +481,6 @@ class ReceiveLoop:
         pending = [r for r in self._running.values() if not r.done]
         end = self._timer.monotonic() + self._stop_timeout
         while pending and self._timer.monotonic() < end:
-            if self._held_keys():
-                # Item 9's rule, while the drain runs too.
-                self._beat_quietly()
-            else:
-                self._beat_if_reporting()
             await asyncio.sleep(min(0.05, self._tick))
             pending = [r for r in pending if not r.done]
         for running in self._running.values():
@@ -496,8 +512,15 @@ class ReceiveLoop:
     def _give_up(self, what: str, error: BaseException) -> None:
         """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
         self._fail(error, f"{self._worker} {what}")
+        # On an io thread, so a slow alert channel never holds the beat back.
+        assert self._loop is not None
+        self._sending.append(
+            self._loop.run_in_executor(self._io, self._alarm_quietly, f"{self._worker} {what}")
+        )
+
+    def _alarm_quietly(self, reason: str) -> None:
         try:
-            self._alerts.alarm(f"{self._worker} {what}")
+            self._alerts.alarm(reason)
         except Exception:
             # The loop ends with LoopFailed, and the host's restart shows.
             pass
@@ -896,11 +919,20 @@ class ReceiveLoop:
 
     # The heartbeat and the visibility of held messages
 
+    async def _beater(self) -> None:
+        """Beat each tick: by item 7's rule, or whatever the handlers do once a
+        process that has stopped receiving holds what S3 has not stored."""
+        while True:
+            if self._stopping and self._held_keys():
+                self._beat_quietly()
+            else:
+                self._beat_if_reporting()
+            await asyncio.sleep(self._tick)
+
     async def _ticker(self) -> None:
         while not self._stopping:
             now = self._timer.monotonic()
             busy = [r for r in self._running.values() if not r.done]
-            self._beat_if_reporting()
             for running in busy:
                 due = now - running.extended >= self._extend_every
                 if running.messages and due and not running.extending:
