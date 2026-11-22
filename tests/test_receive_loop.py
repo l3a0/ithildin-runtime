@@ -699,6 +699,8 @@ def test_an_error_in_the_start_check_still_reaches_the_hold(tmp_path) -> None:
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1
     assert "a bug in the stand-in store" in str(failures[0])
+    # The halt failed first, so the loop ends as LoopFailed naming both.
+    assert isinstance(failures[0], LoopFailed) and "was not stored" in str(failures[0])
     held = [r for r in alarms.reasons if "S3 has not stored" in r]
     # The halt S3 refused failed the loop first, so the alarm names it.
     assert "because the halt for" in held[0]
@@ -749,10 +751,11 @@ def test_the_beat_goes_on_while_the_loop_waits_on_its_own_work_after_a_failure(
     assert _wait(holding, 10)
     # The halt failed while the loop waited on the announce, and the beat went on.
     assert "because the halt for" in holding()[0]
-    time.sleep(0.2)
+    time.sleep(0.6)
     window = [b for b in beats if b >= began]
-    gaps = [later - earlier for earlier, later in zip([began, *window], window, strict=False)]
-    assert gaps and max(gaps) < 0.4
+    ends = [*window, time.monotonic()]
+    gaps = [later - earlier for earlier, later in zip([began, *window], ends, strict=False)]
+    assert max(gaps) < 0.4
     refusing[0].down = False
     thread.join(10)
     assert not thread.is_alive() and len(failures) == 1
@@ -796,10 +799,11 @@ def test_the_drain_beats_while_a_halt_is_held_beside_a_handler_that_does_not_rep
         # while the second handler hangs.
         assert _wait(lambda: _key("alpha") in made._held_keys(), 10)
         held_at = time.monotonic()
-        time.sleep(1.2)
+        time.sleep(1.6)
         window = [b for b in beats if b >= held_at]
-        gaps = [later - earlier for earlier, later in zip([held_at, *window], window, strict=False)]
-        assert gaps and max(gaps) < 0.4
+        ends = [*window, time.monotonic()]
+        gaps = [later - earlier for earlier, later in zip([held_at, *window], ends, strict=False)]
+        assert max(gaps) < 0.4
     finally:
         gate.set()
     refusing[0].down = False
@@ -879,6 +883,218 @@ def test_a_hold_after_a_bug_names_the_bug(tmp_path) -> None:
     refusing[0].down = False
     thread.join(10)
     assert not thread.is_alive() and isinstance(failures[0], RuntimeError)
+
+
+def _silent_capture_loop(tmp_path, *, refusing_class, beats, **settings):
+    """A loop whose first decision's handler stores a capture S3 refuses, then waits
+    without reporting, as a hung handler does, until the case lets it go."""
+    from ithildinruntime.core import StageKind, output_key
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(refusing_class(base, creates=("/alpha/capture.json",)))
+        return refusing[0]
+
+    holder: dict = {}
+    gate = threading.Event()
+    _waiting.append(type("Gate", (), {"go": gate})())
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        if item.decision_at == FIRST:
+            try:
+                holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+            except Halt:
+                pass
+            gate.wait(20)
+        return handlers(holder["base"], holder["plan"], Calls())["alpha"](item, report)
+
+    folder, the_plan, store, made, queue, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=2,
+        extend_every=0.1,
+        tick=0.02,
+        heartbeat_limit=0.2,
+        beat=lambda: beats.append(__import__("time").monotonic()),
+        **settings,
+    )
+    holder.update(store=made._storage, base=store, plan=the_plan)
+    _feed(store, the_plan)
+    # The second decision's result is stored, so the start announces it.
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    return made, refusing, gate, alarms
+
+
+@pytest.mark.parametrize("ends", ["bug", "stop"])
+def test_a_process_that_stopped_receiving_beats_over_a_silent_handler_while_it_holds(
+    tmp_path, ends: str
+) -> None:
+    import time
+
+    beats: list[float] = []
+    made, refusing, gate, alarms = _silent_capture_loop(
+        tmp_path,
+        refusing_class=CaptureAndBrokenAnnounce if ends == "bug" else Refusing,
+        beats=beats,
+        stop_timeout=0.3,
+    )
+    thread, failures = _run_in_thread(made)
+    try:
+        assert _wait(lambda: made._storage.unstored() != (), 10)
+        if ends == "stop":
+            made.stop()
+        assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
+        at = time.monotonic()
+        time.sleep(1.0)
+        assert len([b for b in beats if b >= at]) > 10
+    finally:
+        gate.set()
+        refusing[0].down = False
+        thread.join(10)
+    assert not thread.is_alive()
+
+
+def test_a_process_still_receiving_stops_beating_over_a_silent_handler_while_it_holds(
+    tmp_path,
+) -> None:
+    import time
+
+    beats: list[float] = []
+    made, refusing, gate, alarms = _silent_capture_loop(
+        tmp_path, refusing_class=Refusing, beats=beats
+    )
+    thread, failures = _run_in_thread(made)
+    try:
+        assert _wait(lambda: made._storage.unstored() != (), 10)
+        time.sleep(0.6)
+        # Still receiving, with a capture held: item 7's rule stands, so the
+        # watchdog can kill a container whose handler hangs.
+        assert thread.is_alive() and not made._stopping
+        assert not [b for b in beats if b >= time.monotonic() - 0.3]
+    finally:
+        gate.set()
+        refusing[0].down = False
+        made.stop()
+        thread.join(10)
+
+
+def test_a_stop_with_nothing_held_never_beats_over_a_silent_handler(tmp_path) -> None:
+    import time
+
+    started = threading.Event()
+    gate = threading.Event()
+    _waiting.append(type("Gate", (), {"go": gate})())
+
+    def alpha(item: Item, report):
+        started.set()
+        gate.wait(20)
+        raise Halt("the stand-in was let go")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        heartbeat_limit=0.2,
+        stop_timeout=1.0,
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert started.wait(10)
+    began = time.monotonic()
+    made.stop()
+    thread.join(5)
+    gate.set()
+    assert not thread.is_alive()
+    # Past the heartbeat limit the silent handler counts as hung, through the drain too.
+    assert not [b for b in beats if b > began + 0.3]
+
+
+class SlowGiveUpAlarms(Alarms):
+    """An alert channel that takes a second over the alarm of a queue that failed."""
+
+    def alarm(self, reason: str) -> None:
+        if "KeyError" in reason and "S3 has not stored" not in reason:
+            __import__("time").sleep(1.0)
+        super().alarm(reason)
+
+
+def test_a_slow_give_up_alarm_never_holds_the_beat_back(tmp_path) -> None:
+    import time
+
+    from ithildinruntime.core import StageKind, output_key
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(Refusing(base, creates=("/alpha/capture.json",)))
+        return refusing[0]
+
+    queue = StubQueue()
+    holder: dict = {}
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+        raise AssertionError("put should halt while S3 refuses the capture")
+
+    beats: list[float] = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=1,
+        queue=queue,
+        extend_every=0.1,
+        tick=0.02,
+        alarms=SlowGiveUpAlarms(),
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    holder["store"] = made._storage
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: made._storage.unstored() != (), 10)
+    began = time.monotonic()
+    queue.error = KeyError("ReceiptHandle")
+    time.sleep(1.5)
+    window = [b for b in beats if b >= began]
+    gaps = [b - a for a, b in zip([began, *window], [*window, time.monotonic()], strict=False)]
+    assert max(gaps) < 0.4
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+
+
+@pytest.mark.parametrize(
+    ("failed_because", "clause"),
+    [
+        (None, "it was asked to stop"),
+        ("alpha-1: the halt for k was not stored", "the halt for k was not stored"),
+        ("alpha-1 stopped receiving: KeyError: 'x'", "its queue raised KeyError: 'x'"),
+        (
+            "alpha-1 stopped receiving: the queue refused every receive for 60 seconds",
+            "the queue refused every receive for 60 seconds",
+        ),
+        ("alpha-1 could not answer its queue: KeyError: 'x'", "it could not answer its queue"),
+        ("RuntimeError: a bug", "RuntimeError: a bug"),
+    ],
+    ids=["stop", "halt", "receive-raised", "deaf", "answer", "bug"],
+)
+def test_the_hold_says_why_receiving_stopped_as_a_clause(
+    tmp_path, failed_because: str | None, clause: str
+) -> None:
+    _, _, _, made, _, _ = _stub_loop(tmp_path, decisions=1)
+    made._failed_because = failed_because
+    assert made._why_stopped().startswith(clause)
 
 
 def _loop_settings(tmp_path) -> dict:

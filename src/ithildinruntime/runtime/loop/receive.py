@@ -271,12 +271,16 @@ class ReceiveLoop:
         try:
             asyncio.run(self._main())
         except Exception as error:
+            if self._failure is None and not self._dropped:
+                raise
+            # A bug after a failure, or with a halt dropped, still ends as
+            # LoopFailed naming all of them, for the host's restart record.
+            reason = f"{type(error).__name__}: {error}"
+            if self._failure is not None:
+                reason = f"{self._failed_because or self._failure}. Then {reason}"
             if self._dropped:
-                dropped = "; ".join(self._dropped)
-                raise LoopFailed(
-                    f"{type(error).__name__}: {error}. Halts not stored: {dropped}"
-                ) from error
-            raise
+                reason += ". Halts not stored: " + "; ".join(self._dropped)
+            raise LoopFailed(reason) from error
         if self._failure is not None:
             reason = self._failed_because or str(self._failure)
             if self._dropped:
@@ -351,6 +355,7 @@ class ReceiveLoop:
         except Exception as error:
             # A bug, which ends the loop as a failure does, and which the
             # hold's alarm names.
+            self._stopping = True
             if self._failed_because is None:
                 self._failed_because = f"{type(error).__name__}: {error}"
             raise
