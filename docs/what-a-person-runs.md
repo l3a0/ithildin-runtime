@@ -476,7 +476,7 @@ Run this once, after the first merge that applies `infra/test`, and record the r
 
 #### Drill the budget alarm
 
-Run this once and record the result on [#78](https://github.com/l3a0/ithildin-runtime/issues/78), naming who saw the email and when, such as "the owner". The issue is public, so the record summarises what each command showed and never names the address, the account id, an ARN or a queue URL. The budget counts usage before AWS credits, so credits on the account do not hold the month's spend at zero and keep the drill from starting.
+Run this once and record the result on [#98](https://github.com/l3a0/ithildin-runtime/issues/98), naming who saw the email and when, such as "the owner". The issue is public, so the record summarises what each command showed and never names the address, the account id, an ARN or a queue URL. The budget counts usage before AWS credits, so credits on the account do not hold the month's spend at zero and keep the drill from starting.
 
 1. Wait until `aws budgets describe-budget --account-id <test account id> --budget-name ithildin-test-monthly` shows `CalculatedSpend.ActualSpend` above 0.01 US dollars.
 2. In a checkout of `main`, run step 5's `init`, then `tofu -chdir=infra/test/bootstrap apply -var state_bucket=<state bucket> -var budget_limit=0.01`.
