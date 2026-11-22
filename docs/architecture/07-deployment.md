@@ -490,7 +490,7 @@ Five things follow.
 #### What CI runs on a pull request
 
 CI builds the image on every pull request and runs the tests inside it,
-in the two required checks [How CI runs them](10-quality.md#how-ci-runs-them) describes.
+in the required `test` check and the image check that [How CI runs them](10-quality.md#how-ci-runs-them) describes.
 
 #### Why the guard on publishing is provenance
 

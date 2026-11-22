@@ -195,7 +195,9 @@ Two things are built at 1x all the same.
    the portfolios in each environment, how long each stage takes against
    its deadline, the VM's memory, the VM's CPU, the deployments on each VM group, and the checks in the healthchecks.io project marketlake shares. One alarm says when load nears the 1x limit, and another
    says when the portfolio count reaches the level above. Otherwise the
-   first sign of either is a missed deadline.
+   first sign of either is a missed deadline. Test's measure of CI load is
+   the one exception: a person reads it, as
+   [How CI runs them](architecture/10-quality.md#how-ci-runs-them) says.
 2. Least privilege, so each credential carries only what its 1x use needs
    from the first day. [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds one deferred exception, the admin
    login agents run on, as [A release is checked where it runs](#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault) says.
@@ -3849,7 +3851,7 @@ This section lists every decision made on the project, oldest first, one heading
 
 1. The owner ruled that the test account's budget counts usage before AWS credits, so credits on the account cannot hold its spend at zero and keep the alarm from firing. The owner said "ok" to the recommendation to set `cost_types` with `include_credit = false`. The price is nothing. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### Alarms on operations` in halts-and-drills.md and `#### Drill the budget alarm` in what-a-person-runs.md.
 2. The owner ruled that no alarm reads test's measure of load, the count of `aws` runs cancelled because a newer push replaced them, and a person reads it instead, as the one exception to building load alarms at the first load. The owner said "k" to that recommendation. The price is that a rewrite is noticed late, in an environment that holds nothing that cannot be made again. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### How CI runs them` in architecture/10-quality.md.
-3. The owner ruled that a failing `tofu fmt`, `tofu validate` or `tofu test` blocks a merge to `main`, against the recommendation to leave those checks unrequired. The owner's words were "block a merge". So `.github/workflows/infra.yml` runs them on every pull request, and its `infra` job, which passes only when they pass, is a check `.github/rulesets/default.json` requires. The price is five short jobs on each pull request, and an open pull request reports the check only after a push that follows the merge adding it. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### How CI runs them` in architecture/10-quality.md and `#### Set it up, before the merge that adds it` in what-a-person-runs.md.
+3. The owner ruled that a failing `tofu fmt`, `tofu validate` or `tofu test` blocks a merge to `main`, against the recommendation to leave those checks unrequired. The owner's words were "block a merge". So `.github/workflows/infra.yml` runs them on every pull request, and its `infra` job, which passes only when they pass, is a check `.github/rulesets/default.json` requires. The price is six short jobs on each pull request, and an open pull request reports the check only after a push that follows the merge adding it. Relayed from the owner's chat of 2026-11-21, on [#78](https://github.com/l3a0/ithildin-runtime/issues/78#issuecomment-7072312379). Governs: `### How CI runs them` in architecture/10-quality.md and `#### Set it up, before the merge that adds it` in what-a-person-runs.md.
 
 ## Considered and rejected
 
