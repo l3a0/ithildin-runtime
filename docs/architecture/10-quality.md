@@ -205,14 +205,18 @@ against, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) the third
         not send a message.
      4. Every wait for a delivery allows 60 seconds, the smoke check's
         bound, and a check that nothing else arrives reads every queue of
-        the case together for as long. The delivery case prints the median
-        and largest delay from each event's time to SQS taking its message.
+        the case together for as long. A wait that ends with nothing names
+        the reader and the key and says the apply may not have finished,
+        and every later case fails at once with that line rather than
+        waiting out its own bound. The delivery case prints the median and
+        largest delay from each event's time to SQS taking its message.
 
      The queues' own visibility timeout is 30 seconds on both sides, so the
      cases that need 2 seconds pass it on each receive and extend, as the
-     SQS adapter does. The suite's clients there ignore any endpoint the
-     environment sets and refuse a host outside AWS, as the store suite's
-     bucket client does. The job's `-v` names each case it ran with `[aws]`.
+     SQS adapter does. The suite's clients there are the store suite's
+     bucket client, `aws_client` in `tests/support/aws.py`, which ignores
+     any endpoint the environment sets and refuses a host outside AWS. The
+     job's `-v` names each case it ran with `[aws]`.
    - **The broker suite** holds every `Broker` adapter to the methods
      `OrderPath` calls: a submit with a client order id where the broker keeps one, a find of an order from its intent that answers the broker's id, not found or more than one, whether its list was whole and each paired row as a `BrokerOrder`, a list of every order since a time across all its pages, a lookup by the broker's order id that returns a `BrokerOrder`, with the client order id where the broker keeps one, a cancel by the broker's order id, fills
      with their own ids, positions, open orders, the read [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names for cash, the broker's records through `activities`, the clock, a

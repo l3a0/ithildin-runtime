@@ -33,7 +33,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
@@ -51,6 +50,7 @@ from ithildinruntime.core import (
     Retry,
     StageKind,
     Storage,
+    decision_part,
     encode_output,
     event_body,
     output_key,
@@ -67,7 +67,8 @@ from ithildinruntime.runtime.loop import (
     event_pattern,
     routes,
 )
-from tests.support.stores import EMULATOR_KEYS, REGION, TEST_BUCKET
+from tests.support.aws import DELIVERY_SECONDS, TEST_BUCKET, TEST_QUEUE_PREFIX, aws_client
+from tests.support.stores import EMULATOR_KEYS, REGION
 
 DEPLOYMENT = "ci"
 RUN = "2026-11-02"
@@ -88,12 +89,10 @@ COMPONENTS = ("feed", "alpha", "risk", "book")
 # The components that hear a route. `feed` hears none, so the test environment
 # has no queue for it.
 READERS = tuple(sorted({route.reader for route in routes(TABLE, DEPLOYMENT)}))
-TEST_QUEUE_PREFIX = "ithildin-test"
 
-# How long a case waits for S3's event to reach a queue, the smoke check's bound.
-# design.md says S3's delivery takes "usually seconds and sometimes a minute or
-# longer". A bound costs its full length only when a case fails.
-DELIVERY_SECONDS = 60
+# Whether a wait in this run has already ended with no delivery. In AWS every
+# later case would wait out its own bound for the same reason, so it fails at once.
+_undelivered: list[str] = []
 
 
 @dataclass(frozen=True)
@@ -120,15 +119,15 @@ class Case:
 
     A case's decisions are a minute apart from `first`, so they all fall in
     `first`'s hour, and `mine` tells its keys from every other case's in the
-    same run. The run's stop key is the run's own rather than a decision's, and
-    only the first case writes it, so it counts as that case's.
+    same run. The run's stop key is the run's own rather than a decision's, so
+    every case in the run claims it, and only the first case writes it.
     """
 
     run: str = RUN
     first: datetime = FIRST
 
     def plan(self, decisions: int) -> Plan:
-        if not 1 <= decisions <= 60:
+        if isinstance(decisions, bool) or not 1 <= decisions <= 60:
             raise ValueError(f"a case's {decisions} decisions do not fit in its hour")
         return plan(decisions, self.run, self.first)
 
@@ -139,22 +138,30 @@ class Case:
         return result_key(DEPLOYMENT, self.run, self.at(n), stage)
 
     def mine(self, key: str) -> bool:
-        hour = f"runs/{DEPLOYMENT}/{self.run}/{self.first:%Y%m%dT%H}"
-        return key.startswith(hour) or key == run_stop_key(DEPLOYMENT, self.run)
+        stop = run_stop_key(DEPLOYMENT, self.run)
+        # A decision part reads `20261102T150000Z`, so its first 11 characters name the hour.
+        hour = stop.removesuffix("stop.json") + decision_part(self.first)[:11]
+        return key.startswith(hour) or key == stop
 
 
 # The day every run's date counts from. The key builders accept only a date as
 # a key's run part, so a run's number and attempt become one.
 EPOCH = date(2000, 1, 1)
+# Run numbers repeat their dates after this many runs, which keeps every date
+# inside Python's calendar. The test bucket expires every key within two days,
+# so a repeat meets nothing: 20,000 runs is 690 days at the 29 runs a day ci.yml
+# saw in its first 25 days, and 69 days at ten times that.
+RUN_PERIOD = 20_000
 
 
 def run_case(number: int, attempt: int, index: int) -> Case:
     """The keys of case `index` in attempt `attempt` of the workflow's run `number`.
 
-    The run is EPOCH plus `number` × 100 + `attempt` days, and the case's first
-    decision is that date's midnight UTC plus `index` hours. So no two numbers,
-    attempts, cases or decisions write one key, while the attempt stays under
-    100, the index under 24 and a case's decisions under 60.
+    The run is EPOCH plus (`number` mod RUN_PERIOD) × 100 + `attempt` days, and
+    the case's first decision is that date's midnight UTC plus `index` hours. So
+    no two of RUN_PERIOD numbers in a row, attempts, cases or decisions write
+    one key, while the attempt stays under 100, the index under 24 and a case's
+    decisions under 60.
     """
     if isinstance(number, bool) or not isinstance(number, int) or number < 1:
         raise ValueError(f"a run's number {number!r} is not a count from 1")
@@ -162,7 +169,7 @@ def run_case(number: int, attempt: int, index: int) -> Case:
         raise ValueError(f"a run's attempt {attempt!r} is not 1 to 99")
     if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < 24:
         raise ValueError(f"a case's index {index!r} is not 0 to 23")
-    day = EPOCH + timedelta(days=number * 100 + attempt)
+    day = EPOCH + timedelta(days=(number % RUN_PERIOD) * 100 + attempt)
     return Case(day.isoformat(), datetime(day.year, day.month, day.day, index, tzinfo=UTC))
 
 
@@ -504,8 +511,13 @@ class Cloud:
 
     endpoint: str | None
     bucket: str
-    urls: dict[str, str]
+    # Left out of the repr, because a queue's URL names the account and pytest
+    # prints a failing call's object in the public job log.
+    urls: dict[str, str] = field(repr=False)
     case: Case = field(default_factory=Case)
+    # Whether other cases share these queues, as every case shares the test
+    # environment's. On moto each case makes queues of its own.
+    shared: bool = False
 
     @classmethod
     def make(cls, endpoint: str, name: str, visibility: int = 30) -> Cloud:
@@ -551,7 +563,7 @@ class Cloud:
                     f"Queue {name} does not exist. If this merge changed "
                     "infra/test/routes.json, infra.yml's apply may not have finished."
                 ) from None
-        return cls(None, TEST_BUCKET, urls, case)
+        return cls(None, TEST_BUCKET, urls, case, shared=True)
 
     @property
     def on_aws(self) -> bool:
@@ -581,11 +593,17 @@ class Cloud:
         return SqsQueue(sqs, self.urls[component], visibility_timeout=visibility, wait_seconds=wait)
 
     def receive(self, component: str, wait: int = 1) -> list[Message]:
-        """One receive from a component's queue, deleting every message of another case.
+        """One receive from a component's queue, keeping the case's own messages.
 
-        The case's own messages come back hidden for a minute, so the caller
-        deletes or returns them.
+        Where cases share the queue, as in AWS, a message of another case is
+        deleted. On moto each case has queues of its own, so every message is
+        the case's, a misrouted one included. The case's messages come back
+        hidden for a minute, so the caller deletes or returns them.
         """
+        return self._receive(component, wait)[0]
+
+    def _receive(self, component: str, wait: int = 1) -> tuple[list[Message], bool]:
+        """`receive`, and whether SQS returned any message at all."""
         sqs = client("sqs", self.endpoint)
         url = self.urls[component]
         reply = sqs.receive_message(
@@ -596,15 +614,16 @@ class Cloud:
             AttributeNames=["SentTimestamp"],
         )
         mine = []
-        for raw in reply.get("Messages", []):
+        received = reply.get("Messages", [])
+        for raw in received:
             body = json.loads(raw["Body"])
             key = body.get("detail", {}).get("object", {}).get("key", "")
-            if self.case.mine(key):
+            if not self.shared or self.case.mine(key):
                 sent = int(raw.get("Attributes", {}).get("SentTimestamp", "0"))
                 mine.append(Message(key, body, raw["ReceiptHandle"], sent))
             else:
                 sqs.delete_message(QueueUrl=url, ReceiptHandle=raw["ReceiptHandle"])
-        return mine
+        return mine, bool(received)
 
     def delete(self, component: str, messages: list[Message]) -> None:
         sqs = client("sqs", self.endpoint)
@@ -620,12 +639,18 @@ class Cloud:
             )
 
     def messages(self, component: str) -> list[dict]:
-        """The case's messages waiting on a component's queue, deleted as they are read."""
+        """The case's messages waiting on a component's queue, deleted as they are read.
+
+        It reads until a receive returns nothing at all, because one that held
+        only another case's messages says nothing about the case's own.
+        """
         found: list[dict] = []
-        while batch := self.receive(component):
+        while True:
+            batch, any_at_all = self._receive(component)
             self.delete(component, batch)
             found.extend(m.body for m in batch)
-        return found
+            if not any_at_all:
+                return found
 
     def keys_on(self, component: str) -> list[str]:
         return [m["detail"]["object"]["key"] for m in self.messages(component)]
@@ -665,32 +690,32 @@ class Cloud:
 
 
 def client(service: str, endpoint: str | None, config: Config | None = None):
-    """A client for moto's server, or with no endpoint one for AWS itself.
-
-    The AWS client takes the job's own credentials from the environment, and
-    AWS's endpoint whatever AWS_ENDPOINT_URL or a config file says, and refuses
-    a host outside AWS, as the store suite's bucket client does. So a green run
-    on the test queues cannot come from an emulator.
-    """
-    if endpoint is not None:
-        return boto3.client(
-            service, endpoint_url=endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
-        )
-    own = Config(ignore_configured_endpoint_urls=True, connect_timeout=10, read_timeout=30)
-    made = boto3.client(service, region_name=REGION, config=own.merge(config) if config else own)
-    host = urlsplit(made.meta.endpoint_url).hostname or ""
-    if not host.endswith(".amazonaws.com"):
-        raise RuntimeError(f"the test environment's {service} client points at {host}, not AWS")
-    return made
+    """A client for moto's server, or with no endpoint `aws_client`'s for AWS itself."""
+    if endpoint is None:
+        return aws_client(service, config)
+    return boto3.client(
+        service, endpoint_url=endpoint, region_name=REGION, config=config, **EMULATOR_KEYS
+    )
 
 
 def missing(reader: str, keys: list[str] | set[str], seconds: float) -> str:
-    """What a case says when an event it waits for never reaches a queue."""
-    return (
+    """What a case says when an event it waits for never reaches a queue.
+
+    An assert builds its message only when it fails, so calling this also
+    records that a delivery failed, which `undelivered` reads.
+    """
+    said = (
         f"{reader}'s queue received nothing for {', '.join(sorted(keys))} in {seconds} "
         "seconds. If this merge changed infra/test/routes.json, infra.yml's apply may "
         "not have finished."
     )
+    _undelivered.append(said)
+    return said
+
+
+def undelivered() -> str | None:
+    """The first missing delivery this run recorded, or None."""
+    return _undelivered[0] if _undelivered else None
 
 
 @contextmanager

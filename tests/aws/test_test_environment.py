@@ -33,17 +33,15 @@ import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from tests.support.aws import DELIVERY_SECONDS, REGION, TEST_BUCKET, TEST_QUEUE_PREFIX
+
 pytestmark = pytest.mark.aws
 
-REGION = "us-east-1"
-BUCKET = "ithildin-runtime-test"
-QUEUE_PREFIX = "ithildin-test"
+BUCKET = TEST_BUCKET
+QUEUE_PREFIX = TEST_QUEUE_PREFIX
 ROUTES = json.loads((Path(__file__).parents[2] / "infra" / "test" / "routes.json").read_text())
 READERS = [queue["reader"] for queue in ROUTES["queues"]]
 SMOKE = "smoke"
-
-# How long an event may take to reach its queue before the case fails.
-DELIVERY_SECONDS = 60
 
 _CONFIG = Config(region_name=REGION, retries={"mode": "standard", "total_max_attempts": 3})
 
