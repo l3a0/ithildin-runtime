@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -259,13 +259,26 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
         quotes={},
         status={InstrumentId("USO"): core.BarStatus.STALE},
         provisional=True,
-        flags={"USO": {"spike": True}},
+        flags={
+            InstrumentId("USO"): (
+                core.SpikeFlag(
+                    session=date(2026, 11, 2),
+                    field="close",
+                    price=Decimal("60.123456"),
+                    against=Decimal("40.5"),
+                    rule="close-to-close move past the written multiple",
+                    note="the source stated no volume",
+                ),
+            )
+        },
         segments=("s3://x",),
         ledgers={"a": "b"},
     )
     back = decode(encode(value), core.Snapshot)
     assert back == value
     assert back.status[InstrumentId("USO")] is core.BarStatus.STALE
+    # A flag's price keeps every place it arrived with.
+    assert format(back.flags[InstrumentId("USO")][0].price, "f") == "60.123456"
 
 
 class _Float(float):

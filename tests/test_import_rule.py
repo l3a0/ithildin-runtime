@@ -17,7 +17,15 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.import_rule import ALLOWED, LIBRARIES, NODES, PACKAGE, check, node_of
+from tests.support.import_rule import (
+    ALLOWED,
+    LAKE_SUBMODULES,
+    LIBRARIES,
+    NODES,
+    PACKAGE,
+    check,
+    node_of,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "src" / PACKAGE
@@ -328,8 +336,52 @@ def test_an_outside_library_elsewhere_fails(
 def test_an_outside_library_in_its_box_passes(tmp_path: Path, library: str, owner: str) -> None:
     root = _tree(tmp_path)
     module = NODES[owner].removeprefix(f"{PACKAGE}.") + ".client"
-    _plant(root, module, f"import {library}\n")
+    # `data` imports named submodules of marketlake only, which case 11 tests.
+    name = "lake.loader" if library == "lake" else library
+    _plant(root, module, f"import {name}\n")
     assert _reasons(root) == []
+
+
+# Case 11: `data` imports only the submodules of marketlake the rule names, so
+# it cannot read marketlake's bucket around the read-only port.
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "import lake.bucket\n",
+        "from lake.bucket import upload\n",
+        "from lake import bucket\n",
+        "import lake.schwab\n",
+        "import lake\n",
+        "from lake import loader, bucket\n",
+    ],
+)
+def test_data_importing_another_part_of_marketlake_fails(tmp_path: Path, statement: str) -> None:
+    root = _tree(tmp_path)
+    _plant(root, "data.reader", statement)
+    (reason,) = _reasons(root)
+    assert "and `data` imports only `lake.actions`, `lake.config`" in reason
+
+
+@pytest.mark.parametrize("module", sorted(LAKE_SUBMODULES))
+def test_data_importing_a_named_part_of_marketlake_passes(tmp_path: Path, module: str) -> None:
+    root = _tree(tmp_path)
+    leaf = module.split(".")[1]
+    _plant(
+        root,
+        "data.reader",
+        f"import {module}\nfrom {module} import x\nfrom lake import {leaf}\n",
+    )
+    assert _reasons(root) == []
+
+
+def test_the_data_package_imports_marketlake_only_where_the_rule_allows() -> None:
+    """The submodules `data` imports today, so a new one is a change to the rule."""
+    found = set()
+    for path in (SOURCE / "data").rglob("*.py"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith(("from lake", "import lake")):
+                found.add(line.split()[1])
+    assert found == set(LAKE_SUBMODULES)
 
 
 def test_core_imports_only_the_standard_library_and_rfc8785(tmp_path: Path) -> None:

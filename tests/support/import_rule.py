@@ -35,6 +35,12 @@ arrows alone would miss.
    `journal` imported from `execution`. The checker follows the name back to
    the module that defines it.
 6. An outside library imported outside the one box that may import it.
+7. A submodule of marketlake's `lake` package that `data` may not import.
+   `data` reads marketlake through the read-only bucket port, so it imports
+   only the submodules `LAKE_SUBMODULES` names. `lake.bucket`, which reads
+   marketlake's bucket through boto3, and `lake.schwab` would read around that
+   port. A bare `import lake`, and `from lake import x`, are read as the
+   submodules they name.
 """
 
 from __future__ import annotations
@@ -100,6 +106,13 @@ LIBRARIES: dict[str, str] = {
     # The one codec writes every blob, so only `core` writes canonical JSON.
     "rfc8785": "core",
 }
+
+# The submodules of `lake` that `data` may import, and nothing else of it:
+# the reader and its errors, the reader-file rule, the manifest, and the two
+# modules whose errors the reader raises.
+LAKE_SUBMODULES = frozenset(
+    {"lake.loader", "lake.paths", "lake.manifest", "lake.actions", "lake.config"}
+)
 
 # `core` imports nothing outside the standard library but these.
 CORE_LIBRARIES = frozenset({"rfc8785"})
@@ -236,8 +249,16 @@ class _Checker:
             return None
         return f"needs an arrow from `{importer}` to `{box}`, which the diagram does not draw"
 
-    def _refuse_library(self, importer: str | None, library: str) -> str | None:
+    def _refuse_library(self, importer: str | None, name: str) -> str | None:
+        library = name.split(".")[0]
         owner = LIBRARIES.get(library)
+        if library == "lake" and importer == owner:
+            if not any(name == m or name.startswith(m + ".") for m in LAKE_SUBMODULES):
+                return (
+                    f"imports `{name}`, and `data` imports only "
+                    f"{', '.join(f'`{m}`' for m in sorted(LAKE_SUBMODULES))} of marketlake"
+                )
+            return None
         if owner is not None and importer != owner:
             return f"imports `{library}`, which only `{owner}` may import"
         if importer == "core" and owner is None:
@@ -271,7 +292,11 @@ class _Checker:
         else:
             source = stmt.module or ""
         if not _inside(source):
-            self._sort(source, internal, outside)
+            if source == "lake":
+                for alias in stmt.names:
+                    outside.add(f"lake.{alias.name}")
+            else:
+                self._sort(source, internal, outside)
             return internal, outside
         for alias in stmt.names:
             if alias.name == "*":
@@ -289,6 +314,9 @@ class _Checker:
     def _sort(self, name: str, internal: set[str], outside: set[str]) -> None:
         if _inside(name):
             internal.add(name)
+        elif name.split(".")[0] == "lake":
+            # Kept whole, so rule 7 can read which submodule it names.
+            outside.add(name)
         else:
             outside.add(name.split(".")[0])
 

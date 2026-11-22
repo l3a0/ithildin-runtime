@@ -38,6 +38,7 @@ __all__ = [
     "BrokerAccount",
     "BrokerOrder",
     "BrokerRead",
+    "BucketObject",
     "Constraints",
     "CostSchedule",
     "DecisionResult",
@@ -64,6 +65,7 @@ __all__ = [
     "RestartRecord",
     "SendOutcome",
     "Snapshot",
+    "SpikeFlag",
     "Statistic",
     "StoredBlob",
     "TargetPortfolio",
@@ -128,10 +130,29 @@ class Instrument(_Record):
 
 @dataclass(frozen=True)
 class Bar(_Record):
-    """A bar, with where it came from and when it closed.
+    """A bar, with where it came from, when it closed and when it could be known.
 
-    Each price's kind, venues and delay, and each volume's counting, join this
-    type when #50 names them and #5 adds them.
+    #5 owns this type. Each price stays as received, and `excess_places` names
+    each price field whose received value carries more places than `Price`
+    declares, which is kept rather than rounded.
+
+    - `volume` is `None` where the source stated none, as on an imported vintage.
+    - `fetched` and `fetched_end` are marketlake's `fetch_ts` and `fetch_end_ts`
+      as received, each beside its UTC instant, and `None` where marketlake
+      holds none, as on the Chan vintages.
+    - `knowable_at` is the time the bar could first have been known. For a
+      captured bar it is `fetched_at`. For an imported bar it is `end`, because
+      a vintage records only `source_as_of`, the date its source recorded the
+      whole series, so a bar of a vintage recorded after its sessions can carry
+      corrections made up to that date.
+    - `source` and `source_as_of` are marketlake's own fields for an imported
+      row, and `None` on a captured one.
+    - `price_kind`, `venues`, `delay` and `volume_counted` come from the data
+      module's price-kind contract when the bar is read, and read `unstated`
+      where the contract states nothing.
+    - `vintage_id` names the partition the bar was read from by its path, its
+      SHA-256 in marketlake's manifest and the bucket's version of it.
+    - `first_seen` is the time the data worker read the bar.
     """
 
     instrument: InstrumentId
@@ -140,13 +161,42 @@ class Bar(_Record):
     high: Price
     low: Price
     close: Price
-    volume: int
+    volume: int | None
     basis: str
     origin: str
     vintage_id: str
     end: datetime
     interval: str
     first_seen: datetime
+    fetched: str | None
+    fetched_at: datetime | None
+    fetched_end: str | None
+    fetched_end_at: datetime | None
+    knowable_at: datetime
+    source: str | None
+    source_as_of: date | None
+    price_kind: str
+    venues: str
+    delay: str
+    volume_counted: str
+    excess_places: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SpikeFlag(_Record):
+    """A price the data module flags as wrong, beside the price it was judged against.
+
+    The price stays in its bar as received. `rule` names the check that
+    flagged it, and `note` says what the check could not weigh, such as a
+    volume the source never stated.
+    """
+
+    session: date
+    field: str
+    price: Price
+    against: Price
+    rule: str
+    note: str
 
 
 @dataclass(frozen=True)
@@ -164,14 +214,20 @@ class Quote(_Record):
 
 @dataclass(frozen=True)
 class Snapshot(_Record):
-    """The bars and quotes one decision read, with each instrument's status."""
+    """The bars and quotes one decision read, with each instrument's status.
+
+    `flags` holds each flagged instrument's spike flags, beside prices that
+    stay as received. `ledgers` maps each marketlake ledger the read relied
+    on, by its key in the lake, to the SHA-256 of the bytes read, and keeps no
+    row of it.
+    """
 
     decision_at: datetime
     bars: Mapping[InstrumentId, Mapping[str, tuple[Bar, ...]]]
     quotes: Mapping[InstrumentId, Quote]
     status: Mapping[InstrumentId, BarStatus]
     provisional: bool
-    flags: Mapping[str, object]
+    flags: Mapping[InstrumentId, tuple[SpikeFlag, ...]]
     segments: tuple[str, ...]
     ledgers: Mapping[str, str]
 
@@ -400,6 +456,21 @@ class SendOutcome(_Record):
     decision_at: datetime
     target_hash: str
     orders: tuple[Ack, ...]
+
+
+@dataclass(frozen=True)
+class BucketObject(_Record):
+    """An object read from a bucket the platform may only read, such as marketlake's.
+
+    `version` is the bucket's version of the object, and `sha256` the
+    whole-object SHA-256 the bucket stored with it. Either is `None` where the
+    bucket holds none, which the reader refuses.
+    """
+
+    key: str
+    data: bytes
+    version: str | None
+    sha256: str | None
 
 
 @dataclass(frozen=True)

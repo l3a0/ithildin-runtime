@@ -102,7 +102,7 @@ flowchart TB
     exec_send --> outcome --> mon_report
 
     subgraph adapters["Adapters, which each worker's entry point builds"]
-        lakesrc["marketlake reader<br/>over the local mirror"]
+        lakesrc["Read-only bucket<br/>marketlake's S3 bucket, or a folder holding its lake"]
         clock["History clock or wall clock"]
         timer["Timer<br/>reads wall time and a monotonic clock, and tests fake it"]
         broker["Simulated or paper broker"]
@@ -111,7 +111,7 @@ flowchart TB
         queue["Queue<br/>SQS, or a named pipe fed by the memory-backed folder"]
     end
 
-    lakesrc -. "DataSource" .-> data
+    lakesrc -. "Bucket, read through data's mirror" .-> data
     clock -. "Clock" .-> data
     timer -. "Timer, for deadlines" .-> sup
     timer -. "Timer, for deadlines" .-> mon_report
@@ -164,13 +164,13 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | marketlake reader, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
-| Shadow | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until the data source holds the official close at the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten | The shadow environment's bucket, with the shadow journal | Sent |
-| Paper | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
-| Live | marketlake reader, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
+| Backtest | A folder holding marketlake's lake, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Shadow | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until the data source holds the official close at the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten | The shadow environment's bucket, with the shadow journal | Sent |
+| Paper | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
+| Live | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
-Every mode reads bars through the same marketlake reader. The modes differ in
-which bars they read and which clock drives them, not in how they read. Shadow
+Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
+which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. Shadow
 reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
@@ -287,13 +287,25 @@ classDiagram
         +Decimal high
         +Decimal low
         +Decimal close
-        +int volume
+        +int or None volume
         +str basis
         +str origin
         +str vintage_id
         +datetime end
         +str interval
         +datetime first_seen
+        +str or None fetched
+        +datetime or None fetched_at
+        +str or None fetched_end
+        +datetime or None fetched_end_at
+        +datetime knowable_at
+        +str or None source
+        +date or None source_as_of
+        +str price_kind
+        +str venues
+        +str delay
+        +str volume_counted
+        +list excess_places
     }
     class Snapshot {
         +datetime decision_at
@@ -551,7 +563,11 @@ classDiagram
         +monotonic() float
         +offset() timedelta
         +sync_age() timedelta
-        +wait_until(datetime)
+        +wait_until(datetime, report)
+    }
+    class Bucket {
+        <<Protocol>>
+        +read(key) BucketObject
     }
     class Timer {
         <<Protocol>>
@@ -689,6 +705,7 @@ classDiagram
     OrderPath o-- RiskGate
     OrderPath o-- Broker
     DataSource ..> Snapshot
+    DataSource ..> Bucket
     AlphaModel ..> Forecast
     RiskModel ..> Constraints
     CostModel ..> CostSchedule
@@ -732,8 +749,13 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for split and dividend adjusted, as quantitative-trading's vintage records do |
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
+| `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
+| `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
+| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row |
+| `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
+| `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A bar and a quote also name each price's kind, the venues it covers and any delay from its source, and each volume how it was counted, with a field no source states recorded as unstated, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The class diagram above leaves those fields out until [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names them with [#5](https://github.com/l3a0/ithildin-runtime/issues/5). [#22](https://github.com/l3a0/ithildin-runtime/issues/22) builds `Bar` and `Quote` with the fields the diagram names. [#50](https://github.com/l3a0/ithildin-runtime/issues/50) names those fields and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) adds them.
+A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated`, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -743,15 +765,14 @@ Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns onl
 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
-3. An imported vintage has no receive time, so its knowable time is the vendor's publication date where the vintage records one, and otherwise the bar's `end`, which a backtest states as an assumption of its result.
-
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how.
+3. A captured bar's knowable time is marketlake's `fetch_ts`, and a stamp with no stated zone halts the decision.
+4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections.
 
 ##### What a quote and a snapshot's flags carry
 
 A `Quote` keeps the vendor's stamp as received, the capture time, whether the quote was real time, and its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
 
-A snapshot's `flags` hold a spike flag with both prices per instrument, so the send stage's flag test has a field to read.
+A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so the send stage's flag test has a field to read. The price itself stays as received in its bar.
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 
@@ -1100,14 +1121,14 @@ An arrow means "may import". The diagram draws four rules.
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
    - Only the entry points read the plan's mode, and a module is handed only the decisions.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
-4. **Only `runtime` imports `adapters`**, which holds the S3, memory-backed folder, SQS and named-pipe adapters. So each of the outside libraries in the table below is imported in one module.
+4. **Only `runtime` imports `adapters`**, which holds the S3 and memory-backed folder stores, the S3 and folder read-only buckets, the SQS and named-pipe queues, and the history and wall clocks. So each of the outside libraries in the table below is imported in one module.
 
    **Table:** The one module that imports each of four outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
    | boto3 | `adapters` |
-   | marketlake's package | `data` |
+   | marketlake's package, of which `data` imports only `lake.loader`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
    | Alpaca's SDK | `execution.brokers` |
    | rfc8785, the one codec's canonical JSON | `core` |
 

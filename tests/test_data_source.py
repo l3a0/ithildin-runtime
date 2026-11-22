@@ -1,0 +1,740 @@
+"""The data module's point-in-time read, over a lake built from quantitative-trading's vintages.
+
+Each test reads its own copy of the lake through the folder bucket and a mirror
+in a second directory, as tests/support/lake.py says. Each names the mutant it
+fails under, and each boundary is tested one step below, at and above it, with
+its expected answer taken from the rule #5 writes. The numbers in each test's
+first line are the acceptance tests' numbers on #5.
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import threading
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from lake.battery import build_entry
+from lake.manifest import append_quarantine
+
+from ithildinruntime.adapters import FolderBucket
+from ithildinruntime.core import (
+    BarStatus,
+    BlobMissing,
+    BucketObject,
+    Halt,
+    InstrumentId,
+    StoreUnavailable,
+    from_received,
+    load_sessions,
+)
+from ithildinruntime.data import DataSettings, LakeSource, Mirror, source
+from ithildinruntime.data.reference import (
+    Kind,
+    KindRow,
+    MasterRow,
+    PriceKinds,
+    SecurityMaster,
+    load_master,
+)
+from tests.support import lake as lakes
+
+GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
+TABLE = load_sessions()
+DAYS = sorted(TABLE.sessions)
+LAST = lakes.LAST_SESSION
+FIRST = lakes.FIRST_SESSION
+READ_AT = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
+
+
+def close(day: date) -> datetime:
+    return TABLE.session(day).close
+
+
+def before(day: date, n: int = 1) -> date:
+    return DAYS[DAYS.index(day) - n]
+
+
+class Clock:
+    def __init__(self, at: datetime = READ_AT) -> None:
+        self.at = at
+
+    def now(self) -> datetime:
+        return self.at
+
+    def monotonic(self) -> float:
+        return 0.0
+
+    def offset(self) -> timedelta:
+        return timedelta(0)
+
+    def sync_age(self) -> timedelta:
+        return timedelta(0)
+
+    def wait_until(self, at, report) -> None:
+        pass
+
+
+class Timer:
+    def now(self) -> datetime:
+        return READ_AT
+
+    def monotonic(self) -> float:
+        return 0.0
+
+    def after(self, seconds: float) -> object:
+        raise NotImplementedError
+
+
+class Counting:
+    """A bucket that counts each key it is asked for, and can refuse one or call back."""
+
+    def __init__(self, bucket) -> None:
+        self.bucket = bucket
+        self.reads: list[str] = []
+        self.refuse: dict[str, Exception] = {}
+        self.on_read: dict[str, object] = {}
+
+    def read(self, key: str) -> BucketObject:
+        self.reads.append(key)
+        if key in self.refuse:
+            raise self.refuse[key]
+        hook = self.on_read.pop(key, None)
+        if hook is not None:
+            hook()  # type: ignore[operator]
+        return self.bucket.read(key)
+
+
+def settings(**changes) -> DataSettings:
+    made = DataSettings(
+        instruments=(GLD, USO),
+        lookback=40,
+        first_sessions={GLD: FIRST, USO: FIRST},
+        stale_lag=1,
+        spike_multiple=Decimal(100),
+    )
+    return replace(made, **changes)
+
+
+def make(bucket_root: Path, tmp_path: Path, bucket=None, **changes) -> LakeSource:
+    kinds = changes.pop("kinds", None)
+    master = changes.pop("master", None)
+    return LakeSource(
+        Mirror(bucket or FolderBucket(bucket_root), tmp_path / "mirror"),
+        settings(**changes),
+        clock=Clock(),
+        timer=Timer(),
+        kinds=kinds,
+        master=master,
+    )
+
+
+def unlist(root: Path, key: str) -> None:
+    """Take a partition out of the lake and its manifest, as a session never fetched."""
+    (root / key).unlink()
+    manifest = root / "manifest.jsonl"
+    lines = manifest.read_text().splitlines(keepends=True)
+    manifest.write_text("".join(line for line in lines if f'"{key}"' not in line))
+
+
+# 1. The values.
+
+
+def test_1_a_snapshot_at_the_close_holds_each_bar_as_received(
+    lake: Path, tmp_path: Path, vintages: Path
+) -> None:
+    reading = make(lake, tmp_path).read(close(LAST))
+    snap = reading.snapshot
+    assert snap.status == {GLD: BarStatus.FRESH, USO: BarStatus.FRESH}
+    gld = snap.bars[GLD]["1d"]
+    assert len(gld) == 40 and len(snap.bars[USO]["1d"]) == 40
+    assert [b.session for b in gld] == DAYS[DAYS.index(LAST) - 39 : DAYS.index(LAST) + 1]
+    newest = gld[-1]
+    assert newest.close == Decimal("159.37")
+    assert (newest.origin, newest.basis, newest.volume) == ("imported", "adjusted", None)
+    assert newest.end == close(LAST) == datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
+    assert newest.knowable_at == newest.end
+    assert newest.source == "quantitative-trading:data/inputdata_etf/gld.csv"
+    assert newest.source_as_of == date(2012, 4, 10)
+    assert newest.fetched is None and newest.fetched_at is None
+    assert newest.first_seen == READ_AT
+    assert newest.excess_places == ()
+    key = lakes.partition_key("GLD", LAST)
+    sha = hashlib.sha256((lake / key).read_bytes()).hexdigest()
+    assert newest.vintage_id == f"{key}#sha256={sha}#version={sha}"
+    assert set(snap.ledgers) == {
+        "manifest.jsonl",
+        "quarantine.jsonl",
+        "actions/corporate_actions.jsonl",
+        "reference/schema_versions.parquet",
+    }
+    # Every close is the vintage's own value, read as marketlake stores it.
+    for name, instrument in (("gld.csv", GLD), ("uso.csv", USO)):
+        held = {b.session: b.close for b in snap.bars[instrument]["1d"]}
+        with open(vintages / name, newline="") as handle:
+            rows = {date.fromisoformat(r[0]): r[1] for r in list(csv.reader(handle))[3:]}
+        assert len(held) == 40
+        assert all(held[d] == from_received(float(rows[d])) for d in held)
+
+
+# 2. The start of a series.
+
+
+def test_2_a_snapshot_on_the_fifth_session_holds_five_and_reads_fresh(
+    lake: Path, tmp_path: Path
+) -> None:
+    fifth = DAYS[DAYS.index(FIRST) + 4]
+    snap = make(lake, tmp_path).read(close(fifth)).snapshot
+    assert [b.session for b in snap.bars[GLD]["1d"]] == DAYS[
+        DAYS.index(FIRST) : DAYS.index(fifth) + 1
+    ]
+    assert snap.status[GLD] is BarStatus.FRESH
+
+
+def test_2_a_lookback_without_a_first_session_reads_missing_before_the_series(
+    lake: Path, tmp_path: Path
+) -> None:
+    fifth = DAYS[DAYS.index(FIRST) + 4]
+    # USO began trading on 2006-04-10, so only GLD's master row covers the
+    # sessions before the vintages start.
+    reading = make(lake, tmp_path, instruments=(GLD,), first_sessions={}).read(close(fifth))
+    assert reading.snapshot.status[GLD] is BarStatus.MISSING
+
+
+# 3. End time.
+
+
+@pytest.mark.parametrize(("minutes", "holds"), [(-1, False), (0, True), (1, True)])
+def test_3_a_bar_is_in_a_decision_only_once_its_session_closed(
+    lake: Path, tmp_path: Path, minutes: int, holds: bool
+) -> None:
+    at = close(LAST) + timedelta(minutes=minutes)
+    snap = make(lake, tmp_path).read(at).snapshot
+    for instrument in (GLD, USO):
+        assert (snap.bars[instrument]["1d"][-1].session == LAST) is holds
+        assert snap.status[instrument] is BarStatus.FRESH
+
+
+def test_3_close_minus_20_reads_through_the_session_before(lake: Path, tmp_path: Path) -> None:
+    snap = make(lake, tmp_path).read(close(LAST) - timedelta(minutes=20)).snapshot
+    assert snap.bars[GLD]["1d"][-1].session == before(LAST)
+    assert len(snap.bars[GLD]["1d"]) == 40
+
+
+# 4. Knowable time.
+
+
+@pytest.mark.parametrize(("after_fetch", "holds"), [(-1, False), (0, True), (1, True)])
+def test_4_a_captured_bar_is_known_only_from_its_fetch_stamp(
+    lake: Path, tmp_path: Path, after_fetch: int, holds: bool
+) -> None:
+    fetched = close(LAST) + timedelta(hours=2)
+    lakes.captured(lake, "USO", LAST, fetch_ts=fetched.astimezone(lakes.MARKET_TZ).isoformat())
+    src = make(lake, tmp_path)
+    at_close = src.read(close(LAST)).snapshot
+    assert at_close.bars[USO]["1d"][-1].session == before(LAST)
+    at = fetched + timedelta(microseconds=after_fetch)
+    snap = src.read(at).snapshot
+    newest = snap.bars[USO]["1d"][-1]
+    assert (newest.session == LAST) is holds
+    if holds:
+        assert (newest.origin, newest.basis, newest.source) == ("captured", "raw", None)
+        assert newest.knowable_at == fetched
+        assert newest.fetched == fetched.astimezone(lakes.MARKET_TZ).isoformat()
+
+
+def test_4_a_fetch_stamp_with_no_zone_halts(lake: Path, tmp_path: Path) -> None:
+    lakes.captured(lake, "USO", LAST, fetch_ts="2012-04-09T18:00:00")
+    with pytest.raises(Halt, match="with no zone, so it is not usable"):
+        make(lake, tmp_path).read(close(LAST) + timedelta(days=1))
+
+
+def test_4_a_captured_bar_with_no_fetch_stamp_halts(lake: Path, tmp_path: Path) -> None:
+    lakes.captured(lake, "USO", LAST, fetch_ts=None)
+    with pytest.raises(Halt, match="captured with no fetch stamp"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+# 5. A missing session.
+
+
+def test_5_a_session_missing_inside_the_lookback_reads_missing_and_is_never_filled(
+    lake: Path, tmp_path: Path
+) -> None:
+    gone = before(LAST, 3)
+    unlist(lake, lakes.partition_key("GLD", gone))
+    reading = make(lake, tmp_path).read(close(LAST))
+    snap = reading.snapshot
+    assert snap.status[GLD] is BarStatus.MISSING
+    assert gone not in {b.session for b in snap.bars[GLD]["1d"]}
+    assert len(snap.bars[GLD]["1d"]) == 39
+    assert any(f"no bar for {gone.isoformat()}" in r for r in reading.halts)
+    with pytest.raises(Halt, match="GLD missing"):
+        snap.require_fresh({GLD: ["1d"], USO: ["1d"]})
+
+
+# 6. A stale series.
+
+
+@pytest.mark.parametrize(("dropped", "state"), [(1, "fresh"), (2, "fresh"), (3, "stale")])
+def test_6_a_series_lagging_past_the_written_lag_reads_stale(
+    lake: Path, tmp_path: Path, dropped: int, state: str
+) -> None:
+    for n in range(dropped):
+        unlist(lake, lakes.partition_key("USO", before(LAST, n)))
+    reading = make(lake, tmp_path, stale_lag=2).read(close(LAST))
+    assert reading.snapshot.status[USO] == BarStatus(state)
+    assert any("USO stale" in r for r in reading.halts) is (state == "stale")
+
+
+def test_6_an_absent_lag_halts(lake: Path, tmp_path: Path) -> None:
+    with pytest.raises(Halt, match="no stale lag is written"):
+        make(lake, tmp_path, stale_lag=None).read(close(LAST))
+
+
+# 7. Two rows for one session.
+
+
+def test_7_two_rows_for_one_session_halt(lake: Path, tmp_path: Path) -> None:
+    lakes.doubled(lake, "GLD", before(LAST, 2))
+    with pytest.raises(Halt, match=f"GLD holds 2 daily rows for the session of {before(LAST, 2)}"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+# 8. Every other answer.
+
+
+def test_8_a_partition_whose_provenance_cannot_be_read_halts(lake: Path, tmp_path: Path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    key = lakes.partition_key("GLD", LAST)
+    table = pq.read_table(lake / key)
+    meta = {**table.schema.metadata, b"marketlake.origin": b"bogus"}
+    sink = pa.BufferOutputStream()
+    pq.write_table(table.replace_schema_metadata(meta), sink)
+    lakes.rewrite(lake, key, sink.getvalue().to_pybytes())
+    lakes.record(lake, key, rows=1)
+    with pytest.raises(Halt, match="ProvenanceMalformed"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def test_8_a_quarantine_ledger_that_is_not_utf8_halts(lake: Path, tmp_path: Path) -> None:
+    lakes.rewrite(lake, "quarantine.jsonl", b"\xff\xfe\n")
+    lakes.record(lake, "quarantine.jsonl")
+    with pytest.raises(Halt, match="LedgerNotUtf8"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def _errors() -> list[Exception]:
+    from lake import actions, config, loader, manifest
+
+    made: list[Exception] = []
+    for cls in (
+        *(c for c in loader.LoadError.__subclasses__() if c is not loader.BarsAbsent),
+        config.ConfigError,
+        actions.LedgerLineError,
+        actions.LedgerNotUtf8,
+        manifest.ManifestError,
+    ):
+        error = cls.__new__(cls)
+        Exception.__init__(error, f"a planted {cls.__name__}")
+        made.append(error)
+    return made
+
+
+@pytest.mark.parametrize("error", _errors(), ids=lambda e: type(e).__name__)
+def test_8_each_answer_the_table_halts_on_halts(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def refuse(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(source, "load_bars", refuse)
+    with pytest.raises(Halt, match=type(error).__name__):
+        make(lake, tmp_path).read(close(LAST))
+
+
+# 9. The bucket's copy is checked.
+
+
+def test_9_a_byte_changed_in_the_buckets_copy_halts_naming_both_hashes(
+    lake: Path, tmp_path: Path
+) -> None:
+    key = lakes.partition_key("GLD", LAST)
+    data = bytearray((lake / key).read_bytes())
+    listed = hashlib.sha256(data).hexdigest()
+    data[100] ^= 1
+    lakes.rewrite(lake, key, bytes(data))
+    found = hashlib.sha256(data).hexdigest()
+    with pytest.raises(Halt) as halt:
+        make(lake, tmp_path).read(close(LAST))
+    assert found in halt.value.reason and listed in halt.value.reason
+    assert "upload stopped before its manifest.jsonl" in halt.value.reason
+
+
+def test_9_a_byte_changed_in_the_mirrors_copy_is_downloaded_again(
+    lake: Path, tmp_path: Path
+) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    first = src.read(close(LAST)).snapshot
+    key = lakes.partition_key("GLD", LAST)
+    sha = hashlib.sha256((lake / key).read_bytes()).hexdigest()
+    cached = tmp_path / "mirror" / "objects" / sha
+    data = bytearray(cached.read_bytes())
+    data[100] ^= 1
+    cached.unlink()
+    cached.write_bytes(bytes(data))
+    bucket.reads.clear()
+    again = src.read(close(LAST)).snapshot
+    assert key in bucket.reads
+    assert again.bars == {i: {"1d": tuple(first.bars[i]["1d"])} for i in first.bars}
+    assert hashlib.sha256(cached.read_bytes()).hexdigest() == sha
+
+
+def test_9_a_file_the_mirror_holds_is_not_downloaded_again(lake: Path, tmp_path: Path) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    src.read(close(LAST))
+    bucket.reads.clear()
+    src.read(close(LAST))
+    assert bucket.reads == ["manifest.jsonl"]
+
+
+# 10. The manifest is read whole.
+
+
+def test_10_a_manifest_not_ending_in_a_newline_halts(lake: Path, tmp_path: Path) -> None:
+    manifest = lake / "manifest.jsonl"
+    manifest.write_bytes(manifest.read_bytes().rstrip(b"\n"))
+    with pytest.raises(Halt, match="does not end in a newline"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def test_10_a_manifest_cut_short_mid_line_halts(lake: Path, tmp_path: Path) -> None:
+    manifest = lake / "manifest.jsonl"
+    manifest.write_bytes(manifest.read_bytes()[:-20])
+    with pytest.raises(Halt, match="does not end in a newline"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def test_10_a_failed_manifest_download_halts_with_an_older_copy_held(
+    lake: Path, tmp_path: Path
+) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    src.read(close(LAST))
+    bucket.refuse["manifest.jsonl"] = StoreUnavailable("manifest.jsonl", "503 SlowDown")
+    with pytest.raises(Halt, match="manifest.jsonl could not be downloaded"):
+        src.read(close(LAST))
+
+
+def test_10_a_manifest_missing_from_the_bucket_halts(lake: Path, tmp_path: Path) -> None:
+    (lake / "manifest.jsonl").unlink()
+    with pytest.raises(Halt, match="manifest.jsonl is not in the bucket"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+class _Damaged:
+    """A bucket whose answer's bytes do not match the SHA-256 it stored with them."""
+
+    def __init__(self, bucket, key: str) -> None:
+        self.bucket, self.key = bucket, key
+
+    def read(self, key: str) -> BucketObject:
+        got = self.bucket.read(key)
+        if key == self.key:
+            return replace(got, data=got.data[:-1])
+        return got
+
+
+def test_10_a_download_whose_bytes_differ_from_the_stored_sha256_halts(
+    lake: Path, tmp_path: Path
+) -> None:
+    bucket = _Damaged(FolderBucket(lake), "manifest.jsonl")
+    with pytest.raises(Halt, match="so the download was damaged"):
+        make(lake, tmp_path, bucket=bucket).read(close(LAST))
+
+
+@pytest.mark.parametrize("field", ["version", "sha256"])
+def test_10_a_file_with_no_version_or_no_stored_sha256_halts(
+    lake: Path, tmp_path: Path, field: str
+) -> None:
+    class Bare:
+        def read(self, key: str) -> BucketObject:
+            got = FolderBucket(lake).read(key)
+            return replace(got, **{field: None}) if key.startswith("bars/") else got
+
+    with pytest.raises(Halt, match=f"has no {'version' if field == 'version' else 'SHA-256'}"):
+        make(lake, tmp_path, bucket=Bare()).read(close(LAST))
+
+
+# 11. A missing reader file.
+
+
+@pytest.mark.parametrize("ledger", ["quarantine.jsonl", "actions/corporate_actions.jsonl"])
+def test_11_a_bucket_missing_a_ledger_halts_before_any_read(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ledger: str
+) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr(source, "load_bars", lambda *a, **k: calls.append(a))
+    (lake / ledger).unlink()
+    with pytest.raises(Halt, match=f"{ledger} is a reader file the bucket does not hold"):
+        make(lake, tmp_path).read(close(LAST))
+    assert calls == []
+
+
+@pytest.mark.parametrize("ledger", ["quarantine.jsonl", "actions/corporate_actions.jsonl"])
+def test_11_a_manifest_listing_no_ledger_halts_before_any_read(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ledger: str
+) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr(source, "load_bars", lambda *a, **k: calls.append(a))
+    unlist(lake, ledger)
+    with pytest.raises(Halt, match=f"lists no {ledger}"):
+        make(lake, tmp_path).read(close(LAST))
+    assert calls == []
+
+
+def _quarantine(root: Path, day: date) -> str:
+    key = lakes.partition_key("GLD", day)
+    entry = build_entry(
+        partition=key,
+        verdict="quarantined",
+        check="planted",
+        observed_at=datetime(2026, 11, 21, 17, 0, tzinfo=UTC),
+    )
+    path = root / "quarantine.jsonl"
+    data = path.read_bytes()
+    path.unlink()
+    path.write_bytes(data)
+    append_quarantine(root, entry)
+    lakes.record(root, "quarantine.jsonl", rows=1)
+    return key
+
+
+def test_11_a_quarantined_partition_in_the_lookback_halts(lake: Path, tmp_path: Path) -> None:
+    key = _quarantine(lake, before(LAST, 5))
+    with pytest.raises(Halt, match=f"{key} is quarantined in marketlake"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+# 12. Data not ready.
+
+
+def test_12_a_listed_partition_absent_from_the_bucket_reads_as_data_not_ready(
+    lake: Path, tmp_path: Path
+) -> None:
+    key = lakes.partition_key("USO", before(LAST, 7))
+    (lake / key).unlink()
+    with pytest.raises(Halt, match=f"{key} is listed in the manifest .* the data is not ready"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+# 13. Two decisions at once.
+
+
+def test_13_two_decisions_record_the_ledger_each_one_read(lake: Path, tmp_path: Path) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    old = hashlib.sha256((lake / "quarantine.jsonl").read_bytes()).hexdigest()
+    later: dict[str, object] = {}
+
+    def change_and_read() -> None:
+        # The bucket's quarantine ledger changes while the first decision reads,
+        # and a second decision reads the new one in full.
+        _quarantine(lake, before(LAST, 5))
+
+        def second() -> None:
+            try:
+                src.read(close(LAST))
+            except Halt as halt:
+                later["halt"] = halt
+
+        thread = threading.Thread(target=second)
+        thread.start()
+        thread.join()
+
+    bucket.on_read[lakes.partition_key("USO", LAST)] = change_and_read
+    first = src.read(close(LAST)).snapshot
+    new = hashlib.sha256((lake / "quarantine.jsonl").read_bytes()).hexdigest()
+    assert new != old
+    assert first.ledgers["quarantine.jsonl"] == old
+    assert "is quarantined in marketlake" in later["halt"].reason  # type: ignore[union-attr]
+    assert (tmp_path / "mirror" / "objects" / old).exists()
+    assert (tmp_path / "mirror" / "objects" / new).exists()
+
+
+def test_13_an_interrupted_download_leaves_the_old_file_or_none(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ithildinruntime.data import mirror
+
+    src = make(lake, tmp_path)
+    src.read(close(LAST))
+    objects = tmp_path / "mirror" / "objects"
+    held = {p.name: p.read_bytes() for p in objects.iterdir()}
+    key = lakes.partition_key("GLD", before(LAST, 50))
+    real = mirror.os.replace
+
+    def dies(src_path, dst_path):
+        raise OSError("the machine lost power")
+
+    monkeypatch.setattr(mirror.os, "replace", dies)
+    with pytest.raises(OSError):
+        src._mirror._download(key, None)
+    monkeypatch.setattr(mirror.os, "replace", real)
+    after = {p.name: p.read_bytes() for p in objects.iterdir()}
+    assert after == held
+
+
+# 15. Places.
+
+
+def test_15_prices_with_more_places_than_declared_are_kept_and_named(
+    lake: Path, tmp_path: Path
+) -> None:
+    lakes.with_row(lake, "GLD", LAST, open=100.1234, high=100.12345, low=99.123456, close=100.0)
+    newest = make(lake, tmp_path).read(close(LAST)).snapshot.bars[GLD]["1d"][-1]
+    assert format(newest.open, "f") == "100.1234"
+    assert format(newest.high, "f") == "100.12345"
+    assert format(newest.low, "f") == "99.123456"
+    assert newest.excess_places == ("high", "low")
+
+
+# 16. Unstated kind.
+
+
+def _kinds(first: date, last: date) -> PriceKinds:
+    stated = Kind("official close", "consolidated", "none", "consolidated")
+    return PriceKinds(
+        tuple(
+            KindRow(
+                date(2026, 11, 22),
+                f"quantitative-trading:data/inputdata_etf/{t}.csv",
+                first,
+                last,
+                stated,
+                "a test",
+            )
+            for t in ("gld", "uso")
+        )
+    )
+
+
+def test_16_a_bar_of_unstated_kind_halts_after_the_snapshot(lake: Path, tmp_path: Path) -> None:
+    reading = make(lake, tmp_path).read(close(LAST))
+    assert reading.snapshot.bars[GLD]["1d"][-1].price_kind == "unstated"
+    assert any("GLD's bar" in r and "unstated price kind" in r for r in reading.halts)
+
+
+@pytest.mark.parametrize(("shift", "halts"), [(-1, False), (0, False), (1, True)])
+def test_16_a_session_outside_its_sources_row_reads_unstated(
+    lake: Path, tmp_path: Path, shift: int, halts: bool
+) -> None:
+    oldest = DAYS[DAYS.index(LAST) - 39]
+    first = DAYS[DAYS.index(oldest) + shift]
+    reading = make(lake, tmp_path, kinds=_kinds(first, LAST)).read(close(LAST))
+    assert any("unstated" in r for r in reading.halts) is halts
+    if not halts:
+        assert reading.snapshot.bars[GLD]["1d"][0].price_kind == "official close"
+
+
+# 17. No row in the security master.
+
+
+@pytest.mark.parametrize(("ends", "halts"), [(-1, True), (0, False), (1, False)])
+def test_17_an_instrument_with_no_master_row_on_a_session_halts(
+    lake: Path, tmp_path: Path, ends: int, halts: bool
+) -> None:
+    rows = tuple(r for r in load_master().rows if r.id != USO)
+    last = DAYS[DAYS.index(LAST) + ends]
+    master = SecurityMaster((*rows, MasterRow(USO, "USO", date(2006, 4, 10), last)))
+    src = make(lake, tmp_path, master=master)
+    if halts:
+        with pytest.raises(Halt, match=f"USO has no security master row valid on {LAST}"):
+            src.read(close(LAST))
+    else:
+        assert src.read(close(LAST)).snapshot.status[USO] is BarStatus.FRESH
+
+
+def test_17_the_master_maps_an_id_to_the_ticker_on_each_session() -> None:
+    master = load_master()
+    assert master.ticker(InstrumentId("QQQ"), date(2008, 1, 2)) == "QQQQ"
+    assert master.ticker(InstrumentId("QQQ"), date(2011, 3, 23)) == "QQQ"
+    with pytest.raises(Halt):
+        master.ticker(InstrumentId("GLD"), date(2004, 11, 17))
+
+
+# The answers kept for the run.
+
+
+def test_a_sessions_answer_is_read_once_while_its_files_are_unchanged(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[date] = []
+    real = source.load_bars
+
+    def counted(ticker, freq, start, end, **kwargs):
+        calls.append(start)
+        return real(ticker, freq, start, end, **kwargs)
+
+    monkeypatch.setattr(source, "load_bars", counted)
+    src = make(lake, tmp_path)
+    src.read(close(LAST))
+    assert len(calls) == 80
+    src.read(close(LAST))
+    assert len(calls) == 80
+    lakes.with_row(lake, "GLD", LAST, close=200.0)
+    snap = src.read(close(LAST)).snapshot
+    assert calls[80:] == [LAST]
+    assert snap.bars[GLD]["1d"][-1].close == Decimal("200.0")
+
+
+def test_the_log_names_the_manifests_bytes_and_the_download_seconds(
+    lake: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="ithildinruntime.data.source")
+    reading = make(lake, tmp_path).read(close(LAST))
+    size = (lake / "manifest.jsonl").stat().st_size
+    assert reading.manifest_bytes == size
+    assert f"manifest of {size} bytes" in caplog.text
+
+
+def test_each_decision_reads_its_own_lake_root_and_leaves_none(lake: Path, tmp_path: Path) -> None:
+    make(lake, tmp_path).read(close(LAST))
+    assert list((tmp_path / "mirror" / "roots").iterdir()) == []
+
+
+def test_a_decision_outside_the_session_table_halts(lake: Path, tmp_path: Path) -> None:
+    with pytest.raises(Halt, match="outside the session table's range"):
+        make(lake, tmp_path).read(datetime(2028, 1, 3, 21, tzinfo=UTC))
+
+
+def test_a_version_record_lost_from_the_mirror_is_downloaded_again(
+    lake: Path, tmp_path: Path
+) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    src.read(close(LAST))
+    for record in (tmp_path / "mirror" / "versions").iterdir():
+        record.unlink()
+    bucket.reads.clear()
+    snap = src.read(close(LAST)).snapshot
+    key = lakes.partition_key("GLD", LAST)
+    assert key in bucket.reads
+    sha = hashlib.sha256((lake / key).read_bytes()).hexdigest()
+    assert snap.bars[GLD]["1d"][-1].vintage_id == f"{key}#sha256={sha}#version={sha}"
+    records = [json.loads(p.read_text()) for p in (tmp_path / "mirror" / "versions").iterdir()]
+    assert {"key": key, "version": sha} in records
+
+
+def test_a_folder_bucket_reads_a_missing_key_as_blob_missing(lake: Path) -> None:
+    with pytest.raises(BlobMissing):
+        FolderBucket(lake).read("bars/ticker=GLD/freq=1d/date=1999-01-04.parquet")

@@ -1,0 +1,8 @@
+# The price-kind contract: what each source states about its prices and volume.
+# Rows are only ever added, each dated by `added`, and two rows of one source never
+# cover the same session. A field the source does not state reads `unstated`, and so
+# does a source with no row or a session outside its row's span. `read_from` says
+# what the row was read from. tests/test_data_files.py pins every row.
+added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from
+2026-11-22,quantitative-trading:data/inputdata_etf/gld.csv,2006-04-26,2012-04-09,unstated,unstated,unstated,unstated,quantitative-trading data/vintages.jsonl at 19aadbeb: vendor chan-mat and source_workbook inputData_ETF.mat with no vendor_column. Neither names the price's kind or venues or any delay or how volume was counted
+2026-11-22,quantitative-trading:data/inputdata_etf/uso.csv,2006-04-26,2012-04-09,unstated,unstated,unstated,unstated,quantitative-trading data/vintages.jsonl at 19aadbeb: vendor chan-mat and source_workbook inputData_ETF.mat with no vendor_column. Neither names the price's kind or venues or any delay or how volume was counted
