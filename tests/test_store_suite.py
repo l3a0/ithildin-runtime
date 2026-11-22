@@ -69,12 +69,22 @@ def test_a_key_a_test_route_would_hear_is_refused() -> None:
     spec = StoreSpec("folder", root="unused", run="local", case="case")
     with pytest.raises(ValueError, match=r"runs/ci/\*/smoke/\*"):
         spec.key("smoke/a.json")
+    # The layout the test role's grants admit, which only the bucket run would otherwise show.
     assert spec.key("alpha/a.json") == "runs/ci/local/store/case/alpha/a.json"
+    assert spec.lease(2) == "leases/plans/ci/local-case-2.json"
 
 
 def test_a_routes_file_the_check_cannot_read_is_refused(tmp_path) -> None:
     from tests.support import stores
 
+    # The shape #91 gives the file, with queues and rules listed apart.
+    rules = {
+        "queues": [{"reader": "alpha", "visibility_timeout_seconds": 30}],
+        "rules": [{"name": "alpha-0", "reader": "alpha", "pattern": [{"wildcard": "a/*/b"}]}],
+    }
+    path = tmp_path / "routes-rules.json"
+    path.write_text(json.dumps(rules))
+    assert [route.key for route in stores._routes(path)] == ["a/*/b"]
     for body, words in (
         ([{"pattern": [{"prefix": "runs/"}]}], "cannot read"),
         ([{"reader": "smoke"}], "holds no key pattern"),
@@ -278,7 +288,10 @@ def test_two_processes_racing_one_create_leave_one_winner(spec: StoreSpec) -> No
     assert spec.open().get(spec.key(CASE_KEY)) == f"writer {winners[0]}".encode()
 
 
-# How many processes race each rewrite, and for how many rounds.
+# How many processes race each rewrite, and for how many rounds. On the folder these
+# caught a mutant without the per-key lock in 5 runs of 5, and on the bucket they cost
+# 60 rewrites, which fits the aws job's time. The first bucket runs say whether they draw
+# a 409, and the counts move if they do not.
 REWRITERS = 6
 ROUNDS = 10
 
@@ -412,7 +425,7 @@ try:
 
     spec = StoreSpec(**json.loads(sys.argv[1]))
     quiet = spec.kind == "bucket"
-    key = sys.argv[2]
+    key, whole = sys.argv[2], sys.argv[3] == "whole"
     client = spec.client()
     signed = {}
 
@@ -440,37 +453,57 @@ try:
         connection.putheader(name, value)
     connection.endheaders()
     reply = connection.sock.makefile("rb")
-    status = reply.readline()
-    if not status.startswith(b"HTTP/1.1 100 "):
-        code = status[9:12] if status[9:12].isdigit() else b"none"
-        print(f"stopped: S3 answered {code.decode()} rather than 100 Continue", flush=True)
+
+    def answer():
+        status = reply.readline()
+        while reply.readline() not in (b"\\r\\n", b"\\n", b""):
+            pass
+        return status[9:12].decode() if status[9:12].isdigit() else "none"
+
+    if (code := answer()) != "100":
+        print(f"stopped: S3 answered {code} rather than 100 Continue", flush=True)
         os._exit(1)
-    while reply.readline() not in (b"\\r\\n", b"\\n", b""):
+    if not whole:
+        connection.send(data[:4096])
+        print("written", flush=True)
+        time.sleep(600)
+    # The control sends the whole body and reads S3's final answer. moto repeats its
+    # 100 Continue, so any further 100 is read past.
+    connection.send(data)
+    while (code := answer()) == "100":
         pass
-    connection.send(data[:4096])
+    said = "landed" if code == "200" else f"stopped: S3 answered {code} to the whole body"
+    print(said, flush=True)
 except BaseException as error:
     print(f"stopped: {type(error).__name__}", flush=True)
     if quiet:
         os._exit(1)
     raise
-print("written", flush=True)
-time.sleep(600)
 """
 
 
-def test_a_writer_killed_partway_through_leaves_no_blob(spec: StoreSpec) -> None:
-    key = spec.key(CASE_KEY)
+def _start_writer(spec: StoreSpec, key: str, body: str) -> subprocess.Popen:
     if spec.kind == "folder":
         args = [_KILLED_FOLDER_WRITER, spec.root, key]
     else:
-        args = [_KILLED_S3_WRITER, json.dumps(dataclasses.asdict(spec)), key]
-    writer = subprocess.Popen(
+        args = [_KILLED_S3_WRITER, json.dumps(dataclasses.asdict(spec)), key, body]
+    return subprocess.Popen(
         [sys.executable, "-c", textwrap.dedent(args[0]), *args[1:]],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL if spec.kind == "bucket" else None,
         cwd=os.getcwd(),
         env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
     )
+
+
+def test_a_writer_killed_partway_through_leaves_no_blob(spec: StoreSpec) -> None:
+    """A write killed mid-body leaves no blob, and on S3 the same request whole would land.
+
+    The control sends the same signed request with its whole body to a second key,
+    so a request S3 would refuse after its body cannot make the case pass on nothing.
+    """
+    key = spec.key(CASE_KEY)
+    writer = _start_writer(spec, key, "half")
     try:
         line = writer.stdout.readline().strip()
         assert line == b"written", (
@@ -487,6 +520,17 @@ def test_a_writer_killed_partway_through_leaves_no_blob(spec: StoreSpec) -> None
     assert store.list(spec.key("runs/"), None) == []
     _create(store, key, b"the retry")
     assert store.get(key) == b"the retry"
+    if spec.kind == "folder":
+        return
+    control = spec.key("control/whole.json")
+    whole = _start_writer(spec, control, "whole")
+    try:
+        assert whole.stdout.readline().strip() == b"landed"
+    finally:
+        whole.kill()
+        whole.wait(timeout=30)
+        whole.stdout.close()
+    assert store.get(control) == b"x" * 8192
 
 
 def test_a_lost_reply_on_a_create_that_landed_reads_as_no_answer(spec: StoreSpec) -> None:
