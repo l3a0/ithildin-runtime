@@ -648,6 +648,51 @@ def test_a_slow_alert_channel_never_holds_the_holds_beat_back(tmp_path) -> None:
     assert not thread.is_alive() and len(failures) == 1
 
 
+class BrokenAnnounce(RefusingResults):
+    """Refuses an alpha result, and raises a bug's error on every announce."""
+
+    def announce(self, key):
+        raise RuntimeError("a bug in the stand-in store")
+
+
+def test_an_error_in_the_start_check_still_reaches_the_hold(tmp_path) -> None:
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(BrokenAnnounce(base))
+        return refusing[0]
+
+    def alpha(item: Item, report):
+        raise ValueError("broken")
+
+    beats: list = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=2,
+        extend_every=0.1,
+        tick=0.02,
+        beat=lambda: beats.append(None),
+    )
+    _feed(store, the_plan)
+    # The second decision's result is already stored, so the start announces it.
+    second = Item(FIRST + timedelta(minutes=1), "alpha")
+    store.put_result(
+        _key("alpha", 1), handlers(store, the_plan, Calls())["alpha"](second, lambda: None)
+    )
+    thread, failures = _run_in_thread(made)
+    # The start check starts the first decision, whose halt S3 refuses, and
+    # the announce after it raises.
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
+    assert _holds_alive(thread, beats) and not failures
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and len(failures) == 1
+    assert "a bug in the stand-in store" in str(failures[0])
+    assert store.read_result(_key("alpha"), FIRST).halt is not None
+
+
 def _loop_settings(tmp_path) -> dict:
     folder = Folder(tmp_path / "s", tmp_path / "p")
     return dict(
