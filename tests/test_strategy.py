@@ -385,9 +385,19 @@ def _header(hashes) -> BlobHeader:
         ({"chan": "0" * 63}, "not a lower case hex SHA-256"),
         ({"chan": "A" * 64}, "not a lower case hex SHA-256"),
         ({"chan": "c1"}, "not a lower case hex SHA-256"),
+        ({"chan": 1}, "not a lower case hex SHA-256"),
         ([("chan", "0" * 64)], "at least one strategy"),
     ],
-    ids=["empty", "slash", "dots", "short", "upper-case", "not-hex", "not-a-mapping"],
+    ids=[
+        "empty",
+        "slash",
+        "dots",
+        "short",
+        "upper-case",
+        "not-hex",
+        "not-a-string",
+        "not-a-mapping",
+    ],
 )
 def test_the_header_refuses_hashes_it_cannot_name(hashes, named) -> None:
     with pytest.raises(ValueError, match=named):

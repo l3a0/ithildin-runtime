@@ -2,7 +2,7 @@
 
 docs/design.md's `### Strategies, schedules and decisions` says what a
 strategy brings. Its instruments and every tracked setting its decisions
-depend on are written in one file, `<strategy>.toml`, in the `strategies`
+depend on, its schedule aside, are written in one file, `<strategy>.toml`, in the `strategies`
 folder beside this package's modules, so the release carries it and it is
 the same in backtest, shadow, paper and live. The file holds a top-level
 `instruments` list and one table per section, such as `[alpha]` or `[cost]`,
@@ -27,9 +27,14 @@ or zero one (hard limit 3). The reader refuses these.
 5. A local time, a local datetime and a datetime whose offset is not UTC's,
    because every time the platform holds is UTC, and a time that follows the
    close is written as minutes before it. A plain date is allowed.
+6. An empty table inside an array, which would read as nothing.
 
-An empty section reads as a missing one, so a blank `[cost]` never reads as
-terms present, and `StrategyConfig.section` halts on either.
+An empty table at any depth reads as absent, so a blank `[cost]` or a
+`[cost]` holding only a blank `[cost.GLD]` never reads as terms present, and
+`StrategyConfig.section` halts on a section that is missing or reads as
+absent. An empty array reads as given, so a module that needs an entry checks
+for one. A datetime keeps at most six digits of a second, as Python's
+`tomllib` reads it.
 """
 
 from __future__ import annotations

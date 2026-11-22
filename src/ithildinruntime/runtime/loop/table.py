@@ -124,6 +124,8 @@ class Table:
             # A stage's name and its strategy say the same thing, so neither
             # may say it alone. A shared stage named for a declared strategy
             # would record every strategy's hash on that strategy's blobs.
+            # Only the `<component>/<strategy>` form can be a strategy's
+            # stage, so no other shape is refused.
             parts = stage.name.split("/")
             if stage.strategy is None and len(parts) == 2 and parts[1] in strategies:
                 raise ValueError(
