@@ -221,14 +221,11 @@ bucket, is a published input, and shadow measures the lag.
 
 #### What is checked before deciding
 
-The data worker runs its own minimum checks before anything decides, and the send stage then tests the flags. Four checks halt or flag a decision.
+The data worker runs its own minimum checks before anything decides. Three checks halt or flag a decision.
 
 1. A missing or stale quote at the decision time halts the decision.
 2. A segment whose SHA-256 does not match its manifest entry halts it too.
-3. A price spike is flagged in the snapshot.
-4. The send stage's flag test halts the decision when the instrument is traded or held.
-
-This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
+3. A price spike is flagged in the snapshot beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 
 #### Which read a decision uses
 

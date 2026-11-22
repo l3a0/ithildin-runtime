@@ -391,7 +391,7 @@ sequenceDiagram
     X->>J: journals its hash
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
-    X->>X: runs the daily loss stop's test and the price spike<br/>flag's test, with no order needed
+    X->>X: runs the daily loss stop's test,<br/>with no order needed
     X->>F: creates stop.json from the stop test's result
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
@@ -546,7 +546,7 @@ The steps run in this order.
 
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
-3. **Run the daily loss stop's test and the price spike flag's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that both run with no order needed, so a decision that plans no order still runs them, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
+3. **Run the daily loss stop's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that it runs with no order needed, so a decision that plans no order still runs it, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
      1. The target.
@@ -840,7 +840,7 @@ Two gaps in that measure halt rather than read as no loss.
 
 #### When the stop is tested
 
-This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test and the price spike flag's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
+This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
 
 The stop has a stated limit: no decision tests the price move from close−20 to the close.
 
@@ -1187,7 +1187,6 @@ stateDiagram-v2
         the lease is lost,
         the cutoff passes,
         clocks disagree,
-        a price is flagged,
         a loss cannot be computed with positions held,
         an order is in doubt,
         or a restart comes mid-send.

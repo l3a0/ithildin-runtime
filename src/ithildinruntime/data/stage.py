@@ -23,9 +23,9 @@ things, in order.
    redelivery.
 4. **It judges the stored snapshot.** A missing or stale instrument, or a bar
    of unstated kind, ends the decision with a halt as data's result that
-   names the stored snapshot, as hard limit 3 asks. A spike flag does not
-   halt here, because #7's send stage halts a decision whose traded or held
-   instrument carries one.
+   names the stored snapshot, as hard limit 3 asks. A spike flag halts
+   nothing. It stays in the stored snapshot beside the price, the owner is
+   alerted, and the decision trades on the price as it arrived.
 5. **It returns the result**, which the loop stores last. The result lists
    the snapshot that counts first, and the attempt that differed after it.
 """

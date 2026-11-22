@@ -787,7 +787,7 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 
 A `Quote` keeps the vendor's stamp as received, the capture time, whether the quote was real time, and its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
 
-A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so the send stage's flag test has a field to read. The price itself stays as received in its bar.
+A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A flag halts nothing, and the price itself stays as received in its bar.
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 

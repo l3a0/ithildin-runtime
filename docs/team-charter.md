@@ -317,9 +317,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   or the gate stopped from reading a price of unstated kind, and stores what a decision or the gate read or a halt refused, and each published text
   its opening names, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Has a backtest halt on a price the live check flags as wrong, through the same modules as live, and a
-  backtest quoted as evidence count the sessions so halted and name each flagged price with any fill,
-  fitted value or mark of the account that read it, and keeps the flag as a record beside the price,
+  Has a backtest read a price the live check flags as wrong as a live decision does, through the same
+  modules as live, and a backtest quoted as evidence count the sessions that read a flagged price and
+  name each one with any fill, fitted value or mark of the account that read it, and keeps the flag as a
+  record beside the price,
   which stays as it arrived, under rule 3 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
   Checks that a backtest quoted as evidence of an order filled at the open or close names the kind of price

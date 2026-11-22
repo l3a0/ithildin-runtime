@@ -1,9 +1,9 @@
 """The spike flag on a daily bar: a record beside a price the data module judges wrong.
 
 This doc's rules are a proposal of #5, which the charter's data engineer owns.
-The flag never replaces the price, which stays as it arrived. #7's send stage
-halts a decision whose traded or held instrument carries one, so a backtest
-meets the same halt as a live decision.
+The flag never replaces the price, which stays as it arrived. A flag halts
+nothing. The owner is alerted, and the decision trades on the price as it
+arrived, so a backtest reads a flagged price as a live decision does.
 
 1. **A bar whose prices contradict each other is flagged.** That is a high
    below its open, close or low, a low above them, or any price at or below

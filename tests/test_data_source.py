@@ -187,7 +187,10 @@ def test_1_a_spike_flag_reaches_the_snapshot_beside_the_unchanged_price(
     lake: Path, tmp_path: Path
 ) -> None:
     lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
-    snap = make(lake, tmp_path).read(close(LAST)).snapshot
+    reading = make(lake, tmp_path).read(close(LAST))
+    # A flag halts nothing, so the decision goes on to trade on the price.
+    assert reading.halts == ()
+    snap = reading.snapshot
     assert snap.bars[GLD]["1d"][-1].high == Decimal("150")
     assert [(f.session, f.field, f.rule) for f in snap.flags[GLD]] == [
         (LAST, "high", spikes.CONTRADICT)

@@ -157,7 +157,7 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
 ) -> None:
     """Exploratory, first pinned at ed9d1f7. GLD reaches 6.59 and USO 5.72.
 
-    So a multiple at or below 6.59 flags a GLD bar and halts test 1.
+    So a multiple at or below 6.59 flags a GLD bar in test 1.
     """
     from tests.support import lake as lakes
     from tests.test_data_source import FIRST, LAST, close, make
