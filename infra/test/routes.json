@@ -2,7 +2,7 @@
   {
     "reader": "smoke",
     "pattern": [{ "wildcard": "runs/ci/*/smoke/*" }],
-    "visibility_timeout_seconds": 31,
+    "visibility_timeout_seconds": 30,
     "max_receive_count": 3
   }
 ]
