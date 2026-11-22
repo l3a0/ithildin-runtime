@@ -218,6 +218,29 @@ def test_a_later_capture_that_differs_is_stored_at_its_attempt_key(spec: StoreSp
     assert spec.open().get(key) == b"read one"
 
 
+def test_an_attempts_alarm_says_when_the_first_capture_cannot_be_read(spec) -> None:
+    """The description reads once, so it sends no outage alarm and waits out no deadline."""
+    flaky = Flaky(spec.open())
+    storage, timer, alarms = _storage(flaky)
+    key = _snapshot_key()
+    storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
+    real = flaky.get
+
+    def get(read):
+        if read == key:
+            raise StoreUnavailable(read, "503 SlowDown: the endpoint is blocked")
+        return real(read)
+
+    flaky.get = get
+    stored = storage.put(
+        StageKind.CAPTURING, key, b"read two", attempt=_attempt(), explain=lambda first: "x"
+    )
+    assert stored.ref.key == _attempt()(2)
+    assert timer.elapsed == 0
+    (reason,) = alarms.reasons
+    assert "The difference could not be described: StoreUnavailable" in reason
+
+
 def test_a_capture_at_a_key_of_its_own_that_differs_halts_and_stays_held(spec: StoreSpec) -> None:
     storage, _, _ = _storage(spec.open())
     key = core.broker_read_key("ci", RUN, AT, 1)

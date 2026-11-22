@@ -58,7 +58,13 @@ def test_a_high_below_its_close_is_flagged_beside_the_unchanged_price() -> None:
         CONTRADICT,
     )
     assert odd.high == Decimal("99.9999")
-    assert "the source stated no volume" in flag.note
+    assert "the bar carries no volume" in flag.note
+
+
+def test_a_high_below_its_open_alone_is_flagged() -> None:
+    odd = bar(0, "100.0000", high="100.5000", low="99.0000", open="101.0000")
+    (flag,) = spike_flags([odd], Decimal(100))
+    assert (flag.field, flag.against) == ("high", Decimal("101.0000"))
 
 
 def test_a_low_above_its_open_is_flagged() -> None:
@@ -112,6 +118,13 @@ def test_a_move_is_judged_against_the_other_returns_only() -> None:
 def test_a_lookback_with_too_few_returns_judges_none() -> None:
     flags = spike_flags(series("100", "150", "100"), Decimal("0.1"))
     assert [f for f in flags if f.rule == MOVE] == []
+
+
+def test_a_move_after_returns_that_are_all_equal_is_flagged() -> None:
+    flat = series("100", "100", "100", "100", "101")
+    (flag,) = [f for f in spike_flags(flat, Decimal(1000)) if f.rule == MOVE]
+    assert flag.session == flat[-1].session
+    assert spike_flags(series("100", "100", "100", "100"), Decimal(1)) == ()
 
 
 def test_the_multiple_is_a_positive_decimal() -> None:

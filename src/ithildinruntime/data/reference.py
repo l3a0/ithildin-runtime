@@ -16,6 +16,12 @@ compare with.
    each bar when it is read, so a later row never changes what a recorded bar
    says. A source with no row, or a session outside its row's span, reads
    `unstated` throughout.
+
+In both files each row carries the date it was `added`. A row that corrects
+an earlier one is a new row with a later `added` date over the sessions it
+corrects, and on those sessions it supersedes every row added before it, so
+the earlier row stays in the file as it was. Two rows added on one date that
+cover one session are refused.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ CAPTURE_SOURCE = "marketlake:capture"
 
 @dataclass(frozen=True)
 class MasterRow:
+    added: date
     id: InstrumentId
     ticker: str
     first_session: date
@@ -68,7 +75,7 @@ class SecurityMaster:
 
     def ticker(self, instrument: InstrumentId, day: date) -> str:
         """marketlake's ticker for `instrument` on `day`, halting when no row covers it."""
-        found = [r for r in self.rows if r.id == instrument and r.covers(day)]
+        found = _latest([r for r in self.rows if r.id == instrument and r.covers(day)])
         if not found:
             raise Halt(
                 f"{instrument} has no security master row valid on {day.isoformat()}, "
@@ -112,10 +119,24 @@ class PriceKinds:
 
     def kind(self, source: str, day: date) -> Kind:
         """What `source` states for `day`, or `unstated` throughout where it states nothing."""
-        for row in self.rows:
-            if row.source == source and row.first_session <= day <= row.last_session:
-                return row.kind
-        return NOT_STATED
+        found = _latest(
+            [
+                r
+                for r in self.rows
+                if r.source == source and r.first_session <= day <= r.last_session
+            ]
+        )
+        if len(found) > 1:
+            raise Halt(f"{source} has {len(found)} price-kind rows on {day.isoformat()}")
+        return found[0].kind if found else NOT_STATED
+
+
+def _latest[R: (MasterRow, KindRow)](rows: list[R]) -> list[R]:
+    """The rows added last, which supersede every row added before them."""
+    if not rows:
+        return rows
+    newest = max(r.added for r in rows)
+    return [r for r in rows if r.added == newest]
 
 
 def _rows(path: Path, header: Sequence[str]) -> list[dict[str, str]]:
@@ -136,10 +157,12 @@ def _day(text: str, where: str) -> date:
 
 def load_master(path: Path = MASTER) -> SecurityMaster:
     rows = []
-    for n, raw in enumerate(_rows(path, ("id", "ticker", "first_session", "last_session")), 1):
+    header = ("added", "id", "ticker", "first_session", "last_session")
+    for n, raw in enumerate(_rows(path, header), 1):
         where = f"{path.name} row {n}"
         last = raw["last_session"]
         row = MasterRow(
+            added=_day(raw["added"], where),
             id=InstrumentId(raw["id"]),
             ticker=raw["ticker"],
             first_session=_day(raw["first_session"], where),
@@ -150,8 +173,8 @@ def load_master(path: Path = MASTER) -> SecurityMaster:
         if row.last_session is not None and row.last_session < row.first_session:
             raise Halt(f"{where} ends before it starts")
         for other in rows:
-            if other.id == row.id and _overlap(other, row):
-                raise Halt(f"{where} overlaps another row of {row.id}")
+            if other.id == row.id and other.added == row.added and _overlap(other, row):
+                raise Halt(f"{where} overlaps another row of {row.id} added the same day")
         rows.append(row)
     return SecurityMaster(tuple(rows))
 
@@ -197,9 +220,13 @@ def load_price_kinds(path: Path = PRICE_KINDS) -> PriceKinds:
         for other in rows:
             if (
                 other.source == row.source
+                and other.added == row.added
                 and other.first_session <= row.last_session
                 and row.first_session <= other.last_session
             ):
-                raise Halt(f"{where} covers a session another row of {row.source} covers")
+                raise Halt(
+                    f"{where} covers a session another row of {row.source} "
+                    "added the same day covers"
+                )
         rows.append(row)
     return PriceKinds(tuple(rows))

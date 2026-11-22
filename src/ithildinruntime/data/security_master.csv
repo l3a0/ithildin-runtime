@@ -1,12 +1,14 @@
 # The security master: each instrument's runtime id, marketlake's ticker for it,
 # and the first and last session the mapping holds, the last empty while it trades.
-# Rows are only ever added. A rename or a delisting is a new dated row, never an
-# edit or a removal, and an id is never reused. tests/test_data_files.py pins every
-# row, so an edit or a removal fails CI.
-id,ticker,first_session,last_session
-GLD,GLD,2004-11-18,
-USO,USO,2006-04-10,
-SPY,SPY,1993-01-29,
-QQQ,QQQ,1999-03-10,2004-11-30
-QQQ,QQQQ,2004-12-01,2011-03-22
-QQQ,QQQ,2011-03-23,
+# Rows are only ever added, each dated by `added`. A rename or a delisting is a new
+# row, never an edit or a removal, and an id is never reused. A row that corrects an
+# earlier one is a new row with a later `added` date, which supersedes the earlier
+# row on the sessions both cover. tests/test_data_files.py pins every row, so an edit
+# or a removal fails CI.
+added,id,ticker,first_session,last_session
+2026-11-22,GLD,GLD,2004-11-18,
+2026-11-22,USO,USO,2006-04-10,
+2026-11-22,SPY,SPY,1993-01-29,
+2026-11-22,QQQ,QQQ,1999-03-10,2004-11-30
+2026-11-22,QQQ,QQQQ,2004-12-01,2011-03-22
+2026-11-22,QQQ,QQQ,2011-03-23,

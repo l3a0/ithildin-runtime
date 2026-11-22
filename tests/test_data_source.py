@@ -33,8 +33,9 @@ from ithildinruntime.core import (
     from_received,
     load_sessions,
 )
-from ithildinruntime.data import DataSettings, LakeSource, Mirror, source
+from ithildinruntime.data import DataSettings, LakeSource, Mirror, source, spikes
 from ithildinruntime.data.reference import (
+    CAPTURE_SOURCE,
     Kind,
     KindRow,
     MasterRow,
@@ -182,6 +183,30 @@ def test_1_a_snapshot_at_the_close_holds_each_bar_as_received(
         assert all(held[d] == from_received(float(rows[d])) for d in held)
 
 
+def test_1_a_spike_flag_reaches_the_snapshot_beside_the_unchanged_price(
+    lake: Path, tmp_path: Path
+) -> None:
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    snap = make(lake, tmp_path).read(close(LAST)).snapshot
+    assert snap.bars[GLD]["1d"][-1].high == Decimal("150")
+    assert [(f.session, f.field, f.rule) for f in snap.flags[GLD]] == [
+        (LAST, "high", spikes.CONTRADICT)
+    ]
+    assert GLD in snap.flags and USO not in snap.flags
+
+
+def test_1_the_ports_snapshot_halts_where_a_stored_snapshot_would(
+    lake: Path, tmp_path: Path
+) -> None:
+    """`core.DataSource.snapshot` has no halts beside it, so a stale input raises."""
+    unlist(lake, lakes.partition_key("USO", LAST))
+    unlist(lake, lakes.partition_key("USO", before(LAST)))
+    src = make(lake, tmp_path)
+    assert src.read(close(LAST)).halts
+    with pytest.raises(Halt, match="USO stale for the decision"):
+        src.snapshot(close(LAST))
+
+
 # 2. The start of a series.
 
 
@@ -260,6 +285,46 @@ def test_4_a_captured_bar_with_no_fetch_stamp_halts(lake: Path, tmp_path: Path) 
         make(lake, tmp_path).read(close(LAST))
 
 
+def test_4_an_imported_bar_with_fetch_stamps_is_known_from_its_end(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The Schwab import's rows carry fetch stamps, and an imported bar ignores them."""
+    later = (close(LAST) + timedelta(days=3)).isoformat()
+    lakes.with_row(lake, "GLD", LAST, fetch_ts=later, fetch_end_ts=later)
+    newest = make(lake, tmp_path).read(close(LAST)).snapshot.bars[GLD]["1d"][-1]
+    assert newest.session == LAST and newest.knowable_at == close(LAST)
+    assert newest.fetched == later and newest.fetched_end == later
+
+
+def test_4_a_captured_bar_reads_its_kind_from_the_capture_row(lake: Path, tmp_path: Path) -> None:
+    fetched = (close(LAST) + timedelta(hours=2)).isoformat()
+    lakes.captured(lake, "USO", LAST, fetch_ts=fetched)
+    stated = Kind("last trade", "consolidated", "none", "consolidated")
+    kinds = PriceKinds((KindRow(date(2026, 11, 22), CAPTURE_SOURCE, LAST, LAST, stated, "a test"),))
+    reading = make(lake, tmp_path, kinds=kinds).read(close(LAST) + timedelta(days=1))
+    assert reading.snapshot.bars[USO]["1d"][-1].price_kind == "last trade"
+
+
+@pytest.mark.parametrize("name", ["open", "high", "low", "close"])
+def test_4_a_bar_with_no_price_halts(lake: Path, tmp_path: Path, name: str) -> None:
+    lakes.with_row(lake, "GLD", LAST, **{name: None})
+    with pytest.raises(Halt, match=f"GLD on {LAST} has no {name}"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def test_a_decision_time_that_is_not_utc_is_refused(lake: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="a decision time is UTC"):
+        make(lake, tmp_path).read(close(LAST).astimezone(lakes.MARKET_TZ))
+
+
+def test_a_decision_before_the_session_table_halts(lake: Path, tmp_path: Path) -> None:
+    first = TABLE.first
+    with pytest.raises(Halt, match="outside the session table's range"):
+        make(lake, tmp_path).read(
+            datetime(first.year, first.month, first.day, tzinfo=UTC) - timedelta(days=1)
+        )
+
+
 # 5. A missing session.
 
 
@@ -301,9 +366,14 @@ def test_6_an_absent_lag_halts(lake: Path, tmp_path: Path) -> None:
 
 
 def test_7_two_rows_for_one_session_halt(lake: Path, tmp_path: Path) -> None:
-    lakes.doubled(lake, "GLD", before(LAST, 2))
-    with pytest.raises(Halt, match=f"GLD holds 2 daily rows for the session of {before(LAST, 2)}"):
+    key = lakes.doubled(lake, "GLD", before(LAST, 2))
+    with pytest.raises(
+        Halt, match=f"GLD holds 2 daily rows for the session of {before(LAST, 2)}"
+    ) as e:
         make(lake, tmp_path).read(close(LAST))
+    # No snapshot is stored, so the halt names the file and its version.
+    sha = hashlib.sha256((lake / key).read_bytes()).hexdigest()
+    assert str(e.value).endswith(f"Read from {key} at SHA-256 {sha}, bucket version {sha}")
 
 
 # 8. Every other answer.
@@ -422,6 +492,34 @@ def test_10_a_manifest_cut_short_mid_line_halts(lake: Path, tmp_path: Path) -> N
     manifest.write_bytes(manifest.read_bytes()[:-20])
     with pytest.raises(Halt, match="does not end in a newline"):
         make(lake, tmp_path).read(close(LAST))
+
+
+def test_10_a_whole_entry_hidden_behind_a_damaged_line_mid_file_halts(
+    lake: Path, tmp_path: Path
+) -> None:
+    manifest = lake / "manifest.jsonl"
+    lines = manifest.read_bytes().splitlines(keepends=True)
+    middle = len(lines) // 2
+    manifest.write_bytes(b"".join([*lines[:middle], b'{"torn": \n', *lines[middle:]]))
+    with pytest.raises(Halt, match="manifest.jsonl cannot be read: TornLedger"):
+        make(lake, tmp_path).read(close(LAST))
+
+
+def test_10_a_manifest_sha256_that_is_not_hex_halts_and_touches_nothing_outside(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The mirror names stored files by the manifest's SHA-256, so a path in it must not climb."""
+    victim = tmp_path / "victim"
+    victim.write_text("kept")
+    key = lakes.partition_key("GLD", LAST)
+    climb = "../" * 4 + "victim"
+    entry = json.loads((lake / "manifest.jsonl").read_text().splitlines()[-1])
+    entry.update(partition=key, sha256=climb + "x" * (64 - len(climb)))
+    with (lake / "manifest.jsonl").open("a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+    with pytest.raises(Halt, match="records no SHA-256 for " + key):
+        make(lake, tmp_path).read(close(LAST))
+    assert victim.read_text() == "kept"
 
 
 def test_10_a_failed_manifest_download_halts_with_an_older_copy_held(
@@ -634,6 +732,19 @@ def test_16_a_bar_of_unstated_kind_halts_after_the_snapshot(lake: Path, tmp_path
     assert any("GLD's bar" in r and "unstated price kind" in r for r in reading.halts)
 
 
+@pytest.mark.parametrize("silent", ["price_kind", "venues", "delay", "volume_counted"])
+def test_16_any_one_unstated_field_halts_and_is_named(
+    lake: Path, tmp_path: Path, silent: str
+) -> None:
+    fields = {"price_kind": "official close", "venues": "consolidated", "delay": "none"}
+    fields["volume_counted"] = "consolidated"
+    fields[silent] = "unstated"
+    rows = tuple(replace(r, kind=Kind(**fields)) for r in _kinds(FIRST, LAST).rows)
+    reading = make(lake, tmp_path, kinds=PriceKinds(rows)).read(close(LAST))
+    named = {"price_kind": "price kind", "volume_counted": "volume counting"}.get(silent, silent)
+    assert any(f"has unstated {named}, from" in r for r in reading.halts)
+
+
 @pytest.mark.parametrize(("shift", "halts"), [(-1, False), (0, False), (1, True)])
 def test_16_a_session_outside_its_sources_row_reads_unstated(
     lake: Path, tmp_path: Path, shift: int, halts: bool
@@ -655,7 +766,9 @@ def test_17_an_instrument_with_no_master_row_on_a_session_halts(
 ) -> None:
     rows = tuple(r for r in load_master().rows if r.id != USO)
     last = DAYS[DAYS.index(LAST) + ends]
-    master = SecurityMaster((*rows, MasterRow(USO, "USO", date(2006, 4, 10), last)))
+    master = SecurityMaster(
+        (*rows, MasterRow(date(2026, 11, 22), USO, "USO", date(2006, 4, 10), last))
+    )
     src = make(lake, tmp_path, master=master)
     if halts:
         with pytest.raises(Halt, match=f"USO has no security master row valid on {LAST}"):
@@ -733,6 +846,38 @@ def test_a_version_record_lost_from_the_mirror_is_downloaded_again(
     assert snap.bars[GLD]["1d"][-1].vintage_id == f"{key}#sha256={sha}#version={sha}"
     records = [json.loads(p.read_text()) for p in (tmp_path / "mirror" / "versions").iterdir()]
     assert {"key": key, "version": sha} in records
+
+
+def test_a_version_record_for_another_key_is_not_trusted(lake: Path, tmp_path: Path) -> None:
+    bucket = Counting(FolderBucket(lake))
+    src = make(lake, tmp_path, bucket=bucket)
+    src.read(close(LAST))
+    for record in (tmp_path / "mirror" / "versions").iterdir():
+        held = json.loads(record.read_text())
+        record.write_text(json.dumps({**held, "key": "bars/another"}))
+    bucket.reads.clear()
+    src.read(close(LAST))
+    assert lakes.partition_key("GLD", LAST) in bucket.reads
+
+
+def test_a_changed_reader_file_reads_each_session_again(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An answer is kept by the hashes of every reader file, as well as its partition."""
+    calls: list[date] = []
+    real = source.load_bars
+
+    def counted(ticker, interval, *, start, **kwargs):
+        calls.append(start)
+        return real(ticker, interval, start=start, **kwargs)
+
+    monkeypatch.setattr(source, "load_bars", counted)
+    src = make(lake, tmp_path)
+    src.read(close(LAST))
+    first = len(calls)
+    _quarantine(lake, before(LAST, 200))
+    src.read(close(LAST))
+    assert len(calls) == 2 * first
 
 
 def test_a_folder_bucket_reads_a_missing_key_as_blob_missing(lake: Path) -> None:

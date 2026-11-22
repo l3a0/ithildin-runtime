@@ -12,7 +12,9 @@ How one decision fills its lake root, in order.
    cut short would read an older entry and admit a superseded partition. So
    the bytes must match the SHA-256 the bucket stored with them, the file must
    end in a newline, and a download that fails halts rather than falling back
-   to a copy already held.
+   to a copy already held. A whole line hidden behind damage inside the file
+   halts too, through marketlake's own `refuse_damaged_manifest`, because
+   the tolerant read would skip it and answer without it.
 2. **Both ledgers must be listed and present.** `lake.paths.is_reader_file`
    says a missing `quarantine.jsonl` admits a withheld partition and a missing
    `actions/corporate_actions.jsonl` labels as-traded numbers adjusted, so
@@ -37,6 +39,8 @@ How one decision fills its lake root, in order.
    links to the files it checked.
 6. **A file the bucket reports with no version, or with no stored SHA-256,
    halts**, because a bar's `vintage_id` names its partition by that version.
+   A manifest SHA-256 that is not 64 lowercase hex digits halts as well,
+   because the mirror names its stored files by it.
 
 The mirror never writes to the bucket. `core.Bucket` has no call that could.
 """
@@ -46,13 +50,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from lake.manifest import ManifestError, latest_entries
+from lake.manifest import ManifestError, latest_entries, read_manifest, refuse_damaged_manifest
 from lake.paths import is_reader_file
 
 from ithildinruntime.core import BlobMissing, Bucket, BucketObject, Halt, StoreError
@@ -122,6 +127,7 @@ class Mirror:
                 )
             self._link(path, MANIFEST, manifest.sha256)
             try:
+                refuse_damaged_manifest(path, data, read_manifest(path))
                 entries = latest_entries(path)
             except ManifestError as error:
                 raise Halt(f"{MANIFEST} cannot be read: {type(error).__name__}: {error}") from None
@@ -204,10 +210,13 @@ class Mirror:
         os.link(self._object(sha), target)
 
 
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
 def _manifest_sha(entry: Mapping[str, object], key: str) -> str:
     sha = entry.get("sha256")
-    if not isinstance(sha, str) or len(sha) != 64:
-        raise Halt(f"{MANIFEST} records no SHA-256 for {key}")
+    if not isinstance(sha, str) or _SHA256.fullmatch(sha) is None:
+        raise Halt(f"{MANIFEST} records no SHA-256 for {key}, as 64 lowercase hex digits")
     return sha
 
 

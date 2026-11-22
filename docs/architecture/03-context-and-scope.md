@@ -176,7 +176,7 @@ sets decides at the same minute.
 
 The data worker reads an unsealed day through the one reader marketlake
 publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004),
-which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. The
+which [#100](https://github.com/l3a0/ithildin-runtime/issues/100), part B of [#5](https://github.com/l3a0/ithildin-runtime/issues/5), waits on. The
 reader comes from marketlake's package, a dependency at a pinned commit. The
 read takes three steps.
 
@@ -217,7 +217,7 @@ bucket, is a published input, and shadow measures the lag.
 | --- | --- |
 | A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
 | marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
-| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how the decision treats that quote |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) holds how the decision treats that quote |
 
 #### What is checked before deciding
 
@@ -277,7 +277,7 @@ follow the seal.
 A missing result, or a sealed day that never arrives, pages and stops no
 decision.
 
-This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5),
+This doc proposes, for [#100](https://github.com/l3a0/ithildin-runtime/issues/100),
 that the comparison also takes the newest sealed row at or before the decision
 time, so a row whose segment landed after the decision shows as a difference.
 
@@ -305,7 +305,7 @@ does.
 #### What this rests on
 
 The provisional read is proposed for
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#100](https://github.com/l3a0/ithildin-runtime/issues/100), part B of [#5](https://github.com/l3a0/ithildin-runtime/issues/5), and
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16). It rests on five
 things about marketlake's segments.
 

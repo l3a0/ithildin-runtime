@@ -7,9 +7,12 @@ things, in order.
 1. **It waits for the decision time** through `Clock.wait_until`, handing the
    loop's `report` along, so a wall clock keeps the heartbeat beating while
    it waits and a history clock returns at once. Data holds no branch on the
-   mode. A stop during the wait ends the handler with the process, and the
-   decision runs again after the restart, which is safe because it has
-   written nothing.
+   mode. A stop does not reach a handler waiting here, because the receive
+   loop hands a handler no stop signal, so the process stays up until the
+   wait ends. The wait has written nothing, so a decision cut off by the
+   host's restart runs again safely, but a stop that should end the process
+   at once cannot yet. #107 holds the fix, because a stop that leaves the
+   decision for redelivery needs the loop to say so.
 2. **It reads the snapshot** through `LakeSource`. A read that cannot give a
    snapshot raises `Halt`, which the loop stores as data's result.
 3. **It stores the snapshot** through `core.Storage`'s rule for a capturing

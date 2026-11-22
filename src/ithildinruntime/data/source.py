@@ -180,7 +180,17 @@ class LakeSource:
         self._answers = _Answers()
 
     def snapshot(self, decision_at: datetime) -> Snapshot:
-        return self.read(decision_at).snapshot
+        """The port's read, which halts on any reason a stored snapshot would halt on.
+
+        `core.DataSource` returns a snapshot alone, so a caller of this method
+        never sees `Reading.halts`. A missing, stale or unstated input therefore
+        raises here rather than come back as a snapshot that reads as usable.
+        Data's stage calls `read`, which stores the snapshot before it halts.
+        """
+        reading = self.read(decision_at)
+        if reading.halts:
+            raise Halt("; ".join(reading.halts))
+        return reading.snapshot
 
     def read(self, decision_at: datetime) -> Reading:
         """Read one decision's snapshot, raising `Halt` where no snapshot can be stored."""
@@ -274,10 +284,21 @@ class LakeSource:
     ) -> list[Bar]:
         held: list[Bar] = []
         for day, ticker, key in plan:
-            row = self._answer(root, ticker, day, key)
-            if row is None:
-                continue
-            bar = self._bar(instrument, day, key, root, row, read_at)
+            try:
+                row = self._answer(root, ticker, day, key)
+                if row is None:
+                    continue
+                bar = self._bar(instrument, day, key, root, row, read_at)
+            except Halt as halt:
+                checked = root.files.get(key)
+                if checked is None:
+                    raise
+                # No snapshot is stored for this decision, so the halt names the
+                # file it read, which the bucket keeps by this version.
+                raise Halt(
+                    f"{halt}. Read from {key} at SHA-256 {checked.sha256}, "
+                    f"bucket version {checked.version}"
+                ) from None
             if bar.end <= decision_at and bar.knowable_at <= decision_at:
                 held.append(bar)
         return held

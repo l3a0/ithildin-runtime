@@ -12,9 +12,11 @@ meets the same halt as a live decision.
    deviation of daily returns is flagged.** Each return is judged against the
    sample standard deviation of the lookback's other returns, so a spike does
    not widen the yardstick it is measured with. A lookback with fewer than
-   three returns judges none. The charter discounts a spike that traded on
+   three returns judges none. Where the other returns are all equal, any move
+   apart from them is flagged, because no multiple of a zero spread bounds it.
+   The charter discounts a spike that traded on
    little volume, and no volume threshold is written yet, so nothing is
-   discounted. Each flag on a bar with no stated volume says so.
+   discounted. Each flag on a bar that carries no volume says so.
 
 The arithmetic is decimal at 28 digits, so two runs flag the same bars.
 """
@@ -31,7 +33,7 @@ __all__ = ["CONTRADICT", "MOVE", "largest_multiple", "spike_flags"]
 CONTRADICT = "prices contradict each other"
 MOVE = "close-to-close move past the written multiple"
 _CONTEXT = Context(prec=28)
-_NO_VOLUME = "the source stated no volume, so the flag weighs none"
+_NO_VOLUME = "the bar carries no volume, so the flag weighs none"
 _VOLUME_NOT_WEIGHED = "no volume threshold is written, so the flag weighs no volume"
 
 
@@ -90,7 +92,11 @@ def _multiples(bars: Sequence[Bar]) -> list[tuple[int, Decimal]]:
         if len(others) < 2:
             continue
         std = _std(others)
-        if std is None or std == 0:
+        if std is None:
+            continue
+        if std == 0:
+            if r != others[0]:
+                out.append((i + 1, Decimal("Infinity")))
             continue
         out.append((i + 1, _CONTEXT.divide(abs(r), std)))
     return out

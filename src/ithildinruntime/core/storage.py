@@ -512,7 +512,7 @@ class Storage:
                     reason = (
                         f"{held.key} holds a capture with SHA-256 {counts.sha256}, and a "
                         f"later capture with SHA-256 {held.sha256} is stored at {key}"
-                        f"{self._explained(held, once)}"
+                        f"{self._explained(held)}"
                     )
                     done = Stored(BlobRef(key, held.sha256), counts)
                     try:
@@ -537,12 +537,14 @@ class Storage:
                 )
             n += 1
 
-    def _explained(self, held: _Held, once: bool) -> str:
+    def _explained(self, held: _Held) -> str:
         """What `held.explain` says of the difference, as the end of an alarm's reason."""
         if held.explain is None:
             return ""
         try:
-            first = self._read(held.key, once)
+            # One try with no retry, so a read that fails sends no outage alarm
+            # and does not hold back the alarm this reason belongs to.
+            first = self._read(held.key, True)
             if first is None:
                 return f". {held.key} read as missing, so the difference is not known"
             return f". {held.explain(first)}"

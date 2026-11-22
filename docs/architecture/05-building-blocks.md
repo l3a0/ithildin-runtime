@@ -185,7 +185,7 @@ The figure below is a C4 component diagram.
 flowchart LR
     subgraph sees["What a strategy sees"]
         direction TB
-        data["Data source"] ~~~ clock["Clock"] ~~~ broker["Broker"]
+        data["Data source's bucket"] ~~~ clock["Clock"] ~~~ broker["Broker"]
     end
     modules["The same modules<br/>in every mode"]
     subgraph goes["Where records and signals go"]
@@ -199,7 +199,7 @@ flowchart LR
 [design.md](../design.md#one-runtime) names the three adapters that change what a
 strategy sees:
 
-1. The data source.
+1. The data source's bucket, a folder in a backtest and marketlake's S3 bucket otherwise.
 2. The clock.
 3. The broker.
 
@@ -317,6 +317,14 @@ classDiagram
         +list segments
         +dict ledgers
         +require_fresh(needed)
+    }
+    class SpikeFlag {
+        +date session
+        +str field
+        +Decimal price
+        +Decimal against
+        +str rule
+        +str note
     }
     class Quote {
         +InstrumentId instrument
@@ -525,6 +533,7 @@ classDiagram
 
     Snapshot o-- Bar
     Snapshot o-- Quote
+    Snapshot o-- SpikeFlag
     Bar --> Instrument
     Quote --> Instrument
     Forecast --> Basket
@@ -568,6 +577,12 @@ classDiagram
     class Bucket {
         <<Protocol>>
         +read(key) BucketObject
+    }
+    class BucketObject {
+        +str key
+        +bytes data
+        +str or None version
+        +str or None sha256
     }
     class Timer {
         <<Protocol>>
@@ -705,7 +720,7 @@ classDiagram
     OrderPath o-- RiskGate
     OrderPath o-- Broker
     DataSource ..> Snapshot
-    DataSource ..> Bucket
+    Bucket ..> BucketObject
     AlphaModel ..> Forecast
     RiskModel ..> Constraints
     CostModel ..> CostSchedule
@@ -761,7 +776,7 @@ A bar also names each price's kind, the venues it covers and any delay from its 
 
 ##### Which bars a snapshot returns
 
-Every `DataSource` adapter applies one rule: `snapshot(decision_at)` returns only bars whose `end` and knowable time are both at or before the decision time. Three rules set those times.
+The data source applies one rule in every mode: `snapshot(decision_at)` returns only bars whose `end` and knowable time are both at or before the decision time. Four rules set those times.
 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.

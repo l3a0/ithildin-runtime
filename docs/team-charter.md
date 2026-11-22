@@ -76,8 +76,8 @@ keeps the same way.
 
 From those three follows the architecture's one rule: **what is tested is what
 runs live.** Backtest, paper and live trading run the same modules through the
-same interfaces, and differ only in the adapter at each edge (data source,
-clock, broker). A backtester written separately from the live engine is a
+same interfaces, and differ only in the adapter at each edge (data source's
+bucket, clock, broker). A backtester written separately from the live engine is a
 second implementation of the strategy, and the two drift without either looking
 wrong. Narang names backtest software and feed handlers as places model risk
 lives (L4616).
