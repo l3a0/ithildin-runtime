@@ -328,6 +328,64 @@ def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -
     assert (folder.root / capture).exists() and made._storage.unstored() == ()
 
 
+class AnswersCaptureWithAnError(RefusingResults):
+    """S3 answers the capture with an error, not a refusal to answer, until a case lets it."""
+
+    def create(self, key, data, sha256):
+        if self.down and key.endswith("/alpha/capture.json"):
+            self.tries += 1
+            raise PermissionError(f"AccessDenied on {key}")
+        return self._store.create(key, data, sha256)
+
+
+def test_a_capture_s3_keeps_answering_with_an_error_holds_the_process_and_is_never_dropped(
+    tmp_path,
+) -> None:
+    from ithildinruntime.core import StageKind, output_key
+
+    refusing: list = []
+
+    def wrap(base):
+        refusing.append(AnswersCaptureWithAnError(base))
+        return refusing[0]
+
+    holder: dict = {}
+    capture = output_key(DEPLOYMENT, RUN, FIRST, "alpha", "capture")
+
+    def alpha(item: Item, report):
+        holder["store"].put(StageKind.CAPTURING, capture, b"what the broker said")
+        raise AssertionError("put should halt while S3 answers the capture with an error")
+
+    beats: list = []
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        wrap=wrap,
+        decisions=1,
+        extend_every=0.1,
+        tick=0.02,
+        beat=lambda: beats.append(None),
+    )
+    holder["store"] = made._storage
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert _wait(lambda: (folder.root / _key("alpha")).exists(), 10)
+    made.stop()
+    assert _wait(lambda: any("S3 has not stored" in r for r in alarms.reasons), 10)
+    tries = refusing[0].tries
+    # It keeps the capture, retrying and beating, however long S3 keeps answering so.
+    assert _holds_alive(thread, beats) and _holds_alive(thread, beats)
+    assert refusing[0].tries > tries
+    assert [ref.key for ref in made._storage.unstored()] == [capture]
+    holding = [r for r in alarms.reasons if "S3 has not stored" in r]
+    assert len(holding) == 1 and "until a person acts" in holding[0]
+    assert not [r for r in alarms.reasons if "could not be stored" in r]
+    refusing[0].down = False
+    thread.join(10)
+    assert not thread.is_alive() and not failures
+    assert (folder.root / capture).exists() and made._storage.unstored() == ()
+
+
 @pytest.mark.parametrize("ends", ["stop", "queue-fails"])
 def test_a_handler_past_the_stop_timeout_ends_with_the_process_and_the_drain_beats(
     tmp_path, ends: str
@@ -963,7 +1021,7 @@ def test_a_process_that_stopped_receiving_beats_over_a_silent_handler_while_it_h
     assert not thread.is_alive()
 
 
-def test_a_process_still_receiving_stops_beating_over_a_silent_handler_while_it_holds(
+def test_a_process_still_receiving_beats_over_a_silent_handler_only_while_it_holds(
     tmp_path,
 ) -> None:
     import time
@@ -975,9 +1033,16 @@ def test_a_process_still_receiving_stops_beating_over_a_silent_handler_while_it_
     thread, failures = _run_in_thread(made)
     try:
         assert _wait(lambda: made._storage.unstored() != (), 10)
+        at = time.monotonic()
         time.sleep(1.0)
-        # Still receiving, with a capture held: item 7's rule stands, so the
-        # watchdog can kill a container whose handler hangs.
+        # Still receiving, with a capture held, it beats over the silent
+        # handler, so the watchdog does not kill it and lose the capture.
+        assert thread.is_alive() and not made._stopping
+        assert len([b for b in beats if b >= at]) > 10
+        refusing[0].down = False
+        assert _wait(lambda: made._storage.unstored() == (), 10)
+        time.sleep(0.5)
+        # Nothing is held now, so the silent handler stops the beat again.
         assert thread.is_alive() and not made._stopping
         assert not [b for b in beats if b >= time.monotonic() - 0.3]
     finally:

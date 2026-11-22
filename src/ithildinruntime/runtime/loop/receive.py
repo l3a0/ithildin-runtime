@@ -54,13 +54,14 @@ How the loop runs, in order.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
-   container with a hung handler, except while item 9 holds. Extending a
+   container with a hung handler, except while the process holds a halt or a
+   capture S3 has not stored, whether or not it is still receiving. A hung
+   handler stops renewing its lease all the same. Extending a
    message runs beside the beat, so a slow queue call never holds the
    heartbeat back.
 8. **Ending drains the pool.** However the loop ends, by `stop`, by a
    failure or by a bug, it stops receiving and gives each handler the stop
-   timeout to finish. It beats by item 7's rule, or by item 9's once
-   something is held. A message whose handler did not finish goes back to
+   timeout to finish, beating by item 7's rule. A message whose handler did not finish goes back to
    the queue, and so does one a receive answers after the loop stopped. A
    handler still working when the stop timeout passes ends with the
    process, as in a crash, and its decision is done again after the
@@ -68,13 +69,14 @@ How the loop runs, in order.
 9. **A process that holds what S3 has not stored stays alive.** After the
    drain it retries each halt it could not store and each capture the
    storage contract holds every `extend_every`, quietly, since the first
-   refusal alarmed. From the moment receiving stops it beats whatever its
-   handlers do, so the host's watchdog does not kill it, and it alarms
+   refusal alarmed. It beats whatever its handlers do while it holds them,
+   as item 7 says, so the host's watchdog does not kill it, and it alarms
    naming each blob and why receiving stopped, again until the alert
-   channel takes it. A
-   halt S3 answered and will not store, such as one whose key holds another
-   result, is dropped with an alarm giving its reason. A capture is never
-   dropped. `run` returns or raises only once nothing is held. The price is
+   channel takes it. A halt S3 answered and will not store, such as one
+   whose key holds bytes nothing reads or another result, is dropped with an
+   alarm giving its reason. A capture is never dropped, so one S3 keeps
+   answering with an error holds the process until a person acts. `run`
+   returns or raises only once nothing is held. The price is
    a process that holds a host slot without receiving through an outage, and
    one whose hung handler is not killed while it holds them.
 
@@ -445,7 +447,8 @@ class ReceiveLoop:
                 f"{self._worker} holds {len(held)} {blobs} S3 has not stored: "
                 f"{', '.join(held)}. It stopped receiving because {self._why_stopped()}. "
                 "It keeps retrying them, and exits once they are stored, unless the host "
-                "kills it first, which loses them"
+                "kills it first, which loses them. A capture S3 keeps answering with an "
+                "error is never dropped, so it holds the process until a person acts"
             )
         except Exception:
             # Sent again on the next try, since this alarm alone tells a
@@ -942,10 +945,10 @@ class ReceiveLoop:
     # The heartbeat and the visibility of held messages
 
     async def _beater(self) -> None:
-        """Beat each tick: by item 7's rule, or whatever the handlers do once a
-        process that has stopped receiving holds what S3 has not stored."""
+        """Beat each tick: whatever the handlers do while the process holds what
+        S3 has not stored, and by item 7's rule otherwise."""
         while True:
-            if self._stopping and self._held_keys():
+            if self._held_keys():
                 self._beat_quietly()
             else:
                 self._beat_if_reporting()
