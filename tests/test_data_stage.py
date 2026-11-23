@@ -313,12 +313,21 @@ def test_18_a_redelivery_names_the_release_before_any_halt_the_capture_holds(
     )
 
 
+@pytest.mark.parametrize(
+    "change", ["every hash", "one hash", "a strategy since added", "a strategy since removed"]
+)
 def test_18_a_redelivery_halts_on_a_capture_written_under_other_configuration_hashes(
-    lake: Path, tmp_path: Path
+    lake: Path, tmp_path: Path, change: str
 ) -> None:
+    ours = dict(TABLE.hashes_for("data"))
+    other = {
+        "every hash": {"chan": "d" * 64, "other": "e" * 64},
+        "one hash": {**ours, "other": "e" * 64},
+        "a strategy since added": {"chan": ours["chan"]},
+        "a strategy since removed": {**ours, "third": "f" * 64},
+    }[change]
     clock = Ticking()
     _, storage, _ = stage(lake, tmp_path, clock=clock)
-    other = {"chan": "d" * 64, "other": "e" * 64}
     assert (
         _again(lake, tmp_path, storage, clock, config_hashes=other)(
             Item(close(LAST), "data"), Reports()
@@ -329,24 +338,32 @@ def test_18_a_redelivery_halts_on_a_capture_written_under_other_configuration_ha
     assert again.halt is not None
     assert again.halt.reason == (
         f"{key()} counts and was written under configuration hashes {other}, "
-        f"not this stage's {dict(TABLE.hashes_for('data'))}, so it cannot be judged"
+        f"not this stage's {ours}, so it cannot be judged"
     )
 
 
+@pytest.mark.parametrize("count", [0, 2])
 def test_18_a_redelivery_halts_on_a_capture_that_holds_no_snapshot(
-    lake: Path, tmp_path: Path
+    lake: Path, tmp_path: Path, count: int
 ) -> None:
     from ithildinruntime.core import BlobHeader, OutputFile, encode_output
 
     made, storage, _ = stage(lake, tmp_path, clock=Ticking())
+    clean = (
+        LakeSource(
+            Mirror(FolderBucket(lake), tmp_path / "clean"), settings(), clock=Clock(), timer=Timer()
+        )
+        .read(close(LAST))
+        .snapshot
+    )
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    empty = encode_output(Snapshot, OutputFile(header, (), False))
+    empty = encode_output(Snapshot, OutputFile(header, (clean,) * count, False))
     storage._store.create(key(), empty, sha256_of(empty))
     again = made(Item(close(LAST), "data"), Reports())
     assert again.halt is not None
-    assert again.halt.reason == f"{key()} counts and holds 0 snapshots, not one"
+    assert again.halt.reason == f"{key()} counts and holds {count} snapshots, not one"
 
 
 def test_the_stage_refuses_an_empty_release(lake: Path, tmp_path: Path) -> None:
@@ -555,6 +572,20 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
         return encode_output(Snapshot, OutputFile(header, (body,), False))
 
     assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ: {said}"
+
+
+def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot() -> None:
+    from ithildinruntime.core import BlobHeader, OutputFile, encode_output
+
+    header = BlobHeader(
+        1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
+    )
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    empty = encode_output(Snapshot, OutputFile(header, (), False))
+    one = encode_output(Snapshot, OutputFile(header, (snap,), False))
+    assert (
+        differences(empty, one) == "The captures hold 0 and 1 snapshots, where each should hold one"
+    )
 
 
 # 19. The wait.

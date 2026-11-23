@@ -627,7 +627,9 @@ the second capture says so. Data's stage also judges that first capture
 through the alarm's single read of it, so one failed read halts the
 decision. It halts rather than judges a first capture written under another
 release or other strategy configuration hashes, which a run that never
-mixes releases should never meet.
+mixes releases should never meet. Data's own settings join those hashes
+once [#110](https://github.com/l3a0/ithildin-runtime/issues/110) builds them from the strategies' files. The halts on a
+redelivered capture are listed in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill).
 
 ### Rule 3: a worker resumes by reading what exists
 

@@ -29,7 +29,9 @@ things, in order.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
-   cannot be read to judge it halts, and so does one another release wrote.
+   cannot be read to judge it halts, and so does one that holds other than
+   one snapshot or was written under another release or other strategy
+   configuration hashes.
    That read is the alarm's single try, so one failed read of the first
    capture halts its decision. A missing or stale instrument, or a bar
    of unstated kind, or a bar whose prices contradict each other, and on a
@@ -207,6 +209,11 @@ def differences(first: bytes, later: bytes) -> str:
         two = decode_output(later, Snapshot)
     except Exception as error:
         return f"the first capture is no snapshot the codec reads: {type(error).__name__}: {error}"
+    if len(one.entries) != 1 or len(two.entries) != 1:
+        return (
+            f"The captures hold {len(one.entries)} and {len(two.entries)} snapshots, "
+            "where each should hold one"
+        )
     a, b = one.entries[0], two.entries[0]
     header = []
     if one.header.format != two.header.format:
