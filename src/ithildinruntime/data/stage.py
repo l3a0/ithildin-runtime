@@ -22,7 +22,8 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote or segment, or says that only the read time differs, as on a
+   quote or segment, or says that a capture holds other than one snapshot,
+   or that only the read time differs, as on a
    redelivery after a crash. It names no cause beyond that, because the
    same difference can come from a restatement by marketlake, a nightly
    upload or a redeploy.

@@ -445,7 +445,8 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     so the decision halts on what it will trade from. The stage judges only a
     capture this release wrote under the same strategy configuration hashes,
     and halts on any other, so `judge` repeats this release's read under the
-    same settings. These each halt:
+    settings those hashes name. Those cover data's own settings once #110
+    builds them from the hashed files. These each halt:
 
     1. an instrument the settings read and the snapshot does not hold;
     2. an instrument that is not fresh, or is fresh with no bar;

@@ -343,7 +343,7 @@ def test_18_a_redelivery_halts_on_a_capture_written_under_other_configuration_ha
 
 
 @pytest.mark.parametrize("count", [0, 2])
-def test_18_a_redelivery_halts_on_a_capture_that_holds_no_snapshot(
+def test_18_a_redelivery_halts_on_a_capture_that_holds_other_than_one_snapshot(
     lake: Path, tmp_path: Path, count: int
 ) -> None:
     from ithildinruntime.core import BlobHeader, OutputFile, encode_output
@@ -574,17 +574,22 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
     assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ: {said}"
 
 
-def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot() -> None:
+@pytest.mark.parametrize(("first", "later"), [(0, 1), (2, 1), (1, 0)])
+def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
+    first: int, later: int
+) -> None:
     from ithildinruntime.core import BlobHeader, OutputFile, encode_output
 
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
     snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
-    empty = encode_output(Snapshot, OutputFile(header, (), False))
-    one = encode_output(Snapshot, OutputFile(header, (snap,), False))
-    assert (
-        differences(empty, one) == "The captures hold 0 and 1 snapshots, where each should hold one"
+
+    def holding(n: int) -> bytes:
+        return encode_output(Snapshot, OutputFile(header, (snap,) * n, False))
+
+    assert differences(holding(first), holding(later)) == (
+        f"The captures hold {first} and {later} snapshots, where each should hold one"
     )
 
 
