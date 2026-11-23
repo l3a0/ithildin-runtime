@@ -27,6 +27,7 @@ from ithildinruntime.core import (
     attempt_key,
     decode_output,
     output_key,
+    parse_strategy,
 )
 from ithildinruntime.data import DataStage, LakeSource, Mirror, differences, spikes
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
@@ -34,6 +35,10 @@ from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
 from tests.test_data_source import LAST, Clock, Timer, before, close, settings, unlist
 from tests.test_storage_contract import Alarms
+
+CHAN = parse_strategy("chan", b'instruments = ["GLD", "USO"]\n')
+OTHER = parse_strategy("other", b'instruments = ["SPY", "QQQ"]\n')
+TABLE = Table(stages=(DATA_ROW,), strategies=(CHAN, OTHER))
 
 RUN = "2012-04-09"
 DEPLOYMENT = "test"
@@ -71,7 +76,7 @@ def stage(lake: Path, tmp_path: Path, clock=None, **changes) -> tuple[DataStage,
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
-        config_hash="c1",
+        config_hashes=TABLE.hashes_for("data"),
     )
     return made, storage, alarms
 
@@ -194,7 +199,8 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
 def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> None:
     from ithildinruntime.core import BarStatus, BlobHeader, OutputFile, SpikeFlag, encode_output
 
-    header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", "c1")
+    hashes = {"chan_bollinger": "c" * 64}
+    header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
     base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
     from ithildinruntime.core import InstrumentId
 
@@ -312,6 +318,34 @@ def test_a_backtest_reads_a_folder_and_every_other_mode_reads_s3(tmp_path: Path)
         data_bucket(Mode.BACKTEST, client=object(), bucket="marketlake")
 
 
+def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_datas_header(
+    lake: Path, tmp_path: Path
+) -> None:
+    """Data's stage is shared, so its header names each strategy's own hash."""
+    changed = parse_strategy("other", b'instruments = ["SPY", "QQQ"]\n# a new version\n')
+    tables = {"before": TABLE, "after": Table(stages=(DATA_ROW,), strategies=(CHAN, changed))}
+    headers = {}
+    for name, table in tables.items():
+        _, storage, _ = stage(lake, tmp_path / name)
+        handler = data_handler(
+            bucket=FolderBucket(lake),
+            mirror=tmp_path / name / "mirror",
+            settings=settings(),
+            storage=storage,
+            clock=Clock(),
+            timer=Timer(),
+            deployment=DEPLOYMENT,
+            run=RUN,
+            release="r1",
+            table=table,
+        )
+        headers[name] = handler(Item(close(LAST), "data"), Reports()).header
+    assert dict(headers["before"].config_hashes) == dict(TABLE.hashes_for("data"))
+    assert headers["before"].config_hashes["chan"] == headers["after"].config_hashes["chan"]
+    assert headers["after"].config_hashes["other"] == changed.config_hash
+    assert headers["before"].config_hashes["other"] != changed.config_hash
+
+
 def test_the_entry_points_handler_reads_through_the_bucket_it_is_given(
     lake: Path, tmp_path: Path
 ) -> None:
@@ -326,7 +360,7 @@ def test_the_entry_points_handler_reads_through_the_bucket_it_is_given(
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
-        config_hash="c1",
+        table=TABLE,
     )
     result = handler(Item(close(LAST), "data"), Reports())
     assert result.outputs[0].key == key()

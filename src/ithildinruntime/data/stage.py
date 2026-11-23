@@ -35,7 +35,7 @@ things, in order.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -83,7 +83,7 @@ class DataStage:
         deployment: str,
         run: str,
         release: str,
-        config_hash: str,
+        config_hashes: Mapping[str, str],
     ) -> None:
         self._source = source
         self._storage = storage
@@ -91,7 +91,7 @@ class DataStage:
         self._deployment = deployment
         self._run = run
         self._release = release
-        self._config_hash = config_hash
+        self._config_hashes = dict(config_hashes)
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
         at = item.decision_at
@@ -107,7 +107,7 @@ class DataStage:
             decision_at=at,
             inputs={},
             release=self._release,
-            config_hash=self._config_hash,
+            config_hashes=self._config_hashes,
         )
         data = encode_output(Snapshot, OutputFile(header, (reading.snapshot,), False))
         stored = self._storage.put(

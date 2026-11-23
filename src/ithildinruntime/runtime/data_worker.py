@@ -24,7 +24,7 @@ from ithildinruntime.adapters import FolderBucket, S3Bucket
 from ithildinruntime.core import Bucket, Clock, Mode, StageKind, Storage, Timer
 from ithildinruntime.data import STAGE, DataSettings, DataStage, LakeSource, Mirror
 
-from .loop import Stage
+from .loop import Stage, Table
 
 __all__ = ["DATA_ROW", "data_bucket", "data_handler"]
 
@@ -60,9 +60,14 @@ def data_handler(
     deployment: str,
     run: str,
     release: str,
-    config_hash: str,
+    table: Table,
 ) -> DataStage:
-    """Data's handler for the receive loop, reading `bucket` through a mirror in `mirror`."""
+    """Data's handler for the receive loop, reading `bucket` through a mirror in `mirror`.
+
+    Data's stage is shared by every strategy in `table`, so each blob it writes
+    names every strategy's configuration hash, read from `table` as the receive
+    loop checks it.
+    """
     source = LakeSource(Mirror(bucket, mirror), settings, clock=clock, timer=timer)
     return DataStage(
         source,
@@ -71,5 +76,5 @@ def data_handler(
         deployment=deployment,
         run=run,
         release=release,
-        config_hash=config_hash,
+        config_hashes=table.hashes_for(STAGE),
     )
