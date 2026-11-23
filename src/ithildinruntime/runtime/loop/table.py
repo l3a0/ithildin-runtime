@@ -2,14 +2,18 @@
 
 docs/design.md's `### Rule 2: two kinds of stage, declared in one place` makes
 one table the place each stage's kind and inputs are declared, and `### How a
-component learns of a change` turns that table into routes. A stage's readers
+component learns of a change` turns that table into routes. The table also
+holds each strategy of the deployment, as its reader loaded it, so the
+instruments a strategy trades and the hash its blobs record are read from
+one place. A stage's readers
 are the components whose stages read it, so the table never lists them by
 hand.
 
 The table's form lives in `runtime.loop` rather than elsewhere in `runtime`
 because the supervisor reads it, and the supervisor may import only `core`,
 `journal`, `adapters` and `runtime.loop`. Each worker's entry point adds its
-own stage's row, since each stage's inputs belong to its module's issue.
+own stage's row, since each stage's inputs belong to its module's issue, and
+hands in the strategies it loaded beside the rows.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from ithildinruntime.core import EventKind, Route, StageKind, result_key
+from ithildinruntime.core import EventKind, Route, StageKind, StrategyConfig, result_key
 
 __all__ = ["Hears", "QueueSettings", "Stage", "Table", "event_pattern", "routes", "routes_file"]
 
@@ -30,23 +34,34 @@ _ANY_DECISION = datetime(2000, 1, 3, tzinfo=UTC)
 
 @dataclass(frozen=True)
 class Stage:
-    """One stage: its name, its kind, the stages whose results it reads, and its order.
+    """One stage: its name, its kind, the stages whose results it reads, its order and strategy.
 
     `keeps_order` marks a stage that reads a book the decision before changed,
     such as execution's two stages and monitoring's reconcile. Its decision N
     starts only once its own result for decision N−1 is stored.
+
+    `strategy` names the strategy a stage belongs to, such as a strategy's
+    alpha stage, which is named `<component>/<strategy>`. A stage with no
+    strategy is shared by every strategy of the deployment, such as data's
+    and execution's.
     """
 
     name: str
     kind: StageKind
     inputs: tuple[str, ...] = ()
     keeps_order: bool = False
+    strategy: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", StageKind(self.kind))
         object.__setattr__(self, "inputs", tuple(self.inputs))
         # The key builder refuses a name that cannot be part of a key.
         result_key("table", "2000-01-03", _ANY_DECISION, self.name)
+        if self.strategy is not None and self.name != f"{self.component}/{self.strategy}":
+            raise ValueError(
+                f"stage {self.name} belongs to strategy {self.strategy}, so it is named "
+                f"{self.component}/{self.strategy}"
+            )
 
     @property
     def component(self) -> str:
@@ -69,22 +84,54 @@ class Hears:
 
 @dataclass(frozen=True)
 class Table:
-    """Every stage of a deployment, and the control blobs each component hears."""
+    """Every stage and strategy of a deployment, and the control blobs each component hears.
+
+    `strategies` holds each strategy the deployment runs, as its reader
+    loaded it. A stage that names a strategy belongs to it, and every other
+    stage is shared by them all.
+    """
 
     stages: tuple[Stage, ...]
     hears: tuple[Hears, ...] = ()
+    strategies: tuple[StrategyConfig, ...] = ()
     _by_name: Mapping[str, Stage] = field(init=False, repr=False, compare=False)
+    _strategies: Mapping[str, StrategyConfig] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         stages = tuple(self.stages)
         object.__setattr__(self, "stages", stages)
         object.__setattr__(self, "hears", tuple(self.hears))
+        object.__setattr__(self, "strategies", tuple(self.strategies))
+        strategies: dict[str, StrategyConfig] = {}
+        for strategy in self.strategies:
+            if not isinstance(strategy, StrategyConfig):
+                raise TypeError(f"{strategy!r} is not a strategy's configuration")
+            if strategy.name in strategies:
+                raise ValueError(f"strategy {strategy.name} is declared twice")
+            strategies[strategy.name] = strategy
+        object.__setattr__(self, "_strategies", strategies)
         by_name: dict[str, Stage] = {}
         for stage in stages:
             if stage.name in by_name:
                 raise ValueError(f"stage {stage.name} is declared twice")
             by_name[stage.name] = stage
         for stage in stages:
+            if stage.strategy is not None and stage.strategy not in strategies:
+                raise ValueError(
+                    f"stage {stage.name} belongs to strategy {stage.strategy}, "
+                    "which the table does not declare"
+                )
+            # A stage's name and its strategy say the same thing, so neither
+            # may say it alone. A shared stage named for a declared strategy
+            # would record every strategy's hash on that strategy's blobs.
+            # Only the `<component>/<strategy>` form can be a strategy's
+            # stage, so no other shape is refused.
+            parts = stage.name.split("/")
+            if stage.strategy is None and len(parts) == 2 and parts[1] in strategies:
+                raise ValueError(
+                    f"stage {stage.name} is named for strategy {parts[1]}, "
+                    "so it names that strategy"
+                )
             for other in by_name:
                 # A route matches a stage's result by its name at the end of a
                 # key, so no name may end with another stage's whole name.
@@ -121,6 +168,21 @@ class Table:
 
     def stages_of(self, component: str) -> tuple[Stage, ...]:
         return tuple(s for s in self.stages if s.component == component)
+
+    def strategy(self, name: str) -> StrategyConfig:
+        """One strategy's configuration, whose `instruments` are what it trades."""
+        return self._strategies[name]
+
+    def hashes_for(self, stage: str) -> Mapping[str, str]:
+        """The configuration hashes a stage's blobs record, by strategy.
+
+        A stage that belongs to a strategy records that strategy's hash
+        alone. A shared stage records every strategy's, because it reads the
+        account's book, which carries every strategy's positions.
+        """
+        owner = self.stage(stage).strategy
+        names = [owner] if owner is not None else sorted(self._strategies)
+        return {name: self._strategies[name].config_hash for name in names}
 
 
 def _result_pattern(deployment: str, stage: str) -> str:

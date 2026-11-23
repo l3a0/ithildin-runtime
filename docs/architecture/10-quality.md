@@ -78,7 +78,7 @@ the code that picks that worker's adapters for a mode.
 
 Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, so the
-gross position is a fixed dollar amount the owner sets, recorded in the run's configuration.
+gross position is a fixed dollar amount the owner sets, recorded in the strategy's tracked configuration, in the section whose form [#9](https://github.com/l3a0/ithildin-runtime/issues/9) sets.
 
 Five pieces belong to no single module. Each is written on a sub-issue of
 [#4](https://github.com/l3a0/ithildin-runtime/issues/4).

@@ -102,8 +102,9 @@ erDiagram
         string kind
         string halt_reason
         string halt_cause
+        string inputs
         string release
-        string config_hash
+        string config_hashes
         datetime stored_at
     }
     OUTPUT_FILE {
@@ -113,6 +114,8 @@ erDiagram
         datetime decision_at
         string name
         string inputs
+        string release
+        string config_hashes
         datetime stored_at
     }
     JOURNAL_ENTRY {

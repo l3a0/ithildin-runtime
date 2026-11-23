@@ -18,7 +18,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -461,7 +461,9 @@ class Storage:
         """An output file that `result` lists, after the reader's checks.
 
         A result that holds a halt lists no output to read, so reading one
-        halts, and so does a file the result does not list.
+        halts, and so does a file the result does not list, and one whose
+        header names other configuration hashes than the result's, so one
+        strategy's version cannot pass from one stage to the next as another's.
         """
         if result.halt is not None:
             raise self._halt(f"{result_key} holds a halt: {result.halt.reason}")
@@ -483,6 +485,12 @@ class Storage:
                 f"output file {listed.key} is no {entry.__name__} file: {error}"
             ) from None
         self._same_decision(listed.key, output.header, decision_at)
+        if dict(output.header.config_hashes) != dict(result.header.config_hashes):
+            raise self._halt(
+                f"output file {listed.key} names the configuration hashes "
+                f"{_hashes(output.header.config_hashes)}, and {result_key} names "
+                f"{_hashes(result.header.config_hashes)}"
+            )
         if not output.entries and not output.trade_nothing:
             raise self._halt(
                 f"output file {listed.key} for {_when(decision_at)} has no entries "
@@ -636,3 +644,7 @@ class Storage:
 
 def _when(at: datetime) -> str:
     return at.isoformat().replace("+00:00", "Z")
+
+
+def _hashes(hashes: Mapping[str, str]) -> str:
+    return "{" + ", ".join(f"{k}: {v}" for k, v in sorted(hashes.items())) + "}"

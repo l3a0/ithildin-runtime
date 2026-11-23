@@ -54,6 +54,7 @@ from ithildinruntime.core import (
     encode_output,
     event_body,
     output_key,
+    parse_strategy,
     result_key,
     run_stop_key,
 )
@@ -73,8 +74,12 @@ from tests.support.stores import EMULATOR_KEYS, REGION
 DEPLOYMENT = "ci"
 RUN = "2026-11-02"
 RELEASE = "sha256:release"
-CONFIG = "0" * 64
 FIRST = datetime(2026, 11, 2, 15, 0, tzinfo=UTC)
+
+# The one strategy the plan lists at every decision. Every stand-in stage is
+# shared, so each records this hash, and no stage name or route changes with it.
+STANDIN = parse_strategy("standin", b'instruments = ["STANDIN"]\n')
+CONFIG = {"standin": STANDIN.config_hash}
 
 TABLE = Table(
     stages=(
@@ -84,6 +89,7 @@ TABLE = Table(
         Stage("book", StageKind.DETERMINISTIC, ("alpha", "risk"), keeps_order=True),
     ),
     hears=(Hears("book", EventKind.CREATED, "runs/{deployment}/*/stop.json"),),
+    strategies=(STANDIN,),
 )
 COMPONENTS = ("feed", "alpha", "risk", "book")
 # The components that hear a route. `feed` hears none, so the test environment
@@ -230,7 +236,7 @@ def header(stage: str, at: datetime, inputs: dict[str, str], run: str = RUN) -> 
         decision_at=at,
         inputs=inputs,
         release=RELEASE,
-        config_hash=CONFIG,
+        config_hashes=CONFIG,
     )
 
 
@@ -410,7 +416,6 @@ def loop(
         alerts=alarms,
         timer=timer or SystemTimer(),
         beat=beat,
-        config_hash=CONFIG,
         pool_size=pool_size,
         **{"tick": 0.05, "stop_timeout": 5.0, **limits},
     )

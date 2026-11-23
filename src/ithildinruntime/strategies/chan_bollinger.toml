@@ -1,0 +1,3 @@
+# Chan's Bollinger band on the price spread between GLD and USO. Each
+# module that reads a setting of this strategy adds a section of its own.
+instruments = ["GLD", "USO"]

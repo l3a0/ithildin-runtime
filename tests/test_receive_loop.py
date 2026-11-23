@@ -24,7 +24,6 @@ from ithildinruntime.core import (
 from ithildinruntime.runtime.loop import Item, LoopFailed, ReceiveLoop
 from tests.support.queues import (
     COMPONENTS,
-    CONFIG,
     DEPLOYMENT,
     FIRST,
     RUN,
@@ -1242,7 +1241,6 @@ def _loop_settings(tmp_path) -> dict:
         alerts=Alarms(),
         timer=SystemTimer(),
         beat=lambda: None,
-        config_hash=CONFIG,
     )
 
 
