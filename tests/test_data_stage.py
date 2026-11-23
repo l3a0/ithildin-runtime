@@ -359,8 +359,8 @@ def test_18_a_redelivery_halts_on_a_capture_that_holds_other_than_one_snapshot(
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    empty = encode_output(Snapshot, OutputFile(header, (clean,) * count, False))
-    storage._store.create(key(), empty, sha256_of(empty))
+    held = encode_output(Snapshot, OutputFile(header, (clean,) * count, False))
+    storage._store.create(key(), held, sha256_of(held))
     again = made(Item(close(LAST), "data"), Reports())
     assert again.halt is not None
     assert again.halt.reason == f"{key()} counts and holds {count} snapshots, not one"
