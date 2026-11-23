@@ -277,6 +277,20 @@ def test_1_a_low_above_a_zero_open_reads_as_a_low_above_it_not_as_a_zero_price(
     )
 
 
+def test_1_judge_halts_on_what_the_read_halts_on(lake: Path, tmp_path: Path) -> None:
+    """A stale, a contradicting and an unstated bar each give one reason both ways."""
+    unlist(lake, lakes.partition_key("USO", LAST))
+    unlist(lake, lakes.partition_key("USO", before(LAST)))
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    src = make(lake, tmp_path, kinds=PriceKinds(()))
+    reading = src.read(close(LAST))
+    judged = source.judge(reading.snapshot, src.instruments)
+    assert len(reading.halts) == len(judged) == 4
+    assert {r.split(":")[0] for r in reading.halts if "contradict" in r or "unstated" in r} == {
+        r.split(":")[0] for r in judged if "contradict" in r or "unstated" in r
+    }
+
+
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
     lake: Path, tmp_path: Path
 ) -> None:

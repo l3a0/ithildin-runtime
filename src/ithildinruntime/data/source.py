@@ -90,7 +90,7 @@ from .reference import (
     load_master,
     load_price_kinds,
 )
-from .spikes import CONTRADICT, spike_flags
+from .spikes import CONTRADICT, contradictions, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
@@ -140,7 +140,7 @@ class DataSettings:
 
 @dataclass(frozen=True)
 class Reading:
-    """One decision's snapshot, and the reasons it halts once the snapshot is stored."""
+    """One decision's snapshot, and why it halts once stored, if it is the capture that counts."""
 
     snapshot: Snapshot
     halts: tuple[str, ...]
@@ -179,6 +179,11 @@ class LakeSource:
         self._master = master or load_master()
         self._kinds = kinds or load_price_kinds()
         self._answers = _Answers()
+
+    @property
+    def instruments(self) -> tuple[InstrumentId, ...]:
+        """The instruments every snapshot of this source must hold."""
+        return tuple(self._settings.instruments)
 
     def snapshot(self, decision_at: datetime) -> Snapshot:
         """The port's read, which halts on any reason a stored snapshot would halt on.
@@ -227,8 +232,7 @@ class LakeSource:
                     found = spike_flags(held, settings.spike_multiple)
                     if found:
                         flags[instrument] = found
-                    halts.extend(_contradicted(instrument, found))
-                    halts.extend(_unstated(instrument, held))
+                    halts.extend(_bar_halts(instrument, held))
             ledgers = {MANIFEST: root.manifest.sha256}
             ledgers.update({k: c.sha256 for k, c in root.files.items() if not _is_bars(k)})
             snapshot = Snapshot(
@@ -434,23 +438,32 @@ class LakeSource:
         return BarStatus.FRESH, None
 
 
-def judge(snapshot: Snapshot) -> tuple[str, ...]:
+def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str, ...]:
     """Every reason a stored snapshot halts its decision, read from the snapshot alone.
 
     Data's stage uses it on the capture that counts when a later read differs,
-    so the decision halts on what it will trade from. An instrument that is
-    not fresh, a bar whose prices contradict each other and a bar of unstated
-    kind each halt, as `LakeSource.read` judges them.
+    so the decision halts on what it will trade from. An instrument the
+    settings read and the snapshot does not hold, an instrument that is not
+    fresh, and each bar `LakeSource.read` halts on, through the same
+    `_bar_halts`, each halt. A stored status keeps no session, so its reason
+    names the stored snapshot rather than the session.
     """
     reasons: list[str] = []
+    for instrument in instruments:
+        if instrument not in snapshot.status:
+            reasons.append(f"{instrument} is not in the stored snapshot")
     for instrument, state in snapshot.status.items():
         if state is not BarStatus.FRESH:
             reasons.append(f"{instrument} {state} in the stored snapshot")
-    for instrument, found in snapshot.flags.items():
-        reasons.extend(_contradicted(instrument, found))
     for instrument, by_interval in snapshot.bars.items():
-        reasons.extend(_unstated(instrument, by_interval.get(DAILY, ())))
+        reasons.extend(_bar_halts(instrument, by_interval.get(DAILY, ())))
     return tuple(reasons)
+
+
+def _bar_halts(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
+    """The halts one instrument's bars raise: each contradiction, then any unstated kind."""
+    found = [flag for bar in bars for flag in contradictions(bar)]
+    return _contradicted(instrument, found) + _unstated(instrument, bars)
 
 
 def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:

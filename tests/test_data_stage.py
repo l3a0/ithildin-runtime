@@ -2,7 +2,8 @@
 
 Acceptance tests 18 and 19 on #5: a reread keeps the first capture and stores
 the second under its attempt number with an alarm that says what differed,
-and the wait for the decision time keeps the heartbeat beating under the
+a redelivery judges the first capture, which every later stage reads, and
+the wait for the decision time keeps the heartbeat beating under the
 wall clock and returns at once under the history clock.
 """
 
@@ -28,8 +29,10 @@ from ithildinruntime.core import (
     decode_output,
     output_key,
     parse_strategy,
+    sha256_of,
 )
 from ithildinruntime.data import DataStage, LakeSource, Mirror, differences, spikes
+from ithildinruntime.data.reference import PriceKinds
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
@@ -242,6 +245,120 @@ def test_18_a_redelivery_halts_when_the_capture_that_counts_cannot_be_read(
     assert again.halt.reason == f"{key()} counts and could not be read to judge it"
 
 
+def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> DataStage:
+    """A second stage over the same store, as a process restarted under other settings."""
+    kinds = changes.pop("kinds", None)
+    source = LakeSource(
+        Mirror(FolderBucket(lake), tmp_path / "mirror-again"),
+        settings(**changes),
+        clock=clock,
+        timer=Timer(),
+        kinds=kinds,
+    )
+    return DataStage(
+        source,
+        storage,
+        clock,
+        deployment=DEPLOYMENT,
+        run=RUN,
+        release="r1",
+        config_hashes=TABLE.hashes_for("data"),
+    )
+
+
+def test_18_a_redelivery_halts_on_a_missing_capture_that_counts(lake: Path, tmp_path: Path) -> None:
+    gap = lakes.partition_key("USO", before(LAST, 2))
+    keep = (lake / gap).read_bytes()
+    unlist(lake, gap)
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert "missing" in made(Item(close(LAST), "data"), Reports()).halt.reason
+    lakes.rewrite(lake, gap, keep)
+    lakes.record(lake, gap, rows=1)
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt.reason == f"{key()}, which counts: USO missing in the stored snapshot"
+
+
+def test_18_a_redelivery_halts_on_an_unstated_capture_that_counts(
+    lake: Path, tmp_path: Path
+) -> None:
+    clock = Ticking()
+    made, storage, _ = stage(lake, tmp_path, clock=clock)
+    silent = _again(lake, tmp_path, storage, clock, kinds=PriceKinds(()))
+    assert "unstated" in silent(Item(close(LAST), "data"), Reports()).halt.reason
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt.reason.startswith(f"{key()}, which counts: GLD's bar for ")
+    assert "has unstated price kind, venues, delay, volume counting" in again.halt.reason
+
+
+def test_18_a_redelivery_halts_with_every_reason_the_capture_that_counts_holds(
+    lake: Path, tmp_path: Path
+) -> None:
+    gone = (lakes.partition_key("USO", LAST), lakes.partition_key("USO", before(LAST)))
+    keep = {k: (lake / k).read_bytes() for k in gone}
+    original = (lake / lakes.partition_key("GLD", LAST)).read_bytes()
+    for k in gone:
+        unlist(lake, k)
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is not None
+    for k, data in {**keep, lakes.partition_key("GLD", LAST): original}.items():
+        lakes.rewrite(lake, k, data)
+        lakes.record(lake, k, rows=1)
+    reasons = made(Item(close(LAST), "data"), Reports()).halt.reason.split("; ")
+    assert f"{key()}, which counts: USO stale in the stored snapshot" in reasons
+    assert any("contradict each other" in r for r in reasons) and len(reasons) == 2
+
+
+def test_18_a_redelivery_halts_on_an_instrument_the_capture_that_counts_lacks(
+    lake: Path, tmp_path: Path
+) -> None:
+    clock = Ticking()
+    made, storage, _ = stage(lake, tmp_path, clock=clock)
+    narrow = _again(lake, tmp_path, storage, clock, instruments=(InstrumentId("GLD"),))
+    assert narrow(Item(close(LAST), "data"), Reports()).halt is None
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.halt.reason == f"{key()}, which counts: USO is not in the stored snapshot"
+
+
+def test_18_a_redelivery_halts_when_the_bytes_read_back_are_not_the_capture_that_counts(
+    lake: Path, tmp_path: Path
+) -> None:
+    made, storage, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    real = storage._read
+
+    def other(k: str, once: bool = False) -> bytes | None:
+        data = real(k, once)
+        return data + b" " if k == key() and data is not None else data
+
+    storage._read = other  # type: ignore[method-assign]
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.halt.reason == f"{key()} counts and could not be read to judge it"
+
+
+def test_18_a_redelivery_halts_when_the_capture_that_counts_is_no_snapshot(
+    lake: Path, tmp_path: Path
+) -> None:
+    made, storage, _ = stage(lake, tmp_path, clock=Ticking())
+    storage._store.create(key(), b"not a snapshot", sha256_of(b"not a snapshot"))
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[0].key == key() and again.outputs[1].key == key(2)
+    assert again.halt.reason.startswith(f"{key()} counts and is no snapshot the codec reads: ")
+
+
+def test_18_a_redelivery_whose_new_read_gives_no_snapshot_halts_with_a_clean_capture_stored(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The read comes before the store, so a read that cannot give a snapshot halts first."""
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    lakes.doubled(lake, "GLD", LAST)
+    with pytest.raises(Halt, match="GLD holds 2 daily rows"):
+        made(Item(close(LAST), "data"), Reports())
+
+
 def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     lake: Path, tmp_path: Path
 ) -> None:
@@ -253,40 +370,76 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     assert alarms.reasons == []
 
 
-@pytest.mark.parametrize("name", ["status", "flags"])
-def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> None:
-    from ithildinruntime.core import BarStatus, BlobHeader, OutputFile, SpikeFlag, encode_output
+UNKNOWN = "and neither the header nor marketlake's ledgers changed, so the cause is not known"
+UNREAD = "and no bar, status or flag the decision read changed"
+
+
+@pytest.mark.parametrize(
+    ("names", "said"),
+    [
+        (("status",), f"{UNKNOWN}: status"),
+        (("flags",), f"{UNKNOWN}: flags"),
+        (("quotes",), f"{UNKNOWN}: quotes"),
+        (("provisional",), f"{UNKNOWN}: provisional"),
+        (("ledgers",), f"{UNREAD}: ledgers"),
+        (("segments",), f"{UNREAD}: segments"),
+        (("status", "ledgers"), "as on a restatement by marketlake: status, ledgers"),
+        (("flags", "segments"), "as on a restatement by marketlake: flags, segments"),
+    ],
+)
+def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(
+    names: tuple[str, ...], said: str
+) -> None:
+    from ithildinruntime.core import (
+        BarStatus,
+        BlobHeader,
+        InstrumentId,
+        OutputFile,
+        Quote,
+        SpikeFlag,
+        encode_output,
+    )
 
     hashes = {"chan_bollinger": "c" * 64}
     header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
     base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
-    from ithildinruntime.core import InstrumentId
-
     gld = InstrumentId("GLD")
-    if name == "status":
-        changed = dataclasses.replace(base, status={gld: BarStatus.STALE})
-    else:
-        flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
-        changed = dataclasses.replace(base, flags={gld: (flag,)})
+    flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
+    quote = Quote(gld, close(LAST), None, None, Decimal(1), "v", close(LAST), True, None)
+    values = {
+        "status": {gld: BarStatus.STALE},
+        "flags": {gld: (flag,)},
+        "quotes": {gld: quote},
+        "provisional": True,
+        "ledgers": {"manifest.jsonl": "e" * 64},
+        "segments": ("lake-live/a.jsonl",),
+    }
+    changed = dataclasses.replace(base, **{name: values[name] for name in names})
 
     def encoded(snap: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
-    assert differences(encoded(base), encoded(changed)).endswith(f"marketlake: {name}")
+    assert differences(encoded(base), encoded(changed)) == f"These differ, {said}"
 
 
 @pytest.mark.parametrize(
     ("change", "said"),
     [
-        ("config_hashes", "on a redelivery after a redeploy: the strategies' configuration hashes"),
-        ("one hash", "on a redelivery after a redeploy: the strategies' configuration hashes"),
-        ("release", "on a redelivery after a redeploy: the release"),
-        ("format", "on a redelivery after a redeploy: the format"),
+        (
+            "config_hashes",
+            "as on a redelivery after a redeploy: the strategies' configuration hashes",
+        ),
+        ("one hash", "as on a redelivery after a redeploy: the strategies' configuration hashes"),
+        ("release", "as on a redelivery after a redeploy: the release"),
+        ("format", "as on a redelivery after a redeploy: the format"),
         (
             "release and flags",
-            "after a redeploy that changed the release or the settings: the release, flags",
+            "as after a redeploy that changed the release or the settings: the release, flags",
         ),
-        ("release and ledgers", "on a restatement by marketlake: the release, ledgers"),
+        (
+            "release and ledgers",
+            "and no bar, status or flag the decision read changed: the release, ledgers",
+        ),
     ],
 )
 def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str) -> None:
@@ -313,9 +466,7 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
     def encoded(header: BlobHeader, body: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (body,), False))
 
-    assert (
-        differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ, as {said}"
-    )
+    assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ, {said}"
 
 
 # 19. The wait.

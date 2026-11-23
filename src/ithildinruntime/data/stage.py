@@ -14,19 +14,30 @@ things, in order.
    at once cannot yet. #107 holds the fix, because a stop that leaves the
    decision for redelivery needs the loop to say so.
 2. **It reads the snapshot** through `LakeSource`. A read that cannot give a
-   snapshot raises `Halt`, which the loop stores as data's result.
+   snapshot raises `Halt`, which the loop stores as data's result. The read
+   comes before the store, so it halts this way even when a redelivery finds
+   a first capture already stored.
 3. **It stores the snapshot** through `core.Storage`'s rule for a capturing
    stage. The first capture wins, and a later read that differs, even only in
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote or segment. A change in the header alone reads as a redelivery after
-   a redeploy, a change in marketlake's ledgers or segments as its
-   restatement, and nothing but the read time as a redelivery after a crash.
+   quote or segment. It reads the difference as one of six cases.
+   1. Nothing but the read time: a redelivery after a crash.
+   2. The header alone: a redelivery after a redeploy.
+   3. marketlake's ledgers or segments together with what the decision
+      read: a restatement by marketlake.
+   4. The ledgers or segments alone, as when marketlake seals a day the
+      decision does not read: no input of the decision changed.
+   5. The header with what the decision read: a redeploy that changed the
+      release or the settings.
+   6. What the decision read alone: a cause not known, such as data
+      settings that no hash in the header names yet, which #110 holds.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
-   cannot be read to judge it halts. A missing or stale instrument, or a bar
+   cannot be read to judge it halts. That read is the alarm's single try, so
+   one failed read of the first capture halts its decision. A missing or stale instrument, or a bar
    of unstated kind, or a bar whose prices contradict each other, ends the
    decision with a halt as data's result that names the stored snapshot, as
    hard limit 3 asks. A close past the written multiple halts nothing. Its
@@ -50,6 +61,7 @@ from ithildinruntime.core import (
     Clock,
     DecisionResult,
     Halt,
+    InstrumentId,
     OutputFile,
     Snapshot,
     StageKind,
@@ -132,14 +144,19 @@ class DataStage:
         )
         report()
         outputs = (stored.counts,) if stored.ref == stored.counts else (stored.counts, stored.ref)
-        reasons = reading.halts if stored.ref == stored.counts else _counted(stored.counts, first)
+        if stored.ref == stored.counts:
+            reasons = reading.halts
+        else:
+            reasons = _counted(stored.counts, first, self._source.instruments)
         halt = None
         if reasons:
             halt = self._storage.halt_record(Halt("; ".join(reasons)), cause=stored.counts)
         return DecisionResult(header=header, outputs=outputs, halt=halt)
 
 
-def _counted(counts: BlobRef, first: Sequence[bytes]) -> tuple[str, ...]:
+def _counted(
+    counts: BlobRef, first: Sequence[bytes], instruments: Sequence[InstrumentId]
+) -> tuple[str, ...]:
     """The halts of the capture that counts, which every later stage reads.
 
     A later read that differs judges nothing, because the decision trades from
@@ -152,7 +169,7 @@ def _counted(counts: BlobRef, first: Sequence[bytes]) -> tuple[str, ...]:
         snapshot = decode_output(first[0], Snapshot).entries[0]
     except Exception as error:
         return (f"{counts.key} counts and is no snapshot the codec reads: {error}",)
-    return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot))
+    return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot, instruments))
 
 
 def differences(first: bytes, later: bytes) -> str:
@@ -177,15 +194,24 @@ def differences(first: bytes, later: bytes) -> str:
         if getattr(a, name) != getattr(b, name):
             snapshot.append(name)
     named = ", ".join(header + snapshot)
+    lake = [d for d in snapshot if d in ("ledgers", "segments")]
+    read = [d for d in snapshot if d not in ("ledgers", "segments")]
     if not named:
         return "Only the read time differs, as on a redelivery after a crash"
     if not snapshot:
         return f"These differ, as on a redelivery after a redeploy: {named}"
-    if header and "ledgers" not in snapshot and "segments" not in snapshot:
+    if lake and read:
+        return f"These differ, as on a restatement by marketlake: {named}"
+    if lake:
+        return f"These differ, and no bar, status or flag the decision read changed: {named}"
+    if header:
         return (
             f"These differ, as after a redeploy that changed the release or the settings: {named}"
         )
-    return f"These differ, as on a restatement by marketlake: {named}"
+    return (
+        "These differ, and neither the header nor marketlake's ledgers changed, "
+        f"so the cause is not known: {named}"
+    )
 
 
 def _without_read_time(bars: object) -> object:

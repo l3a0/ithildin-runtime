@@ -30,7 +30,7 @@ from decimal import Context, Decimal
 
 from ithildinruntime.core import Bar, SpikeFlag
 
-__all__ = ["CONTRADICT", "MOVE", "largest_multiple", "spike_flags"]
+__all__ = ["CONTRADICT", "MOVE", "contradictions", "largest_multiple", "spike_flags"]
 
 CONTRADICT = "prices contradict each other"
 MOVE = "close-to-close move past the written multiple"
@@ -44,7 +44,8 @@ def _note(bar: Bar, text: str) -> str:
     return f"{text}. {weighed}" if text else weighed
 
 
-def _contradictions(bar: Bar) -> list[SpikeFlag]:
+def contradictions(bar: Bar) -> list[SpikeFlag]:
+    """The first rule's flags on one bar, which no real trade produces."""
     found: list[SpikeFlag] = []
     prices = {"open": bar.open, "high": bar.high, "low": bar.low, "close": bar.close}
     for name, price in prices.items():
@@ -110,7 +111,7 @@ def spike_flags(bars: Sequence[Bar], multiple: Decimal) -> tuple[SpikeFlag, ...]
         raise ValueError("the spike multiple is a positive decimal")
     found: list[SpikeFlag] = []
     for bar in bars:
-        found.extend(_contradictions(bar))
+        found.extend(contradictions(bar))
     for i, size in _multiples(bars):
         if size > multiple:
             bar = bars[i]

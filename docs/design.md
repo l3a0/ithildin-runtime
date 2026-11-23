@@ -621,6 +621,9 @@ capture wins. A capturing stage stores what it read before it judges it, and its
 derives every remaining output from it, never from a fresh read, and a
 fresh read that differs from the stored one is stored too, under its own
 attempt number, and named in the decision result rather than discarded.
+The price is that a decision resumed after marketlake restated its data
+trades on the first capture, wrong values included, and only the alarm on
+the second capture says so.
 
 ### Rule 3: a worker resumes by reading what exists
 
@@ -2091,8 +2094,8 @@ Five rules keep a day of decisions safe.
          order path, where the gate values exposure at that same price,
          such as a whole bar at a tenth of its true value or a split the
          record missed. A lone close below its bar's low halts today only
-         through the low-above case, which waits for the owner's
-         confirmation, and a lone close above its bar's high halts by the
+         through the low-above case, which entry 15 of
+         [2026-11-22](#2026-11-22) records, and a lone close above its bar's high halts by the
          ruling's high-below case.
 
 An account belongs to one environment and carries one deployment there, and the supervisor refuses a

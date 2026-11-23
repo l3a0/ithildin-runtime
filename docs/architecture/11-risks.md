@@ -39,6 +39,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [Design for 10x, plan the rewrite before 100x, build at 1x](../design.md#design-for-10x-plan-the-rewrite-before-100x-build-at-1x)
 - [One runtime](../design.md#one-runtime)
+- [Rule 2: two kinds of stage, declared in one place](../design.md#rule-2-two-kinds-of-stage-declared-in-one-place)
 - [Rule 7: how a run stops](../design.md#rule-7-how-a-run-stops)
 - [Rule 9: what a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held)
 - [Rule 9: who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease)
