@@ -156,8 +156,13 @@ def _counted(
     the first capture. A first capture that cannot be read or decoded halts,
     since it cannot be judged.
     """
-    if not first or sha256_of(first[0]) != counts.sha256:
+    if not first:
         return (f"{counts.key} counts and could not be read to judge it",)
+    if sha256_of(first[0]) != counts.sha256:
+        return (
+            f"{counts.key} counts and was read back with SHA-256 {sha256_of(first[0])}, "
+            f"not the stored {counts.sha256}",
+        )
     try:
         snapshot = decode_output(first[0], Snapshot).entries[0]
     except Exception as error:

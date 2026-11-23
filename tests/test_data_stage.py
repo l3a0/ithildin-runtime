@@ -277,6 +277,7 @@ def test_18_a_redelivery_halts_on_a_missing_capture_that_counts(lake: Path, tmp_
     lakes.record(lake, gap, rows=1)
     again = made(Item(close(LAST), "data"), Reports())
     assert again.outputs[1].key == key(2)
+    assert again.halt is not None
     assert again.halt.reason == f"{key()}, which counts: USO missing in the stored snapshot"
 
 
@@ -289,6 +290,7 @@ def test_18_a_redelivery_halts_on_an_unstated_capture_that_counts(
     assert "unstated" in silent(Item(close(LAST), "data"), Reports()).halt.reason
     again = made(Item(close(LAST), "data"), Reports())
     assert again.outputs[1].key == key(2)
+    assert again.halt is not None
     assert again.halt.reason.startswith(f"{key()}, which counts: GLD's bar for ")
     assert "has unstated price kind, venues, delay, volume counting" in again.halt.reason
 
@@ -307,7 +309,9 @@ def test_18_a_redelivery_halts_with_every_reason_the_capture_that_counts_holds(
     for k, data in {**keep, lakes.partition_key("GLD", LAST): original}.items():
         lakes.rewrite(lake, k, data)
         lakes.record(lake, k, rows=1)
-    reasons = made(Item(close(LAST), "data"), Reports()).halt.reason.split("; ")
+    halt = made(Item(close(LAST), "data"), Reports()).halt
+    assert halt is not None
+    reasons = halt.reason.split("; ")
     assert f"{key()}, which counts: USO stale in the stored snapshot" in reasons
     assert any("contradict each other" in r for r in reasons) and len(reasons) == 2
 
@@ -337,7 +341,10 @@ def test_18_a_redelivery_halts_when_the_bytes_read_back_are_not_the_capture_that
 
     storage._read = other  # type: ignore[method-assign]
     again = made(Item(close(LAST), "data"), Reports())
-    assert again.halt.reason == f"{key()} counts and could not be read to judge it"
+    assert again.halt is not None
+    assert again.halt.reason.startswith(f"{key()} counts and was read back with SHA-256 ")
+    assert again.halt is not None
+    assert again.halt.reason.endswith(f", not the stored {again.outputs[0].sha256}")
 
 
 def test_18_a_redelivery_halts_when_the_capture_that_counts_is_no_snapshot(
@@ -347,6 +354,7 @@ def test_18_a_redelivery_halts_when_the_capture_that_counts_is_no_snapshot(
     storage._store.create(key(), b"not a snapshot", sha256_of(b"not a snapshot"))
     again = made(Item(close(LAST), "data"), Reports())
     assert again.outputs[0].key == key() and again.outputs[1].key == key(2)
+    assert again.halt is not None
     assert again.halt.reason.startswith(f"{key()} counts and is no snapshot the codec reads: ")
 
 

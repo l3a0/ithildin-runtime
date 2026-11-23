@@ -90,7 +90,7 @@ from .reference import (
     load_master,
     load_price_kinds,
 )
-from .spikes import CONTRADICT, contradictions, spike_flags
+from .spikes import CONTRADICT, MOVE, contradictions, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
@@ -442,14 +442,18 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     """Every reason a stored snapshot halts its decision, read from the snapshot alone.
 
     Data's stage uses it on the capture that counts when a later read differs,
-    so the decision halts on what it will trade from. An instrument the
-    settings read and the snapshot does not hold, an instrument that is not
-    fresh or is fresh with no bar, and each bar `LakeSource.read` halts on,
-    through the same `_bar_halts`, each halt. Contradictions are those this
-    release's rule finds in the stored bars together with those the snapshot
-    recorded, so neither a stored flag nor a changed rule lets a bar through.
+    so the decision halts on what it will trade from. These each halt:
+
+    1. an instrument the settings read and the snapshot does not hold;
+    2. an instrument that is not fresh, or is fresh with no bar;
+    3. each bar `LakeSource.read` halts on, through the same `_bar_halts`;
+    4. each stored flag that is not the move rule's and that this release's
+       rule does not find in the bars, as an earlier release may have
+       recorded under another rule or name. Its reason states the record as
+       stored rather than guess what it meant.
+
     A stored status keeps no session, so its reason names the stored snapshot
-    rather than the session.
+    rather than the session, and it is trusted as recorded.
     """
     reasons: list[str] = []
     for instrument in instruments:
@@ -460,26 +464,37 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
             reasons.append(f"{instrument} {state} in the stored snapshot")
         elif not snapshot.bars.get(instrument, {}).get(DAILY):
             reasons.append(f"{instrument} is fresh and has no bar in the stored snapshot")
+    found: set[tuple[object, ...]] = set()
     for instrument, by_interval in snapshot.bars.items():
-        stored = [f for f in snapshot.flags.get(instrument, ()) if f.rule == CONTRADICT]
-        reasons.extend(_bar_halts(instrument, by_interval.get(DAILY, ()), stored))
+        bars = by_interval.get(DAILY, ())
+        reasons.extend(_bar_halts(instrument, bars))
+        found.update(_key(instrument, f) for bar in bars for f in contradictions(bar))
+    for instrument, flags in snapshot.flags.items():
+        for flag in flags:
+            if flag.rule != MOVE and _key(instrument, flag) not in found:
+                reasons.append(
+                    f"{instrument}'s stored flag for {flag.session.isoformat()} halts as "
+                    f"recorded: its {flag.field} of {flag.price} against {flag.against}, "
+                    f"by the rule {flag.rule!r}"
+                )
     return tuple(reasons)
 
 
-def _bar_halts(
-    instrument: InstrumentId, bars: Sequence[Bar], stored: Sequence[SpikeFlag] = ()
-) -> list[str]:
+def _key(instrument: InstrumentId, flag: SpikeFlag) -> tuple[object, ...]:
+    return (instrument, flag.session, flag.field, flag.rule, flag.price, flag.against)
+
+
+def _bar_halts(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
     """The halts one instrument's bars raise: each contradiction, then any unstated kind.
 
-    `stored` adds the contradiction flags a stored snapshot recorded, so a flag
-    an earlier release raised halts even where this release's rule would not.
+    The contradictions come in the order `spike_flags` gives them, by session
+    and then field, keeping the order the checks found them in a tie.
     """
-    found = {(f.session, f.field, f.rule, f.price, f.against): f for f in stored}
-    for bar in bars:
-        for flag in contradictions(bar):
-            found.setdefault((flag.session, flag.field, flag.rule, flag.price, flag.against), flag)
-    ordered = [found[k] for k in sorted(found)]
-    return _contradicted(instrument, ordered) + _unstated(instrument, bars)
+    found = sorted(
+        (flag for bar in bars for flag in contradictions(bar)),
+        key=lambda f: (f.session, f.field),
+    )
+    return _contradicted(instrument, found) + _unstated(instrument, bars)
 
 
 def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:

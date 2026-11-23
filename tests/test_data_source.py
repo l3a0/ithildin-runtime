@@ -322,7 +322,70 @@ def test_1_judge_halts_on_a_stored_contradiction_flag_the_bars_do_not_raise() ->
     clean = bar(0, "100")
     flag = SpikeFlag(clean.session, "low", Decimal(100), Decimal(99), spikes.CONTRADICT, "")
     reasons = source.judge(_stored([clean], flags={GLD: (flag,)}), (GLD,))
-    assert any("its low of 100 is above the smallest" in r for r in reasons)
+    assert reasons == (
+        f"GLD's stored flag for {clean.session.isoformat()} halts as recorded: its low of 100 "
+        f"against 99, by the rule {spikes.CONTRADICT!r}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("rule", "field"), [("prices contradict", "high"), ("a new rule", "close")]
+)
+def test_1_judge_halts_on_a_stored_flag_of_a_rule_or_field_this_release_does_not_know(
+    rule: str, field: str
+) -> None:
+    from ithildinruntime.core import SpikeFlag
+    from tests.test_data_spikes import bar
+
+    clean = bar(0, "100")
+    flag = SpikeFlag(clean.session, field, Decimal(1), Decimal(2), rule, "")
+    (reason,) = source.judge(_stored([clean], flags={GLD: (flag,)}), (GLD,))
+    assert f"its {field} of 1 against 2, by the rule {rule!r}" in reason
+
+
+def test_1_judge_halts_on_no_stored_flag_of_the_move_rule() -> None:
+    """A move flag alerts and halts nothing, stored or not."""
+    from ithildinruntime.core import SpikeFlag
+    from tests.test_data_spikes import bar
+
+    clean = bar(0, "100")
+    flag = SpikeFlag(clean.session, "close", Decimal(100), Decimal(10), spikes.MOVE, "")
+    assert source.judge(_stored([clean], flags={GLD: (flag,)}), (GLD,)) == ()
+
+
+def test_1_judge_halts_on_a_stored_flag_for_an_instrument_with_no_bars() -> None:
+    from ithildinruntime.core import SpikeFlag
+    from tests.test_data_spikes import bar
+
+    clean = bar(0, "100")
+    flag = SpikeFlag(clean.session, "high", Decimal(1), Decimal(2), spikes.CONTRADICT, "")
+    stored = _stored([clean], flags={USO: (flag,)})
+    (reason,) = source.judge(stored, (GLD,))
+    assert reason.startswith("USO's stored flag for ")
+
+
+def test_1_judge_halts_on_stored_and_recomputed_contradictions_once_each() -> None:
+    """A bar that contradicts on its high, a flag recorded on its low, and the high's own flag."""
+    from ithildinruntime.core import SpikeFlag
+    from tests.test_data_spikes import bar
+
+    odd = bar(0, "100", high="99", low="98", open="99")
+    (own,) = spikes.contradictions(odd)
+    low = SpikeFlag(odd.session, "low", Decimal(98), Decimal(97), spikes.CONTRADICT, "")
+    reasons = source.judge(_stored([odd], flags={GLD: (own, low)}), (GLD,))
+    assert len(reasons) == 2
+    assert "its high of 99 is below the largest" in reasons[0]
+    assert "halts as recorded: its low of 98 against 97" in reasons[1]
+
+
+def test_1_contradictions_halt_in_the_order_spike_flags_gives_them() -> None:
+    from tests.test_data_spikes import bar
+
+    bars = [bar(0, "0", open="0", high="-1", low="-2"), bar(1, "5", high="0", low="0")]
+    flags = [f for f in spikes.spike_flags(bars, Decimal(100)) if f.rule == spikes.CONTRADICT]
+    expected = source._contradicted(GLD, flags)
+    assert source._bar_halts(GLD, bars) == expected
+    assert len(expected) == len(flags)
 
 
 def test_1_judge_halts_on_an_instrument_marked_fresh_with_no_bar() -> None:
@@ -332,6 +395,9 @@ def test_1_judge_halts_on_an_instrument_marked_fresh_with_no_bar() -> None:
     assert source.judge(_stored([]), (GLD,)) == (
         "GLD is fresh and has no bar in the stored snapshot",
     )
+    from tests.test_data_spikes import bar
+
+    assert source.judge(_stored([bar(0, "100")]), (GLD,)) == ()
 
 
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
