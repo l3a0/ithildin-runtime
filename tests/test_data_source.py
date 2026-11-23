@@ -204,6 +204,22 @@ def test_1_a_contradiction_flag_halts_beside_the_unchanged_price(
         src.snapshot(close(LAST))
 
 
+def test_1_a_contradiction_halts_each_decision_that_reads_it_and_holds_nothing_after(
+    lake: Path, tmp_path: Path
+) -> None:
+    """A halt is the decision's own, so the source carries nothing to the next one."""
+    bad = before(LAST, 45)
+    lakes.with_row(lake, "GLD", bad, high=1.0, low=1.0)
+    src = make(lake, tmp_path)
+    first = src.read(close(before(LAST, 44)))
+    again = src.read(close(before(LAST, 43)))
+    clear = src.read(close(LAST))
+    assert any("contradict each other" in r for r in first.halts)
+    assert any("contradict each other" in r for r in again.halts)
+    assert clear.halts == ()
+    assert bad not in [b.session for b in clear.snapshot.bars[GLD]["1d"]]
+
+
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
     lake: Path, tmp_path: Path
 ) -> None:
