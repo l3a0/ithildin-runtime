@@ -279,6 +279,7 @@ def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> Non
     ("change", "said"),
     [
         ("config_hashes", "on a redelivery after a redeploy: the strategies' configuration hashes"),
+        ("one hash", "on a redelivery after a redeploy: the strategies' configuration hashes"),
         ("release", "on a redelivery after a redeploy: the release"),
         ("format", "on a redelivery after a redeploy: the format"),
         (
@@ -297,6 +298,8 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
     later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
+    elif change == "one hash":
+        later = dataclasses.replace(first, config_hashes={"chan": "d" * 64})
     elif change == "format":
         later = dataclasses.replace(first, format=2)
     else:

@@ -242,14 +242,24 @@ def test_1_a_lone_wrong_close_trips_both_rules_and_halts(lake: Path, tmp_path: P
     reading = make(lake, tmp_path, spike_multiple=Decimal(10)).read(close(LAST))
     rules = {f.rule for f in reading.snapshot.flags[GLD]}
     assert rules == {spikes.MOVE, spikes.CONTRADICT}
-    assert any("contradict each other" in r for r in reading.halts)
+    # 158.91 is GLD's low on 2012-04-09 in Chan's vintage, and 15.937 the close written here.
+    assert reading.halts == (
+        f"GLD's bar for {LAST.isoformat()} has prices that contradict each other: "
+        "its low of 158.91 is above the smallest of its open, close and high, 15.937",
+    )
 
 
 def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Path) -> None:
-    lakes.with_row(lake, "GLD", LAST, high=150.0, low=0.0)
+    lakes.with_row(lake, "GLD", LAST, high=0.0, low=0.0)
     reading = make(lake, tmp_path).read(close(LAST))
     contradictions = [f for f in reading.snapshot.flags[GLD] if f.rule == spikes.CONTRADICT]
-    assert len(contradictions) >= 2
+    # A high and a low at zero, and a high below the largest of its open, close and low.
+    assert len(contradictions) == 3
+    assert any(
+        "its high of 0.0 is below the largest of its open, close and low" in r
+        for r in reading.halts
+    )
+    assert any("its high of 0.0 is at or below zero" in r for r in reading.halts)
     assert len([r for r in reading.halts if "contradict each other" in r]) == len(contradictions)
     assert any("its low of 0.0 is at or below zero" in r for r in reading.halts)
 
