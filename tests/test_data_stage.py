@@ -37,6 +37,7 @@ from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_hand
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
 from tests.test_data_source import LAST, Clock, Timer, before, close, settings, unlist
+from tests.test_data_spikes import bar
 from tests.test_storage_contract import Alarms
 
 CHAN = parse_strategy("chan", b'instruments = ["GLD", "USO"]\n')
@@ -184,7 +185,7 @@ def test_18_a_reread_after_a_changed_bar_says_the_bars_differ(lake: Path, tmp_pa
     third = made(Item(close(LAST), "data"), Reports())
     assert third.outputs[1].key == key(2)
     (reason,) = alarms.reasons
-    assert reason.endswith("These differ, as on a restatement by marketlake: bars, ledgers")
+    assert reason.endswith("These differ: bars, ledgers")
 
 
 def test_18_a_redelivery_halts_on_the_contradicting_capture_that_counts(
@@ -319,6 +320,7 @@ def test_18_a_redelivery_halts_on_an_instrument_the_capture_that_counts_lacks(
     narrow = _again(lake, tmp_path, storage, clock, instruments=(InstrumentId("GLD"),))
     assert narrow(Item(close(LAST), "data"), Reports()).halt is None
     again = made(Item(close(LAST), "data"), Reports())
+    assert again.halt is not None
     assert again.halt.reason == f"{key()}, which counts: USO is not in the stored snapshot"
 
 
@@ -370,26 +372,22 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     assert alarms.reasons == []
 
 
-UNKNOWN = "and neither the header nor marketlake's ledgers changed, so the cause is not known"
-UNREAD = "and no bar, status or flag the decision read changed"
-
-
 @pytest.mark.parametrize(
-    ("names", "said"),
+    "names",
     [
-        (("status",), f"{UNKNOWN}: status"),
-        (("flags",), f"{UNKNOWN}: flags"),
-        (("quotes",), f"{UNKNOWN}: quotes"),
-        (("provisional",), f"{UNKNOWN}: provisional"),
-        (("ledgers",), f"{UNREAD}: ledgers"),
-        (("segments",), f"{UNREAD}: segments"),
-        (("status", "ledgers"), "as on a restatement by marketlake: status, ledgers"),
-        (("flags", "segments"), "as on a restatement by marketlake: flags, segments"),
+        ("bars",),
+        ("status",),
+        ("flags",),
+        ("quotes",),
+        ("provisional",),
+        ("ledgers",),
+        ("segments",),
+        ("bars", "ledgers"),
+        ("status", "ledgers"),
+        ("flags", "segments"),
     ],
 )
-def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(
-    names: tuple[str, ...], said: str
-) -> None:
+def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str, ...]) -> None:
     from ithildinruntime.core import (
         BarStatus,
         BlobHeader,
@@ -413,33 +411,25 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(
         "provisional": True,
         "ledgers": {"manifest.jsonl": "e" * 64},
         "segments": ("lake-live/a.jsonl",),
+        "bars": {gld: {"1d": (bar(0, "100"),)}},
     }
     changed = dataclasses.replace(base, **{name: values[name] for name in names})
 
     def encoded(snap: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
-    assert differences(encoded(base), encoded(changed)) == f"These differ, {said}"
+    assert differences(encoded(base), encoded(changed)) == f"These differ: {', '.join(names)}"
 
 
 @pytest.mark.parametrize(
     ("change", "said"),
     [
-        (
-            "config_hashes",
-            "as on a redelivery after a redeploy: the strategies' configuration hashes",
-        ),
-        ("one hash", "as on a redelivery after a redeploy: the strategies' configuration hashes"),
-        ("release", "as on a redelivery after a redeploy: the release"),
-        ("format", "as on a redelivery after a redeploy: the format"),
-        (
-            "release and flags",
-            "as after a redeploy that changed the release or the settings: the release, flags",
-        ),
-        (
-            "release and ledgers",
-            "and no bar, status or flag the decision read changed: the release, ledgers",
-        ),
+        ("config_hashes", "the strategies' configuration hashes"),
+        ("one hash", "the strategies' configuration hashes"),
+        ("release", "the release"),
+        ("format", "the format"),
+        ("release and flags", "the release, flags"),
+        ("release and ledgers", "the release, ledgers"),
     ],
 )
 def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str) -> None:
@@ -466,7 +456,7 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
     def encoded(header: BlobHeader, body: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (body,), False))
 
-    assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ, {said}"
+    assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ: {said}"
 
 
 # 19. The wait.

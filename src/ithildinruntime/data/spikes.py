@@ -3,7 +3,8 @@
 This doc's rules are a proposal of #5, which the charter's data engineer owns.
 The flag never replaces the price, which stays as it arrived. A flag from the
 first rule halts the decision, because no real trade produces one, and
-`source.LakeSource.read` adds that halt. A flag from the second rule halts
+`source.LakeSource.read` adds that halt, and `source.judge` adds it to a
+redelivered decision's first capture. A flag from the second rule halts
 nothing: monitoring alerts the owner, which #11 builds, and the decision trades
 on the price as it arrived. A backtest meets both as a live decision does.
 

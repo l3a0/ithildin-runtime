@@ -291,6 +291,49 @@ def test_1_judge_halts_on_what_the_read_halts_on(lake: Path, tmp_path: Path) -> 
     }
 
 
+def _stored(bars, flags=None, status=None):  # type: ignore[no-untyped-def]
+    from ithildinruntime.core import Snapshot
+
+    return Snapshot(
+        close(LAST),
+        {GLD: {"1d": tuple(bars)}} if bars is not None else {},
+        {},
+        status if status is not None else {GLD: BarStatus.FRESH},
+        False,
+        flags or {},
+        (),
+        {},
+    )
+
+
+def test_1_judge_finds_a_contradiction_in_the_bars_where_no_flag_was_stored() -> None:
+    from tests.test_data_spikes import bar
+
+    stored = _stored([bar(0, "100", high="99", low="98", open="99")])
+    (reason,) = [r for r in source.judge(stored, (GLD,)) if "contradict" in r]
+    assert "its high of 99 is below the largest of its open, close and low, 100" in reason
+
+
+def test_1_judge_halts_on_a_stored_contradiction_flag_the_bars_do_not_raise() -> None:
+    """A flag an earlier release recorded halts even where this release's rule would not."""
+    from ithildinruntime.core import SpikeFlag
+    from tests.test_data_spikes import bar
+
+    clean = bar(0, "100")
+    flag = SpikeFlag(clean.session, "low", Decimal(100), Decimal(99), spikes.CONTRADICT, "")
+    reasons = source.judge(_stored([clean], flags={GLD: (flag,)}), (GLD,))
+    assert any("its low of 100 is above the smallest" in r for r in reasons)
+
+
+def test_1_judge_halts_on_an_instrument_marked_fresh_with_no_bar() -> None:
+    assert source.judge(_stored(None), (GLD,)) == (
+        "GLD is fresh and has no bar in the stored snapshot",
+    )
+    assert source.judge(_stored([]), (GLD,)) == (
+        "GLD is fresh and has no bar in the stored snapshot",
+    )
+
+
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
     lake: Path, tmp_path: Path
 ) -> None:

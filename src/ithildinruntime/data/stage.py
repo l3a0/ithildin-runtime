@@ -22,17 +22,10 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote or segment. It reads the difference as one of six cases.
-   1. Nothing but the read time: a redelivery after a crash.
-   2. The header alone: a redelivery after a redeploy.
-   3. marketlake's ledgers or segments together with what the decision
-      read: a restatement by marketlake.
-   4. The ledgers or segments alone, as when marketlake seals a day the
-      decision does not read: no input of the decision changed.
-   5. The header with what the decision read: a redeploy that changed the
-      release or the settings.
-   6. What the decision read alone: a cause not known, such as data
-      settings that no hash in the header names yet, which #110 holds.
+   quote or segment, or says that only the read time differs, as on a
+   redelivery after a crash. It names no cause beyond that, because the
+   same difference can come from a restatement by marketlake, a nightly
+   upload or a redeploy.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
@@ -194,24 +187,9 @@ def differences(first: bytes, later: bytes) -> str:
         if getattr(a, name) != getattr(b, name):
             snapshot.append(name)
     named = ", ".join(header + snapshot)
-    lake = [d for d in snapshot if d in ("ledgers", "segments")]
-    read = [d for d in snapshot if d not in ("ledgers", "segments")]
     if not named:
         return "Only the read time differs, as on a redelivery after a crash"
-    if not snapshot:
-        return f"These differ, as on a redelivery after a redeploy: {named}"
-    if lake and read:
-        return f"These differ, as on a restatement by marketlake: {named}"
-    if lake:
-        return f"These differ, and no bar, status or flag the decision read changed: {named}"
-    if header:
-        return (
-            f"These differ, as after a redeploy that changed the release or the settings: {named}"
-        )
-    return (
-        "These differ, and neither the header nor marketlake's ledgers changed, "
-        f"so the cause is not known: {named}"
-    )
+    return f"These differ: {named}"
 
 
 def _without_read_time(bars: object) -> object:
