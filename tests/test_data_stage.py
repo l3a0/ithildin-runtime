@@ -351,6 +351,7 @@ def test_18_a_redelivery_halts_when_the_bytes_read_back_are_not_the_capture_that
 ) -> None:
     made, storage, _ = stage(lake, tmp_path, clock=Ticking())
     assert made(Item(close(LAST), "data"), Reports()).halt is None
+    original = (tmp_path / "store" / key()).read_bytes()
     real = storage._read
 
     def other(k: str, once: bool = False) -> bytes | None:
@@ -360,8 +361,10 @@ def test_18_a_redelivery_halts_when_the_bytes_read_back_are_not_the_capture_that
     storage._read = other  # type: ignore[method-assign]
     again = made(Item(close(LAST), "data"), Reports())
     assert again.halt is not None
-    assert again.halt.reason.startswith(f"{key()} counts and was read back with SHA-256 ")
-    assert again.halt.reason.endswith(f", not the stored {again.outputs[0].sha256}")
+    assert again.halt.reason == (
+        f"{key()} counts and was read back with SHA-256 {sha256_of(original + b' ')}, "
+        f"not the stored {sha256_of(original)}"
+    )
 
 
 def test_18_a_redelivery_halts_when_the_capture_that_counts_is_no_snapshot(

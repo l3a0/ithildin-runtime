@@ -379,7 +379,7 @@ def test_1_judge_halts_on_stored_and_recomputed_contradictions_once_each() -> No
     assert "halts as recorded: its low of 98 against 97" in reasons[1]
 
 
-@pytest.mark.parametrize("change", ["session", "instrument", "price", "against"])
+@pytest.mark.parametrize("change", ["session", "instrument", "field", "rule", "price", "against"])
 def test_1_judge_states_a_stored_flag_that_differs_from_the_recomputed_one(change: str) -> None:
     """Only a flag equal in every field to one the bars raise counts as found."""
     from tests.test_data_spikes import bar
@@ -389,6 +389,8 @@ def test_1_judge_states_a_stored_flag_that_differs_from_the_recomputed_one(chang
     moved = {
         "session": dataclasses.replace(own, session=own.session + timedelta(days=1)),
         "instrument": own,
+        "field": dataclasses.replace(own, field="low"),
+        "rule": dataclasses.replace(own, rule="a new rule"),
         "price": dataclasses.replace(own, price=Decimal(1)),
         "against": dataclasses.replace(own, against=Decimal(2)),
     }[change]
