@@ -26,6 +26,7 @@ from typing import Annotated, NewType
 
 from .codec import Places, encode
 from .halt import Halt
+from .names import is_name, is_sha256
 
 __all__ = [
     "Ack",
@@ -417,7 +418,16 @@ class StoredBlob(_Record):
 
 @dataclass(frozen=True)
 class BlobHeader(_Record):
-    """The header every output file begins with. `inputs` maps each input's key to its SHA-256."""
+    """The header every output file and decision result begins with.
+
+    `inputs` maps each input's key to its SHA-256. `config_hashes` maps each
+    strategy the blob concerns to the SHA-256 of that strategy's tracked
+    configuration file. A stage that belongs to one strategy records that
+    strategy alone, and a stage the deployment's strategies share records
+    every one of them, so a change to one strategy's file leaves every other
+    strategy's blobs naming the same version. The codec writes the map with
+    its keys sorted, so its bytes do not depend on the order it was built in.
+    """
 
     format: int
     deployment: str
@@ -427,7 +437,20 @@ class BlobHeader(_Record):
     decision_at: datetime
     inputs: Mapping[str, str]
     release: str
-    config_hash: str
+    config_hashes: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.config_hashes, Mapping) or not self.config_hashes:
+            raise ValueError("a header names the configuration hash of at least one strategy")
+        for strategy, digest in self.config_hashes.items():
+            if not is_name(strategy):
+                raise ValueError(f"strategy {strategy!r} cannot be part of a key")
+            if not is_sha256(digest):
+                raise ValueError(
+                    f"strategy {strategy}'s configuration hash {digest!r} is not a lower case "
+                    "hex SHA-256"
+                )
 
 
 @dataclass(frozen=True)

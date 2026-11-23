@@ -73,6 +73,9 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             f.name: sample(hints[f.name], empty=empty, depth=depth + 1)
             for f in dataclasses.fields(hint)
         }
+        if hint is core.BlobHeader:
+            # A header names at least one strategy, each by a key name and a SHA-256.
+            fields["config_hashes"] = {"chan": "0" * 64, "reversal.2": "f" * 64}
         if hint is core.Snapshot and not empty:
             # A snapshot files each bar under its own instrument and interval.
             bar = sample(core.Bar, depth=depth + 1)

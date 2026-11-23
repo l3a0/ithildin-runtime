@@ -79,6 +79,12 @@ How the loop runs, in order.
    returns or raises only once nothing is held. The price is
    a process that holds a host slot without receiving through an outage, and
    one whose hung handler is not killed while it holds them.
+10. **A stage runs only at a decision of every strategy the table declares.**
+    Before a handler runs, the loop halts the stage at a decision whose
+    strategies are not exactly the table's, naming the strategies left out or
+    extra. A handler's result whose configuration hashes differ from the ones
+    the table gives its stage is stored as a halt, with an alarm, as item 6
+    says of any error a handler did not handle.
 
 Every limit is measured on the timer's monotonic reading.
 """
@@ -190,7 +196,6 @@ class ReceiveLoop:
         alerts: Alerts,
         timer: Timer,
         beat: Callable[[], None],
-        config_hash: str,
         pool_size: int = 4,
         heartbeat_limit: float = 30.0,
         extend_every: float = 10.0,
@@ -206,6 +211,8 @@ class ReceiveLoop:
             raise ValueError(f"{component} needs a handler for each of {sorted(names)}")
         if pool_size < 1:
             raise ValueError("a pool holds at least one handler")
+        if not table.strategies:
+            raise ValueError("the table declares no strategy, so no blob could name its hash")
         self._worker = worker
         self._component = component
         self._stages = stages
@@ -218,7 +225,6 @@ class ReceiveLoop:
         self._alerts = alerts
         self._timer = timer
         self._beat = beat
-        self._config_hash = config_hash
         self._pool_size = pool_size
         self._heartbeat_limit = heartbeat_limit
         self._extend_every = extend_every
@@ -229,6 +235,7 @@ class ReceiveLoop:
             r for r in routes(table, plan.deployment) if r.reader == component
         )
         self._decisions = tuple(d.at for d in plan.decisions)
+        self._deciding = {d.at: frozenset(d.strategies) for d in plan.decisions}
         self._index = {at: i for i, at in enumerate(self._decisions)}
         # The first decision of each stage not yet known to be stored, so a
         # check never reads a key it already found.
@@ -857,6 +864,7 @@ class ReceiveLoop:
 
         returned: object = None
         try:
+            self._check_strategies(item)
             returned = self._handlers[item.stage](item, report)
             self._check_result(item, returned)
             result = returned
@@ -887,6 +895,29 @@ class ReceiveLoop:
         prefix = self._key(item).removesuffix("result.json")
         return tuple(ref for ref in returned.outputs if ref.key.startswith(prefix))
 
+    def _check_strategies(self, item: Item) -> None:
+        """Halt a stage at a decision whose strategies are not exactly the table's.
+
+        The plan builder drops a clock time after an early close one strategy
+        at a time, so two strategies on different schedules can meet a
+        decision only one of them makes. Running every stage there would run
+        the other's stages off its schedule. So the stage halts, until #11
+        writes how strategies on different schedules share a deployment.
+        """
+        deciding = self._deciding.get(item.decision_at, frozenset())
+        declared = {s.name for s in self._table.strategies}
+        if deciding == declared:
+            return
+        parts = []
+        if missing := sorted(declared - deciding):
+            parts.append(f"it leaves out {', '.join(missing)}")
+        if extra := sorted(deciding - declared):
+            parts.append(f"it lists {', '.join(extra)}, which the table does not declare")
+        raise Halt(
+            f"stage {item.stage} halts at decision {decision_part(item.decision_at)}, whose "
+            f"strategies differ from the table's: {', and '.join(parts)}"
+        )
+
     def _check_result(self, item: Item, result: object) -> None:
         if not isinstance(result, DecisionResult):
             raise TypeError(f"the handler returned {type(result).__name__}, not a DecisionResult")
@@ -895,6 +926,13 @@ class ReceiveLoop:
             raise ValueError(
                 f"the handler returned the result of stage {header.stage} at "
                 f"{decision_part(header.decision_at)}"
+            )
+        expected = dict(self._table.hashes_for(item.stage))
+        if dict(header.config_hashes) != expected:
+            raise ValueError(
+                f"the handler returned a result naming the configuration hashes "
+                f"{_hashes(header.config_hashes)}, and stage {item.stage} records "
+                f"{_hashes(expected)}"
             )
 
     def _store(self, item: Item, result: DecisionResult) -> None:
@@ -937,7 +975,7 @@ class ReceiveLoop:
             decision_at=item.decision_at,
             inputs={},
             release=self._plan.release,
-            config_hash=self._config_hash,
+            config_hashes=self._table.hashes_for(item.stage),
         )
         record = self._storage.halt_record(halt, found_outputs=found)
         return DecisionResult(header=header, outputs=(), halt=record)
@@ -999,3 +1037,7 @@ class ReceiveLoop:
             await self._in_io(self._storage.retry_held)
         finally:
             self._retrying = False
+
+
+def _hashes(hashes: Mapping[str, str]) -> str:
+    return "{" + ", ".join(f"{k}: {v}" for k, v in sorted(hashes.items())) + "}"

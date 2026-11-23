@@ -1,0 +1,2 @@
+# A strategy file is hashed by its bytes, so no checkout may change its line endings.
+*.toml -text
