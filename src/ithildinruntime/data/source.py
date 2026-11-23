@@ -10,7 +10,7 @@ How one decision is read, in order.
 
 1. **The lookback.** Each instrument reads the `lookback` sessions the
    calendar holds up to the latest session ended by the decision, from the
-   series' first session on where the run's configuration names one.
+   series' first session on where its settings name one.
 2. **One read per session.** marketlake's `load_bars` returns around a session
    missing inside a range with no error, and a row carries no session. So the
    source calls it once per session, with `start` and `end` both that
@@ -106,7 +106,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DataSettings:
-    """The data module's settings, from the run's tracked configuration.
+    """The data module's settings. No entry point builds them from a strategy's tracked file yet.
 
     - `instruments` are the instruments the run's strategies trade.
     - `lookback` is the number of sessions each instrument reads, counted on
@@ -184,8 +184,9 @@ class LakeSource:
         """The port's read, which halts on any reason a stored snapshot would halt on.
 
         `core.DataSource` returns a snapshot alone, so a caller of this method
-        never sees `Reading.halts`. A missing, stale or unstated input therefore
-        raises here rather than come back as a snapshot that reads as usable.
+        never sees `Reading.halts`. A missing, stale or unstated input, or a bar
+        whose prices contradict each other, therefore raises here rather than
+        come back as a snapshot that reads as usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
         """
         reading = self.read(decision_at)
@@ -440,10 +441,23 @@ def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[
     """
     return [
         f"{instrument}'s bar for {f.session.isoformat()} has prices that contradict each "
-        f"other: its {f.field} of {f.price} against {f.against}"
+        f"other: {_why(f)}"
         for f in found
         if f.rule == CONTRADICT
     ]
+
+
+def _why(flag: SpikeFlag) -> str:
+    if flag.price <= 0 and flag.against == 0:
+        return f"its {flag.field} of {flag.price} is at or below zero"
+    if flag.field == "high":
+        return (
+            f"its high of {flag.price} is below the largest of its open, close and low, "
+            f"{flag.against}"
+        )
+    return (
+        f"its low of {flag.price} is above the smallest of its open, close and high, {flag.against}"
+    )
 
 
 def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:

@@ -217,6 +217,27 @@ def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> Non
     assert differences(encoded(base), encoded(changed)).endswith(f"marketlake: {name}")
 
 
+@pytest.mark.parametrize("change", ["config_hashes", "release"])
+def test_18_the_reread_alarm_names_a_change_in_the_header_alone(change: str) -> None:
+    from ithildinruntime.core import BlobHeader, OutputFile, encode_output
+
+    hashes = {"chan": "c" * 64}
+    first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
+    if change == "config_hashes":
+        later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
+        named = "the strategies' configuration hashes"
+    else:
+        later = dataclasses.replace(first, release="r2")
+        named = "the release"
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+
+    def encoded(header: BlobHeader) -> bytes:
+        return encode_output(Snapshot, OutputFile(header, (snap,), False))
+
+    said = differences(encoded(first), encoded(later))
+    assert said == f"These differ, as on a redelivery after a redeploy: {named}"
+
+
 # 19. The wait.
 
 
@@ -339,7 +360,12 @@ def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_dat
             release="r1",
             table=table,
         )
-        headers[name] = handler(Item(close(LAST), "data"), Reports()).header
+        result = handler(Item(close(LAST), "data"), Reports())
+        stored = decode_output(
+            (tmp_path / name / "store" / result.outputs[0].key).read_bytes(), Snapshot
+        )
+        assert dict(stored.header.config_hashes) == dict(result.header.config_hashes)
+        headers[name] = stored.header
     assert dict(headers["before"].config_hashes) == dict(TABLE.hashes_for("data"))
     assert headers["before"].config_hashes["chan"] == headers["after"].config_hashes["chan"]
     assert headers["after"].config_hashes["other"] == changed.config_hash

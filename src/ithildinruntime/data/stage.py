@@ -128,11 +128,16 @@ class DataStage:
 def differences(first: bytes, later: bytes) -> str:
     """What differs between two captures of one decision's snapshot, for the alarm."""
     try:
-        a = decode_output(first, Snapshot).entries[0]
-        b = decode_output(later, Snapshot).entries[0]
+        one = decode_output(first, Snapshot)
+        two = decode_output(later, Snapshot)
     except Exception as error:
         return f"the first capture is no snapshot the codec reads: {type(error).__name__}: {error}"
+    a, b = one.entries[0], two.entries[0]
     differ = []
+    if one.header.release != two.header.release:
+        differ.append("the release")
+    if dict(one.header.config_hashes) != dict(two.header.config_hashes):
+        differ.append("the strategies' configuration hashes")
     if _without_read_time(a.bars) != _without_read_time(b.bars):
         differ.append("bars")
     for name in ("status", "flags", "ledgers", "quotes", "segments", "provisional"):
@@ -140,6 +145,8 @@ def differences(first: bytes, later: bytes) -> str:
             differ.append(name)
     if not differ:
         return "Only the read time differs, as on a redelivery after a crash"
+    if all(d.startswith("the ") for d in differ):
+        return f"These differ, as on a redelivery after a redeploy: {', '.join(differ)}"
     return f"These differ, as on a restatement by marketlake: {', '.join(differ)}"
 
 

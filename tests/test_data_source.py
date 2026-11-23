@@ -196,9 +196,10 @@ def test_1_a_contradiction_flag_halts_beside_the_unchanged_price(
         (LAST, "high", spikes.CONTRADICT)
     ]
     assert GLD in snap.flags and USO not in snap.flags
+    # 159.72 is the largest of GLD's open, close and low on 2012-04-09 in Chan's vintage.
     assert reading.halts == (
         f"GLD's bar for {LAST.isoformat()} has prices that contradict each other: "
-        "its high of 150.0 against 159.72",
+        "its high of 150.0 is below the largest of its open, close and low, 159.72",
     )
     with pytest.raises(Halt, match="contradict each other"):
         src.snapshot(close(LAST))
@@ -218,6 +219,39 @@ def test_1_a_contradiction_halts_each_decision_that_reads_it_and_holds_nothing_a
     assert any("contradict each other" in r for r in again.halts)
     assert clear.halts == ()
     assert bad not in [b.session for b in clear.snapshot.bars[GLD]["1d"]]
+
+
+def test_1_a_contradicting_bar_halts_through_the_last_decision_whose_lookback_holds_it(
+    lake: Path, tmp_path: Path
+) -> None:
+    """One step below, at and past the lookback's edge."""
+    span = settings().lookback
+    bad = before(LAST, span + 5)
+    lakes.with_row(lake, "GLD", bad, high=1.0, low=1.0)
+    src = make(lake, tmp_path)
+    last_holding = DAYS[DAYS.index(bad) + span - 1]
+    first_clear = DAYS[DAYS.index(bad) + span]
+    for day, halts in ((before(last_holding), True), (last_holding, True), (first_clear, False)):
+        reading = src.read(close(day))
+        assert any("contradict each other" in r for r in reading.halts) is halts, day
+
+
+def test_1_a_lone_wrong_close_trips_both_rules_and_halts(lake: Path, tmp_path: Path) -> None:
+    """A close at a tenth with the rest of the bar as it was: a move and a contradiction."""
+    lakes.with_row(lake, "GLD", LAST, close=15.937)
+    reading = make(lake, tmp_path, spike_multiple=Decimal(10)).read(close(LAST))
+    rules = {f.rule for f in reading.snapshot.flags[GLD]}
+    assert rules == {spikes.MOVE, spikes.CONTRADICT}
+    assert any("contradict each other" in r for r in reading.halts)
+
+
+def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Path) -> None:
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=0.0)
+    reading = make(lake, tmp_path).read(close(LAST))
+    contradictions = [f for f in reading.snapshot.flags[GLD] if f.rule == spikes.CONTRADICT]
+    assert len(contradictions) >= 2
+    assert len([r for r in reading.halts if "contradict each other" in r]) == len(contradictions)
+    assert any("its low of 0.0 is at or below zero" in r for r in reading.halts)
 
 
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
