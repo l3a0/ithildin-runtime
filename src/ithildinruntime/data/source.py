@@ -442,7 +442,9 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     """Every reason a stored snapshot halts its decision, read from the snapshot alone.
 
     Data's stage uses it on the capture that counts when a later read differs,
-    so the decision halts on what it will trade from. These each halt:
+    so the decision halts on what it will trade from. The stage judges only a
+    capture this release wrote, and halts on any other, so `judge` repeats
+    this release's read. These each halt:
 
     1. an instrument the settings read and the snapshot does not hold;
     2. an instrument that is not fresh, or is fresh with no bar;

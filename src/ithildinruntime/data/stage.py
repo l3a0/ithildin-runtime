@@ -29,10 +29,12 @@ things, in order.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
-   cannot be read to judge it halts. That read is the alarm's single try, so
-   one failed read of the first capture halts its decision. A missing or stale instrument, or a bar
-   of unstated kind, or a bar whose prices contradict each other, ends the
-   decision with a halt as data's result that names the stored snapshot, as
+   cannot be read to judge it halts, and so does one another release wrote.
+   That read is the alarm's single try, so one failed read of the first
+   capture halts its decision. A missing or stale instrument, or a bar
+   of unstated kind, or a bar whose prices contradict each other, and on a
+   redelivery each case `data.source.judge` lists, ends the decision with a
+   halt as data's result that names the stored snapshot, as
    hard limit 3 asks. A close past the written multiple halts nothing. Its
    flag stays in the stored snapshot beside the price, monitoring alerts the
    owner, which #11 builds, and the decision trades on the price as it
@@ -140,7 +142,7 @@ class DataStage:
         if stored.ref == stored.counts:
             reasons = reading.halts
         else:
-            reasons = _counted(stored.counts, first, self._source.instruments)
+            reasons = _counted(stored.counts, first, self._source.instruments, self._release)
         halt = None
         if reasons:
             halt = self._storage.halt_record(Halt("; ".join(reasons)), cause=stored.counts)
@@ -148,13 +150,16 @@ class DataStage:
 
 
 def _counted(
-    counts: BlobRef, first: Sequence[bytes], instruments: Sequence[InstrumentId]
+    counts: BlobRef, first: Sequence[bytes], instruments: Sequence[InstrumentId], release: str
 ) -> tuple[str, ...]:
     """The halts of the capture that counts, which every later stage reads.
 
     A later read that differs judges nothing, because the decision trades from
-    the first capture. A first capture that cannot be read or decoded halts,
-    since it cannot be judged.
+    the first capture. A first capture that cannot be read, does not match its
+    stored SHA-256 or cannot be decoded halts, since it cannot be judged. So
+    does one another release wrote: only this release's own code reads its
+    fields as it wrote them, so `judge` repeats this release's read and no
+    other's.
     """
     if not first:
         return (f"{counts.key} counts and could not be read to judge it",)
@@ -164,9 +169,15 @@ def _counted(
             f"not the stored {counts.sha256}",
         )
     try:
-        snapshot = decode_output(first[0], Snapshot).entries[0]
+        stored = decode_output(first[0], Snapshot)
     except Exception as error:
         return (f"{counts.key} counts and is no snapshot the codec reads: {error}",)
+    if stored.header.release != release:
+        return (
+            f"{counts.key} counts and was written by release {stored.header.release!r}, "
+            f"not this release {release!r}, so it cannot be judged",
+        )
+    snapshot = stored.entries[0]
     return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot, instruments))
 
 

@@ -10,6 +10,7 @@ first line are the acceptance tests' numbers on #5.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import hashlib
 import json
 import threading
@@ -376,6 +377,25 @@ def test_1_judge_halts_on_stored_and_recomputed_contradictions_once_each() -> No
     assert len(reasons) == 2
     assert "its high of 99 is below the largest" in reasons[0]
     assert "halts as recorded: its low of 98 against 97" in reasons[1]
+
+
+@pytest.mark.parametrize("change", ["session", "instrument", "price", "against"])
+def test_1_judge_states_a_stored_flag_that_differs_from_the_recomputed_one(change: str) -> None:
+    """Only a flag equal in every field to one the bars raise counts as found."""
+    from tests.test_data_spikes import bar
+
+    odd = bar(0, "100", high="99", low="98", open="99")
+    (own,) = spikes.contradictions(odd)
+    moved = {
+        "session": dataclasses.replace(own, session=own.session + timedelta(days=1)),
+        "instrument": own,
+        "price": dataclasses.replace(own, price=Decimal(1)),
+        "against": dataclasses.replace(own, against=Decimal(2)),
+    }[change]
+    flags = {USO: (moved,)} if change == "instrument" else {GLD: (moved,)}
+    reasons = source.judge(_stored([odd], flags=flags), (GLD,))
+    assert len(reasons) == 2
+    assert "is below the largest" in reasons[0] and "halts as recorded" in reasons[1]
 
 
 def test_1_contradictions_halt_in_the_order_spike_flags_gives_them() -> None:

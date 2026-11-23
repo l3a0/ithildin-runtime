@@ -249,6 +249,7 @@ def test_18_a_redelivery_halts_when_the_capture_that_counts_cannot_be_read(
 def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> DataStage:
     """A second stage over the same store, as a process restarted under other settings."""
     kinds = changes.pop("kinds", None)
+    release = changes.pop("release", "r1")
     source = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror-again"),
         settings(**changes),
@@ -262,8 +263,25 @@ def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> Da
         clock,
         deployment=DEPLOYMENT,
         run=RUN,
-        release="r1",
+        release=release,
         config_hashes=TABLE.hashes_for("data"),
+    )
+
+
+def test_18_a_redelivery_halts_on_a_clean_capture_another_release_wrote(
+    lake: Path, tmp_path: Path
+) -> None:
+    """Only this release's code reads a capture's fields as it wrote them."""
+    clock = Ticking()
+    made, storage, _ = stage(lake, tmp_path, clock=clock)
+    earlier = _again(lake, tmp_path, storage, clock, release="r0")
+    assert earlier(Item(close(LAST), "data"), Reports()).halt is None
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt is not None
+    assert again.halt.reason == (
+        f"{key()} counts and was written by release 'r0', not this release 'r1', "
+        "so it cannot be judged"
     )
 
 
@@ -343,7 +361,6 @@ def test_18_a_redelivery_halts_when_the_bytes_read_back_are_not_the_capture_that
     again = made(Item(close(LAST), "data"), Reports())
     assert again.halt is not None
     assert again.halt.reason.startswith(f"{key()} counts and was read back with SHA-256 ")
-    assert again.halt is not None
     assert again.halt.reason.endswith(f", not the stored {again.outputs[0].sha256}")
 
 

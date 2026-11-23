@@ -33,6 +33,8 @@ from ithildinruntime.core import Bar, SpikeFlag
 
 __all__ = ["CONTRADICT", "MOVE", "contradictions", "largest_multiple", "spike_flags"]
 
+# Both rule names are recorded in every stored flag, so a rename leaves the
+# old text readable or a redelivered decision halts on the stored record.
 CONTRADICT = "prices contradict each other"
 MOVE = "close-to-close move past the written multiple"
 _CONTEXT = Context(prec=28)
