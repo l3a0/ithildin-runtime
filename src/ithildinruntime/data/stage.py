@@ -99,6 +99,8 @@ class DataStage:
         release: str,
         config_hashes: Mapping[str, str],
     ) -> None:
+        if not release:
+            raise ValueError("data's stage names its release, which a redelivery checks")
         self._source = source
         self._storage = storage
         self._clock = clock
@@ -142,7 +144,9 @@ class DataStage:
         if stored.ref == stored.counts:
             reasons = reading.halts
         else:
-            reasons = _counted(stored.counts, first, self._source.instruments, self._release)
+            reasons = _counted(
+                stored.counts, first, self._source.instruments, self._release, self._config_hashes
+            )
         halt = None
         if reasons:
             halt = self._storage.halt_record(Halt("; ".join(reasons)), cause=stored.counts)
@@ -150,16 +154,23 @@ class DataStage:
 
 
 def _counted(
-    counts: BlobRef, first: Sequence[bytes], instruments: Sequence[InstrumentId], release: str
+    counts: BlobRef,
+    first: Sequence[bytes],
+    instruments: Sequence[InstrumentId],
+    release: str,
+    config_hashes: Mapping[str, str],
 ) -> tuple[str, ...]:
     """The halts of the capture that counts, which every later stage reads.
 
     A later read that differs judges nothing, because the decision trades from
     the first capture. A first capture that cannot be read, does not match its
-    stored SHA-256 or cannot be decoded halts, since it cannot be judged. So
-    does one another release wrote: only this release's own code reads its
-    fields as it wrote them, so `judge` repeats this release's read and no
-    other's.
+    stored SHA-256, cannot be decoded or holds other than one snapshot halts,
+    since it cannot be judged. So does one written under another release or
+    other strategy configuration hashes: only this release's code, under the
+    settings those hashes name, reads its fields and status as it wrote them,
+    so `judge` repeats this release's read and no other's. That holds for
+    data's own settings once #110 builds `DataSettings` from the files the
+    hashes name. Until then a change to `DataSettings` alone moves no hash.
     """
     if not first:
         return (f"{counts.key} counts and could not be read to judge it",)
@@ -177,6 +188,14 @@ def _counted(
             f"{counts.key} counts and was written by release {stored.header.release!r}, "
             f"not this release {release!r}, so it cannot be judged",
         )
+    if dict(stored.header.config_hashes) != dict(config_hashes):
+        return (
+            f"{counts.key} counts and was written under configuration hashes "
+            f"{dict(stored.header.config_hashes)}, not this stage's {dict(config_hashes)}, "
+            "so it cannot be judged",
+        )
+    if len(stored.entries) != 1:
+        return (f"{counts.key} counts and holds {len(stored.entries)} snapshots, not one",)
     snapshot = stored.entries[0]
     return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot, instruments))
 

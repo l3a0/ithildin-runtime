@@ -250,6 +250,7 @@ def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> Da
     """A second stage over the same store, as a process restarted under other settings."""
     kinds = changes.pop("kinds", None)
     release = changes.pop("release", "r1")
+    hashes = changes.pop("config_hashes", TABLE.hashes_for("data"))
     source = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror-again"),
         settings(**changes),
@@ -264,25 +265,94 @@ def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> Da
         deployment=DEPLOYMENT,
         run=RUN,
         release=release,
-        config_hashes=TABLE.hashes_for("data"),
+        config_hashes=hashes,
     )
 
 
+@pytest.mark.parametrize(("wrote", "reads"), [("r0", "r1"), ("r1", "r2")])
 def test_18_a_redelivery_halts_on_a_clean_capture_another_release_wrote(
-    lake: Path, tmp_path: Path
+    lake: Path, tmp_path: Path, wrote: str, reads: str
 ) -> None:
     """Only this release's code reads a capture's fields as it wrote them."""
     clock = Ticking()
-    made, storage, _ = stage(lake, tmp_path, clock=clock)
-    earlier = _again(lake, tmp_path, storage, clock, release="r0")
-    assert earlier(Item(close(LAST), "data"), Reports()).halt is None
-    again = made(Item(close(LAST), "data"), Reports())
+    _, storage, _ = stage(lake, tmp_path, clock=clock)
+    assert (
+        _again(lake, tmp_path, storage, clock, release=wrote)(
+            Item(close(LAST), "data"), Reports()
+        ).halt
+        is None
+    )
+    again = _again(lake, tmp_path, storage, clock, release=reads)(
+        Item(close(LAST), "data"), Reports()
+    )
     assert again.outputs[1].key == key(2)
+    assert again.halt is not None
+    assert again.halt.reason == (
+        f"{key()} counts and was written by release {wrote!r}, not this release {reads!r}, "
+        "so it cannot be judged"
+    )
+
+
+def test_18_a_redelivery_names_the_release_before_any_halt_the_capture_holds(
+    lake: Path, tmp_path: Path
+) -> None:
+    """Another release's contradicting capture halts on the release, not on this reading."""
+    clock = Ticking()
+    _, storage, _ = stage(lake, tmp_path, clock=clock)
+    original = (lake / lakes.partition_key("GLD", LAST)).read_bytes()
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    earlier = _again(lake, tmp_path, storage, clock, release="r0")
+    assert earlier(Item(close(LAST), "data"), Reports()).halt is not None
+    lakes.rewrite(lake, lakes.partition_key("GLD", LAST), original)
+    lakes.record(lake, lakes.partition_key("GLD", LAST), rows=1)
+    again = _again(lake, tmp_path, storage, clock)(Item(close(LAST), "data"), Reports())
     assert again.halt is not None
     assert again.halt.reason == (
         f"{key()} counts and was written by release 'r0', not this release 'r1', "
         "so it cannot be judged"
     )
+
+
+def test_18_a_redelivery_halts_on_a_capture_written_under_other_configuration_hashes(
+    lake: Path, tmp_path: Path
+) -> None:
+    clock = Ticking()
+    _, storage, _ = stage(lake, tmp_path, clock=clock)
+    other = {"chan": "d" * 64, "other": "e" * 64}
+    assert (
+        _again(lake, tmp_path, storage, clock, config_hashes=other)(
+            Item(close(LAST), "data"), Reports()
+        ).halt
+        is None
+    )
+    again = _again(lake, tmp_path, storage, clock)(Item(close(LAST), "data"), Reports())
+    assert again.halt is not None
+    assert again.halt.reason == (
+        f"{key()} counts and was written under configuration hashes {other}, "
+        f"not this stage's {dict(TABLE.hashes_for('data'))}, so it cannot be judged"
+    )
+
+
+def test_18_a_redelivery_halts_on_a_capture_that_holds_no_snapshot(
+    lake: Path, tmp_path: Path
+) -> None:
+    from ithildinruntime.core import BlobHeader, OutputFile, encode_output
+
+    made, storage, _ = stage(lake, tmp_path, clock=Ticking())
+    header = BlobHeader(
+        1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
+    )
+    empty = encode_output(Snapshot, OutputFile(header, (), False))
+    storage._store.create(key(), empty, sha256_of(empty))
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.halt is not None
+    assert again.halt.reason == f"{key()} counts and holds 0 snapshots, not one"
+
+
+def test_the_stage_refuses_an_empty_release(lake: Path, tmp_path: Path) -> None:
+    _, storage, _ = stage(lake, tmp_path)
+    with pytest.raises(ValueError, match="names its release"):
+        _again(lake, tmp_path, storage, Ticking(), release="")
 
 
 def test_18_a_redelivery_halts_on_a_missing_capture_that_counts(lake: Path, tmp_path: Path) -> None:

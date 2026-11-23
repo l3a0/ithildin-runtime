@@ -625,7 +625,9 @@ The price is that a decision resumed after marketlake restated its data
 trades on the first capture, wrong values included, and only the alarm on
 the second capture says so. Data's stage also judges that first capture
 through the alarm's single read of it, so one failed read halts the
-decision.
+decision. It halts rather than judges a first capture written under another
+release or other strategy configuration hashes, which a run that never
+mixes releases should never meet.
 
 ### Rule 3: a worker resumes by reading what exists
 

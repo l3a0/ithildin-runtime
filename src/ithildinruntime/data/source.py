@@ -450,9 +450,10 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     2. an instrument that is not fresh, or is fresh with no bar;
     3. each bar `LakeSource.read` halts on, through the same `_bar_halts`;
     4. each stored flag that is not the move rule's and that this release's
-       rule does not find in the bars, as an earlier release may have
-       recorded under another rule or name. Its reason states the record as
-       stored rather than guess what it meant.
+       rule does not find in the bars. Within one release the bars raise
+       every flag stored beside them, so such a flag means the record is not
+       what this release wrote. Its reason states the record as stored
+       rather than guess what it meant.
 
     A stored status keeps no session, so its reason names the stored snapshot
     rather than the session, and it is trusted as recorded.

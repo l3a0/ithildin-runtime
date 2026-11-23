@@ -316,7 +316,7 @@ def test_1_judge_finds_a_contradiction_in_the_bars_where_no_flag_was_stored() ->
 
 
 def test_1_judge_halts_on_a_stored_contradiction_flag_the_bars_do_not_raise() -> None:
-    """A flag an earlier release recorded halts even where this release's rule would not."""
+    """A stored flag the bars do not raise halts as recorded."""
     from ithildinruntime.core import SpikeFlag
     from tests.test_data_spikes import bar
 
@@ -381,7 +381,7 @@ def test_1_judge_halts_on_stored_and_recomputed_contradictions_once_each() -> No
 
 @pytest.mark.parametrize("change", ["session", "instrument", "field", "rule", "price", "against"])
 def test_1_judge_states_a_stored_flag_that_differs_from_the_recomputed_one(change: str) -> None:
-    """Only a flag equal in every field to one the bars raise counts as found."""
+    """Only a flag equal in every field but its note to one the bars raise counts as found."""
     from tests.test_data_spikes import bar
 
     odd = bar(0, "100", high="99", low="98", open="99")
