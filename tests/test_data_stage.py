@@ -184,6 +184,64 @@ def test_18_a_reread_after_a_changed_bar_says_the_bars_differ(lake: Path, tmp_pa
     assert reason.endswith("These differ, as on a restatement by marketlake: bars, ledgers")
 
 
+def test_18_a_redelivery_halts_on_the_contradicting_capture_that_counts(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The decision trades from the first capture, so its halt follows the first capture."""
+    original = (lake / lakes.partition_key("GLD", LAST)).read_bytes()
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    first = made(Item(close(LAST), "data"), Reports())
+    assert first.halt is not None
+    # The process died before the loop stored the result, and marketlake fixed the bar.
+    lakes.rewrite(lake, lakes.partition_key("GLD", LAST), original)
+    lakes.record(lake, lakes.partition_key("GLD", LAST), rows=1)
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[0].key == key() and again.outputs[1].key == key(2)
+    assert again.halt is not None and again.halt.cause == again.outputs[0]
+    assert f"{key()}, which counts: " in again.halt.reason
+    assert "contradict each other" in again.halt.reason
+
+
+def test_18_a_redelivery_judges_a_clean_capture_that_counts_however_the_reread_reads(
+    lake: Path, tmp_path: Path
+) -> None:
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt is None
+
+
+def test_18_a_redelivery_halts_on_a_stale_capture_that_counts(lake: Path, tmp_path: Path) -> None:
+    gone = (lakes.partition_key("USO", LAST), lakes.partition_key("USO", before(LAST)))
+    keep = {k: (lake / k).read_bytes() for k in gone}
+    for k in gone:
+        unlist(lake, k)
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert "USO" in made(Item(close(LAST), "data"), Reports()).halt.reason
+    for k, data in keep.items():
+        lakes.rewrite(lake, k, data)
+        lakes.record(lake, k, rows=1)
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt is not None
+    assert f"{key()}, which counts: USO" in again.halt.reason
+
+
+def test_18_a_redelivery_halts_when_the_capture_that_counts_cannot_be_read(
+    lake: Path, tmp_path: Path
+) -> None:
+    made, storage, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    storage._read = lambda key, once=False: None  # type: ignore[method-assign]
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt is not None
+    assert again.halt.reason == f"{key()} counts and could not be read to judge it"
+
+
 def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     lake: Path, tmp_path: Path
 ) -> None:
@@ -217,25 +275,44 @@ def test_18_the_reread_alarm_names_a_change_in_status_or_flags(name: str) -> Non
     assert differences(encoded(base), encoded(changed)).endswith(f"marketlake: {name}")
 
 
-@pytest.mark.parametrize("change", ["config_hashes", "release"])
-def test_18_the_reread_alarm_names_a_change_in_the_header_alone(change: str) -> None:
-    from ithildinruntime.core import BlobHeader, OutputFile, encode_output
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        ("config_hashes", "on a redelivery after a redeploy: the strategies' configuration hashes"),
+        ("release", "on a redelivery after a redeploy: the release"),
+        ("format", "on a redelivery after a redeploy: the format"),
+        (
+            "release and flags",
+            "after a redeploy that changed the release or the settings: the release, flags",
+        ),
+        ("release and ledgers", "on a restatement by marketlake: the release, ledgers"),
+    ],
+)
+def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str) -> None:
+    from ithildinruntime.core import BlobHeader, InstrumentId, OutputFile, SpikeFlag, encode_output
 
     hashes = {"chan": "c" * 64}
     first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
-        named = "the strategies' configuration hashes"
+    elif change == "format":
+        later = dataclasses.replace(first, format=2)
     else:
         later = dataclasses.replace(first, release="r2")
-        named = "the release"
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    if change == "release and flags":
+        flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
+        later_snap = dataclasses.replace(snap, flags={InstrumentId("GLD"): (flag,)})
+    elif change == "release and ledgers":
+        later_snap = dataclasses.replace(snap, ledgers={"manifest.jsonl": "e" * 64})
 
-    def encoded(header: BlobHeader) -> bytes:
-        return encode_output(Snapshot, OutputFile(header, (snap,), False))
+    def encoded(header: BlobHeader, body: Snapshot) -> bytes:
+        return encode_output(Snapshot, OutputFile(header, (body,), False))
 
-    said = differences(encoded(first), encoded(later))
-    assert said == f"These differ, as on a redelivery after a redeploy: {named}"
+    assert (
+        differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ, as {said}"
+    )
 
 
 # 19. The wait.

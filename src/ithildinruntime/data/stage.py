@@ -18,10 +18,15 @@ things, in order.
 3. **It stores the snapshot** through `core.Storage`'s rule for a capturing
    stage. The first capture wins, and a later read that differs, even only in
    its read time, is stored under its own attempt number, which alarms. The
-   alarm's reason says whether any bar, status, flag or ledger differs, or
-   only the read time, so a restatement by marketlake reads apart from a
-   redelivery.
-4. **It judges the stored snapshot.** A missing or stale instrument, or a bar
+   alarm's reason names what differs: the header's format, release or
+   strategies' configuration hashes, and any bar, status, flag, ledger,
+   quote or segment. A change in the header alone reads as a redelivery after
+   a redeploy, a change in marketlake's ledgers or segments as its
+   restatement, and nothing but the read time as a redelivery after a crash.
+4. **It judges the snapshot that counts.** That is the read just made, unless
+   an earlier capture of the decision is stored, in which case it is that
+   first capture, because every later stage reads it. A first capture that
+   cannot be read to judge it halts. A missing or stale instrument, or a bar
    of unstated kind, or a bar whose prices contradict each other, ends the
    decision with a halt as data's result that names the stored snapshot, as
    hard limit 3 asks. A close past the written multiple halts nothing. Its
@@ -35,12 +40,13 @@ things, in order.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
     BlobHeader,
+    BlobRef,
     Clock,
     DecisionResult,
     Halt,
@@ -52,9 +58,10 @@ from ithildinruntime.core import (
     decode_output,
     encode_output,
     output_key,
+    sha256_of,
 )
 
-from .source import LakeSource
+from .source import LakeSource, judge
 
 __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 
@@ -110,19 +117,42 @@ class DataStage:
             config_hashes=self._config_hashes,
         )
         data = encode_output(Snapshot, OutputFile(header, (reading.snapshot,), False))
+        first: list[bytes] = []
+
+        def explain(held: bytes) -> str:
+            first.append(held)
+            return differences(held, data)
+
         stored = self._storage.put(
             StageKind.CAPTURING,
             output_key(self._deployment, self._run, at, STAGE, SNAPSHOT),
             data,
             attempt=lambda n: attempt_key(self._deployment, self._run, at, STAGE, SNAPSHOT, n),
-            explain=lambda first: differences(first, data),
+            explain=explain,
         )
         report()
         outputs = (stored.counts,) if stored.ref == stored.counts else (stored.counts, stored.ref)
+        reasons = reading.halts if stored.ref == stored.counts else _counted(stored.counts, first)
         halt = None
-        if reading.halts:
-            halt = self._storage.halt_record(Halt("; ".join(reading.halts)), cause=stored.counts)
+        if reasons:
+            halt = self._storage.halt_record(Halt("; ".join(reasons)), cause=stored.counts)
         return DecisionResult(header=header, outputs=outputs, halt=halt)
+
+
+def _counted(counts: BlobRef, first: Sequence[bytes]) -> tuple[str, ...]:
+    """The halts of the capture that counts, which every later stage reads.
+
+    A later read that differs judges nothing, because the decision trades from
+    the first capture. A first capture that cannot be read or decoded halts,
+    since it cannot be judged.
+    """
+    if not first or sha256_of(first[0]) != counts.sha256:
+        return (f"{counts.key} counts and could not be read to judge it",)
+    try:
+        snapshot = decode_output(first[0], Snapshot).entries[0]
+    except Exception as error:
+        return (f"{counts.key} counts and is no snapshot the codec reads: {error}",)
+    return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot))
 
 
 def differences(first: bytes, later: bytes) -> str:
@@ -133,21 +163,29 @@ def differences(first: bytes, later: bytes) -> str:
     except Exception as error:
         return f"the first capture is no snapshot the codec reads: {type(error).__name__}: {error}"
     a, b = one.entries[0], two.entries[0]
-    differ = []
+    header = []
+    if one.header.format != two.header.format:
+        header.append("the format")
     if one.header.release != two.header.release:
-        differ.append("the release")
+        header.append("the release")
     if dict(one.header.config_hashes) != dict(two.header.config_hashes):
-        differ.append("the strategies' configuration hashes")
+        header.append("the strategies' configuration hashes")
+    snapshot = []
     if _without_read_time(a.bars) != _without_read_time(b.bars):
-        differ.append("bars")
+        snapshot.append("bars")
     for name in ("status", "flags", "ledgers", "quotes", "segments", "provisional"):
         if getattr(a, name) != getattr(b, name):
-            differ.append(name)
-    if not differ:
+            snapshot.append(name)
+    named = ", ".join(header + snapshot)
+    if not named:
         return "Only the read time differs, as on a redelivery after a crash"
-    if all(d.startswith("the ") for d in differ):
-        return f"These differ, as on a redelivery after a redeploy: {', '.join(differ)}"
-    return f"These differ, as on a restatement by marketlake: {', '.join(differ)}"
+    if not snapshot:
+        return f"These differ, as on a redelivery after a redeploy: {named}"
+    if header and "ledgers" not in snapshot and "segments" not in snapshot:
+        return (
+            f"These differ, as after a redeploy that changed the release or the settings: {named}"
+        )
+    return f"These differ, as on a restatement by marketlake: {named}"
 
 
 def _without_read_time(bars: object) -> object:

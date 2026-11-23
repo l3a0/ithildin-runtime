@@ -254,6 +254,19 @@ def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Pa
     assert any("its low of 0.0 is at or below zero" in r for r in reading.halts)
 
 
+def test_1_a_low_above_a_zero_open_reads_as_a_low_above_it_not_as_a_zero_price(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The zero branch of the reason belongs to the price at or below zero alone."""
+    lakes.with_row(lake, "GLD", LAST, open=0.0)
+    reading = make(lake, tmp_path).read(close(LAST))
+    assert any("its open of 0.0 is at or below zero" in r for r in reading.halts)
+    assert any(
+        "its low of" in r and "is above the smallest of its open, close and high, 0.0" in r
+        for r in reading.halts
+    )
+
+
 def test_1_a_move_flag_halts_nothing_and_the_price_reaches_the_decision(
     lake: Path, tmp_path: Path
 ) -> None:

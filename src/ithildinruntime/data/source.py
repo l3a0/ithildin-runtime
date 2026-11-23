@@ -92,7 +92,7 @@ from .reference import (
 )
 from .spikes import CONTRADICT, spike_flags
 
-__all__ = ["DAILY", "DataSettings", "LakeSource", "Reading"]
+__all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
 DAILY = "1d"
 _PRICES = ("open", "high", "low", "close")
@@ -432,6 +432,25 @@ class LakeSource:
                 f"past the written lag of {allowed}",
             )
         return BarStatus.FRESH, None
+
+
+def judge(snapshot: Snapshot) -> tuple[str, ...]:
+    """Every reason a stored snapshot halts its decision, read from the snapshot alone.
+
+    Data's stage uses it on the capture that counts when a later read differs,
+    so the decision halts on what it will trade from. An instrument that is
+    not fresh, a bar whose prices contradict each other and a bar of unstated
+    kind each halt, as `LakeSource.read` judges them.
+    """
+    reasons: list[str] = []
+    for instrument, state in snapshot.status.items():
+        if state is not BarStatus.FRESH:
+            reasons.append(f"{instrument} {state} in the stored snapshot")
+    for instrument, found in snapshot.flags.items():
+        reasons.extend(_contradicted(instrument, found))
+    for instrument, by_interval in snapshot.bars.items():
+        reasons.extend(_unstated(instrument, by_interval.get(DAILY, ())))
+    return tuple(reasons)
 
 
 def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:
