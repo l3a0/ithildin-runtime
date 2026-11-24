@@ -2049,7 +2049,8 @@ def test_a_stop_ends_a_wall_clocks_wait_and_leaves_the_decision_for_later(
         assert not failures and alarms.reasons == []
     elif ends == "bug":
         assert len(failures) == 1 and isinstance(failures[0], RuntimeError)
-        assert not any("stage alpha" in r for r in alarms.reasons)
+        # Only an alarm that names the bug, so none for the stopped handler.
+        assert all("a bug in the loop's own code" in r for r in alarms.reasons)
     else:
         assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
         assert len(alarms.reasons) == 1 and "stopped receiving" in alarms.reasons[0]

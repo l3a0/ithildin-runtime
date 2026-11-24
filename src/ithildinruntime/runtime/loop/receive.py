@@ -88,18 +88,18 @@ How the loop runs, in order.
     extra. A handler's result whose configuration hashes differ from the ones
     the table gives its stage is stored as a halt, with an alarm, as item 6
     says of any error a handler did not handle.
-11. **A stop ends a handler's wait on the clock.** `stop` asks it, and so
-    does the loop's end on a failure or a bug. A handler waiting in
+11. **A stop ends a handler's wait on the clock.** `stop` asks it, and so does
+    the loop's end on a failure or a bug. A handler waiting in
     `Clock.wait_until` under the wall clock, which waits through
     `Progress.wait_for_stop`, wakes at once and ends with `Stopped`. The loop
     stores nothing for its decision and alarms nothing, because a stop is no
     fault in the decision. It returns the handler's messages to the queue
-    rather than deleting them, and starts nothing once a stop is asked. The
-    decision runs again, on another instance or when this one next starts,
-    unless a result, such as the supervisor's halt, is stored by then. A
-    handler may wait this way only before it has written anything, and
-    tests/test_stop_rule.py lists the modules that do. Any other handler gets
-    the stop timeout, and its result is stored as usual. A handler that raises `Stopped` when no
+    rather than deleting them, and starts nothing once a stop is asked. A
+    check, on another instance or when this one next starts, starts the
+    decision again where it finds no result stored for it. A handler may wait
+    this way only before it has written anything, and tests/test_stop_rule.py
+    lists the modules that do. Any other handler gets the stop timeout, and
+    its result is stored as usual. A handler that raises `Stopped` when no
     stop was asked has a bug, so its decision halts and alarms as item 6 says
     of any error a handler did not handle. Releasing it instead would start
     the decision again at once, for ever, while the worker beat as healthy.
