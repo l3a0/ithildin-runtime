@@ -27,6 +27,6 @@ class Stopped(BaseException):
     """End a handler that was waiting when its loop was asked to stop.
 
     When a stop was asked, the loop stores nothing for the decision and returns
-    any message it holds to the queue. A clock's wait raises it, and a handler waits
-    that way only before it has written anything.
+    any message the handler holds to the queue. A clock's wait raises it, and a
+    handler waits that way only before it has written anything.
     """

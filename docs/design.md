@@ -1584,11 +1584,11 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    stage reads only blobs keyed by its own decision, so its handlers may run
    decisions side by side.
 5. **A handler's failure stays in its item.** A handler that raises an error
-   it does not handle, other than one ending on a stop as item 7 says, writes a halt as its stage's result for that
+   it does not handle, `SystemExit` and `KeyboardInterrupt` included, other than one ending on a stop as item 7 says, writes a halt as its stage's result for that
    decision and alarms, and the loop deletes its message, so the other
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
-   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) asks of a process that holds a capture. A process whose loop ends for any other reason does the same, such as one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms. Such a process works in four steps.
+   lease by the conditional rewrite that clears the holder, so the next holder never waits out a lease nobody renews. If the halt cannot be written, the process stops receiving and stays alive, as [A write S3 refuses or does not answer](#rule-1-a-write-s3-refuses-or-does-not-answer) asks of a process that holds a capture. A process whose loop ends for any other reason does the same, such as one whose queue has refused every receive for 60 seconds, twice the host's heartbeat limit, which stops receiving and alarms. An error in the loop's own work on an item, such as building its halt, ends the loop too. It alarms and returns the item's messages to the queue, because a loop that went on would start the decision again at once, for ever. Such a process works in four steps.
    1. It gives each handler the stop timeout to finish, as item 7 says. A handler still working after that ends with the process, as a crash does, and its decision is done again after the restart.
    2. It retries every halt and capture it holds once each interval, quietly, since the first refusal alarmed.
    3. It beats while it holds one, whatever its handlers do, so the host's watchdog leaves it, and alarms naming each blob and why receiving stopped. That alarm is sent again until the alert channel takes it, because it alone tells a holding process from a healthy one.
