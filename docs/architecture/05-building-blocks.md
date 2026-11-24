@@ -209,7 +209,7 @@ It lists three more beside them, which change only where records and signals go:
 2. The queue.
 3. The alert channel.
 
-Those three differ because a backtest of 1,480 decisions must not append to the
+Those three differ because a backtest of 1,461 decisions must not append to the
 paper journal or page the owner.
 
 ### No module asks which mode it is in
@@ -346,6 +346,16 @@ classDiagram
         +int direction
         +int horizon_sessions
         +Decimal confidence
+    }
+    class Signal {
+        +str name
+        +Decimal value
+        +date first_session
+        +date last_session
+    }
+    class ForecastSet {
+        +list forecasts
+        +list signals
     }
     class Constraints {
         +Decimal max_order_qty
@@ -554,6 +564,8 @@ classDiagram
     Bar --> Instrument
     Quote --> Instrument
     Forecast --> Basket
+    ForecastSet o-- Forecast
+    ForecastSet o-- Signal
     TargetPortfolio --> Instrument
     OrderIntent --> Instrument
     BrokerOrder --> Instrument
@@ -647,7 +659,7 @@ classDiagram
     }
     class AlphaModel {
         <<Protocol>>
-        +forecast(Snapshot) list
+        +forecast(Snapshot) ForecastSet
     }
     class RiskModel {
         <<Protocol>>
@@ -741,7 +753,7 @@ classDiagram
     OrderPath o-- Broker
     DataSource ..> Snapshot
     Bucket ..> BucketObject
-    AlphaModel ..> Forecast
+    AlphaModel ..> ForecastSet
     RiskModel ..> Constraints
     CostModel ..> CostSchedule
     RiskGate ..> Verdict
@@ -768,7 +780,20 @@ The two diagrams above make eight choices for a reviewer to check. Several are p
 
 #### A forecast is about a basket, not an instrument
 
-The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio for the day. A `Basket` holds `{USO: 1, GLD: −h}`, so one forecast carries the whole position and portfolio construction never has to know it is a pair. The charter and [#6](https://github.com/l3a0/ithildin-runtime/issues/6) say a forecast is per instrument, so this is a proposal for [#6](https://github.com/l3a0/ithildin-runtime/issues/6) rather than a decision here.
+The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio for the day. A `Basket` holds `{USO: 1, GLD: −h}`, so one forecast carries the whole position and portfolio construction never has to know it is a pair. A leg is a number of shares per unit of the basket, never an amount of dollars, so a model that weighs its legs in dollars divides each weight by the price it decided on.
+
+**Table:** What each field of a forecast says
+
+| Field | What it says |
+| --- | --- |
+| `basket` | Both legs, `{USO: 1, GLD: −h}`, whatever the direction. A flat forecast names them too, so a target built from it writes each leg as zero rather than leaving it out |
+| `direction` | The unit, +1 to hold the basket long, −1 to hold it short and 0 to hold none. A flat position is direction 0, never a missing forecast |
+| `horizon_sessions` | 1 for this strategy, because it remakes the forecast at each decision |
+| `confidence` | 1 for this strategy, because its rule grades no strength |
+
+The model returns a `ForecastSet`, its forecasts and the signals behind them, because both come from one calculation. A `Signal` is one value the model fitted, with the first and last session whose prices it read. The six this strategy writes are the hedge ratio, the spread, the spread's mean and standard deviation, the z-score and the unit. The types refuse what would read as nothing to do: a basket with no leg, a forecast out of its bounds, and a set with no forecast, no signal or two signals of one name.
+
+Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. A halt the model raises becomes the stage's result, whose header names data's result and the snapshot, so the halt says what it read.
 
 #### A bar carries where it came from
 
@@ -1161,8 +1186,9 @@ An arrow means "may import". The diagram draws four rules.
      - the plan;
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
-   - the calendar function and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
-   - the names of data's stage and of its snapshot, so a stage that reads them imports no `data`;
+   - the calendar function, the lookup of the session a decision belongs to and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
+   - the names of data's stage, of its snapshot and of alpha's two output files, so a stage that reads them imports no `data` and no `alpha`;
+   - `read_snapshot`, the steps every stage takes to read data's result, pass on its halt and read the one snapshot it lists;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

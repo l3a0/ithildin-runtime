@@ -7,6 +7,7 @@ This document is the one place that holds the steps of a sort and every drill's 
 - [How a sort runs](#how-a-sort-runs)
 - [Every alarm and its drill](#every-alarm-and-its-drill)
   - [Alarms on data](#alarms-on-data)
+  - [Alarms on the alpha model](#alarms-on-the-alpha-model)
   - [Alarms on the order path](#alarms-on-the-order-path)
   - [Alarms on leases and takeover](#alarms-on-leases-and-takeover)
   - [Alarms on deployment and release](#alarms-on-deployment-and-release)
@@ -130,6 +131,25 @@ Test 1 to test 4 are the acceptance tests in [architecture/10-quality.md](archit
 | A fetch stamp with no zone | The ticker, the session and the stamp | `tests/test_data_source.py`'s case for test 4 with a stamp that names no zone | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) | paper |
 | The sealed day differs from what a provisional read saw | The ticker, the minute and both values, or the row the sealed day quarantined or lacks | Change or quarantine a sealed row a run's snapshot used, and land a sealed row after the used one, at or before the decision time | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 | A provisional snapshot with no stored comparison result past the written bound, or a sealed day that never arrives | The snapshot, the day and the bound | Withhold a day's sealed rows from a run's next session, and stop monitoring's comparison, each expecting a page and no decision stopped | [#5](https://github.com/l3a0/ithildin-runtime/issues/5), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
+
+### Alarms on the alpha model
+
+Each row halts one strategy's alpha stage for its decision and leaves its positions as they are. Each drill names its cases in `tests/test_alpha.py`, which read the stored halt's reason, its inputs and its empty cause. In a test environment the last row stands for every other, because all of them reach the owner by the same stored halt.
+
+**Table:** Alpha alarms, the reason each writes, and its drill
+
+| Alarm | Reason it writes | Drill | Built on | Gate |
+| --- | --- | --- | --- | --- |
+| A leg of the strategy that is missing, stale or has no daily bar in the snapshot the alpha stage reads | The instrument and its state | The cases `a-leg-missing`, `a-leg-data-calls-missing`, `a-leg-stale` and `no-daily-bar` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A bar whose basis is not `adjusted`, because a split inside a window of prices as traded would read as a move of the market | The strategy, the instrument, the session and the basis | The cases `a-bar-as-traded` and `the-newest-bar-as-traded` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| Two legs whose bars name different sessions | The strategy, both legs and the first session that differs | The cases `one-leg-a-session-short`, `one-leg-with-a-gap` and `one-leg-out-of-order` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A newest bar that is not the decision's own session, which every decision before the close meets until [#114](https://github.com/l3a0/ithildin-runtime/issues/114) adds the decision's quote | The strategy, the decision's session and the newest bar's | The cases `a-newest-bar-of-the-day-before` and `a-newest-bar-after-the-decision` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| Fewer sessions than the newest z-score reads | The strategy, the sessions it reads and the sessions the snapshot holds | The case `too-few-sessions` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A window of the hedging leg's closes that are all equal, or a band window whose spreads do not move | The strategy, the session and the close or the standard deviation | The cases `a-hedging-leg-that-does-not-move` and `a-band-that-does-not-move` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A window of bars that ends before it settles which unit is held | The strategy and the sessions whose z-scores it read | The case `an-unsettled-window` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A figure the model's arithmetic or the codec cannot hold | The strategy, the decision and the error | The case `a-figure-past-the-codec` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A forecast that names another strategy | The stage and both strategies | `test_a_forecast_of_another_strategy_halts` | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) | paper |
+| A strategy's alpha section is missing, leaves a key out, or holds one its model refuses | The strategy, its file, the key and what is wrong | The cases of `test_a_section_the_model_refuses_halts_with_its_inputs_and_no_cause`, and one run through the receive loop expecting the halt stored. In a test environment, a strategy with no alpha section, expecting the stored halt and the push | [#6](https://github.com/l3a0/ithildin-runtime/issues/6), [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
 
 ### Alarms on the order path
 

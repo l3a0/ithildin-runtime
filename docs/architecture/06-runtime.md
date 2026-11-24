@@ -372,7 +372,7 @@ sequenceDiagram
     Note over V,P: Phase 2, decide
     par
         F-->>A: sends an event for data's result
-        A->>F: stores the forecast, hedge ratio, z-score<br/>and alpha's result
+        A->>F: stores the forecast, then the signals<br/>behind it, then alpha's result
     and
         F-->>C: sends an event for data's result
         C->>F: stores each strategy's cost schedule<br/>and its cost stage's result
@@ -494,13 +494,13 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TB
-    data["Data's result"] --> alpha["Alpha model<br/>writes the forecast, hedge ratio, z-score"]
+    data["Data's result"] --> alpha["Alpha model<br/>writes the forecast and<br/>the signals behind it"]
     data --> risk["Risk model<br/>writes the constraints"]
     data --> cost["Cost model<br/>writes each strategy's cost schedule"]
     alpha --> pc["Portfolio construction<br/>writes the target portfolio"]

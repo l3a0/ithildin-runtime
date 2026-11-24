@@ -4,6 +4,10 @@ This page is section 11 of [the architecture](00-README.md), in the order of the
 
 Every choice that carries a cost names it where the choice is made, as a sentence that starts "The price". This page lists each section that holds one, by page, and states none of them again, so the price is read where it is decided. `tests/test_risks_page.py` fails when a section of an architecture page, design.md, what-a-person-runs.md or halts-and-drills.md holds a sentence starting "The price is", "The price of" or "The price has" and is not listed here. [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling) also gives the price of each open proposal in its own column.
 
+## Prices in Introduction and goals
+
+- [How the model knows which unit it holds](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds)
+
 ## Prices in Building blocks
 
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
