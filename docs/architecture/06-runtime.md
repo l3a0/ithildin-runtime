@@ -152,7 +152,7 @@ flowchart LR
     exec -->|"7.2 account file, book"| d1
     d3 -->|"7.3 replay"| exec
     d1 -->|"8.1 snapshot, book"| models
-    models -->|"8.2 forecast, constraints,<br/>costs, target"| d1
+    models -->|"8.2 forecast, signals,<br/>constraints, costs, target"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3
@@ -298,7 +298,7 @@ flowchart LR
 | Phase | Who acts | What it produces | What stops it |
 | --- | --- | --- | --- |
 | 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
-| 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on |
+| 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on, or one of its own |
 | 3. Send | Execution, then monitoring | Orders at the broker, the decision's report and the heartbeat's ping | A failed check, a refused order or an order in doubt |
 | After the close | Execution, then the supervisor | A result on each open order, then the run's stop | A read that fails or runs late, which pages the owner, or a difference, which halts and pages |
 
@@ -372,7 +372,7 @@ sequenceDiagram
     Note over V,P: Phase 2, decide
     par
         F-->>A: sends an event for data's result
-        A->>F: stores the forecast, hedge ratio, z-score<br/>and alpha's result
+        A->>F: stores the forecast, then the signals<br/>behind it, then alpha's result
     and
         F-->>C: sends an event for data's result
         C->>F: stores each strategy's cost schedule<br/>and its cost stage's result
@@ -494,13 +494,13 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TB
-    data["Data's result"] --> alpha["Alpha model<br/>writes the forecast, hedge ratio, z-score"]
+    data["Data's result"] --> alpha["Alpha model<br/>writes the forecast and<br/>the signals behind it"]
     data --> risk["Risk model<br/>writes the constraints"]
     data --> cost["Cost model<br/>writes each strategy's cost schedule"]
     alpha --> pc["Portfolio construction<br/>writes the target portfolio"]

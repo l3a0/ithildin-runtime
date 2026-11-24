@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -687,12 +688,22 @@ def test_a_section_the_model_refuses_halts_in_the_stage_and_stores_no_schedule(t
     bare = parse_strategy("chan", uso(TERM).replace(b'["USO"]', b'["GLD", "USO"]'))
     table = Table(stages=(DATA_ROW, *cost_rows([bare])), strategies=(bare,))
     storage = store(tmp_path)
-    write_data(storage)
+    data = write_data(storage)
     held = blobs(tmp_path)
     # Building the handler refuses nothing, so the halt is the stage's own result.
     stage = handler(storage, table=table)
-    with pytest.raises(Halt, match="strategy chan's configuration chan.toml has no .* for GLD"):
-        run(stage)
+    result = run(stage)
+    assert result.outputs == ()
+    assert result.halt is not None
+    assert result.halt.reason == (
+        "strategy chan's configuration chan.toml has no [cost] terms for GLD"
+    )
+    # Nothing upstream halted, so the halt names no cause, and monitoring alarms on it.
+    assert result.halt.cause is None
+    # It names what the stage read, as every result does.
+    snapshot_sha = sha256_of((tmp_path / SNAPSHOT_KEY).read_bytes())
+    assert dict(result.header.inputs) == {data.key: data.sha256, SNAPSHOT_KEY: snapshot_sha}
+    assert dict(result.header.config_hashes) == {"chan": bare.config_hash}
     assert blobs(tmp_path) == held
 
 
@@ -710,11 +721,31 @@ def test_the_stage_reads_the_capture_that_counts_and_not_a_later_one(tmp_path) -
     assert set(result.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
 
 
-def test_a_data_result_that_lists_no_snapshot_halts(tmp_path) -> None:
+@pytest.mark.parametrize("times", [0, 2])
+def test_a_data_result_that_lists_the_snapshot_other_than_once_halts(tmp_path, times) -> None:
     storage = store(tmp_path)
-    storage.put_result(DATA_RESULT, DecisionResult(data_header(), (), None))
-    with pytest.raises(Halt, match="lists .*snapshot.json 0 times, not once"):
+    file = encode_output(Snapshot, OutputFile(data_header(), (SNAPSHOT,), False))
+    ref = storage.put(StageKind.CAPTURING, SNAPSHOT_KEY, file).ref
+    storage.put_result(DATA_RESULT, DecisionResult(data_header(), (ref,) * times, None))
+    with pytest.raises(Halt, match=f"lists .*snapshot.json {times} times, not once"):
         run(handler(storage))
+
+
+@pytest.mark.parametrize(
+    "apart",
+    [timedelta(days=-1), timedelta(days=1), timedelta(minutes=-20), timedelta(microseconds=1)],
+    ids=str,
+)
+def test_a_snapshot_of_another_decision_halts(tmp_path, apart) -> None:
+    storage = store(tmp_path)
+    other = AT + apart
+    # The file's own header names this decision, so storage's check passes.
+    write_data(storage, entries=(replace(SNAPSHOT, decision_at=other),))
+    with pytest.raises(Halt) as caught:
+        run(handler(storage))
+    assert caught.value.reason == (
+        f"{SNAPSHOT_KEY} holds a snapshot of {other.isoformat()}, not of {AT.isoformat()}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -831,6 +862,7 @@ def test_the_loop_stores_each_strategys_schedule_and_one_bad_files_halt(tmp_path
     assert other.halt is not None and other.outputs == ()
     assert "strategy other's configuration other.toml has no [cost] section" in other.halt.reason
     assert other.halt.reason.endswith("so it states no cost for SPY")
+    assert other.halt.cause is None and set(other.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
     assert dict(other.header.config_hashes) == {"other": bad.config_hash}
     read = storage.read_output(keys["chan"], chan, chan.outputs[0], AT, CostSchedule)
     assert read.entries == (schedule(),)

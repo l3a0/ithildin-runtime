@@ -48,6 +48,7 @@ __all__ = [
     "DecisionResult",
     "Fill",
     "Forecast",
+    "ForecastSet",
     "FoundOrder",
     "GateInputs",
     "HaltRecord",
@@ -68,6 +69,7 @@ __all__ = [
     "Rate",
     "RestartRecord",
     "SendOutcome",
+    "Signal",
     "Snapshot",
     "SpikeFlag",
     "Statistic",
@@ -289,18 +291,82 @@ class Snapshot(_Record):
 
 @dataclass(frozen=True)
 class Basket(_Record):
-    """Instruments in a fixed ratio, such as `{USO: 1, GLD: -h}` for a spread."""
+    """Instruments in a fixed ratio, such as `{USO: 1, GLD: -h}` for a spread.
+
+    A leg is a number of shares per unit of the basket, never an amount of
+    dollars. A model that weighs its legs in dollars divides each weight by the
+    price it decided on before it writes the leg. A basket names at least one
+    leg.
+    """
 
     legs: Mapping[InstrumentId, Statistic]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.legs:
+            raise ValueError("a basket names at least one leg")
 
 
 @dataclass(frozen=True)
 class Forecast(_Record):
+    """What one strategy expects of one basket.
+
+    `direction` is 1 to hold the basket long, -1 to hold it short and 0 to hold
+    none of it. A flat forecast names its legs too, so a target built from it
+    writes each one as zero rather than leaving it out. `confidence` is between
+    0 and 1.
+    """
+
     strategy: str
     basket: Basket
     direction: int
     horizon_sessions: int
     confidence: Statistic
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if type(self.direction) is not int or self.direction not in (-1, 0, 1):
+            raise ValueError(f"direction {self.direction!r} is not -1, 0 or 1")
+        if type(self.horizon_sessions) is not int or self.horizon_sessions < 1:
+            raise ValueError(f"horizon {self.horizon_sessions!r} is not one session or more")
+        if not self.confidence.is_finite() or not 0 <= self.confidence <= 1:
+            raise ValueError(f"confidence {self.confidence} is not between 0 and 1")
+
+
+@dataclass(frozen=True)
+class Signal(_Record):
+    """One value an alpha model computed for a decision, and the sessions it read.
+
+    `first_session` and `last_session` are the first and the last session whose
+    prices the value read.
+    """
+
+    name: str
+    value: Statistic
+    first_session: date
+    last_session: date
+
+
+@dataclass(frozen=True)
+class ForecastSet(_Record):
+    """What an alpha model returns: its forecasts and the signals behind them.
+
+    It holds at least one forecast and one signal, because an output file with
+    no entries halts its reader, and a missing forecast never reads as flat.
+    """
+
+    forecasts: tuple[Forecast, ...]
+    signals: tuple[Signal, ...]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.forecasts:
+            raise ValueError("a forecast set holds at least one forecast")
+        if not self.signals:
+            raise ValueError("a forecast set holds at least one signal")
+        names = [signal.name for signal in self.signals]
+        if repeated := sorted({n for n in names if names.count(n) > 1}):
+            raise ValueError(f"a forecast set holds more than one signal named {repeated[0]}")
 
 
 @dataclass(frozen=True)

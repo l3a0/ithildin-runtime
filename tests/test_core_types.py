@@ -114,7 +114,9 @@ def test_instrument_id_is_a_new_type_over_str() -> None:
         (core.CostTerm, "fixed", 4),
         (core.CostTerm, "per_share", 8),
         (core.CostTerm, "per_dollar", 8),
+        (core.Basket, "legs", 8),
         (core.Forecast, "confidence", 8),
+        (core.Signal, "value", 8),
         (core.Verdict, "value", 9),
     ],
 )
@@ -304,6 +306,65 @@ def test_a_session_date_and_a_mapping_type_are_what_the_diagram_names() -> None:
 def test_every_type_stored_at_a_key_of_its_own_names_its_format(kind: type) -> None:
     """A later release reads an older blob by its format, so each type stored alone carries one."""
     assert get_type_hints(kind)["format"] is int
+
+
+def test_a_basket_with_no_legs_is_refused() -> None:
+    with pytest.raises(ValueError, match="a basket names at least one leg"):
+        core.Basket({})
+
+
+def _forecast(**changes: object) -> core.Forecast:
+    fields: dict[str, object] = {
+        "strategy": "chan",
+        "basket": core.Basket({USO: Decimal(1)}),
+        "direction": 0,
+        "horizon_sessions": 1,
+        "confidence": Decimal(1),
+    }
+    return core.Forecast(**fields | changes)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("direction", [-1, 0, 1])
+@pytest.mark.parametrize("confidence", ["0", "0.5", "1"])
+def test_a_forecast_takes_each_direction_and_each_bound_of_confidence(
+    direction: int, confidence: str
+) -> None:
+    made = _forecast(direction=direction, confidence=Decimal(confidence))
+    assert (made.direction, made.confidence) == (direction, Decimal(confidence))
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"direction": 2}, "direction 2 is not -1, 0 or 1"),
+        ({"direction": -2}, "direction -2 is not -1, 0 or 1"),
+        ({"direction": True}, "direction True is not -1, 0 or 1"),
+        ({"direction": Decimal(1)}, "is not -1, 0 or 1"),
+        ({"horizon_sessions": 0}, "horizon 0 is not one session or more"),
+        ({"horizon_sessions": -1}, "horizon -1 is not one session or more"),
+        ({"horizon_sessions": True}, "horizon True is not one session or more"),
+        ({"confidence": Decimal("-0.00000001")}, "confidence -1E-8 is not between 0 and 1"),
+        ({"confidence": Decimal("1.00000001")}, "confidence 1.00000001 is not between 0 and 1"),
+        ({"confidence": Decimal("NaN")}, "confidence NaN is not between 0 and 1"),
+        ({"confidence": Decimal("Infinity")}, "confidence Infinity is not between 0 and 1"),
+    ],
+)
+def test_a_forecast_out_of_its_bounds_is_refused(changes: dict, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason):
+        _forecast(**changes)
+
+
+def test_a_forecast_set_holds_forecasts_and_signals_of_different_names() -> None:
+    one = core.Signal("hedge_ratio", Decimal("0.5"), date(2026, 10, 1), date(2026, 10, 30))
+    two = dataclasses.replace(one, name="z_score")
+    made = core.ForecastSet((_forecast(),), (one, two))
+    assert made.signals == (one, two)
+    with pytest.raises(ValueError, match="at least one forecast"):
+        core.ForecastSet((), (one, two))
+    with pytest.raises(ValueError, match="at least one signal"):
+        core.ForecastSet((_forecast(),), ())
+    with pytest.raises(ValueError, match="more than one signal named z_score"):
+        core.ForecastSet((_forecast(),), (one, two, two))
 
 
 def test_a_gate_reads_a_close_from_its_journal_entry() -> None:

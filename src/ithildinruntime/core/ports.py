@@ -25,7 +25,7 @@ from .records import (
     BucketObject,
     Constraints,
     CostSchedule,
-    Forecast,
+    ForecastSet,
     FoundOrder,
     GateInputs,
     OrderIntent,
@@ -166,7 +166,7 @@ class Broker(Protocol):
 
 
 class AlphaModel(Protocol):
-    def forecast(self, snapshot: Snapshot) -> Sequence[Forecast]: ...
+    def forecast(self, snapshot: Snapshot) -> ForecastSet: ...
 
 
 class RiskModel(Protocol):

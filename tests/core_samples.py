@@ -30,6 +30,8 @@ PROTOCOLS = (
 RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.PlanDecision,
     core.CostTerm,
+    core.Signal,
+    core.ForecastSet,
 ]
 
 
@@ -79,6 +81,19 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
         if hint is core.BlobHeader:
             # A header names at least one strategy, each by a key name and a SHA-256.
             fields["config_hashes"] = {"chan": "0" * 64, "reversal.2": "f" * 64}
+        if hint is core.Basket:
+            # A basket names at least one leg.
+            fields["legs"] = sample(hints["legs"], depth=depth + 1)
+        if hint is core.Forecast:
+            # A forecast bounds its direction, its horizon and its confidence.
+            fields |= {"direction": -1, "horizon_sessions": 2, "confidence": Decimal("0.00004")}
+        if hint is core.ForecastSet:
+            # A forecast set holds at least one forecast, and signals of different names.
+            (forecast, _), (signal, _) = (
+                sample(hints[name], depth=depth + 1) for name in ("forecasts", "signals")
+            )
+            fields["forecasts"] = (forecast, forecast)
+            fields["signals"] = (signal, dataclasses.replace(signal, name="z_score"))
         if hint is core.Snapshot and not empty:
             # A snapshot files each bar under its own instrument and interval.
             bar = sample(core.Bar, depth=depth + 1)

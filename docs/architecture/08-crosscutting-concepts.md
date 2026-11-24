@@ -92,6 +92,8 @@ erDiagram
         string strategy
         string name
         decimal value
+        date first_session
+        date last_session
         string release
     }
     DECISION_RESULT {
@@ -230,7 +232,7 @@ Run records serve two purposes. They are how the workers pass work to each other
 Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
 
 - A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional.
-- A signal record holds a value the run computed, such as the hedge ratio, the z-score or the forecast, keyed by run, component, decision and name.
+- A signal record holds a value the alpha model fitted, such as the hedge ratio or the z-score, with the first and last session whose prices it read. A strategy's signals for one decision are the entries of one file, `signals.json`, beside `forecast.json`. The file's header names the snapshot by its key and SHA-256, and the snapshot's bars name their vintage, so each value says which window of which vintage it was fitted on.
 - Each blob's header names the blobs it came from, and a halt says why a decision stopped.
 
 **Table:** Which blobs can be regenerated
@@ -421,7 +423,7 @@ The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it 
 
 **A value the platform computes is rounded once, in one place.** The types in `core` hold `Decimal`.
 
-- A statistic, such as the alpha model's hedge ratio and z-score, may be computed in floats and converted at the stage's output by `core.to_decimal`, which takes the float's shortest form and rounds it half to even to the field's declared places.
+- A statistic is converted once, at the stage's output, by `core.to_decimal`, which rounds it half to even to the field's declared places. One computed in floats is taken in the float's shortest form first. The alpha model computes its hedge ratio and z-score in `Decimal` at 28 digits, inside a context of its own, and decides on the unrounded values.
 - The risk gate, the order manager, `Journal.replay` and reconciliation compute in `Decimal` throughout, and the quantity journaled for an order is the exact string the broker adapter sends and the gate checks.
 
 A `dict` field's values take the declared places of their value type, such as a share count in `TargetPortfolio.shares`. A field's declared places never shrink in a later release.
@@ -493,7 +495,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
-| A stage's output file, including data's snapshot, alpha's signal records and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
+| A stage's output file, including data's snapshot, alpha's forecast and its signal records, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | The account's `Valuation`, an output of the day's first recover stage, by this doc's proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
