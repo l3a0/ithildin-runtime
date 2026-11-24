@@ -225,6 +225,17 @@ def test_18_a_redelivery_judges_a_clean_capture_that_counts_however_the_reread_r
     assert again.halt is None
 
 
+def test_18_a_redelivery_passes_a_capture_that_counts_with_a_close_below_its_low(
+    lake: Path, tmp_path: Path
+) -> None:
+    lakes.with_row(lake, "GLD", LAST, close=150.0)
+    made, _, _ = stage(lake, tmp_path, clock=Ticking())
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    again = made(Item(close(LAST), "data"), Reports())
+    assert again.outputs[1].key == key(2)
+    assert again.halt is None
+
+
 def test_18_a_redelivery_halts_on_a_stale_capture_that_counts(lake: Path, tmp_path: Path) -> None:
     gone = (lakes.partition_key("USO", LAST), lakes.partition_key("USO", before(LAST)))
     keep = {k: (lake / k).read_bytes() for k in gone}

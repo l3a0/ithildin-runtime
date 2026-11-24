@@ -193,12 +193,12 @@ def test_a_move_after_returns_that_are_all_equal_is_flagged() -> None:
     assert spike_flags(series("100", "100", "100", "100"), Decimal(1)) == ()
 
 
-# Rule 3: a close below its bar's low, by the owner's two rulings of 2026-11-24 on #5.
+# Rule 3: a close below its bar's low.
 
 
 def test_every_bar_of_the_lookback_is_held_to_its_own_low_with_or_without_a_volume() -> None:
     odd = [bar(n, "95", high="101", low="100", open="100") for n in (0, 1, 2)]
-    odd[1] = dataclasses.replace(odd[1], volume=Decimal(1000))
+    odd[1] = dataclasses.replace(odd[1], volume=1000)
     flags = [f for f in spike_flags(odd, Decimal(100)) if f.rule == BELOW_LOW]
     assert [f.session for f in flags] == [START + timedelta(days=n) for n in (0, 1, 2)]
     assert ["no volume threshold is written" in f.note for f in flags] == [False, True, False]
@@ -218,7 +218,9 @@ def test_each_rule_name_stays_as_recorded() -> None:
     )
 
 
-@pytest.mark.parametrize(("close", "flagged"), [("99.9999", True), ("100.0000", False)])
+@pytest.mark.parametrize(
+    ("close", "flagged"), [("99.9999", True), ("100.0000", False), ("100.0001", False)]
+)
 def test_a_close_one_step_below_its_low_is_flagged_and_one_at_it_is_not(
     close: str, flagged: bool
 ) -> None:

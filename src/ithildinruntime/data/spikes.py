@@ -1,6 +1,7 @@
 """The spike flag on a daily bar: a record beside a price the data module judges wrong.
 
-This doc's rules are a proposal of #5, which the charter's data engineer owns.
+The owner's rulings on #5 settle what each rule's flag does. The rest of these
+rules is a proposal of #5, which the charter's data engineer owns.
 The flag never replaces the price, which stays as it arrived. A flag from the
 first rule halts the decision, because no real trade produces one, and
 `source.LakeSource.read` adds that halt, and `source.judge` adds it to a
