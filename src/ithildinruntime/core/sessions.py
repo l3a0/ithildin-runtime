@@ -11,7 +11,7 @@ Each row carries the exchange's offset from UTC on that day, so a time on the
 exchange's clock becomes UTC without the host's time zone database. New York
 changes its clocks at 02:00 on a Sunday, never on a session day.
 
-Four things halt rather than guess, because a missing input stops trading
+Five things halt rather than guess, because a missing input stops trading
 (hard limit 3):
 
 1. A table whose bytes do not match the SHA-256 below.
@@ -19,6 +19,7 @@ Four things halt rather than guess, because a missing input stops trading
 3. A date inside the range that the table holds no session for.
 4. A time before the open of the table's first session, when asked which
    session it belongs to.
+5. The table's first session, when asked which session came before it.
 """
 
 from __future__ import annotations
@@ -104,6 +105,14 @@ class SessionTable:
         self.session(first)
         self.session(last)
         return tuple(self.sessions[d] for d in sorted(self.sessions) if first <= d <= last)
+
+    def before(self, day: date) -> Session:
+        """The session before `day`, which must itself be a session."""
+        self.session(day)
+        earlier = [d for d in self.sessions if d < day]
+        if not earlier:
+            raise Halt(f"the session table holds no session before {day.isoformat()}")
+        return self.sessions[max(earlier)]
 
     def opened_by(self, at: datetime) -> Session:
         """The latest session whose open is at or before `at`, which is a UTC time.

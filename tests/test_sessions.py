@@ -126,6 +126,24 @@ def test_a_time_no_session_opened_by_halts(at: datetime, reason: str) -> None:
         _table(SMALL).opened_by(at)
 
 
+def test_the_session_before_one_skips_a_holiday_and_a_weekend() -> None:
+    assert _table(SMALL).before(date(2026, 11, 27)).day == date(2026, 11, 25)
+    assert _table(SMALL).before(date(2026, 11, 30)).day == date(2026, 11, 27)
+
+
+@pytest.mark.parametrize(
+    ("day", "reason"),
+    [
+        (date(2026, 11, 25), "holds no session before 2026-11-25"),
+        (date(2026, 11, 26), "holds no session on 2026-11-26"),
+        (date(2026, 11, 24), "outside the session table's range"),
+    ],
+)
+def test_a_day_with_no_session_before_it_halts(day: date, reason: str) -> None:
+    with pytest.raises(Halt, match=reason):
+        _table(SMALL).before(day)
+
+
 @pytest.mark.parametrize(
     "at",
     [

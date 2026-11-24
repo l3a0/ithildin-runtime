@@ -663,6 +663,25 @@ def test_6_a_series_lagging_past_the_written_lag_reads_stale(
     assert any("USO stale" in r for r in reading.halts) is (state == "stale")
 
 
+@pytest.mark.parametrize(("dropped", "state"), [(0, "fresh"), (1, "stale")])
+def test_6_under_the_written_lag_of_0_one_session_behind_is_stale(
+    lake: Path, tmp_path: Path, dropped: int, state: str
+) -> None:
+    for n in range(dropped):
+        unlist(lake, lakes.partition_key("USO", before(LAST, n)))
+    reading = make(lake, tmp_path, stale_lag=0).read(close(LAST))
+    assert reading.snapshot.status[USO] == BarStatus(state)
+    assert any("USO stale" in r for r in reading.halts) is (state == "stale")
+
+
+@pytest.mark.parametrize("lag", [True, False, -1, 0.0, 1.5, "0", Decimal(0)])
+def test_6_a_lag_that_is_no_whole_number_of_sessions_is_refused(lag: object) -> None:
+    with pytest.raises(ValueError, match="the stale lag is a whole number of sessions"):
+        settings(stale_lag=lag)
+    assert settings(stale_lag=0).stale_lag == 0
+    assert settings(stale_lag=None).stale_lag is None
+
+
 def test_6_an_absent_lag_halts(lake: Path, tmp_path: Path) -> None:
     with pytest.raises(Halt, match="no stale lag is written"):
         make(lake, tmp_path, stale_lag=None).read(close(LAST))

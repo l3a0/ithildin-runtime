@@ -16,10 +16,16 @@ from .codec import (
     places,
     to_decimal,
 )
+from .exact import *  # noqa: F403
+from .exact import __all__ as _exact
+from .exposure import *  # noqa: F403
+from .exposure import __all__ as _exposure
 from .halt import Halt, Stopped
 from .inputs import SnapshotInput, read_snapshot
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
+from .limits import *  # noqa: F403
+from .limits import __all__ as _limits
 from .names import DATA_STAGE, FORECAST_OUTPUT, SIGNALS_OUTPUT, SNAPSHOT_OUTPUT
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
@@ -74,7 +80,10 @@ __all__ = [
     "read_snapshot",
     "to_decimal",
     "to_utc",
+    *_exact,
+    *_exposure,
     *_keys,
+    *_limits,
     *_ports,
     *_queue,
     *_records,

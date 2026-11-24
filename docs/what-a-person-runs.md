@@ -346,7 +346,7 @@ Monitoring's report after each decision ends with the same summary `ithildin sta
 
 #### When a writing command is needed
 
-Most alarms on shadow and paper need no writing command at all. A missing bar, a gate refusal or a pair leg left open clears itself at the next decision, which plans again from the book, and the person's job is to read the reason and decide whether something larger is wrong. On live, every halt holds the account until the owner clears it.
+Most alarms on shadow and paper need no writing command at all. A missing bar, a gate refusal or a pair leg left open clears itself at the next decision, which plans again from the book, and the person's job is to read the reason and decide whether something larger is wrong. One refusal repeats instead. While `max_position`, `max_gross` or `max_net` is past, every order that adds is refused until the position shrinks, its target changes or the owner raises the limit, as [What may go out while a limit is past](design.md#rule-9-what-may-go-out-while-a-limit-is-past) says. On live, every halt holds the account until the owner clears it.
 
 The writing commands are for the cases the platform cannot resolve alone:
 

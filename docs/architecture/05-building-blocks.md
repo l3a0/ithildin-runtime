@@ -358,13 +358,29 @@ classDiagram
         +list signals
     }
     class Constraints {
-        +Decimal max_order_qty
-        +Decimal max_position
+        +str strategy
+        +dict max_order_qty
+        +dict max_position
         +Decimal max_gross
         +int max_open_orders
         +Decimal max_net
         +Decimal loss_stop
         +int moc_cutoff
+    }
+    class HardCaps {
+        +dict max_order_qty
+        +dict max_position
+        +Decimal max_gross
+        +int max_open_orders
+        +Decimal loss_stop
+        +int moc_cutoff
+        +Decimal share
+        +Decimal stress_move
+        +Decimal stress_low
+        +Decimal stress_high
+        +str stress_vintage
+        +date stress_through
+        +int stress_max_age_days
     }
     class TargetPortfolio {
         +datetime decision_at
@@ -377,14 +393,27 @@ classDiagram
         +Decimal cash
         +Decimal platform_realised_pnl
         +int replayed_through
+        +list in_doubt
+        +int or None corrected_through
+        +datetime or None repositioned_at
     }
     class OrderIntent {
         +str client_order_id
         +str strategy
         +InstrumentId instrument
         +Decimal qty
-        +str type
-        +str time_in_force
+        +OrderType type
+        +TimeInForce time_in_force
+    }
+    class OrderType {
+        <<enumeration>>
+        MARKET
+        MARKET_ON_CLOSE
+    }
+    class TimeInForce {
+        <<enumeration>>
+        DAY
+        CLS
     }
     class Fill {
         +str fill_id
@@ -428,9 +457,39 @@ classDiagram
     }
     class Verdict {
         +bool approved
-        +str limit
+        +Limit or None limit
+        +Decimal or None value
+        +Decimal or None bound
+        +str or None missing_term
+        +bool adding
+        +Decimal or None worst_loss
+        +LossReading loss
+        +list past
+    }
+    class Limit {
+        <<enumeration>>
+        MAX_ORDER_QTY
+        MAX_POSITION
+        MAX_GROSS
+        MAX_OPEN_ORDERS
+        MAX_NET
+        LOSS_STOP
+        MOC_CUTOFF
+        STOP
+        CLOSE_ENTRY
+        IN_DOUBT
+        POSITION
+    }
+    class PastLimit {
+        +Limit limit
         +Decimal value
-        +str missing_term
+        +Decimal bound
+    }
+    class LossReading {
+        +Decimal loss
+        +Decimal bound
+        +bool past
+        +date session
     }
     class CostSchedule {
         +dict terms
@@ -464,16 +523,21 @@ classDiagram
         +date session
         +Decimal value
         +Decimal cash
+        +dict positions
         +dict marks
         +int replayed_through
     }
     class GateInputs {
-        +Decimal share
-        +Decimal stress_move
-        +str vintage_hash
-        +Decimal value
-        +str stop_state
-        +JournalEntry close_entry
+        +HardCaps caps
+        +Valuation or None valuation
+        +StopState stop
+        +JournalEntry or None close_entry
+    }
+    class StopState {
+        <<enumeration>>
+        ABSENT
+        FIRED
+        UNREADABLE
     }
     class SendOutcome {
         +datetime decision_at
@@ -579,6 +643,16 @@ classDiagram
     CostSchedule o-- CostTerm
     CostTerm --> CostKind
     CostTerm --> CostSide
+    OrderIntent --> OrderType
+    OrderIntent --> TimeInForce
+    Verdict --> Limit
+    Verdict o-- LossReading
+    Verdict o-- PastLimit
+    PastLimit --> Limit
+    GateInputs o-- HardCaps
+    GateInputs o-- Valuation
+    GateInputs --> StopState
+    GateInputs o-- JournalEntry
 ```
 
 ### The interfaces
@@ -682,6 +756,7 @@ classDiagram
     class RiskGate {
         <<Protocol>>
         +check(OrderIntent, Book, Snapshot, Constraints, GateInputs, now) Verdict
+        +loss(Book, Snapshot, Constraints, GateInputs, now) LossReading
     }
     class BlobStore {
         <<Protocol>>
@@ -768,6 +843,7 @@ classDiagram
     RiskModel ..> Constraints
     CostModel ..> CostSchedule
     RiskGate ..> Verdict
+    RiskGate ..> LossReading
     Broker ..> Ack
     Broker ..> Fill
     Journal ..> Book
@@ -948,99 +1024,131 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. The diagram draws only the sources this section names. The stop blob's arrow and the journal's arrow reach the `GateInputs` box, for the stop blob's state and a close's entry, so the other four values have no arrow.
+The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, does the reading.
 
 The figure below is a C4 component diagram.
 
 ```mermaid
 flowchart LR
     order["The order"]
-    journal["The journal"]
-    book["The book"]
     snapshot["The snapshot"]
     file["The risk model's constraints file"]
+    now["The Clock port"]
+    journal["The journal"]
+    book["The book"]
+    inputs["GateInputs"]
     caps["The hard caps blob,<br/>which only the owner can write"]
-    checked["OrderPath checks every field and halts<br/>if one is missing, not finite or of the wrong sign"]
-    constraints["The run's Constraints"]
+    v["Recover's valuation file"]
     stop["The stop blob"]
-    owner["The owner's record"]
-    now["now, the send stage's Clock reading"]
-    subgraph inputs["GateInputs"]
-        direction TB
-        share["The share"]
-        stress["The stress move"]
-        vintage["The vintage hash"]
-        value["The portfolio value"]
-        stopstate["The stop blob's state"]
-        closeentry["A close's entry"]
-        share ~~~ stress ~~~ vintage ~~~ value ~~~ stopstate ~~~ closeentry
-    end
     gate["The risk gate's check"]
-    verdict["The Verdict, which names<br/>any term the gate could not compute"]
-    journal -->|"send replays it just before each check"| book
-    file --> checked
-    caps --> checked
-    checked -->|"the tighter of each field and its hard cap<br/>applies, a proposal for issue 7"| constraints
-    stop -->|"OrderPath reads its state"| inputs
-    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
-    owner -->|"for a close, OrderPath reads any confirmation,<br/>never from the order or a caller"| gate
+    verdict["A Verdict"]
+    halt["A halt naming the input"]
     order --> gate
-    book --> gate
     snapshot --> gate
-    constraints --> gate
+    file -->|"one strategy's Constraints"| gate
+    now -->|"now, as the send stage reads it"| gate
+    book --> gate
     inputs --> gate
-    now --> gate
-    gate --> verdict
+    journal -->|"OrderPath replays it<br/>just before each check"| book
+    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
+    caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
+    v -->|"OrderPath reads the session's Valuation"| inputs
+    stop -->|"OrderPath reads its state before each check"| inputs
+    gate -->|"an input is absent, stale or invalid"| halt
+    gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
 ```
 
 ##### What the gate is handed
 
-`check` takes six things.
+`check` takes six things, and `loss`, which reads the day's loss with no order, takes the last five.
 
 1. The order.
-2. The book.
+2. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
 3. The snapshot.
-4. The run's `Constraints`.
-5. A `GateInputs`, which holds the share, the stress move, the vintage hash, the portfolio value, the stop blob's state and, for a close, its close entry.
+4. The strategy's `Constraints`.
+5. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the stop blob's state and, for a close, its close entry.
 6. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
 
-`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds the shape. The figure draws the owner's confirmation straight into the gate because no field of `GateInputs` holds it yet, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) places that field.
+`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
+
+##### What halts and what refuses
+
+A halt says an input is absent, stale or invalid, so nothing can be concluded. A refusal says a limit worked. The gate raises every halt before it answers, so a refusal never hides one. The one state read as a refusal is a stop blob that could not be read, as [Which orders a stop refuses](06-runtime.md#which-orders-a-stop-refuses) says.
+
+A refusal names the first of these that applies, so the same order always names the same limit.
+
+1. The stop, in any state but absent, whoever placed the order.
+2. A close entry.
+3. An order in doubt on the same instrument.
+4. An order that names no strategy, which has no position to count a worst loss against.
+5. The seven limits, in the order of the table below. A figure at its limit passes, for all seven.
+
+`Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, is refused as it is built.
 
 ##### How the gate values the book
 
-The gate computes each position's worst loss from the replayed `Book`, the order and `stress_move`, and `Verdict` names any term it could not compute. `send` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit.
+`OrderPath` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit. The order being checked is not yet in that book, and one whose id already is halts, because checking it would resend it.
 
-The gate checks seven limits, one for each field of `Constraints` in the data diagram above, as [#7](https://github.com/l3a0/ithildin-runtime/issues/7) counts them. Three of the seven limits need the snapshot's prices to value the book.
+Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. It halts unless that bar is later than the session V was valued at, so a decision never enters on a price it could not leave on.
 
-**Table:** The seven limits, and which need the snapshot's prices
+Each instrument has a range: what the account would hold if only its open sales filled, and if only its open buys did, the order included. `core.exposure` gives it, for the account or one strategy.
 
-| Field of `Constraints` | Needs the snapshot's prices to value the book |
-| --- | --- |
-| `max_order_qty`, the maximum order size | No |
-| `max_position`, the maximum position per instrument | No |
-| `max_gross`, the maximum portfolio size | Yes |
-| `max_open_orders`, the maximum open orders | No |
-| `max_net`, the net exposure | Yes |
-| `loss_stop`, the loss stop | Yes |
-| `moc_cutoff`, the market-on-close cutoff | No |
+**Table:** The seven limits, the exposure each bounds, and how it counts
+
+| Field of `Constraints` | What it bounds | What the gate compares | Reads a price |
+| --- | --- | --- | --- |
+| `max_order_qty`, per instrument | One order's shares, such as one sized on a wrong price | The order's size | No |
+| `max_position`, per instrument | Shares held in one instrument | The order's instrument, at the end of its range further from zero | No |
+| `max_gross` | The account's dollars, long plus short | Each instrument's further end at its mark, summed | Yes |
+| `max_open_orders` | Orders whose outcome is unknown | Every open order, and the one being checked | No |
+| `max_net` | A leg left alone under the stress move | Every low end summed at its mark, and every high end, signed across instruments, whichever sum is further from zero | Yes |
+| `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
+| `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The time left to the close | No |
+
+`max_net` and the worst loss assume the stress move. `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
+
+An order that adds is refused while `max_position`, `max_gross` or `max_net` is past with it counted. One that only reduces, which `core.classify` says, goes out past them, unless it makes net larger in some case of which other open orders fill ([What may go out while a limit is past](../design.md#rule-9-what-may-go-out-while-a-limit-is-past)). Only one sum can grow: the low ends for a sale and the high ends for a buy. The gate reads that sum before and after the order, because a larger breach at the other end would hide the change, and equal is not larger.
+
+**Table:** Orders under one limit of 50, at marks of 1
+
+| Limit | Book | Order | What decides | Answer |
+| --- | --- | --- | --- | --- |
+| `max_position` | Long 100 | Sale of 30, or of 100 | It only reduces, and the further end stays 100 | Passes |
+| `max_position` | Long 100 | Sale of 101 | It crosses zero, so it adds | Refused at 100 |
+| `max_gross` | GLD 100, USO 60 | Sale of all the GLD | It only reduces, and the further ends still sum to 160 | Passes |
+| `max_net` | GLD 100, USO −30 | Sale of all the GLD | The low sum shrinks from 70 to −30 | Passes |
+| `max_net` | GLD 120, USO −55 | Sale of all the GLD | The low sum shrinks from 65 to −55, past the limit and smaller | Passes |
+| `max_net` | GLD 100, USO −30, all the GLD's sale working | Buy of all the USO | The high sum grows from 70 to 100, because the sale may not fill | Refused at 100 |
+| `max_net` | GLD 100, USO −60 | Sale of all the GLD | The low sum grows from 40 to −60 | Refused at 60 |
+| `max_net` | GLD 60, a buy of 100 GLD working, USO −60 | Sale of 60 GLD | The low sum grows from 0 to −60. The high sum stays 100 and would hide it | Refused at 60 |
+| `max_net` | GLD 100 alone | Sale of 100 USO, its missing leg | It adds, and net is already past | Refused at 100 |
+
+The **worst loss** a verdict carries is the strategy's own: each leg's range, the order included, at its further end and its mark, summed over legs, times the stress move.
 
 ##### How the gate reads the cutoff
 
-`moc_cutoff` is minutes before the close. The one calendar function in `core` turns it into a UTC instant from the decision's own session's close, and the gate compares only that instant. The gate also refuses a market-on-close order past the cutoff, at the time execution hands it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says.
+`moc_cutoff` is minutes before the close. The gate counts back from the decision's own session's close, so an early close moves the cutoff, and it refuses a market-on-close order past it, at the time execution hands it. A decision belongs to the session `core`'s calendar function gives it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says.
 
 ##### Where the limits come from
 
-The `Constraints` come from the risk model's constraints file, so the order path first checks every field of that file, and every hard cap in the hard caps blob only the owner can write. Each must be present, finite and of the sign the field expects, and the order path halts otherwise. Then it takes the tighter of each pair, a field of the constraints file and its hard cap.
+Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write. So a constraints file can tighten a limit and never loosen it. `core.tighten` takes both, and the gate calls it itself, on the caps as they read just before each check. So no caller can hand the gate a looser limit, and a cap the owner lowers binds at once.
+
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and the gate halts otherwise, naming the source and the field. Three checks go further.
+
+1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
+2. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
+3. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument neither limits halts.
 
 **Table:** Which value of each pair applies
 
 | The pair | The one that applies |
 | --- | --- |
 | A maximum | The smaller maximum |
+| The net cap, where the hard caps' is the share of V over the stress move, rounded down | The smaller |
 | The loss stop | The smaller loss |
-| The cutoff | The earlier cutoff |
+| The cutoff | The earlier cutoff, which is the larger number of minutes |
 
-A constraints file can tighten a limit and never loosen it. This is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+The price is that a limit is set in two places.
 
 #### The book comes from the journal
 
@@ -1199,9 +1307,11 @@ An arrow means "may import". The diagram draws four rules.
      - the plan;
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
-   - the calendar function, the lookup of the session a decision belongs to and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
+   - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - the names of data's stage, of its snapshot and of alpha's two output files, so a stage that reads them imports no `data` and no `alpha`;
    - `read_snapshot`, the steps a model's stage takes to read data's result, pass on its halt and read the one snapshot it lists;
+   - `parse_caps` and `tighten`, which read the hard caps blob and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
+   - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
