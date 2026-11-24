@@ -375,7 +375,7 @@ sequenceDiagram
         A->>F: stores the forecast, hedge ratio, z-score<br/>and alpha's result
     and
         F-->>C: sends an event for data's result
-        C->>F: stores the cost schedule and cost's result
+        C->>F: stores each strategy's cost schedule<br/>and its cost stage's result
     and
         F-->>K: sends events for data's and<br/>execution's recover results
         K->>F: stores the constraints and risk's result
@@ -502,7 +502,7 @@ The figure below is a C4 dynamic diagram.
 flowchart TB
     data["Data's result"] --> alpha["Alpha model<br/>writes the forecast, hedge ratio, z-score"]
     data --> risk["Risk model<br/>writes the constraints"]
-    data --> cost["Cost model<br/>writes the cost schedule"]
+    data --> cost["Cost model<br/>writes each strategy's cost schedule"]
     alpha --> pc["Portfolio construction<br/>writes the target portfolio"]
     risk --> pc
     cost --> pc

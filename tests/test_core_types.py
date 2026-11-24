@@ -111,7 +111,9 @@ def test_instrument_id_is_a_new_type_over_str() -> None:
         (core.Bar, "close", 4),
         (core.TargetPortfolio, "shares", 9),
         (core.Book, "cash", 4),
-        (core.CostSchedule, "per_share", 8),
+        (core.CostTerm, "fixed", 4),
+        (core.CostTerm, "per_share", 8),
+        (core.CostTerm, "per_dollar", 8),
         (core.Forecast, "confidence", 8),
         (core.Verdict, "value", 9),
     ],
@@ -259,17 +261,6 @@ def test_halt_is_a_plain_exception_caught_inside_a_context_manager() -> None:
             raise Halt("USO missing for the session")
     assert raised.value.reason == "USO missing for the session"
     assert str(raised.value) == "USO missing for the session"
-
-
-def test_a_cost_schedule_estimates_a_trade_and_halts_on_a_missing_instrument() -> None:
-    schedule = core.CostSchedule(per_share={USO: Decimal("0.0035")}, fixed={USO: Decimal("1.00")})
-    assert schedule.estimate(USO, Decimal("-200")) == Decimal("1.7000")
-    with pytest.raises(Halt):
-        schedule.estimate(GLD, Decimal("1"))
-    one_sided = core.CostSchedule(per_share={GLD: Decimal("0.01")}, fixed={USO: Decimal("1")})
-    for instrument in (GLD, USO):
-        with pytest.raises(Halt):
-            one_sided.estimate(instrument, Decimal("1"))
 
 
 def test_a_journal_entrys_hash_is_the_sha256_of_its_bytes() -> None:

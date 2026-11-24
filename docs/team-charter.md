@@ -152,7 +152,7 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Data | Capture, clean, timestamp and serve point-in-time data (L3605) | Vendor feeds, broker fills | Vintages, a security master, bars | Data engineer |
 | Alpha model | Forecast return or direction per instrument (L1033, L2029) | Point-in-time data | Forecast, with horizon and confidence | Quant researcher |
 | Risk model | Limit or remove exposures nobody chose (L928, L2089) | Positions, data | Constraints and penalties | Risk engineer |
-| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | Order size, liquidity, own real fills | Cost estimate | Trading systems engineer |
+| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | The decision's snapshot, the strategy's cost terms, and own real fills once they calibrate it | A cost schedule per strategy and decision | Trading systems engineer |
 | Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above | Target positions | Trading systems engineer |
 | Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current | Orders, then fills | Trading systems engineer |
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |

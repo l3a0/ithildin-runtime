@@ -27,7 +27,10 @@ PROTOCOLS = (
     "DataSource Clock Timer Queue Broker AlphaModel RiskModel CostModel RiskGate BlobStore Alerts"
 ).split()
 
-RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [core.PlanDecision]
+RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
+    core.PlanDecision,
+    core.CostTerm,
+]
 
 
 def _strip(hint: Any) -> Any:
