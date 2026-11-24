@@ -1284,10 +1284,11 @@ as any expired deadline does.
 No worker can write the gate's hard caps, because they come from a blob the
 bucket's policy lets only the owner's credential write, and only the owner
 changes them, by hand. The net cap also follows V, which is valued at the
-closes data recorded, so a wrong close moves it, and so does a wrong
-broker cash record inside its range, up to the net limit the
+closes data recorded, so a wrong close, or a wrong broker cash
+record inside its type's range, moves it, up to the net limit the
 strategy's own settings hold, which
-[#115](https://github.com/l3a0/ithildin-runtime/issues/115) places. A wrong price
+[#115](https://github.com/l3a0/ithildin-runtime/issues/115) places. Such a
+record journaled after V moves the day's loss by its size too. A wrong price
 can also make a figure read small, as rule 4 of
 [A backtest names what it could not have traded](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
 says of a limit that reads one.

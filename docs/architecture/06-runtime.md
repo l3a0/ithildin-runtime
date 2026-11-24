@@ -393,7 +393,7 @@ sequenceDiagram
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>X: runs the daily loss stop's test,<br/>with no order needed
     break the day's loss is past the stop
-        Note over X,J: execution records the firing<br/>and halts the decision
+        Note over X,J: execution records the firing<br/>and halts the decision. The report, the ping<br/>and the read after the close still run
     end
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
@@ -1202,7 +1202,8 @@ stateDiagram-v2
     Sending --> Halted: on any cause the note beside Sending lists
     note right of Sending
         Sending halts when
-        the risk gate refuses,
+        the risk gate refuses or halts on an input,
+        the day's loss is past the stop,
         the kill switch is set,
         the run or account halts,
         the lease is lost,

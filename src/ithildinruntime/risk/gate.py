@@ -261,7 +261,8 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
                 raise Halt(f"{name}'s open order {order.client_order_id} has nothing left")
             seen.add(order.client_order_id)
             working.add(order.instrument)
-    # Every figure counts an order in doubt through the open order it is.
+    # Every range, and the count of open orders, include an order in doubt through the
+    # open order it is.
     if uncounted := sorted(set(book.in_doubt) - working):
         raise Halt(f"{uncounted[0]} is in doubt and the book holds no open order in it")
     if valuation.replayed_through > book.replayed_through:

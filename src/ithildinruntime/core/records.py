@@ -471,7 +471,8 @@ class Book(_Record):
     - `open_orders_by_strategy` holds each order whose outcome is unknown, at
       its unfilled remainder.
     - `in_doubt` names each instrument with a `sending` entry that no later
-      entry settles. That order is open too, and every figure counts it there.
+      entry settles. That order is open too, and every range and the count of
+      open orders include it there.
     - `corrected_through` is the number of the newest entry that moved cash or a
       position by anything but the platform's own fill or a listed broker
       record, or `None`.

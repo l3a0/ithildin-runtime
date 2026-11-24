@@ -653,7 +653,7 @@ def test_5_a_session_missing_inside_the_lookback_reads_missing_and_is_never_fill
 
 
 def test_every_bar_data_reads_is_one_the_gate_will_value(lake: Path, tmp_path: Path) -> None:
-    """Data's read and `core.mark` each refuse a bar not yet ended or known, so they must agree."""
+    """`core.mark` values each bar data reads, one that ends at the decision included."""
     for at in (close(LAST), close(LAST) - timedelta(minutes=20), close(LAST) + timedelta(days=1)):
         snap = make(lake, tmp_path).read(at).snapshot
         newest = snap.bars[GLD]["1d"][-1]
