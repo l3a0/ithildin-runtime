@@ -38,20 +38,27 @@ How the loop runs, in order.
    message's visibility while the handler runs, deletes it once the result is
    stored, and returns at once a message it has no free handler for.
 6. **A handler's failure stays in its item.** A handler that raises, other
-   than one ending on a stop as item 11 says, writes a
-   halt as its stage's result for that decision, and one whose error it did
-   not handle also alarms, naming the worker, the stage, the decision and the
-   error. The other handlers go on. A halt that cannot be stored ends
-   receiving, and the loop raises `LoopFailed` once item 9 lets it, so the
-   host restarts the process. So does any error from the queue other than
-   `QueueUnavailable`, and a queue that has refused every receive for longer
-   than `deaf_after`, because a loop that can no longer receive must not go
-   on beating as if it worked. Each queue failure alarms
-   first. The refusals count from the first one since the queue last
-   answered or every handler was last busy, so a pool busy for a while and
-   then refused once goes on. A queue that has answered nothing for longer
-   than `deaf_after` while a backlog keeps every handler busy alarms once,
-   and the loop ends once a handler frees and the refusals go on.
+   than one ending on a stop as item 11 says, writes a halt as its stage's
+   result for that decision, and one whose error it did not handle also
+   alarms, naming the worker, the stage, the decision, the error and each
+   capture not yet stored. `SystemExit` and `KeyboardInterrupt` are such
+   errors too, since one raised in a handler's thread ends nothing else. The
+   other handlers go on. A halt that cannot be stored ends receiving, and the
+   loop raises `LoopFailed` once item 9 lets it, so the host restarts the
+   process. An error in a handler's thread that leaves its item with no result
+   stored or held, such as one raised while its halt is built, ends the loop
+   the same way, because going on would start the decision again at once, for
+   ever. It alarms, naming the worker, the stage, the decision, the error and
+   what the item had ended with, and the item's messages go back to the queue.
+   Any error from the queue other than `QueueUnavailable` ends it with
+   `LoopFailed`, and so does a queue that has refused every receive for longer
+   than `deaf_after`, because a loop that can no longer receive must not go on
+   beating as if it worked. Each queue failure alarms first. The refusals
+   count from the first one since the queue last answered or every handler was
+   last busy, so a pool busy for a while and then refused once goes on. A
+   queue that has answered nothing for longer than `deaf_after` while a
+   backlog keeps every handler busy alarms once, and the loop ends once a
+   handler frees and the refusals go on.
 7. **A hung handler stops the heartbeat.** A handler reports progress through
    the function it is handed. The loop beats only while every busy handler
    has reported within the heartbeat limit, so the host's watchdog kills a
@@ -63,25 +70,25 @@ How the loop runs, in order.
 8. **Ending drains the pool.** However the loop ends, by `stop`, by a
    failure or by a bug, it stops receiving and gives each handler the stop
    timeout to finish, beating by item 7's rule. A handler that waits ends at
-   once, as item 11 says. A message whose handler did not finish, or ended on
-   the stop, goes back to the queue, and so does one a receive answers after
-   the loop stopped. A
+   once, as item 11 says. A message whose handler did not finish, or whose
+   item ended on the stop or with no result stored or held, goes back to the
+   queue, and so does one a receive answers after the loop stopped. A
    handler still working when the stop timeout passes ends with the
    process, as in a crash, and its decision is done again after the
    restart, unless item 9 keeps the process alive.
 9. **A process that holds what S3 has not stored stays alive.** After the
-   drain it retries each halt it could not store and each capture the
-   storage contract holds every `extend_every`, quietly, since the first
-   refusal alarmed. It beats whatever its handlers do while it holds them,
-   as item 7 says, so the host's watchdog does not kill it, and it alarms
-   naming each blob and why receiving stopped, again until the alert
-   channel takes it. A halt S3 answered and will not store, such as one
-   whose key holds bytes nothing reads or another result, is dropped with an
-   alarm giving its reason. A capture is never dropped, so one S3 keeps
-   answering with an error holds the process until a person acts. `run`
-   returns or raises only once nothing is held. The price is
-   a process that holds a host slot without receiving through an outage, and
-   one whose hung handler is not killed while it holds them.
+   drain it retries each halt it could not store and each capture the storage
+   contract holds every `extend_every`, quietly, since the first refusal or
+   the alarm below said so. It beats whatever its handlers do while it holds
+   them, as item 7 says, so the host's watchdog does not kill it, and it
+   alarms naming each blob and why receiving stopped, again until the alert
+   channel takes it. A halt S3 answered and will not store, such as one whose
+   key holds bytes nothing reads or another result, is dropped with an alarm
+   giving its reason. A capture is never dropped, so one S3 keeps answering
+   with an error holds the process until a person acts. `run` returns or
+   raises only once nothing is held. The price is a process that holds a host
+   slot without receiving through an outage, and one whose hung handler is not
+   killed while it holds them.
 10. **A stage runs only at a decision of every strategy the table declares.**
     Before a handler runs, the loop halts the stage at a decision whose
     strategies are not exactly the table's, naming the strategies left out or
@@ -121,6 +128,7 @@ from typing import Protocol
 from ithildinruntime.core import (
     Alerts,
     BlobHeader,
+    BlobRef,
     DecisionResult,
     Event,
     EventKind,
@@ -168,19 +176,20 @@ class Handler(Protocol):
     for a stop, because a raise there could end a send stage between the
     broker's answer and the journal entry that records it. A handler that has
     written nothing may hand `report` to `Clock.wait_until`, and lets the
-    `Stopped` a stop raises there through, since a stopped item starts again
-    from nothing. A handler can run
-    more than once for one item, after a crash or a stop or on two instances
-    at once, so
-    a stage that writes outside rests on a create-only record of its own, such
-    as the send stage's claim, and on #10's lease on the account.
+    `Stopped` a stop raises there through, since a check starts a stopped item
+    again, from nothing, where it finds no result stored for it. A handler can
+    run more than once for one item, after a crash or a stop or on two
+    instances at once, so a stage that writes outside rests on a create-only
+    record of its own, such as the send stage's claim, and on #10's lease on
+    the account.
     """
 
     def __call__(self, item: Item, report: Progress) -> DecisionResult: ...
 
 
 class LoopFailed(Exception):
-    """A halt the loop could not store, or a queue it could not read or answer.
+    """A halt the loop could not store, an item it could not finish, or a queue
+    it could not read or answer.
 
     The loop raises it once nothing is held, as `ReceiveLoop.run` says.
     """
@@ -193,9 +202,16 @@ class _Running:
     extended: float
     messages: list[Event] = field(default_factory=list)
     done: bool = False
-    # Whether the handler ended on a stop, with no result stored.
-    stopped: bool = False
+    # Whether the item ended with no result known to be stored or held, on a
+    # stop or on an error in `_work` itself, so its messages go back.
+    unfinished: bool = False
+    # What the item ended with other than a stored result, such as a halt's
+    # reason, which no blob holds until the halt is stored.
+    ended: str | None = None
     extending: bool = False
+
+    def said_ended(self) -> str:
+        return "" if self.ended is None else f". The item had ended with {self.ended}"
 
 
 class _Progress:
@@ -320,7 +336,7 @@ class ReceiveLoop:
 
     def run(self) -> None:
         """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored,
-        or a queue could not be read or answered.
+        an item could not be finished, or a queue could not be read or answered.
 
         Either way it returns only once each handler has ended or had the stop
         timeout, and nothing is held: S3 has stored every halt and capture
@@ -365,11 +381,14 @@ class ReceiveLoop:
         assert self._inbox is not None
         self._inbox.put_nowait(("stop", None))
 
-    def _fail(self, error: BaseException, what: str | None = None) -> None:
-        """End the loop with `LoopFailed`, from the event loop's thread."""
+    def _fail(self, error: BaseException, what: str | None = None, more: str = "") -> None:
+        """End the loop with `LoopFailed`, from the event loop's thread.
+
+        `LoopFailed` says `what` and `more`, and the hold's alarm `what` alone.
+        """
         if self._failure is None:
             self._failure = error
-            self._causes.append(what or str(error))
+            self._causes.append((what or str(error)) + more)
             # A bug may have ended the loop first, and the first cause stands.
             if self._failed_because is None:
                 self._failed_because = what
@@ -418,7 +437,7 @@ class ReceiveLoop:
             # A bug, which ends the loop as a failure does, and which the
             # hold's alarm names.
             self._stopping = True
-            bug = f"{type(error).__name__}: {error}"
+            bug = _said(error)
             self._causes.append(bug)
             if self._failed_because is None:
                 self._failed_because = bug
@@ -505,9 +524,10 @@ class ReceiveLoop:
                 "kills it first, which loses them. A capture S3 keeps answering with an "
                 "error is never dropped, so it holds the process until a person acts"
             )
-        except Exception:
-            # Sent again on the next try, since this alarm alone tells a
-            # holding process from a healthy one.
+        except BaseException:
+            # Whatever the channel raised, what is held is still tried. Sent
+            # again on the next try, since this alarm alone tells a holding
+            # process from a healthy one.
             return False
         return True
 
@@ -526,7 +546,10 @@ class ReceiveLoop:
                 # S3 answered, such as with bytes no codec reads at the key,
                 # and no retry changes its answer, so the halt is not held.
                 # Its reason goes out in the alarm.
-                self._drop_halt(key, halt, f"could not be stored: {type(error).__name__}: {error}")
+                self._drop_halt(key, halt, f"could not be stored: {_said(error)}")
+                continue
+            except BaseException:
+                # No answer from S3 either, so it stays held, and the next is tried.
                 continue
             if stored != halt:
                 theirs = stored.halt.reason if stored.halt is not None else "an output"
@@ -538,7 +561,7 @@ class ReceiveLoop:
 
     def _drop_halt(self, key: str, halt: DecisionResult, what: str) -> None:
         reason = halt.halt.reason if halt.halt is not None else ""
-        said = f"{self._worker}'s halt for {key} {what}. Its reason: {reason}"
+        said = _escaped(f"{self._worker}'s halt for {key} {what}. Its reason: {reason}")
         with self._stored_lock:
             self._unstored_halts.pop(key, None)
             # LoopFailed names each, so the host's restart record keeps the
@@ -587,16 +610,17 @@ class ReceiveLoop:
         except QueueUnavailable:
             pass
         except Exception as error:
-            self._give_up(f"could not answer its queue: {type(error).__name__}: {error}", error)
+            self._give_up(f"could not answer its queue: {_said(error)}", error)
 
-    def _give_up(self, what: str, error: BaseException) -> None:
+    def _give_up(self, what: str, error: BaseException, more: str = "") -> None:
         """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
-        self._fail(error, f"{self._worker} {what}")
+        self._fail(error, f"{self._worker} {what}", more)
+        self._send(f"{self._worker} {what}{more}")
+
+    def _send(self, reason: str) -> None:
         # On an io thread, so a slow alert channel never holds the beat back.
         assert self._loop is not None
-        self._sending.append(
-            self._loop.run_in_executor(self._io, self._alarm_quietly, f"{self._worker} {what}")
-        )
+        self._sending.append(self._loop.run_in_executor(self._io, self._alarm_quietly, reason))
 
     def _alarm_quietly(self, reason: str) -> None:
         try:
@@ -651,7 +675,7 @@ class ReceiveLoop:
                     # worker that hears nothing, which must not go on beating.
                     self._give_up(
                         f"stopped receiving: the queue refused every receive for "
-                        f"{refusing:.0f} seconds, last with {refused.answer}",
+                        f"{refusing:.0f} seconds, last with {_escaped(refused.answer)}",
                         refused,
                     )
                     return
@@ -661,7 +685,7 @@ class ReceiveLoop:
                 events = ()
                 await asyncio.sleep(self._tick)
             except Exception as error:
-                self._give_up(f"stopped receiving: {type(error).__name__}: {error}", error)
+                self._give_up(f"stopped receiving: {_said(error)}", error)
                 return
             if events:
                 # Wait until the events have handlers, so the next receive asks
@@ -687,7 +711,7 @@ class ReceiveLoop:
         try:
             self._alerts.alarm(
                 f"{self._worker}'s queue has answered no receive for {silent:.0f} seconds, "
-                f"last with {refused.answer}"
+                f"last with {_escaped(refused.answer)}"
             )
         except Exception:
             # The loop goes on, and the halt on the deaf queue still comes.
@@ -891,9 +915,23 @@ class ReceiveLoop:
     def _handler_ended(self, running: _Running, future: asyncio.Future) -> None:
         running.done = True
         error = future.exception() if not future.cancelled() else None
-        running.stopped = isinstance(error, Stopped)
         if isinstance(error, _Fatal):
-            self._fail(error.__cause__ or error, f"{self._worker}: {error}")
+            # The hold's alarm says only that the halt was not stored, so no
+            # text of a handler's or a store's can keep it from going out.
+            cause = error.__cause__ or error
+            more = f": {_said(cause)}{running.said_ended()}"
+            self._fail(cause, f"{self._worker}: {error}", more)
+            self._send(f"{self._worker}: {error}{more}")
+        elif error is not None:
+            # An error `_work` did not turn into a stored or held result. A
+            # later check would find no result and start the decision again,
+            # for ever, so the loop ends and the host restarts the process.
+            running.unfinished = True
+            what = (
+                f"could not finish stage {running.item.stage} at decision "
+                f"{decision_part(running.item.decision_at)}"
+            )
+            self._give_up(what, error, f": {_said(error)}{running.said_ended()}")
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
 
@@ -906,9 +944,9 @@ class ReceiveLoop:
             self._slots.notify_all()
 
     async def _finish_messages(self, running: _Running) -> None:
-        # A handler that ended on a stop stored no result, so its messages go
-        # back to the queue for the decision to run again.
-        answer = self._queue.release if running.stopped else self._queue.done
+        # An unfinished item's messages go back to the queue, for a check to
+        # start the decision again where it finds no result stored for it.
+        answer = self._queue.release if running.unfinished else self._queue.done
         for message in running.messages:
             await self._quietly(answer, message)
         running.messages.clear()
@@ -925,41 +963,55 @@ class ReceiveLoop:
             self._check_result(item, returned)
             result = returned
         except Halt as halt:
+            running.ended = _said(halt)
             result = self._halt_result(stage, item, halt)
         except Stopped as stopped:
             if self._stop_asked.is_set():
-                # `_handler_ended` marks it, and its messages go back to the queue.
-                raise
-            error = f"Stopped, and no stop was asked: {stopped}"
-            self._store_unhandled(stage, item, error, returned)
+                running.unfinished = True
+                return
+            running.ended = f"{_said(stopped)}, and no stop was asked"
+            self._store_unhandled(stage, running, returned)
             return
-        except Exception as error:
-            self._store_unhandled(stage, item, f"{type(error).__name__}: {error}", returned)
+        except BaseException as error:
+            # `SystemExit` and `KeyboardInterrupt` too. The pool keeps either in
+            # its future, so one raised here would end nothing.
+            running.ended = _said(error)
+            self._store_unhandled(stage, running, returned)
             return
-        self._store(item, result)
+        self._store(running, result)
 
-    def _store_unhandled(self, stage: Stage, item: Item, error: str, returned: object) -> None:
+    def _store_unhandled(self, stage: Stage, running: _Running, returned: object) -> None:
         """Alarm on an error the handler did not handle, and store it as the item's halt."""
+        item = running.item
         reason = (
             f"{self._worker} failed in stage {item.stage} at decision "
-            f"{decision_part(item.decision_at)} with an error it did not handle: {error}"
+            f"{decision_part(item.decision_at)} with an error it did not handle: {running.ended}"
         )
-        result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
+        if unstored := self._storage.unstored():
+            reason += f". Captures not yet stored: {', '.join(ref.key for ref in unstored)}"
         # The alarm goes first, so the reason is sent even when its halt
-        # is never stored.
+        # cannot be built or is never stored.
         try:
             self._alerts.alarm(reason)
-        except Exception:
-            # Monitoring alarms on every halt it reads.
+        except BaseException:
+            # Monitoring alarms on every halt it reads, so nothing the channel
+            # raises may keep the halt from being stored.
             pass
-        self._store(item, result)
+        result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
+        self._store(running, result)
 
     def _own_outputs(self, item: Item, returned: object) -> tuple:
         """The outputs a rejected result names under the item's own prefix, which a halt keeps."""
+        # A result the handler built wrongly can hold anything, and naming its
+        # outputs must not keep its halt from being stored.
         if not isinstance(returned, DecisionResult):
             return ()
+        try:
+            refs = tuple(returned.outputs)
+        except Exception:
+            return ()
         prefix = self._key(item).removesuffix("result.json")
-        return tuple(ref for ref in returned.outputs if ref.key.startswith(prefix))
+        return tuple(ref for ref in refs if _is_ref(ref) and ref.key.startswith(prefix))
 
     def _check_strategies(self, item: Item) -> None:
         """Halt a stage at a decision whose strategies are not exactly the table's.
@@ -1001,25 +1053,30 @@ class ReceiveLoop:
                 f"{_hashes(expected)}"
             )
 
-    def _store(self, item: Item, result: DecisionResult) -> None:
+    def _store(self, running: _Running, result: DecisionResult) -> None:
+        item = running.item
         stage = self._table.stage(item.stage)
         try:
             # A key that already holds another result keeps it, such as the
             # supervisor's halt, which is final for the decision, as
             # `Storage.put_result` says. Nothing stored is overwritten.
             self._storage.put_result(self._key(item), result)
-        except Exception as error:
+        except BaseException as error:
+            # Whatever the store raised, a halt already built is held.
             if result.halt is not None:
+                if running.ended is None:
+                    running.ended = _escaped(f"Halt: {result.halt.reason}")
                 self._keep_halt(item, result)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
+            running.ended = f"a result that could not be stored: {_said(error)}"
             halt = Halt(
                 f"{self._worker} could not store the result of stage {item.stage} at decision "
-                f"{decision_part(item.decision_at)}: {type(error).__name__}: {error}"
+                f"{decision_part(item.decision_at)}: {_said(error)}"
             )
             fallback = self._halt_result(stage, item, halt, self._own_outputs(item, result))
             try:
                 self._storage.put_result(self._key(item), fallback)
-            except Exception as second:
+            except BaseException as second:
                 self._keep_halt(item, fallback)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from second
         with self._stored_lock:
@@ -1103,6 +1160,23 @@ class ReceiveLoop:
             await self._in_io(self._storage.retry_held)
         finally:
             self._retrying = False
+
+
+def _said(error: BaseException) -> str:
+    """The error's type and text, or its type alone where reading its text raises."""
+    try:
+        return _escaped(f"{type(error).__name__}: {error}")
+    except BaseException:
+        return f"{type(error).__name__}, whose text could not be read"
+
+
+def _escaped(text: str) -> str:
+    """The text as `Storage.halt_record` escapes a reason, so an alert channel can send it."""
+    return text.encode("utf-8", "backslashreplace").decode()
+
+
+def _is_ref(ref: object) -> bool:
+    return isinstance(ref, BlobRef) and isinstance(ref.key, str) and isinstance(ref.sha256, str)
 
 
 def _hashes(hashes: Mapping[str, str]) -> str:

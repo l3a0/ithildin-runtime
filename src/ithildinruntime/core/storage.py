@@ -215,7 +215,7 @@ class _Differs(Exception):
 class _AlarmFailed(Exception):
     """A capture is stored, and the alarm that says so could not be sent."""
 
-    def __init__(self, reason: str, error: Exception, stored: Stored) -> None:
+    def __init__(self, reason: str, error: BaseException, stored: Stored) -> None:
         super().__init__(reason)
         self.reason = reason
         self.error = error
@@ -308,6 +308,11 @@ class Storage:
             raise self._halt(
                 f"{held.trying} was not stored: {type(error).__name__}: {error}"
             ) from error
+        except BaseException:
+            # Raised on as it is, such as `KeyboardInterrupt`. The capture is
+            # held all the same, so the halt its handler ends in names it.
+            self._hold(kind, held)
+            raise
 
     def put_result(self, key: str, result: DecisionResult, *, once: bool = False) -> DecisionResult:
         """Create a decision's result, and return the result its key holds.
@@ -394,7 +399,7 @@ class Storage:
                     self._held.remove(held)
                 stored.append(failed.stored)
                 continue
-            except Exception:
+            except BaseException:
                 # A capture S3 still will not take stays held and named by
                 # every halt, whatever the error, so one cannot block the rest.
                 continue
@@ -415,9 +420,14 @@ class Storage:
         restart_records: Sequence[RestartRecord] = (),
         found_outputs: Sequence[BlobRef] = (),
     ) -> HaltRecord:
-        """The record a halt becomes at a worker's edge, naming each capture still held."""
+        """The record a halt becomes at a worker's edge, naming each capture still held.
+
+        A lone surrogate, as in a file name Python could not decode, has no
+        UTF-8 form, and the codec refuses a reason that holds one, so it is
+        escaped.
+        """
         return HaltRecord(
-            reason=halt.reason,
+            reason=halt.reason.encode("utf-8", "backslashreplace").decode(),
             cause=cause,
             restart_records=tuple(restart_records),
             found_outputs=tuple(found_outputs),
@@ -525,7 +535,7 @@ class Storage:
                     done = Stored(BlobRef(key, held.sha256), counts)
                     try:
                         self._alerts.alarm(reason)
-                    except Exception as error:
+                    except BaseException as error:
                         raise _AlarmFailed(reason, error, done) from error
                     return done
                 return Stored(BlobRef(key, held.sha256), counts)
@@ -556,7 +566,7 @@ class Storage:
             if first is None:
                 return f". {held.key} read as missing, so the difference is not known"
             return f". {held.explain(first)}"
-        except Exception as error:
+        except BaseException as error:
             return f". The difference could not be described: {type(error).__name__}: {error}"
 
     def _create(self, key: str, data: bytes, sha: str, once: bool) -> str | None:
@@ -628,7 +638,7 @@ class Storage:
         )
         try:
             self._alerts.alarm(halt.reason)
-        except Exception as error:
+        except BaseException as error:
             return Halt(
                 f"{halt.reason}. The alarm could not be sent: {type(error).__name__}: {error}"
             )
