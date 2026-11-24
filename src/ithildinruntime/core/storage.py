@@ -420,9 +420,14 @@ class Storage:
         restart_records: Sequence[RestartRecord] = (),
         found_outputs: Sequence[BlobRef] = (),
     ) -> HaltRecord:
-        """The record a halt becomes at a worker's edge, naming each capture still held."""
+        """The record a halt becomes at a worker's edge, naming each capture still held.
+
+        A lone surrogate, as in a file name Python could not decode, has no
+        UTF-8 form, and the codec refuses a reason that holds one, so it is
+        escaped.
+        """
         return HaltRecord(
-            reason=halt.reason,
+            reason=halt.reason.encode("utf-8", "backslashreplace").decode(),
             cause=cause,
             restart_records=tuple(restart_records),
             found_outputs=tuple(found_outputs),

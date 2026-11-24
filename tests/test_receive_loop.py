@@ -2269,13 +2269,16 @@ class BrokenStop(Stopped):
 
 # Each fault, and what its halt says of it.
 HARD_TO_RECORD = {
-    "outputs-not-refs": "TypeError: the handler returned a result whose outputs are not all",
-    "outputs-bad-ref": "TypeError: the handler returned a result whose outputs are not all",
-    "outputs-none": "TypeError: 'NoneType' object is not iterable",
-    "halt-not-a-record": "TypeError: the handler returned a result whose halt is not a HaltRecord",
+    "outputs-not-refs": "CodecError: ",
+    "outputs-bad-ref": "CodecError: ",
+    "outputs-none": "CodecError: ",
+    "outputs-one-bad": "CodecError: ",
+    "outputs-a-set": "CodecError: ",
+    "halt-not-a-record": "CodecError: ",
     "error-text": "BrokenText, whose text could not be read",
     "stray-stop-text": "BrokenStop, whose text could not be read, and no stop was asked",
     "not-utf-8": "ValueError: no such file: \\udcff",
+    "returned-not-utf-8": "no such file: \\udcff",
     "channel-down": "ValueError: the handler's own error",
     "channel-exits": "ValueError: the handler's own error",
 }
@@ -2284,9 +2287,12 @@ HARD_TO_RECORD = {
 @pytest.mark.parametrize("broken", HARD_TO_RECORD)
 def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, broken: str) -> None:
     started: list[Item] = []
+    own = BlobRef(output_key(DEPLOYMENT, RUN, FIRST, "alpha", "x"), "0")
 
     class Channel(Alarms):
         def alarm(self, reason: str) -> None:
+            # As a channel that sends text over a wire does.
+            reason.encode()
             super().alarm(reason)
             if broken == "channel-down":
                 raise RuntimeError("no channel")
@@ -2299,6 +2305,9 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
             raise BrokenText
         if broken == "stray-stop-text":
             raise BrokenStop
+        if broken == "returned-not-utf-8":
+            record = made._storage.halt_record(Halt("no such file: \udcff"))
+            return DecisionResult(header("alpha", item.decision_at, {}), (), record)
         if broken == "not-utf-8":
             # As in a file name Python could not decode.
             raise ValueError("no such file: \udcff")
@@ -2308,6 +2317,8 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
             "outputs-not-refs": (("x",), None),
             "outputs-bad-ref": ((BlobRef(None, "0"),), None),
             "outputs-none": (None, None),
+            "outputs-one-bad": ((own, BlobRef(own.key, None)), None),
+            "outputs-a-set": (frozenset({own}), None),
             "halt-not-a-record": ((), "oops"),
         }[broken]
         return DecisionResult(header("alpha", item.decision_at, {}), outputs, halt)
@@ -2322,15 +2333,20 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
         assert not loops.errors
     assert len(started) == 1 and queue.released == []
     halt = store.read_result(_key("alpha"), FIRST).halt
-    assert halt is not None and halt.found_outputs == ()
-    assert f"did not handle: {HARD_TO_RECORD[broken]}" in halt.reason
-    assert len(alarms.reasons) == 1
+    # A halt names the item's own outputs, in whatever the handler put them.
+    assert halt is not None
+    named = broken in ("outputs-a-set", "outputs-one-bad")
+    assert halt.found_outputs == ((own,) if named else ())
+    assert HARD_TO_RECORD[broken] in halt.reason
+    if broken != "returned-not-utf-8":
+        assert f"did not handle: {HARD_TO_RECORD[broken]}" in halt.reason
+        assert len(alarms.reasons) == 1
 
 
 @pytest.mark.parametrize(
     "raised", [SystemExit("no store"), Stopped("no store")], ids=["exit", "stop"]
 )
-@pytest.mark.parametrize("ends", ["raises", "returns-a-result"])
+@pytest.mark.parametrize("ends", ["raises", "returns-a-halt", "returns-a-result"])
 def test_a_halt_is_held_whatever_the_store_raised(tmp_path, raised, ends: str) -> None:
     """A restart that lost it could store an output where the stage had halted."""
     started: list[Item] = []
@@ -2343,6 +2359,9 @@ def test_a_halt_is_held_whatever_the_store_raised(tmp_path, raised, ends: str) -
         started.append(item)
         if ends == "raises":
             raise Halt("the handler's own halt")
+        if ends == "returns-a-halt":
+            record = made._storage.halt_record(Halt("the handler's own halt"))
+            return DecisionResult(header("alpha", item.decision_at, {}), (), record)
         return handlers(*holder, Calls())["alpha"](item, report)
 
     _, the_plan, store, made, queue, alarms = _stub_loop(
@@ -2371,20 +2390,22 @@ def test_a_halt_is_held_whatever_the_store_raised(tmp_path, raised, ends: str) -
     down.clear()
     thread.join(5)
     assert len(started) == 1 and held and alive and not thread.is_alive()
-    assert len([r for r in alarms.reasons if "holds 1 blob" in r]) == 1
     reason = store.read_result(_key("alpha"), FIRST).halt.reason
-    said = "the handler's own halt" if ends == "raises" else f"{type(raised).__name__}: no store"
-    assert said in reason
+    if ends == "returns-a-result":
+        ended = f"a result that could not be stored: {type(raised).__name__}: no store"
+        assert f"{type(raised).__name__}: no store" in reason
+    else:
+        ended = "Halt: the handler's own halt"
+        assert reason == "the handler's own halt"
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     # What the store raised and what the item had ended with, which a host that
-    # kills the process would otherwise lose.
-    ended = (
-        "Halt: the handler's own halt"
-        if ends == "raises"
-        else f"a result that could not be stored: {type(raised).__name__}: no store"
-    )
+    # kills the process would otherwise lose, in an alarm of its own.
+    (hold,) = [r for r in alarms.reasons if "holds 1 blob" in r]
+    (other,) = [r for r in alarms.reasons if r != hold]
     for said in (f"was not stored: {type(raised).__name__}: no store", f"had ended with {ended}"):
-        assert said in alarms.reasons[0] and said in str(failures[0])
+        assert said in other and said in str(failures[0])
+        # The hold's alarm holds no text but the loop's own, which every channel takes.
+        assert said not in hold
     # A held halt is this process's to store, so its event is not handed on.
     assert queue.done_keys == [_key("feed")] and queue.released == []
 
@@ -2491,13 +2512,20 @@ def test_a_held_halt_is_stored_whatever_else_the_hold_meets(tmp_path, stuck: str
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
 
 
-@pytest.mark.parametrize("refusals", [1, 2])
-def test_a_result_whose_refusal_cannot_be_read_still_stores_a_halt(tmp_path, refusals: int) -> None:
-    """Refused once, a halt takes the result's place. Refused twice, the halt is held."""
+@pytest.mark.parametrize(
+    ("ends", "refusals"), [("returns-a-result", 1), ("returns-a-result", 2), ("raises", 1)]
+)
+def test_a_result_whose_refusal_cannot_be_read_still_stores_a_halt(
+    tmp_path, ends: str, refusals: int
+) -> None:
+    """A result refused once has a halt in its place. A halt refused once is held."""
+    held = (ends, refusals) != ("returns-a-result", 1)
     left = [BrokenText()] * refusals
     holder: list = []
 
     def alpha(item: Item, report: Progress):
+        if ends == "raises":
+            raise Halt("the handler's own halt")
         return handlers(*holder, Calls())["alpha"](item, report)
 
     _, the_plan, store, made, queue, _ = _stub_loop(tmp_path, alpha, decisions=1)
@@ -2515,14 +2543,15 @@ def test_a_result_whose_refusal_cannot_be_read_still_stores_a_halt(tmp_path, ref
     _feed(store, the_plan)
     queue.put(_key("feed"))
     assert _wait(lambda: _key("feed") in queue.done_keys + queue.released, 5)
-    if refusals == 2:
+    if held:
         assert _wait(lambda: not thread.is_alive(), 5)
     made.stop()
     thread.join(5)
     assert not thread.is_alive() and queue.released == []
     said = "BrokenText, whose text could not be read"
-    assert said in store.read_result(_key("alpha"), FIRST).halt.reason
-    assert [said in str(f) for f in failures] == [True] * (refusals - 1)
+    reason = store.read_result(_key("alpha"), FIRST).halt.reason
+    assert reason == "the handler's own halt" if ends == "raises" else said in reason
+    assert [said in str(f) for f in failures] == [True] * held
 
 
 def test_a_held_halt_whose_refusal_cannot_be_read_is_dropped_with_its_alarm(tmp_path) -> None:
@@ -2666,6 +2695,8 @@ def test_an_error_in_the_loops_own_work_inside_the_drain_ends_the_run_with_it(
     )
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
     assert str(failures[0]) == reason and alarms.reasons == [reason]
+    # What the hold's alarm would say, which is the loop's own words alone.
+    assert made._why_stopped() == "it could not finish stage alpha at decision 20261102T150000Z"
     assert queue.released == [_key("feed")] and queue.done_keys == []
     assert not (folder.root / _key("alpha")).exists()
 
