@@ -487,7 +487,7 @@ sequenceDiagram
 
 A run that starts on a book the broker disagrees with would trade the wrong difference. So this phase ends in a comparison, and a difference halts.
 
-1. **Data reads the bars.** It reads what the decision's lookback needs from marketlake, about 40 sessions of each ETF, and records which ones it read before any model sees them.
+1. **Data reads the bars.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, and records which ones it read before any model sees them.
 2. **Execution waits for that snapshot,** so it reads the broker at the decision's own time.
 3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
 4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.

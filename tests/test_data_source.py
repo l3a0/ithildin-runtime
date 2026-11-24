@@ -533,6 +533,178 @@ def test_2_a_lookback_without_a_first_session_reads_missing_before_the_series(
     assert reading.snapshot.status[GLD] is BarStatus.MISSING
 
 
+# A first session written later than the lake's series starts, test 10 of #110.
+
+QQQ = InstrumentId("QQQ")
+# The 40th session of both series, the first whose lookback they fill, and the 11th.
+FILLED = date(2006, 6, 21)
+EARLY = date(2006, 5, 10)
+LATE = date(2012, 2, 27)
+
+
+def window(at: date, lookback: int = 40) -> list[date]:
+    end = DAYS.index(at) + 1
+    return DAYS[end - lookback : end]
+
+
+def list_partition(root: Path, key: str) -> None:
+    """Put a partition in the lake and its manifest that no decision here reads."""
+    (root / key).parent.mkdir(parents=True, exist_ok=True)
+    (root / key).write_bytes(b"not read")
+    lakes.record(root, key)
+
+
+def late(src: LakeSource, at: date) -> str:
+    with pytest.raises(Halt) as caught:
+        src.read(close(at))
+    return caught.value.reason
+
+
+@pytest.mark.parametrize(
+    ("at", "first", "gone"),
+    [
+        # One session after the lake's start.
+        (FILLED, date(2006, 4, 27), []),
+        # The same where the other leg's first session cuts the lookback too, and is right.
+        (EARLY, date(2006, 4, 27), []),
+        # After a hole of one session inside the lookback.
+        (LAST, LATE, [before(LATE)]),
+        # After a hole that runs to the lookback's old end.
+        (LAST, LATE, [d for d in window(LAST) if d < LATE]),
+        # One session past the lookback's old end, with no hole.
+        (LAST, window(LAST)[1], []),
+        # After the decision itself, which leaves no session to read.
+        (LAST, date(2012, 4, 10), []),
+    ],
+    ids=[
+        "one-late",
+        "both-cut",
+        "a-hole-inside",
+        "a-hole-at-the-old-end",
+        "the-old-end",
+        "past-the-decision",
+    ],
+)
+@pytest.mark.parametrize(("leg", "other"), [("GLD", "USO"), ("USO", "GLD")])
+def test_a_first_session_that_cuts_a_lookback_the_lake_could_fill_halts(
+    lake: Path, tmp_path: Path, at: date, first: date, gone: list[date], leg: str, other: str
+) -> None:
+    for day in gone:
+        unlist(lake, lakes.partition_key(leg, day))
+    src = make(
+        lake,
+        tmp_path,
+        first_sessions={InstrumentId(leg): first, InstrumentId(other): FIRST},
+    )
+    manifest = hashlib.sha256((lake / "manifest.jsonl").read_bytes()).hexdigest()
+    assert late(src, at) == (
+        f"{leg}'s first session is written as {first.isoformat()}, which cuts the decision's "
+        f"lookback, and the lake lists {lakes.partition_key(leg, FIRST)} before it. "
+        f"Read from manifest.jsonl at SHA-256 {manifest}, bucket version {manifest}"
+    )
+    assert list((tmp_path / "mirror" / "roots").iterdir()) == []
+
+
+def test_a_late_first_session_names_the_bucket_version_of_the_manifest_it_read(
+    lake: Path, tmp_path: Path
+) -> None:
+    """S3's version is no hash, and the folder's version is its file's SHA-256."""
+
+    class Versioned(Counting):
+        def read(self, key: str) -> BucketObject:
+            got = super().read(key)
+            return replace(got, version=f"version-{len(self.reads)}")
+
+    bucket = Versioned(FolderBucket(lake))
+    late_gld = {GLD: date(2006, 4, 27), USO: FIRST}
+    src = make(lake, tmp_path, bucket=bucket, first_sessions=late_gld)
+    for _ in range(2):
+        read = len(bucket.reads) + 1
+        assert late(src, FILLED).endswith(f"bucket version version-{read}")
+        assert bucket.reads[read - 1] == "manifest.jsonl"
+
+
+@pytest.mark.parametrize(
+    ("at", "first"),
+    [
+        (FILLED, FIRST),
+        # At the lookback's old end and before it, where it cuts nothing.
+        (LAST, window(LAST)[0]),
+        (LAST, before(window(LAST)[0])),
+        # The master names no USO ticker for part of the lookback.
+        (EARLY, FIRST),
+    ],
+)
+def test_a_first_session_that_cuts_nothing_the_lake_lists_passes(
+    lake: Path, tmp_path: Path, at: date, first: date
+) -> None:
+    reading = make(lake, tmp_path, first_sessions={GLD: first, USO: first}).read(close(at))
+    assert reading.halts == ()
+    assert set(reading.snapshot.status.values()) == {BarStatus.FRESH}
+
+
+def test_a_first_session_too_early_reads_missing(lake: Path, tmp_path: Path) -> None:
+    early = make(lake, tmp_path, first_sessions={GLD: before(FIRST), USO: FIRST})
+    assert early.read(close(EARLY)).snapshot.status == {
+        GLD: BarStatus.MISSING,
+        USO: BarStatus.FRESH,
+    }
+
+
+def test_a_partition_before_the_calendars_first_session_is_an_earlier_one(
+    lake: Path, tmp_path: Path
+) -> None:
+    """GLD traded from 2004-11-18, and the session table starts in 2006."""
+    earlier = date(2005, 12, 30)
+    assert earlier < TABLE.first
+    # Listed after a later day, as a backfill is, and named as the earliest.
+    list_partition(lake, lakes.partition_key("GLD", date(2006, 1, 3)))
+    list_partition(lake, lakes.partition_key("GLD", earlier))
+    assert f"the lake lists {lakes.partition_key('GLD', earlier)} before it" in late(
+        make(lake, tmp_path), EARLY
+    )
+    # The master names no USO ticker that day, so this partition is none of USO's.
+    list_partition(lake, lakes.partition_key("USO", earlier))
+    uso = make(lake, tmp_path, instruments=(USO,), first_sessions={USO: FIRST})
+    assert uso.read(close(EARLY)).halts == ()
+
+
+@pytest.mark.parametrize(
+    ("partition", "first", "at", "halts"),
+    [
+        ("bars/ticker=QQQQ/freq=1d/date=2006-04-25.parquet", FIRST, EARLY, True),
+        # The master gives QQQ another ticker that day.
+        ("bars/ticker=QQQ/freq=1d/date=2006-04-25.parquet", FIRST, EARLY, False),
+        # Not a daily bar.
+        ("bars/ticker=QQQQ/freq=1m/date=2006-04-25.parquet", FIRST, EARLY, False),
+        # The partition's own day decides the ticker, which changed before the first session.
+        (
+            "bars/ticker=QQQQ/freq=1d/date=2011-03-21.parquet",
+            date(2011, 3, 24),
+            date(2011, 4, 8),
+            True,
+        ),
+        (
+            "bars/ticker=QQQ/freq=1d/date=2011-03-21.parquet",
+            date(2011, 3, 24),
+            date(2011, 4, 8),
+            False,
+        ),
+    ],
+)
+def test_only_an_earlier_daily_partition_of_the_instruments_own_ticker_halts(
+    lake: Path, tmp_path: Path, partition: str, first: date, at: date, halts: bool
+) -> None:
+    list_partition(lake, partition)
+    src = make(lake, tmp_path, instruments=(QQQ,), first_sessions={QQQ: first})
+    with pytest.raises(Halt) as caught:
+        src.snapshot(close(at))
+    if halts:
+        assert f"the lake lists {partition} before it" in caught.value.reason
+    else:
+        assert caught.value.reason.startswith("QQQ missing for the decision")
+
+
 # 3. End time.
 
 
