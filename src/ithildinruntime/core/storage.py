@@ -215,7 +215,7 @@ class _Differs(Exception):
 class _AlarmFailed(Exception):
     """A capture is stored, and the alarm that says so could not be sent."""
 
-    def __init__(self, reason: str, error: Exception, stored: Stored) -> None:
+    def __init__(self, reason: str, error: BaseException, stored: Stored) -> None:
         super().__init__(reason)
         self.reason = reason
         self.error = error
@@ -530,7 +530,7 @@ class Storage:
                     done = Stored(BlobRef(key, held.sha256), counts)
                     try:
                         self._alerts.alarm(reason)
-                    except Exception as error:
+                    except BaseException as error:
                         raise _AlarmFailed(reason, error, done) from error
                     return done
                 return Stored(BlobRef(key, held.sha256), counts)
@@ -561,7 +561,7 @@ class Storage:
             if first is None:
                 return f". {held.key} read as missing, so the difference is not known"
             return f". {held.explain(first)}"
-        except Exception as error:
+        except BaseException as error:
             return f". The difference could not be described: {type(error).__name__}: {error}"
 
     def _create(self, key: str, data: bytes, sha: str, once: bool) -> str | None:
@@ -633,7 +633,7 @@ class Storage:
         )
         try:
             self._alerts.alarm(halt.reason)
-        except Exception as error:
+        except BaseException as error:
             return Halt(
                 f"{halt.reason}. The alarm could not be sent: {type(error).__name__}: {error}"
             )

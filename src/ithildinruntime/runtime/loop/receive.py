@@ -50,8 +50,7 @@ How the loop runs, in order.
    built, ends the loop the same way, because going on would start the
    decision again at once, for ever. It alarms, naming the worker, the stage,
    the decision, the error and what the item had ended with, and the item's
-   messages go back to the queue. An error in the loop's own checks ends the
-   loop with no alarm of its own. Any error from the queue other than
+   messages go back to the queue. Any error from the queue other than
    `QueueUnavailable` ends it with `LoopFailed`, and so does a queue that has
    refused every receive for longer than `deaf_after`, because a loop that
    can no longer receive must not go on beating as if it worked. Each queue
@@ -80,7 +79,7 @@ How the loop runs, in order.
 9. **A process that holds what S3 has not stored stays alive.** After the
    drain it retries each halt it could not store and each capture the
    storage contract holds every `extend_every`, quietly, since the first
-   refusal alarmed. It beats whatever its handlers do while it holds them,
+   refusal or the alarm below said so. It beats whatever its handlers do while it holds them,
    as item 7 says, so the host's watchdog does not kill it, and it alarms
    naming each blob and why receiving stopped, again until the alert
    channel takes it. A halt S3 answered and will not store, such as one
@@ -134,6 +133,7 @@ from ithildinruntime.core import (
     Event,
     EventKind,
     Halt,
+    HaltRecord,
     Plan,
     Progress,
     Queue,
@@ -206,10 +206,13 @@ class _Running:
     # Whether the item ended with no result known to be stored or held, on a
     # stop or on an error in `_work` itself, so its messages go back.
     unfinished: bool = False
-    # What the item ended with other than a stored result, for the alarm of an
-    # item that could not be finished.
+    # What the item ended with other than a stored result, such as a halt's
+    # reason, which no blob holds until the halt is stored.
     ended: str | None = None
     extending: bool = False
+
+    def said_ended(self) -> str:
+        return "" if self.ended is None else f". The item had ended with {self.ended}"
 
 
 class _Progress:
@@ -541,7 +544,7 @@ class ReceiveLoop:
                 # S3 answered, such as with bytes no codec reads at the key,
                 # and no retry changes its answer, so the halt is not held.
                 # Its reason goes out in the alarm.
-                self._drop_halt(key, halt, f"could not be stored: {type(error).__name__}: {error}")
+                self._drop_halt(key, halt, f"could not be stored: {_said(error)}")
                 continue
             except BaseException:
                 # No answer from S3 either, so it stays held, and the next is tried.
@@ -910,7 +913,8 @@ class ReceiveLoop:
         running.done = True
         error = future.exception() if not future.cancelled() else None
         if isinstance(error, _Fatal):
-            self._fail(error.__cause__ or error, f"{self._worker}: {error}")
+            what = f"{self._worker}: {error}{running.said_ended()}"
+            self._fail(error.__cause__ or error, what)
         elif error is not None:
             # An error `_work` did not turn into a stored or held result. A
             # later check would find no result and start the decision again,
@@ -919,11 +923,8 @@ class ReceiveLoop:
             what = (
                 f"could not finish stage {running.item.stage} at decision "
                 f"{decision_part(running.item.decision_at)}: {_said(error)}"
+                f"{running.said_ended()}"
             )
-            if running.ended is not None:
-                # Such as the reason of a halt that could not be built, which
-                # no result holds.
-                what += f". The item had ended with {running.ended}"
             self._give_up(what, error)
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
@@ -962,7 +963,7 @@ class ReceiveLoop:
             if self._stop_asked.is_set():
                 running.unfinished = True
                 return
-            running.ended = f"Stopped, and no stop was asked: {stopped}"
+            running.ended = f"{_said(stopped)}, and no stop was asked"
             self._store_unhandled(stage, running, returned)
             return
         except BaseException as error:
@@ -980,6 +981,8 @@ class ReceiveLoop:
             f"{self._worker} failed in stage {item.stage} at decision "
             f"{decision_part(item.decision_at)} with an error it did not handle: {running.ended}"
         )
+        if unstored := self._storage.unstored():
+            reason += f". Captures not yet stored: {', '.join(ref.key for ref in unstored)}"
         # The alarm goes first, so the reason is sent even when its halt
         # cannot be built or is never stored.
         try:
@@ -997,12 +1000,12 @@ class ReceiveLoop:
         # outputs must not keep its halt from being stored.
         if not isinstance(returned, DecisionResult):
             return ()
-        if not isinstance(returned.outputs, (tuple, list)):
+        try:
+            refs = tuple(returned.outputs)
+        except Exception:
             return ()
-        refs = [ref for ref in returned.outputs if isinstance(ref, BlobRef)]
-        named = [r for r in refs if isinstance(r.key, str) and isinstance(r.sha256, str)]
         prefix = self._key(item).removesuffix("result.json")
-        return tuple(ref for ref in named if ref.key.startswith(prefix))
+        return tuple(ref for ref in refs if _is_ref(ref) and ref.key.startswith(prefix))
 
     def _check_strategies(self, item: Item) -> None:
         """Halt a stage at a decision whose strategies are not exactly the table's.
@@ -1036,6 +1039,11 @@ class ReceiveLoop:
                 f"the handler returned the result of stage {header.stage} at "
                 f"{decision_part(header.decision_at)}"
             )
+        # Refused here rather than by the codec, so its halt is built afresh.
+        if not all(_is_ref(ref) for ref in result.outputs):
+            raise TypeError("the handler returned a result whose outputs are not all blob refs")
+        if result.halt is not None and not isinstance(result.halt, HaltRecord):
+            raise TypeError("the handler returned a result whose halt is not a HaltRecord")
         expected = dict(self._table.hashes_for(item.stage))
         if dict(header.config_hashes) != expected:
             raise ValueError(
@@ -1056,7 +1064,8 @@ class ReceiveLoop:
             # Whatever the store raised, a halt already built is held.
             if result.halt is not None:
                 self._keep_halt(item, result)
-                raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
+                what = f"the halt for {self._key(item)} was not stored: {_said(error)}"
+                raise _Fatal(what) from error
             running.ended = f"a result that could not be stored: {_said(error)}"
             halt = Halt(
                 f"{self._worker} could not store the result of stage {item.stage} at decision "
@@ -1067,7 +1076,8 @@ class ReceiveLoop:
                 self._storage.put_result(self._key(item), fallback)
             except BaseException as second:
                 self._keep_halt(item, fallback)
-                raise _Fatal(f"the halt for {self._key(item)} was not stored") from second
+                what = f"the halt for {self._key(item)} was not stored: {_said(second)}"
+                raise _Fatal(what) from second
         with self._stored_lock:
             self._stored.add((item.stage, item.decision_at))
 
@@ -1089,7 +1099,10 @@ class ReceiveLoop:
             release=self._plan.release,
             config_hashes=self._table.hashes_for(item.stage),
         )
-        record = self._storage.halt_record(halt, found_outputs=found)
+        # A lone surrogate, as in a file name Python could not decode, has no
+        # UTF-8 form, and the codec refuses a reason that holds one.
+        said = Halt(halt.reason.encode("utf-8", "backslashreplace").decode())
+        record = self._storage.halt_record(said, found_outputs=found)
         return DecisionResult(header=header, outputs=(), halt=record)
 
     # The heartbeat and the visibility of held messages
@@ -1157,6 +1170,10 @@ def _said(error: BaseException) -> str:
         return f"{type(error).__name__}: {error}"
     except BaseException:
         return f"{type(error).__name__}, whose text could not be read"
+
+
+def _is_ref(ref: object) -> bool:
+    return isinstance(ref, BlobRef) and isinstance(ref.key, str) and isinstance(ref.sha256, str)
 
 
 def _hashes(hashes: Mapping[str, str]) -> str:

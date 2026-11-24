@@ -224,19 +224,21 @@ def test_explain_is_refused_on_a_deterministic_output(spec) -> None:
         storage.put(StageKind.DETERMINISTIC, _snapshot_key(), b"one", explain=lambda first: "x")
 
 
-def test_an_explain_that_raises_leaves_the_alarm_saying_so(spec) -> None:
+@pytest.mark.parametrize("error", [RuntimeError, SystemExit])
+def test_an_explain_that_raises_leaves_the_alarm_saying_so(spec, error) -> None:
     storage, _, alarms = _storage(spec.open())
     key = _snapshot_key()
     storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
 
     def explain(first: bytes) -> str:
-        raise RuntimeError("the codec refused it")
+        raise error("the codec refused it")
 
     storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt(), explain=explain)
     (reason,) = alarms.reasons
     assert reason.endswith(
-        "The difference could not be described: RuntimeError: the codec refused it"
+        f"The difference could not be described: {error.__name__}: the codec refused it"
     )
+    assert storage.unstored() == ()
 
 
 def test_an_attempts_alarm_says_when_the_first_capture_reads_as_missing(spec) -> None:
@@ -722,15 +724,25 @@ def test_a_reader_halt_names_each_capture_still_held(spec: StoreSpec) -> None:
 
 
 class FailingAlarms(Alarms):
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
+
     def alarm(self, reason: str) -> None:
         super().alarm(reason)
-        raise ConnectionError("the pager is unreachable")
+        raise self.error
 
 
-def test_an_alarm_that_cannot_be_sent_leaves_a_true_halt(spec: StoreSpec) -> None:
+PAGER_ERRORS = [ConnectionError("the pager is unreachable"), SystemExit("the pager is unreachable")]
+
+
+@pytest.mark.parametrize("error", PAGER_ERRORS, ids=lambda error: type(error).__name__)
+def test_an_alarm_that_cannot_be_sent_leaves_a_true_halt(
+    spec: StoreSpec, error: BaseException
+) -> None:
     """A stored capture is never named as unstored, and an outage halt keeps its reason."""
     flaky = Flaky(spec.open())
-    timer, alarms = FakeTimer(), FailingAlarms()
+    timer, alarms = FakeTimer(), FailingAlarms(error)
     storage = Storage(
         flaky, timer=timer, pause=timer.pause, retry=RETRY, alerts=alarms, owner_step=OWNER_STEP
     )
@@ -749,13 +761,16 @@ def test_an_alarm_that_cannot_be_sent_leaves_a_true_halt(spec: StoreSpec) -> Non
         storage.put(StageKind.CAPTURING, core.broker_read_key("ci", RUN, AT, 1), b"read")
     reason = outage.value.reason
     assert "did not store" in reason and OWNER_STEP in reason
-    assert "The alarm could not be sent: ConnectionError" in reason
+    assert f"The alarm could not be sent: {type(error).__name__}" in reason
     assert alarms.reasons[-1] in reason
 
 
-def test_a_held_capture_whose_alarm_fails_on_retry_is_released_as_stored(spec: StoreSpec) -> None:
+@pytest.mark.parametrize("error", PAGER_ERRORS, ids=lambda error: type(error).__name__)
+def test_a_held_capture_whose_alarm_fails_on_retry_is_released_as_stored(
+    spec: StoreSpec, error: BaseException
+) -> None:
     flaky = Flaky(spec.open())
-    timer, alarms = FakeTimer(), FailingAlarms()
+    timer, alarms = FakeTimer(), FailingAlarms(error)
     storage = Storage(
         flaky, timer=timer, pause=timer.pause, retry=RETRY, alerts=alarms, owner_step=OWNER_STEP
     )
