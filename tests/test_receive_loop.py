@@ -285,7 +285,14 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     # handler's end made, however long it lasts: the halt alone, or the
     # result and the halt that replaces it.
     writes = 1 if ends == "raises" else 2
-    assert len([r for r in alarms.reasons if "by the deadline" in r]) == writes
+    assert len([r for r in alarms.reasons if r.startswith("S3 did not store")]) == writes
+    # What the item had ended with goes out beside the outage's own alarm.
+    (detail,) = [r for r in alarms.reasons if "The item had ended with" in r]
+    assert "S3 did not store" in detail and "because" not in detail
+    if ends == "raises":
+        assert detail.endswith("The item had ended with ValueError: broken")
+    else:
+        assert "The item had ended with a result that could not be stored" in detail
 
 
 def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -> None:
@@ -1665,6 +1672,34 @@ def test_an_error_from_extend_other_than_an_unavailable_queue_ends_the_loop(tmp_
     assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
 
 
+@pytest.mark.parametrize("where", ["receive", "answer", "bug"])
+def test_an_error_whose_text_utf_8_cannot_encode_still_alarms(tmp_path, where: str) -> None:
+    """The text is escaped, so a channel that sends it over a wire takes the alarm."""
+    error = OSError("no such pipe: \udcff")
+    queue = StubQueue()
+    folder, the_plan, store, made, _, alarms = _stub_loop(tmp_path, decisions=1, queue=queue)
+
+    def feed() -> None:
+        if where == "receive":
+            queue.error = error
+        elif where == "answer":
+            queue.done_error = error
+        else:
+
+            async def broken(events) -> None:
+                raise error
+
+            made._on_events = broken
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+
+    failures = _run_until_it_fails(made, feed)
+    assert len(failures) == 1
+    # What the alarms and the hold's alarm say of it.
+    for reason in (*alarms.reasons, made._why_stopped()):
+        assert "no such pipe: \\udcff" in reason and reason.encode()
+
+
 def test_a_queue_that_refuses_every_receive_ends_the_loop_after_a_bound(tmp_path) -> None:
     from ithildinruntime.core import QueueUnavailable
 
@@ -2267,14 +2302,14 @@ class BrokenStop(Stopped):
         raise RuntimeError("no text")
 
 
+NOT_STORED = "could not store the result of stage alpha at decision 20261102T150000Z: CodecError"
 # Each fault, and what its halt says of it.
 HARD_TO_RECORD = {
-    "outputs-not-refs": "CodecError: ",
-    "outputs-bad-ref": "CodecError: ",
-    "outputs-none": "CodecError: ",
-    "outputs-one-bad": "CodecError: ",
-    "outputs-a-set": "CodecError: ",
-    "halt-not-a-record": "CodecError: ",
+    "outputs-not-refs": NOT_STORED,
+    "outputs-bad-ref": NOT_STORED,
+    "outputs-none": NOT_STORED,
+    "outputs-one-bad": NOT_STORED,
+    "outputs-a-set": NOT_STORED,
     "error-text": "BrokenText, whose text could not be read",
     "stray-stop-text": "BrokenStop, whose text could not be read, and no stop was asked",
     "not-utf-8": "ValueError: no such file: \\udcff",
@@ -2319,7 +2354,6 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
             "outputs-none": (None, None),
             "outputs-one-bad": ((own, BlobRef(own.key, None)), None),
             "outputs-a-set": (frozenset({own}), None),
-            "halt-not-a-record": ((), "oops"),
         }[broken]
         return DecisionResult(header("alpha", item.decision_at, {}), outputs, halt)
 
@@ -2338,7 +2372,9 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
     named = broken in ("outputs-a-set", "outputs-one-bad")
     assert halt.found_outputs == ((own,) if named else ())
     assert HARD_TO_RECORD[broken] in halt.reason
-    if broken != "returned-not-utf-8":
+    if broken == "returned-not-utf-8":
+        assert alarms.reasons == [] and halt.reason == HARD_TO_RECORD[broken]
+    elif not broken.startswith("outputs"):
         assert f"did not handle: {HARD_TO_RECORD[broken]}" in halt.reason
         assert len(alarms.reasons) == 1
 
@@ -2509,6 +2545,10 @@ def test_a_held_halt_is_stored_whatever_else_the_hold_meets(tmp_path, stuck: str
         at = FIRST + timedelta(minutes=n)
         assert store.read_result(_key("alpha", n), at).halt is not None
     assert (folder.root / capture).exists() == (stuck == "capture")
+    # `LoopFailed` names the first item alone, so each item's own alarm is its record.
+    for n in range(2):
+        (detail,) = [r for r in alarms.reasons if f"{_key('alpha', n)} was not stored: " in r]
+        assert "SystemExit: no write" in detail and "had ended with" in detail
     assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
 
 

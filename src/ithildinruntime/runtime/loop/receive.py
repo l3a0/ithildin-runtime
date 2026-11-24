@@ -77,18 +77,18 @@ How the loop runs, in order.
    process, as in a crash, and its decision is done again after the
    restart, unless item 9 keeps the process alive.
 9. **A process that holds what S3 has not stored stays alive.** After the
-   drain it retries each halt it could not store and each capture the
-   storage contract holds every `extend_every`, quietly, since the first
-   refusal alarmed. It beats whatever its handlers do while it holds them,
-   as item 7 says, so the host's watchdog does not kill it, and it alarms
-   naming each blob and why receiving stopped, again until the alert
-   channel takes it. A halt S3 answered and will not store, such as one
-   whose key holds bytes nothing reads or another result, is dropped with an
-   alarm giving its reason. A capture is never dropped, so one S3 keeps
-   answering with an error holds the process until a person acts. `run`
-   returns or raises only once nothing is held. The price is
-   a process that holds a host slot without receiving through an outage, and
-   one whose hung handler is not killed while it holds them.
+   drain it retries each halt it could not store and each capture the storage
+   contract holds every `extend_every`, quietly, since the first refusal or
+   the alarm below said so. It beats whatever its handlers do while it holds
+   them, as item 7 says, so the host's watchdog does not kill it, and it
+   alarms naming each blob and why receiving stopped, again until the alert
+   channel takes it. A halt S3 answered and will not store, such as one whose
+   key holds bytes nothing reads or another result, is dropped with an alarm
+   giving its reason. A capture is never dropped, so one S3 keeps answering
+   with an error holds the process until a person acts. `run` returns or
+   raises only once nothing is held. The price is a process that holds a host
+   slot without receiving through an outage, and one whose hung handler is not
+   killed while it holds them.
 10. **A stage runs only at a decision of every strategy the table declares.**
     Before a handler runs, the loop halts the stage at a decision whose
     strategies are not exactly the table's, naming the strategies left out or
@@ -143,7 +143,6 @@ from ithildinruntime.core import (
     StoreUnavailable,
     Timer,
     decision_part,
-    encode,
     result_key,
 )
 
@@ -438,7 +437,7 @@ class ReceiveLoop:
             # A bug, which ends the loop as a failure does, and which the
             # hold's alarm names.
             self._stopping = True
-            bug = f"{type(error).__name__}: {error}"
+            bug = _said(error)
             self._causes.append(bug)
             if self._failed_because is None:
                 self._failed_because = bug
@@ -611,7 +610,7 @@ class ReceiveLoop:
         except QueueUnavailable:
             pass
         except Exception as error:
-            self._give_up(f"could not answer its queue: {type(error).__name__}: {error}", error)
+            self._give_up(f"could not answer its queue: {_said(error)}", error)
 
     def _give_up(self, what: str, error: BaseException, more: str = "") -> None:
         """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
@@ -686,7 +685,7 @@ class ReceiveLoop:
                 events = ()
                 await asyncio.sleep(self._tick)
             except Exception as error:
-                self._give_up(f"stopped receiving: {type(error).__name__}: {error}", error)
+                self._give_up(f"stopped receiving: {_said(error)}", error)
                 return
             if events:
                 # Wait until the events have handlers, so the next receive asks
@@ -922,9 +921,7 @@ class ReceiveLoop:
             cause = error.__cause__ or error
             more = f": {_said(cause)}{running.said_ended()}"
             self._fail(cause, f"{self._worker}: {error}", more)
-            if not isinstance(cause, Halt):
-                # An outage's halt already alarmed with S3's answer.
-                self._send(f"{self._worker}: {error}{more}")
+            self._send(f"{self._worker}: {error}{more}")
         elif error is not None:
             # An error `_work` did not turn into a stored or held result. A
             # later check would find no result and start the decision again,
@@ -1048,9 +1045,6 @@ class ReceiveLoop:
                 f"the handler returned the result of stage {header.stage} at "
                 f"{decision_part(header.decision_at)}"
             )
-        # A result the codec refuses is refused before the store, so a halt is
-        # built for it afresh rather than from what it holds.
-        encode(result)
         expected = dict(self._table.hashes_for(item.stage))
         if dict(header.config_hashes) != expected:
             raise ValueError(
