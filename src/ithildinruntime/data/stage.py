@@ -14,7 +14,9 @@ things, in order.
 2. **It reads the snapshot** through `LakeSource`. A read that cannot give a
    snapshot raises `Halt`, which the loop stores as data's result. The read
    comes before the store, so it halts this way even when a redelivery finds
-   a first capture already stored.
+   a first capture already stored. Settings that could not be built from the
+   strategies' files halt here too, at each decision, so the reason is stored
+   as the decision's result rather than lost with a worker that fails to start.
 3. **It stores the snapshot** through `core.Storage`'s rule for a capturing
    stage. The first capture wins, and a later read that differs, even only in
    its read time, is stored under its own attempt number, which alarms. The
@@ -91,11 +93,15 @@ class _Item(Protocol):
 
 
 class DataStage:
-    """The handler the receive loop calls for data's stage, one decision at a time."""
+    """The handler the receive loop calls for data's stage, for any number of decisions at once.
+
+    `source` is the read, or the `Halt` that refused its settings, which every
+    decision then raises.
+    """
 
     def __init__(
         self,
-        source: LakeSource,
+        source: LakeSource | Halt,
         storage: Storage,
         clock: Clock,
         *,
@@ -117,7 +123,11 @@ class DataStage:
     def __call__(self, item: _Item, report: Progress) -> DecisionResult:
         at = item.decision_at
         self._clock.wait_until(at, report)
-        reading = self._source.read(at)
+        source = self._source
+        if isinstance(source, Halt):
+            # Decisions run side by side, and a raised exception gains its own traceback.
+            raise Halt(source.reason)
+        reading = source.read(at)
         report()
         header = BlobHeader(
             format=_FORMAT,
@@ -150,7 +160,7 @@ class DataStage:
             reasons = reading.halts
         else:
             reasons = _counted(
-                stored.counts, first, self._source.instruments, self._release, self._config_hashes
+                stored.counts, first, source.instruments, self._release, self._config_hashes
             )
         halt = None
         if reasons:
@@ -173,9 +183,8 @@ def _counted(
     since it cannot be judged. So does one written under another release or
     other strategy configuration hashes: only this release's code, under the
     settings those hashes name, reads its fields and status as it wrote them,
-    so `judge` repeats this release's read and no other's. That holds for
-    data's own settings once #110 builds `DataSettings` from the files the
-    hashes name. Until then a change to `DataSettings` alone moves no hash.
+    so `judge` repeats this release's read and no other's. Data's own settings
+    come from the files those hashes name, so a change to one moves a hash.
     """
     if not first:
         return (f"{counts.key} counts and could not be read to judge it",)

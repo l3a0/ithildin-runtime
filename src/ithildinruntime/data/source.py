@@ -10,7 +10,8 @@ How one decision is read, in order.
 
 1. **The lookback.** Each instrument reads the `lookback` sessions the
    calendar holds up to the latest session ended by the decision, from the
-   series' first session on where its settings name one.
+   series' first session on where its settings name one. A first session that
+   cuts a lookback the lake could fill halts, as `_refuse_late` says.
 2. **One read per session.** marketlake's `load_bars` returns around a session
    missing inside a range with no error, and a row carries no session. So the
    source calls it once per session, with `start` and `end` both that
@@ -63,7 +64,7 @@ from lake.actions import LedgerLineError, LedgerNotUtf8
 from lake.config import ConfigError
 from lake.loader import BarsAbsent, LoadError, PartitionQuarantined, load_bars
 from lake.manifest import ManifestError
-from lake.paths import LakePaths
+from lake.paths import LakePaths, parse_bars_rel
 
 from ithildinruntime.core import (
     Bar,
@@ -106,21 +107,29 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DataSettings:
-    """The data module's settings. No entry point builds them from a strategy's tracked file yet.
+    """The data module's settings, which `settings.data_settings` builds from tracked files.
+
+    The data worker's entry point builds them from the file of every strategy
+    its table declares. A caller that reads no strategy's file builds them
+    directly.
 
     - `instruments` are the instruments the run's strategies trade.
     - `lookback` is the number of sessions each instrument reads, counted on
-      the calendar. The walking skeleton reads 40.
-    - `first_sessions` names each series' first session, before which a
-      lookback holds no session rather than reading `missing`. Test 1's series
-      start on 2006-04-26.
+      the calendar.
+    - `first_sessions` names each series' first session in the lake, before
+      which a lookback holds no session rather than reading `missing`. One
+      later than a session the lake lists halts a decision whose lookback it
+      cuts.
     - `stale_lag` is #7's written lag, in sessions. `None` halts every
-      decision, because an absent lag is a missing input.
+      decision, because an absent lag is a missing input. No file can write it.
     - `spike_multiple` is how many standard deviations of the lookback's daily
       returns a close-to-close move may reach before it is flagged.
       `spikes.largest_multiple` measured the largest the Chan vintages reach,
       which tests/test_data_spikes.py pins and docs/design.md's `## Configuration`
       states beside the setting, labelled exploratory.
+
+    docs/design.md's `## Configuration` states the values the first strategy
+    writes.
     """
 
     instruments: tuple[InstrumentId, ...]
@@ -209,6 +218,7 @@ class LakeSource:
         start = self._timer.monotonic()
         root = self._mirror.open()
         try:
+            self._refuse_late(root, latest)
             self._mirror.partitions(root, (key for plan in plans.values() for _, _, key in plan))
             seconds = self._timer.monotonic() - start
             log.info(
@@ -268,8 +278,7 @@ class LakeSource:
 
     def _plan(self, instrument: InstrumentId, latest: date) -> list[tuple[date, str, str]]:
         """Each lookback session's day, ticker and partition key, oldest first."""
-        end = bisect.bisect_right(self._days, latest)
-        days = self._days[max(0, end - self._settings.lookback) : end]
+        days = self._lookback(latest)
         first = self._settings.first_sessions.get(instrument)
         if first is not None:
             days = [d for d in days if d >= first]
@@ -278,6 +287,44 @@ class LakeSource:
             ticker = self._master.ticker(instrument, day)
             plan.append((day, ticker, _partition_key(ticker, day)))
         return plan
+
+    def _lookback(self, latest: date) -> list[date]:
+        """The sessions a lookback ending at `latest` counts, before a first session cuts it."""
+        end = bisect.bisect_right(self._days, latest)
+        return self._days[max(0, end - self._settings.lookback) : end]
+
+    def _refuse_late(self, root: LakeRoot, latest: date) -> None:
+        """Halt on a first session that cuts a lookback where the lake lists an earlier partition.
+
+        A first session says where the lake's series of an instrument starts.
+        Written later than that, it would drop a session the lake lost from the
+        lookback, and the bars after the hole would read `fresh`. Only the
+        manifest shows it, so this raises before any snapshot is stored, where
+        a redelivery halts as the first delivery did. The manifest is read
+        rather than the calendar, which starts later than some series do.
+        """
+        oldest = self._lookback(latest)[0]
+        firsts = {
+            i: first
+            for i in self._settings.instruments
+            if (first := self._settings.first_sessions.get(i)) is not None and first > oldest
+        }
+        if not firsts:
+            return
+        listed = [r for r in map(parse_bars_rel, root.entries) if r and r.freq == DAILY]
+        for instrument, first in firsts.items():
+            earlier = [
+                r
+                for r in listed
+                if r.day < first and r.ticker in self._master.tickers(instrument, r.day)
+            ]
+            if earlier:
+                start = min(earlier, key=lambda r: r.day)
+                raise Halt(
+                    f"{instrument}'s first session is written as {first.isoformat()}, which cuts "
+                    "the decision's lookback, and the lake lists "
+                    f"{_partition_key(start.ticker, start.day)} before it"
+                )
 
     # The read
 
@@ -445,8 +492,7 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     so the decision halts on what it will trade from. The stage judges only a
     capture this release wrote under the same strategy configuration hashes,
     and halts on any other, so `judge` repeats this release's read under the
-    settings those hashes name. Those cover data's own settings once #110
-    builds them from the hashed files. These each halt:
+    settings those hashes name, data's own among them. These each halt:
 
     1. an instrument the settings read and the snapshot does not hold;
     2. an instrument that is not fresh, or is fresh with no bar;

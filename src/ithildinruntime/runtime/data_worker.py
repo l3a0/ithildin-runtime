@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from ithildinruntime.adapters import FolderBucket, S3Bucket
-from ithildinruntime.core import Bucket, Clock, Mode, StageKind, Storage, Timer
-from ithildinruntime.data import STAGE, DataSettings, DataStage, LakeSource, Mirror
+from ithildinruntime.core import Bucket, Clock, Halt, Mode, StageKind, Storage, Timer
+from ithildinruntime.data import STAGE, DataStage, LakeSource, Mirror, data_settings
 
 from .loop import Stage, Table
 
@@ -53,7 +53,6 @@ def data_handler(
     *,
     bucket: Bucket,
     mirror: str | Path,
-    settings: DataSettings,
     storage: Storage,
     clock: Clock,
     timer: Timer,
@@ -66,9 +65,19 @@ def data_handler(
 
     Data's stage is shared by every strategy in `table`, so each blob it writes
     names every strategy's configuration hash, read from `table` as the receive
-    loop checks it.
+    loop checks it. The settings are built from the same strategies, so a change
+    to one moves the hash of the file that writes it. Files that build no
+    settings halt each decision with the reason stored, and never the worker's
+    start. One `LakeSource` serves every decision, because it keeps each
+    session's answer for the run.
     """
-    source = LakeSource(Mirror(bucket, mirror), settings, clock=clock, timer=timer)
+    source: LakeSource | Halt
+    try:
+        settings = data_settings(table.strategies)
+    except Halt as halt:
+        source = halt
+    else:
+        source = LakeSource(Mirror(bucket, mirror), settings, clock=clock, timer=timer)
     return DataStage(
         source,
         storage,

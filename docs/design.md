@@ -627,8 +627,8 @@ the second capture says so. Data's stage also judges that first capture
 through the alarm's single read of it, so one failed read halts the
 decision. It halts rather than judges a first capture written under another
 release or other strategy configuration hashes, which a run that never
-mixes releases should never meet. Data's own settings join those hashes
-once [#110](https://github.com/l3a0/ithildin-runtime/issues/110) builds them from the strategies' files. The halts on a
+mixes releases should never meet. Those hashes cover data's own settings,
+which are built from the same files. The halts on a
 redelivered capture are listed in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill).
 
 ### Rule 3: a worker resumes by reading what exists
@@ -1906,6 +1906,13 @@ Execution still serves cancels and the kill switch as
 says, so [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds
 execution's entry point to serve them when no strategy table can be built.
 
+A file that loads can still hold a section its module refuses. That section
+halts the module's stage at each decision, with the reason stored as the
+stage's result, and stops no worker. The price is that a bad section CI missed
+is first heard at the decision time. Data's section is the one whose halt
+reaches every strategy, as [What data reads for several strategies](#what-data-reads-for-several-strategies)
+says.
+
 A run in shadow, paper and live is one trading day of one deployment. One
 function in `core` turns the deployment's schedules and the exchange's trading
 calendar into a list of decisions, each with its time and the strategies
@@ -2223,7 +2230,9 @@ finds it there.
    for combining forecasts is written. Strategies on different schedules wait
    for the same rule: every stage halts at a decision whose strategies are not
    exactly the deployment's, so two strategies share a deployment only while
-   they decide at the same times.
+   they decide at the same times. Strategies that write different data settings
+   halt as well, as [What data reads for several strategies](#what-data-reads-for-several-strategies)
+   says, until each instrument takes its own strategy's settings.
 2. **A halt that holds a shadow or paper account until a person clears
    it**, for every cause but those [A halt is final for its decision](#rule-7-a-halt-is-final-for-its-decision) names for shadow and paper. Slice 1
    builds the one holding-halt check for every cause, because live holds on
@@ -2263,6 +2272,49 @@ The price of this subsection is four things.
    runs both at once.
 4. Execution reads the clock for the cutoff, a reading that a backtest never
    exercises and only a drill with a test clock does.
+
+#### What data reads for several strategies
+
+Data captures one snapshot per decision for every strategy of a deployment, so
+it reads one lookback, one stale lag and one spike multiple. They come from the
+`[data]` section of each strategy's file, in three steps.
+
+1. Data reads every instrument that any of the files lists.
+2. Where two files write a different lookback, stale lag or spike multiple, or a
+   different first session for an instrument both trade, every decision halts.
+   The halt names the key and each strategy with its value.
+3. Where a file's section is missing or refused, every decision halts too. The
+   halt names the strategy, the file and the key.
+
+So no strategy's file can change the bars another strategy's decision acts on
+while that other strategy's hash stays the same. A halt changes none, because a
+halted decision acts on nothing.
+
+The price is that strategies sharing an account have to agree on these settings,
+or take an account of their own. Raising one strategy's lookback means raising
+the other's, which moves its hash and closes its sample. A bad section, or a bar
+missing for an instrument only one strategy trades, halts every strategy of the
+deployment. And the spike multiple only alerts, yet retuning it moves the hash,
+so retuning it during a sample reads as a change of configuration. The rule
+above that adding a strategy changes no shared module therefore holds for data's
+settings only among strategies that agree.
+
+#### Where each series starts
+
+`first_sessions`, in the same section, says where the lake's series of each
+instrument starts, so that sessions before the start do not read as missing. It
+is never a strategy's choice of where to begin. Written later than the start, it
+would cut a session the lake lost out of the lookback, and the bars after that
+hole would read `fresh`.
+
+So a decision halts where a first session cuts its lookback and the manifest
+lists an earlier daily partition of the instrument. The check raises before any
+snapshot is stored, because a stored snapshot does not show it and a redelivery
+would otherwise pass.
+
+The price is paid when marketlake later imports days before the written start.
+Decisions whose lookback that date still cuts halt until the file's date moves,
+which moves the hash. At most a lookback's length of decisions can be cut.
 
 ## Data structures
 
@@ -3585,7 +3637,7 @@ withdrawal or transfer permission and how that was checked.
 | `ITHILDIN_TEST_RUN` | No | The `aws` job's environment, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` joined by a hyphen | `tests/aws/` | Name the run's own keys |
 | Each environment's marketlake bucket and the data worker's read-only role | No, a bucket name and a short-lived role | The environment's configuration, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) write with the accounts, and one read-only statement in marketlake's bucket policy, as architecture/07-deployment.md's `#### Who can read marketlake's bucket` says. No environment reads it yet, because every read today is a backtest's folder | The data worker's entry point, `runtime/data_worker.py`, which hands the bucket to `data` | Read marketlake's partitions, manifest and reader files, and nothing else |
 | The mirror's directory | No | Machine configuration, never a path in a tracked file | The data worker's entry point | Hold a cache of marketlake's bucket, which losing costs only a download |
-| The data module's settings: the instruments, the lookback, each series' first session, [#7](https://github.com/l3a0/ithildin-runtime/issues/7)'s stale lag and the spike multiple | No | `data.DataSettings`, which no entry point builds from a file yet. [#102](https://github.com/l3a0/ithildin-runtime/issues/102)'s reader loads each strategy's tracked file, and data's stage, which every strategy shares, names each strategy's configuration hash in its header. The walking skeleton reads 40 sessions, from 2006-04-26 for both series. The spike multiple is 10 standard deviations, chosen after the measurement beside it was seen, so it stays exploratory. Over every 40-session lookback from 2006-04-26 to 2012-04-09, with each return judged against the lookback's other returns, the Chan vintages reach 6.59 standard deviations for GLD and 5.72 for USO. So a multiple at or below 6.59 flags a GLD bar in test 1, one at or below 5.72 flags both series, and from 6.6 up the move rule flags neither. A wider measurement read Yahoo's full daily history to 2026-09-03 the same way, 21.8 years of GLD and 20.4 of USO. There a multiple of 10 flags one real session, USO on 2020-03-09 at 10.47 standard deviations, and the largest GLD move is 8.26, on 2013-04-15. Its 2006 to 2012 sessions overlap the vintages the multiple was set on. That history was read from Yahoo vintages kept outside this repository, so no test pins the wider figures, and the 6.59 and 5.72 above are the ones `tests/test_data_spikes.py` pins. A missing lag halts every decision | The data worker | Set which bars a snapshot holds and which prices it flags |
+| The data module's settings: the instruments, the lookback, each series' first session, [#7](https://github.com/l3a0/ithildin-runtime/issues/7)'s stale lag and the spike multiple | No | The `[data]` section of each strategy's tracked file, in the form `data/settings.py` holds, and its `instruments` list. `data.data_settings` builds one `data.DataSettings` from every strategy the stage table declares, and data's stage names each one's configuration hash in its header, so a change to a setting moves a hash. The walking skeleton's file, `chan_bollinger.toml`, writes a lookback of 60 sessions, a stale lag of 0, a spike multiple of 10 and a first session of 2006-04-26 for both series. The multiple was chosen after the measurement beside it was seen, so it stays exploratory. Over every 60-session lookback from 2006-04-26 to 2012-04-09, with each return judged against the lookback's other returns, the Chan vintages reach 6.807921 standard deviations for GLD and 5.302537 for USO. So a multiple of 6.80 or below flags a GLD bar in test 1, one of 5.30 or below flags both series, and from 6.81 up the move rule flags neither. A wider measurement read Yahoo's full daily history to 2026-09-03 the same way, 21.8 years of GLD and 20.4 of USO. There a multiple of 10 flags one real session, USO on 2020-03-09 at 11.91 standard deviations, and the largest GLD move is 9.17, on 2013-04-15. Its 2006 to 2012 sessions overlap the vintages the multiple was set on. That history was read from Yahoo vintages kept outside this repository, so no test pins the wider figures, and the 6.807921 and 5.302537 above are the ones `tests/test_data_spikes.py` pins. A missing key halts every decision | The data worker | Set which bars a snapshot holds and which prices it flags |
 | Each strategy's cost terms, the `[cost]` section of its file | No | The strategy's tracked file, as one list of terms per instrument, whose form `cost/model.py` holds | The strategy's cost stage, through `core`'s strategy reader | Set what a trade is estimated to cost. It holds no limit and sends nothing. `chan_bollinger.toml` writes every figure as zero, because the replication it reproduces charges no cost |
 | Each strategy's alpha settings, the `[alpha]` section of its file | No | The strategy's tracked file, as the model's name and that model's own keys, whose form `alpha/bollinger.py` holds for the band | The strategy's alpha stage, through `core`'s strategy reader | Set what the strategy forecasts. It holds no limit and sends nothing. `chan_bollinger.toml` writes the replication's own settings: a 20-session hedge fit, a 20-session band, an entry at 1 standard deviation and an exit at 0 |
 | `GITHUB_RUN_NUMBER` and `GITHUB_RUN_ATTEMPT` | No | Every step of the `aws` job, set by GitHub | `tests/support/queues.py`, for the queue suite | Name each queue suite case's keys, as a run date the key builders accept |
@@ -3981,6 +4033,7 @@ This section lists every decision made on the project, oldest first, one heading
 5. The owner ruled that a forecast names one basket, holding both legs and the hedge between them, rather than one instrument. The owner answered "Yes, one basket". The metric was how many modules must know the two legs are a pair: one with a basket, two without, and two could disagree on the hedge. Turned down: a forecast per instrument, where portfolio construction rebuilds the hedge. The price is a change to the charter's module table. [#6](https://github.com/l3a0/ithildin-runtime/issues/6#issuecomment-7132144226) Governs: `#### A forecast is about a basket, not an instrument` in architecture/05-building-blocks.md and the module table in team-charter.md.
 6. The owner accepted that test 1 runs the Bollinger band on GLD and USO. The owner answered "Accept both" to this and entry 7, after asking how to choose. The metric was how much a mismatch could be blamed on something other than the engine, and this strategy holds only −1, 0 or +1 units, so each decision is checked on its own. Turned down: [Chan's linear rule](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading) on the same data, which is always in the market with continuous units, and the Kalman-filter hedge on EWA and EWC, which adds a model to verify first. The price is that the engine keeps a capital account, so test 1's comparison recomputes Chan's return over gross dollars from the recorded positions and prices. [#4](https://github.com/l3a0/ithildin-runtime/issues/4#issuecomment-7141314171) Governs: `## The strategy the skeleton runs` in architecture/01-introduction-and-goals.md.
 7. The owner accepted that each run records the signals it computed. The metric was how often a decision will need explaining after the fact. With the record, comparing shadow with its backtest is a lookup, and [#114](https://github.com/l3a0/ithildin-runtime/issues/114)'s shadow run plans such a comparison. Turned down: recomputing them whenever two runs are compared. The price is one more output file per decision, which holds nothing that cannot be regenerated. [#4](https://github.com/l3a0/ithildin-runtime/issues/4#issuecomment-7141314171) Governs: `#### Run records` in architecture/08-crosscutting-concepts.md and `##### What the model returns and its stage stores` in architecture/05-building-blocks.md.
+8. The owner ruled that data refuses when strategies that share a deployment write different data settings. One lookback, one stale lag and one spike multiple serve the deployment, and a difference halts every decision, naming the key and each strategy with its value. The owner's answer was "Refuse and halt". The metric put to the owner was whether one strategy's file can change what another strategy's decision acts on while that other strategy's hash stays the same. Turned down: each instrument taking its own strategy's settings, the widest of each setting, a data stage per strategy, and one settings file per deployment. The price is that strategies sharing an account have to agree or take an account of their own. So the rule that adding a strategy changes no shared module, and entry 5 of [2026-11-22](#2026-11-22), by which a deployment supports any number of strategies, hold for data's settings only among strategies that agree, until each instrument takes its own. [#110](https://github.com/l3a0/ithildin-runtime/issues/110#issuecomment-7139214347) Governs: `#### What data reads for several strategies` and the list of what waits under `### Strategies, schedules and decisions`, `## Configuration` and `## Considered and rejected` in design.md.
 
 ## Considered and rejected
 
@@ -4148,3 +4201,7 @@ once rather than re-argued.
 | Skipping a decision time that falls outside its session | A strategy whose schedule names such a time would silently never trade at it, and nothing would say the schedule is wrong. The owner ruled on 2026-11-11 that the plan halts instead, at the price that one strategy's wrong time stops every strategy that day |
 | An alarm on the count of `aws` runs cancelled in test | Test holds nothing that cannot be made again, so a person reads the count instead, at the price that a rewrite is noticed late. The owner ruled on 2026-11-21 for that |
 | A halt on a price the move rule flags, or on a close below its bar's low | The owner ruled on 2026-11-22, in chat and with no stated reason, that a close past the written multiple alerts the owner and the decision trades on the price as it arrived, at the price that a wrong price large enough to flag reaches the order path, where the gate values exposure at that same price. A price the contradiction rule flags still halts, by the narrowing of the same day. The owner ruled on 2026-11-24 that a low above the open or the close is no contradiction, so a close below its low halts nothing. It alerts through the below-the-low rule, which entry 2 of [2026-11-24](#2026-11-24) records |
+| Each instrument taking its own strategy's data settings | One lookback, stale lag and spike multiple serve a deployment, and a difference halts, so `DataSettings` holds one of each. This is the next step when a second strategy needs other settings, and the strategies' files would not change. It would still refuse two strategies that share an instrument and write different settings for it. The owner ruled on 2026-11-24 to refuse |
+| The widest of the strategies' data settings, meaning the longest lookback, the smallest lag and the smallest multiple | A longer lookback in one file would put more bars in front of another strategy's model, which can decide differently on them while its own hash stays the same. The owner ruled on 2026-11-24 to refuse |
+| A data stage per strategy | It alone would keep one strategy's missing bar or bad section from halting another. One instrument would be captured twice and the two captures can differ, while the account's reconcile and risk stages need one set of prices. The owner ruled on 2026-11-24 to refuse |
+| One data settings file per deployment, outside the strategies' files | A change to it would move no strategy's hash, so a sample would not show it. The owner ruled on 2026-11-24 to refuse |

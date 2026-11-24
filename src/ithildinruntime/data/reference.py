@@ -73,9 +73,14 @@ class MasterRow:
 class SecurityMaster:
     rows: tuple[MasterRow, ...]
 
+    def tickers(self, instrument: InstrumentId, day: date) -> tuple[str, ...]:
+        """Every ticker a row gives `instrument` on `day`, none where no row covers it."""
+        rows = _latest([r for r in self.rows if r.id == instrument and r.covers(day)])
+        return tuple(r.ticker for r in rows)
+
     def ticker(self, instrument: InstrumentId, day: date) -> str:
         """marketlake's ticker for `instrument` on `day`, halting when no row covers it."""
-        found = _latest([r for r in self.rows if r.id == instrument and r.covers(day)])
+        found = self.tickers(instrument, day)
         if not found:
             raise Halt(
                 f"{instrument} has no security master row valid on {day.isoformat()}, "
@@ -83,7 +88,7 @@ class SecurityMaster:
             )
         if len(found) > 1:
             raise Halt(f"{instrument} has {len(found)} security master rows on {day.isoformat()}")
-        return found[0].ticker
+        return found[0]
 
 
 @dataclass(frozen=True)

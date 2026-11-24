@@ -76,9 +76,12 @@ marketlake holds three kinds of bar.
 | Committed vintages | quantitative-trading, imported once | The backtest |
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
 
-The vendor download exists because the strategy's first z-score needs about 40
-sessions of closes: 20 to fit the first hedge ratio, and 20 more spreads to fill
-the z-score's 20-day window.
+The vendor download exists because each decision reads 60 sessions of closes.
+The newest z-score needs 39 of them: 20 to fit the hedge ratio of the oldest
+spread in its 20-day window, and one more for each of the 19 spreads after that.
+The other 21 reach the earlier sessions whose z-scores settle
+[which unit is held](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds).
+So the download and capture together have to hold 60 sessions.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported

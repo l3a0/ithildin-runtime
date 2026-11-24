@@ -16,8 +16,8 @@ from typing import get_type_hints
 
 import pytest
 
-from ithildinruntime.core import Bar, InstrumentId
-from ithildinruntime.data import largest_multiple, spike_flags
+from ithildinruntime.core import STRATEGIES, Bar, InstrumentId, load_strategies
+from ithildinruntime.data import data_settings, largest_multiple, spike_flags
 from ithildinruntime.data.spikes import BELOW_LOW, CONTRADICT, MOVE, below_low, contradictions
 from tests.core_samples import sample
 
@@ -251,9 +251,12 @@ def test_the_multiple_is_a_positive_decimal() -> None:
 def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
     built_lake: Path, tmp_path: Path
 ) -> None:
-    """Exploratory, first pinned at ed9d1f7. GLD reaches 6.59 and USO 5.72.
+    """Exploratory, measured over the lookback Chan's tracked file states.
 
-    So a multiple at or below 6.59 flags a GLD bar in test 1. No bar of either
+    GLD's largest move is between 6.80 and 6.81 standard deviations and USO's
+    between 5.30 and 5.31. So a multiple of 6.80 or below flags a GLD bar in
+    test 1, one of 5.30 or below flags both series, and 6.81 and up flags
+    neither. No bar of either
     has a low above its open or close, which design.md's 2026-11-24 entry
     quotes, and none contradicts itself.
     """
@@ -261,6 +264,8 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
     from tests.test_data_source import FIRST, LAST, close, make
 
     whole = lakes.copy_lake(built_lake, tmp_path / "whole", kept=((FIRST, LAST),))
+    (chan,) = load_strategies(STRATEGIES, ["chan_bollinger"])
+    lookback = data_settings([chan]).lookback
     found = {}
     src = make(whole, tmp_path, lookback=1500, spike_multiple=Decimal(1000))
     snap = src.read(close(LAST)).snapshot
@@ -269,5 +274,5 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
         assert len(bars) == 1500
         assert [b for b in bars if b.low > min(b.open, b.close)] == []
         assert [b for b in bars if contradictions(b) or below_low(b)] == []
-        found[instrument] = round(largest_multiple(bars, 40), 6)
-    assert found == {"GLD": Decimal("6.592043"), "USO": Decimal("5.716228")}
+        found[instrument] = round(largest_multiple(bars, lookback), 6)
+    assert found == {"GLD": Decimal("6.807921"), "USO": Decimal("5.302537")}

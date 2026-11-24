@@ -37,13 +37,20 @@ from ithildinruntime.data.reference import PriceKinds
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
-from tests.test_data_source import LAST, Clock, Timer, before, close, settings, unlist
+from tests.test_data_source import FIRST, LAST, Clock, Timer, before, close, settings, unlist
 from tests.test_data_spikes import bar
 from tests.test_storage_contract import Alarms
 
 CHAN = parse_strategy("chan", b'instruments = ["GLD", "USO"]\n')
 OTHER = parse_strategy("other", b'instruments = ["SPY", "QQQ"]\n')
 TABLE = Table(stages=(DATA_ROW,), strategies=(CHAN, OTHER))
+# The same two strategies as files data's settings can be built from.
+DATA = b"[data]\nlookback = 40\nstale_lag = 1\nspike_multiple = 100\n[data.first_sessions]\n"
+READS_CHAN = parse_strategy(
+    "chan", b'instruments = ["GLD", "USO"]\n' + DATA + b"GLD = 2006-04-26\nUSO = 2006-04-26\n"
+)
+OTHER_FILE = b'instruments = ["SPY", "QQQ"]\n' + DATA + b"SPY = 1993-01-29\nQQQ = 1999-03-10\n"
+READS = Table(stages=(DATA_ROW,), strategies=(READS_CHAN, parse_strategy("other", OTHER_FILE)))
 
 RUN = "2012-04-09"
 DEPLOYMENT = "test"
@@ -498,6 +505,22 @@ def test_18_a_redelivery_whose_new_read_gives_no_snapshot_halts_with_a_clean_cap
         made(Item(close(LAST), "data"), Reports())
 
 
+def test_18_a_redelivery_halts_on_a_first_session_written_late_since_the_first_capture(
+    lake: Path, tmp_path: Path
+) -> None:
+    """Only the manifest shows it, so a halt beside the stored capture would miss it."""
+    clock = Ticking()
+    made, storage, _ = stage(lake, tmp_path, clock=clock)
+    assert made(Item(close(LAST), "data"), Reports()).halt is None
+    held = (tmp_path / "store" / key()).read_bytes()
+    late = {InstrumentId("GLD"): before(LAST, 5), InstrumentId("USO"): FIRST}
+    again = _again(lake, tmp_path, storage, clock, first_sessions=late)
+    with pytest.raises(Halt, match="GLD's first session is written as"):
+        again(Item(close(LAST), "data"), Reports())
+    assert (tmp_path / "store" / key()).read_bytes() == held
+    assert not (tmp_path / "store" / key(2)).exists()
+
+
 def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     lake: Path, tmp_path: Path
 ) -> None:
@@ -812,15 +835,15 @@ def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_dat
     lake: Path, tmp_path: Path
 ) -> None:
     """Data's stage is shared, so its header names each strategy's own hash."""
-    changed = parse_strategy("other", b'instruments = ["SPY", "QQQ"]\n# a new version\n')
-    tables = {"before": TABLE, "after": Table(stages=(DATA_ROW,), strategies=(CHAN, changed))}
+    changed = parse_strategy("other", OTHER_FILE + b"# a new version\n")
+    after = Table(stages=(DATA_ROW,), strategies=(READS_CHAN, changed))
+    tables = {"before": READS, "after": after}
     headers = {}
     for name, table in tables.items():
         _, storage, _ = stage(lake, tmp_path / name)
         handler = data_handler(
             bucket=FolderBucket(lake),
             mirror=tmp_path / name / "mirror",
-            settings=settings(),
             storage=storage,
             clock=Clock(),
             timer=Timer(),
@@ -834,8 +857,12 @@ def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_dat
             (tmp_path / name / "store" / result.outputs[0].key).read_bytes(), Snapshot
         )
         assert dict(stored.header.config_hashes) == dict(result.header.config_hashes)
+        # The lake holds neither of the second strategy's instruments, which data now reads.
+        assert result.halt is not None
+        assert "SPY missing for the decision" in result.halt.reason
+        assert "QQQ missing for the decision" in result.halt.reason
         headers[name] = stored.header
-    assert dict(headers["before"].config_hashes) == dict(TABLE.hashes_for("data"))
+    assert dict(headers["before"].config_hashes) == dict(READS.hashes_for("data"))
     assert headers["before"].config_hashes["chan"] == headers["after"].config_hashes["chan"]
     assert headers["after"].config_hashes["other"] == changed.config_hash
     assert headers["before"].config_hashes["other"] != changed.config_hash
@@ -848,14 +875,13 @@ def test_the_entry_points_handler_reads_through_the_bucket_it_is_given(
     handler = data_handler(
         bucket=FolderBucket(lake),
         mirror=tmp_path / "other-mirror",
-        settings=settings(),
         storage=storage,
         clock=Clock(),
         timer=Timer(),
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
-        table=TABLE,
+        table=READS,
     )
     result = handler(Item(close(LAST), "data"), Reports())
     assert result.outputs[0].key == key()

@@ -213,8 +213,8 @@ sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
 513 halt and none is wrong. The lookback was chosen after the z-scores of
 2006 to 2012 and of 2012 to 2026 were both read, so "none halts" is exploratory,
 and a longer walk is rare rather than impossible. A settled unit does not
-depend on the lookback. The strategy's lookback is 60 sessions, which
-[#110](https://github.com/l3a0/ithildin-runtime/issues/110) writes in place of the 40 that data's settings state today.
+depend on the lookback. The strategy's lookback is 60 sessions, which the
+`[data]` section of its tracked file states.
 
 The price has three parts.
 
