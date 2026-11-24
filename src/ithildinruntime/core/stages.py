@@ -78,7 +78,8 @@ class StageDecision:
         self._report = report
         self._read: dict[str, BlobRef] = {}
         self._results: dict[str, DecisionResult] = {}
-        self._passed_on: tuple[Halt, BlobRef] | None = None
+        # Each halt `result` raised for an upstream halt, with the result that holds it.
+        self._passed_on: list[tuple[Halt, BlobRef]] = []
         self._wrote = False
 
     def result(self, upstream: str) -> DecisionResult:
@@ -97,7 +98,7 @@ class StageDecision:
             self._note(ref)
             if found.halt is not None:
                 halt = Halt(f"{key} holds a halt: {found.halt.reason}")
-                self._passed_on = (halt, ref)
+                self._passed_on.append((halt, ref))
                 raise halt
             self._results[upstream] = found
         return self._results[upstream]
@@ -156,12 +157,11 @@ class StageDecision:
     def halted(self, halt: Halt) -> DecisionResult:
         """The result that holds `halt`.
 
-        Its `cause` is the result whose halt `result` raised, and empty for any
-        other halt, which is what monitoring alarms on.
+        Its `cause` is the result that holds the upstream halt `result` raised
+        as `halt`, and empty for any other halt, which is what monitoring alarms
+        on.
         """
-        cause = None
-        if self._passed_on is not None and halt is self._passed_on[0]:
-            cause = self._passed_on[1]
+        cause = next((ref for passed, ref in self._passed_on if passed is halt), None)
         record = self._run.storage.halt_record(halt, cause=cause)
         return DecisionResult(header=self._header(), outputs=(), halt=record)
 

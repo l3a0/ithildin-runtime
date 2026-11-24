@@ -1947,7 +1947,8 @@ files, so they are identical in backtest, shadow, paper and live. A
 deployment names the strategies it runs, and the reader loads only those, so
 adding a strategy adds a file and rows, never a change to a shared module, while
 its data settings agree with the others', as [What data reads for several
-strategies](#what-data-reads-for-several-strategies) says. A
+strategies](#what-data-reads-for-several-strategies) says, and once the risk
+stage can write two strategies' limits, as item 1 of the list below says. A
 stage that belongs to one strategy is named `<component>/<strategy>`, and
 every other stage is shared by the deployment's strategies. No shared stage
 takes a two-part name whose second part is a declared strategy, so a strategy
@@ -2291,7 +2292,10 @@ finds it there.
    exactly the deployment's, so two strategies share a deployment only while
    they decide at the same times. Strategies that write different data settings
    halt as well, as [What data reads for several strategies](#what-data-reads-for-several-strategies)
-   says, until each instrument takes its own strategy's settings.
+   says, until each instrument takes its own strategy's settings. The risk stage
+   halts every deployment of two strategies, whatever they agree on, until what
+   scope each one's limits take is decided, as
+   [What halts the risk stage](architecture/05-building-blocks.md#what-halts-the-risk-stage) says.
 2. **A halt that holds a shadow or paper account until a person clears
    it**, for every cause but those [A halt is final for its decision](#rule-7-a-halt-is-final-for-its-decision) names for shadow and paper. Slice 1
    builds the one holding-halt check for every cause, because live holds on
@@ -2373,7 +2377,7 @@ The price is four things.
 3. The spike multiple only alerts, yet retuning it moves the hash, so retuning it
    during a sample reads as a change of configuration.
 4. Adding a strategy changes no shared module only while its data settings agree
-   with the others'.
+   with the others', and the risk stage's halt on two strategies holds even then.
 
 #### Where each series starts
 
@@ -3756,7 +3760,7 @@ withdrawal or transfer permission and how that was checked.
 | Each account's hard caps, `accounts/<account>/caps.json` | No | The environment's bucket, at a key only the owner's credential may write or delete. No tracked file and no issue holds an account's value, apart from the share, the cutoffs this doc states or proposes, and the stress move, its vintage and its last session, which [#116](https://github.com/l3a0/ithildin-runtime/issues/116) records. The owner writes each account's by hand, and [#123](https://github.com/l3a0/ithildin-runtime/issues/123) tracks whether shadow's and paper's are set | `core.parse_caps`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) calls before each check of an order and, by this doc's proposal, in each decision's recover stage, in the form [The hard caps blob](architecture/08-crosscutting-concepts.md#the-hard-caps-blob) gives | Hold every order on the account to the seven limits, and set the share and the stress move the net cap comes from. A missing or unknown field of `limits`, a value out of its range, or another account's blob halts every order, so a release rolled back past a new field stops trading until the field goes |
 | Each strategy's cost terms, the `[cost]` section of its file | No | The strategy's tracked file, as one list of terms per instrument, whose form `cost/model.py` holds | The strategy's cost stage, through `core`'s strategy reader | Set what a trade is estimated to cost. It holds no limit and sends nothing. `chan_bollinger.toml` writes every figure as zero, because the replication it reproduces charges no cost |
 | Each strategy's alpha settings, the `[alpha]` section of its file | No | The strategy's tracked file, as the model's name and that model's own keys, whose form `alpha/bollinger.py` holds for the band | The strategy's alpha stage, through `core`'s strategy reader | Set what the strategy forecasts. It holds no limit and sends nothing. `chan_bollinger.toml` writes the replication's own settings: a 20-session hedge fit, a 20-session band, an entry at 1 standard deviation and an exit at 0 |
-| Each strategy's limits, the `[risk]` section of its file | No | The strategy's tracked file, as each field of `Constraints` but the strategy's name, whose form `risk/model.py` holds. `chan_bollinger.toml` has none yet, because its dollar values follow the gross amount [#9](https://github.com/l3a0/ithildin-runtime/issues/9) sets, so until then a deployment of that strategy halts at the risk stage | The risk stage, through `core`'s strategy reader | Tighten the owner's hard caps for that strategy. The gate takes the tighter of the two, so no value here lets out an order a cap refuses |
+| Each strategy's limits, the `[risk]` section of its file | No | The strategy's tracked file, as each field of `Constraints` but the strategy's name, whose form `risk/model.py` holds. `chan_bollinger.toml` has none yet, because its dollar values follow the gross amount the owner sets on [#129](https://github.com/l3a0/ithildin-runtime/issues/129), so until they are written a deployment of that strategy halts at the risk stage | The risk stage, through `core`'s strategy reader | Tighten the owner's hard caps for that strategy. The gate takes the tighter of the two, so no value here lets out an order a cap refuses |
 | `GITHUB_RUN_NUMBER` and `GITHUB_RUN_ATTEMPT` | No | Every step of the `aws` job, set by GitHub | `tests/support/queues.py`, for the queue suite | Name each queue suite case's keys, as a run date the key builders accept |
 | Each strategy's configuration, `<strategy>.toml` | No. It holds no secret and no hard cap. A limit in its `[risk]` section only tightens | `src/ithildinruntime/strategies/`, a tracked folder the release carries | `core`'s strategy reader, at each worker's start, for the strategies its deployment names | Set the strategy's instruments and each module's settings for it. The SHA-256 of its bytes is the hash every blob of the strategy records |
 

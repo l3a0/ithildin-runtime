@@ -239,8 +239,8 @@ Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OU
 
 | Blobs | Can they be regenerated? |
 | --- | --- |
-| A deterministic component's blobs | Yes, from marketlake, the journal, the hard caps as recover stored them and the code |
-| Data's snapshots, execution's account files, the hard caps as recover read them, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
+| A deterministic component's blobs | Yes, from marketlake, the journal, the hard caps as recover stored them, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and the code |
+| Data's snapshots, execution's account files, the hard caps as recover read them, by the same proposal, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
 | The restart records the host's stop handler writes | No, but they are diagnostics rather than recorded data. They are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it |
 | A backtest's blobs | Yes. They sit in a memory-backed folder and vanish when it ends, because a backtest can be regenerated |
 
