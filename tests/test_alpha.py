@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Context, Decimal, localcontext
 from pathlib import Path
 
@@ -78,33 +79,45 @@ def d(text: object) -> Decimal:
 
 # The hand-worked series
 #
-# Three closes fit each hedge ratio and two spreads make each band, so a
-# z-score reads 3 + 2 − 1 = 4 sessions. GLD's close rises by 1 a session, so
+# Three closes fit each hedge ratio and three spreads make each band, so a
+# z-score reads 3 + 3 − 1 = 5 sessions. GLD's close rises by 1 a session, so
 # over three closes x the mean is the middle one, the squares sum to 2, and the
 # slope is half of USO's last close less its first.
 #
-#   session     GLD  USO   hedge ratio          spread
-#   2011-11-18    9   40
-#   2011-11-21   10   20
-#   2011-11-22   11   22
-#   2011-11-23   12   21   (21 − 20) / 2 = 0.5  21 − 0.5 × 12 = 15
-#   2011-11-25   13   25   (25 − 22) / 2 = 1.5  25 − 1.5 × 13 = 5.5
-#   2011-11-28   14   22   (22 − 21) / 2 = 0.5  22 − 0.5 × 14 = 15
+#   session     GLD  USO   hedge ratio              spread
+#   2011-11-17   10   38
+#   2011-11-18   11   37
+#   2011-11-21   12   13   (13 − 38) / 2 = −12.5    13 + 12.5 × 12 = 163
+#   2011-11-22   13   16   (16 − 37) / 2 = −10.5    16 + 10.5 × 13 = 152.5
+#   2011-11-23   14   19   (19 − 13) / 2 = 3        19 − 3 × 14 = −23
+#   2011-11-25   15   29   (29 − 16) / 2 = 6.5      29 − 6.5 × 15 = −68.5
+#   2011-11-28   16   26   (26 − 19) / 2 = 3.5      26 − 3.5 × 16 = −30
 #
-# The band of two spreads has their average as its mean, and the gap between
-# them over √2 as its deviation, so each z-score is 1/√2 = 0.70710678 up or
-# down. On 11-28 the mean is (5.5 + 15) / 2 = 10.25, the deviation is
-# 9.5 / √2 = 6.71751442 and the z-score is up. On 11-25 it is down.
-HAND_DAYS = [date(2011, 11, n) for n in (18, 21, 22, 23, 25, 28)]
-HAND = made(HAND_DAYS, (9, 10, 11, 12, 13, 14), (40, 20, 22, 21, 25, 22))
-SMALL = strategy(hedge_sessions=3, band_sessions=2)
+# On 11-28 the band holds −23, −68.5 and −30. Their mean is −40.5, they sit
+# 17.5, −28 and 10.5 from it, those squares sum to 1200.5, and half of that is
+# 600.25, whose root is 24.5. So the z-score is 10.5 / 24.5 = 3/7. On 11-25 the
+# band holds 152.5, −23 and −68.5, whose mean is above −68.5, so it is below 0.
+HAND_DAYS = [date(2011, 11, n) for n in (17, 18, 21, 22, 23, 25, 28)]
+GOLD = (10, 11, 12, 13, 14, 15, 16)
+OIL = (38, 37, 13, 16, 19, 29, 26)
+HAND = made(HAND_DAYS, GOLD, OIL)
+NEWEST = len(HAND_DAYS) - 1
+WHOLE = len(HAND_DAYS)
+SMALL = strategy(hedge_sessions=3, band_sessions=3)
 HAND_FITTED = {
-    "hedge_ratio": ("0.50000000", date(2011, 11, 23)),
-    "spread": ("15.00000000", date(2011, 11, 23)),
-    "spread_mean": ("10.25000000", date(2011, 11, 22)),
-    "spread_std": ("6.71751442", date(2011, 11, 22)),
-    "z_score": ("0.70710678", date(2011, 11, 22)),
+    "hedge_ratio": ("3.50000000", date(2011, 11, 23)),
+    "spread": ("-30.00000000", date(2011, 11, 23)),
+    "spread_mean": ("-40.50000000", date(2011, 11, 21)),
+    "spread_std": ("24.50000000", date(2011, 11, 21)),
+    "z_score": ("0.42857143", date(2011, 11, 21)),
 }
+# The same GLD with other USO closes. The newest band holds 101, 24 and 10, so
+# its mean is 45, its deviation 49 and its z-score −35/49 = −5/7. The one before
+# holds 95.5, 101 and 24, whose z-score is −49.5 / √1845.25, below −1.
+LONG = made(HAND_DAYS, GOLD, (26, 35, 29, 24, 17, 24, 18))
+# Here the newest band holds −69, −27 and 204: mean 36, deviation 147, z-score
+# 168/147 = 8/7, above 1 on its own.
+SHORT = made(HAND_DAYS, GOLD, (16, 17, 21, 12, 36, 18, 12))
 
 
 def forecast_of(config: StrategyConfig, held: Snapshot) -> ForecastSet:
@@ -117,11 +130,11 @@ def written(signals: tuple[Signal, ...]) -> dict[str, tuple[str, date, date]]:
 
 def test_sessions_of_the_hand_worked_series_are_consecutive() -> None:
     start = DAYS.index(HAND_DAYS[0])
-    assert DAYS[start : start + 6] == HAND_DAYS
+    assert DAYS[start : start + WHOLE] == HAND_DAYS
 
 
 def test_the_hand_worked_series_gives_each_fitted_value_and_a_flat_basket() -> None:
-    made_set = forecast_of(SMALL, HAND.at(5, 6))
+    made_set = forecast_of(SMALL, HAND.at(NEWEST, WHOLE))
     (forecast,) = made_set.forecasts
     # Up past 0 ends a long, and 11-25's z-score below 0 ends a short: flat, on two z-scores.
     assert (forecast.strategy, forecast.direction, forecast.horizon_sessions) == ("chan", 0, 1)
@@ -129,64 +142,85 @@ def test_the_hand_worked_series_gives_each_fitted_value_and_a_flat_basket() -> N
     # A flat forecast names both legs.
     assert {i: str(q) for i, q in forecast.basket.legs.items()} == {
         USO: "1.00000000",
-        GLD: "-0.50000000",
+        GLD: "-3.50000000",
     }
     expected = {
         name: (value, first, date(2011, 11, 28)) for name, (value, first) in HAND_FITTED.items()
     }
-    # 11-25's z-score reads the four sessions from 11-21.
-    expected["unit"] = ("0.00000000", date(2011, 11, 21), date(2011, 11, 28))
+    # 11-25's z-score reads the five sessions from 11-18.
+    expected["unit"] = ("0.00000000", date(2011, 11, 18), date(2011, 11, 28))
     assert written(made_set.signals) == expected
     assert [s.name for s in made_set.signals] == [*HAND_FITTED, "unit"]
 
 
 def test_a_short_settled_by_the_newest_z_score_reads_one_band() -> None:
-    made_set = forecast_of(strategy(hedge_sessions=3, band_sessions=2, entry="0.5"), HAND.at(5, 4))
+    made_set = forecast_of(SMALL, SHORT.at(NEWEST, 5))
     assert made_set.forecasts[0].direction == -1
     found = written(made_set.signals)
-    assert found.pop("unit") == ("-1.00000000", date(2011, 11, 22), date(2011, 11, 28))
-    assert {n: (v, first) for n, (v, first, _) in found.items()} == HAND_FITTED
+    assert found["z_score"][0] == "1.14285714"
+    assert found["spread_std"] == ("147.00000000", date(2011, 11, 21), date(2011, 11, 28))
+    assert found["unit"] == ("-1.00000000", date(2011, 11, 21), date(2011, 11, 28))
+    # USO's closes fell as GLD's rose, so the hedge is bought: −(−12).
+    assert str(made_set.forecasts[0].basket.legs[GLD]) == "12.00000000"
 
 
-def test_a_long_is_held_from_the_z_score_below_the_band() -> None:
-    made_set = forecast_of(strategy(hedge_sessions=3, band_sessions=2, entry="0.5"), HAND.at(4, 4))
+def test_a_long_is_held_inside_the_band_from_the_z_score_below_it() -> None:
+    made_set = forecast_of(SMALL, LONG.at(NEWEST, 6))
     assert made_set.forecasts[0].direction == 1
-    assert str(made_set.forecasts[0].basket.legs[GLD]) == "-1.50000000"
+    assert str(made_set.forecasts[0].basket.legs[GLD]) == "-0.50000000"
     found = written(made_set.signals)
-    # On 11-25 the mean is the same, the deviation too, and the z-score is down.
-    assert found["z_score"][0] == "-0.70710678"
-    assert found["spread"][0] == "5.50000000"
-    assert found["unit"] == ("1.00000000", date(2011, 11, 21), date(2011, 11, 25))
+    assert found["z_score"][0] == "-0.71428571"
+    assert (found["spread_mean"][0], found["spread_std"][0]) == ("45.00000000", "49.00000000")
+    assert found["unit"] == ("1.00000000", date(2011, 11, 18), date(2011, 11, 28))
+
+
+def test_the_model_decides_on_unrounded_values() -> None:
+    # The z-score is 8/7 = 1.142857142857…, which the stored 1.14285714 is below.
+    config = strategy(hedge_sessions=3, band_sessions=3, entry="1.14285714")
+    made_set = forecast_of(config, SHORT.at(NEWEST, 5))
+    assert made_set.forecasts[0].direction == -1
+    assert written(made_set.signals)["z_score"][0] == "1.14285714"
+
+
+def zero_hedge(last: object) -> ForecastSet:
+    """LONG with USO closing at `last` on 11-28, and 17 on 11-23."""
+    closes = made(HAND_DAYS, GOLD, (26, 35, 29, 24, 17, 24, last))
+    return forecast_of(SMALL, closes.at(NEWEST, WHOLE))
 
 
 def test_a_hedge_ratio_of_zero_is_written_with_no_sign() -> None:
-    # USO closes 21 on 11-28 as on 11-23, so the slope is 0 and the spread 21.
-    closes = made(HAND_DAYS, (9, 10, 11, 12, 13, 14), (40, 20, 22, 21, 25, 21))
-    made_set = forecast_of(SMALL, closes.at(5, 6))
+    made_set = zero_hedge(17)
     assert written(made_set.signals)["hedge_ratio"][0] == "0.00000000"
     stored = encode(made_set.forecasts[0])
     assert b'"GLD":"0.00000000"' in stored and b"-0" not in stored
 
 
-def test_a_ratio_that_rounds_to_zero_is_stored_as_zero_with_no_sign() -> None:
-    closes = made(HAND_DAYS, (9, 10, 11, 12, 13, 14), (40, 20, 22, 21, 25, "21.000000001"))
-    made_set = forecast_of(SMALL, closes.at(5, 6))
+@pytest.mark.parametrize("last", ["17.000000001", "16.999999999"])
+def test_a_ratio_that_rounds_to_zero_is_stored_as_zero_with_no_sign(last) -> None:
+    made_set = zero_hedge(last)
     for value in (made_set.forecasts[0].basket.legs[GLD], made_set.signals[0].value):
         assert value.is_zero() and not value.is_signed()
 
 
+def test_a_hedging_leg_that_ends_a_window_where_it_began_is_fitted() -> None:
+    # GLD closes 14, 15, 14 over the newest window, which moves.
+    gold = (10, 11, 12, 13, 14, 15, 14)
+    made_set = forecast_of(SMALL, made(HAND_DAYS, gold, OIL).at(NEWEST, WHOLE))
+    # x sits −1/3, 2/3 and −1/3 from its mean and y −17/3, 13/3 and 4/3, so the
+    # products sum to 13/3 and the squares to 2/3.
+    assert written(made_set.signals)["hedge_ratio"][0] == "6.50000000"
+
+
 def test_the_two_session_counts_are_read_apart() -> None:
     # Four closes fit the ratio and three spreads make the band, so a z-score reads six.
-    config = strategy(hedge_sessions=4, band_sessions=3, entry="0.1", exit="-0.05")
-    (one, *_), (hedge, spread, middle, *_) = (
-        forecast_of(config, HAND.at(5, 6)).forecasts,
-        forecast_of(config, HAND.at(5, 6)).signals,
-    )
-    assert one.direction in (-1, 1)
-    assert (hedge.first_session, spread.first_session) == (date(2011, 11, 22), date(2011, 11, 22))
-    assert middle.first_session == HAND_DAYS[0]
+    config = strategy(hedge_sessions=4, band_sessions=3, entry="0.01", exit="0")
+    made_set = forecast_of(config, HAND.at(NEWEST, 6))
+    assert made_set.forecasts[0].direction in (-1, 1)
+    first = {name: start for name, (_, start, _) in written(made_set.signals).items()}
+    assert first["hedge_ratio"] == first["spread"] == date(2011, 11, 22)
+    assert first["spread_mean"] == first["z_score"] == date(2011, 11, 18)
     with pytest.raises(Halt, match="reads 6 sessions of USO and GLD, and the snapshot holds 5 to"):
-        forecast_of(config, HAND.at(5, 5))
+        forecast_of(config, HAND.at(NEWEST, 5))
 
 
 # Each fitted value against a known answer. The three constants were written
@@ -441,7 +475,10 @@ def test_the_decisions_in_reverse_on_one_model_agree(whole) -> None:
 def test_a_model_that_fits_on_a_later_session_fails_the_harness(removed) -> None:
     ahead = run_of(Planted, SYNTHETIC)
     part = run_of(Planted, SYNTHETIC.first(len(SYNTHETIC) - removed))
-    assert "hedge_ratio" in {what for _, what in disagreements(ahead, part)}
+    found = {what for _, what in disagreements(ahead, part)}
+    assert {"hedge_ratio", "forecast"} <= found
+    # Far enough ahead, it holds another unit and halts where the other run decides.
+    assert removed == 10 or {"unit", "halt"} <= found
 
 
 # The section
@@ -455,30 +492,48 @@ def test_the_model_reads_every_setting_of_its_section() -> None:
     swapped = forecast_of(strategy(dependent='"GLD"', independent='"USO"'), held)
     assert swapped.forecasts[0].basket.legs[GLD] == 1
     assert swapped.forecasts[0].basket.legs[USO] != 1
-    # The hand-worked series is flat at an entry of 1 and short at 0.5.
-    small = {"hedge_sessions": 3, "band_sessions": 2}
-    assert forecast_of(strategy(**small), HAND.at(5, 6)).forecasts[0].direction == 0
-    for entry, exit_at, unit in (("0.5", "0", -1), ("1", "0", 0)):
-        config = strategy(entry=entry, exit=exit_at, **small)
-        assert forecast_of(config, HAND.at(5, 6)).forecasts[0].direction == unit
-    # An exit of −0.8 holds both sides past ±0.7071, so no z-score settles either.
+    # The hand-worked series is flat at an entry of 1 and short at 0.4, as 3/7 is above it.
+    small = {"hedge_sessions": 3, "band_sessions": 3}
+    for entry, unit in (("1", 0), ("0.4", -1)):
+        config = strategy(entry=entry, **small)
+        assert forecast_of(config, HAND.at(NEWEST, 6)).forecasts[0].direction == unit
+    # An exit of −0.8 holds both sides past ±0.8, so neither z-score settles either.
     with pytest.raises(Halt, match="cannot tell which unit it holds"):
-        forecast_of(strategy(exit="-0.8", **small), HAND.at(5, 6))
+        forecast_of(strategy(exit="-0.8", **small), HAND.at(NEWEST, 6))
 
 
 @pytest.mark.parametrize(
     "changes",
     [
         {"hedge_sessions": 3},
-        {"band_sessions": 2},
+        {"band_sessions": 2, "entry": "0.7"},
         {"entry": "0.00000001"},
         {"exit": "0.99999999"},
         {"exit": "-0.99999999"},
         {"entry": "2.5", "exit": "-1.5"},
+        # A z-score over 4 spreads stays within 3 / √4 = 1.5, and one over 20 within 4.2485.
+        {"band_sessions": 4, "entry": "1.49999999"},
+        {"band_sessions": 4, "entry": "1.4999999999999999999999999999999999999"},
+        {"band_sessions": 16, "entry": "3.74"},
+        {"entry": "4.24"},
     ],
 )
 def test_a_setting_at_its_bound_is_accepted(changes) -> None:
     assert isinstance(build_model(strategy(**changes)), BollingerSpread)
+
+
+@pytest.mark.parametrize("spreads", [2, 3, 4, 5, 20])
+def test_no_z_score_passes_the_bound_the_section_is_held_to(spreads) -> None:
+    # The newest spread far from the others, which sit together, is the furthest it can be.
+    with localcontext(Context(prec=28)):
+        values = [d(0)] * (spreads - 1) + [d(1)]
+        score = (values[-1] - mean(values)) / deviation(values)
+        assert abs(score**2 * spreads - (spreads - 1) ** 2) < d("1e-24")
+        draw = random.Random(spreads)
+        for _ in range(200):
+            values = [d(repr(draw.gauss(0, 1))) for _ in range(spreads)]
+            score = (values[-1] - mean(values)) / deviation(values)
+            assert score**2 * spreads < (spreads - 1) ** 2 + d("1e-24")
 
 
 SECTION_OF = "strategy chan's configuration chan.toml has an [alpha] section that "
@@ -549,6 +604,20 @@ BAD_SECTIONS = {
             f"has entry = {entry} and exit = {exit_at}, and an exit sits between −entry and entry",
         )
         for entry, exit_at in (("1", "1"), ("1", "-1"), ("1", "1.5"), ("1", "-1.5"), ("0", "0"))
+    },
+    **{
+        f"an-entry-of-{entry}-no-z-score-over-{spreads}-spreads-reaches": (
+            {"entry": entry, "band_sessions": str(spreads)},
+            f"has entry = {entry}, which no z-score over {spreads} spreads can pass",
+        )
+        for entry, spreads in (
+            ("10", 20),
+            ("4.25", 20),
+            ("1", 2),
+            ("1.16", 3),
+            ("1.5", 4),
+            ("3.75", 16),
+        )
     },
     "an-entry-below-zero": (
         {"entry": "-1"},
@@ -690,10 +759,10 @@ def halted(tmp_path: Path, config: StrategyConfig, held: Snapshot) -> str:
 
 
 def with_closes(gld: tuple, uso: tuple) -> Snapshot:
-    return made(HAND_DAYS, gld, uso).at(5, 6)
+    return made(HAND_DAYS, gld, uso).at(NEWEST, WHOLE)
 
 
-HAND_SNAPSHOT = HAND.at(5, 6)
+HAND_SNAPSHOT = HAND.at(NEWEST, WHOLE)
 CLOSE = TABLE.session(date(2011, 11, 28)).close
 
 
@@ -734,10 +803,10 @@ HALTS = {
     ),
     "a-bar-as-traded": (
         basis(GLD, 0),
-        "strategy chan reads adjusted prices, and GLD's bar of 2011-11-18 has the basis raw",
+        "strategy chan reads adjusted prices, and GLD's bar of 2011-11-17 has the basis raw",
     ),
     "the-newest-bar-as-traded": (
-        basis(USO, 5),
+        basis(USO, NEWEST),
         "strategy chan reads adjusted prices, and USO's bar of 2011-11-28 has the basis raw",
     ),
     "one-leg-a-session-short": (
@@ -746,7 +815,7 @@ HALTS = {
         "different ones, such as 2011-11-28",
     ),
     "one-leg-with-a-gap": (
-        leg(HAND_SNAPSHOT, GLD, [b for n, b in enumerate(HAND_SNAPSHOT.bars[GLD]["1d"]) if n != 2]),
+        leg(HAND_SNAPSHOT, GLD, [b for n, b in enumerate(HAND_SNAPSHOT.bars[GLD]["1d"]) if n != 3]),
         "strategy chan reads both legs on the same sessions, and USO and GLD have bars of "
         "different ones, such as 2011-11-22",
     ),
@@ -767,27 +836,32 @@ HALTS = {
         "strategy chan decides on the session 2011-11-25, and the newest bar of USO and GLD is "
         "2011-11-28's",
     ),
+    "a-decision-past-the-calendar": (
+        replace(HAND_SNAPSHOT, decision_at=datetime(2050, 1, 3, 21, 0, tzinfo=UTC)),
+        "strategy chan cannot place its decision on a session: 2050-01-03T21:00:00+00:00 is "
+        "outside the session table's range, 2006-01-01 to 2027-12-31",
+    ),
     "too-few-sessions": (
-        HAND.at(5, 3),
-        "strategy chan reads 4 sessions of USO and GLD, and the snapshot holds 3 to 2011-11-28",
+        HAND.at(NEWEST, 4),
+        "strategy chan reads 5 sessions of USO and GLD, and the snapshot holds 4 to 2011-11-28",
     ),
     "a-hedging-leg-that-does-not-move": (
-        with_closes((9, 10, 11, 13, 13, 13), (40, 20, 22, 21, 25, 22)),
-        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 closes are all 13",
+        with_closes((10, 11, 12, 13, 14, 14, 14), OIL),
+        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 closes are all 14",
     ),
     "a-band-that-does-not-move": (
         # USO is 3 + GLD / 2 throughout, so each spread is 3.
-        with_closes((9, 10, 12, 13, 15, 16), ("7.5", "8", "9", "9.5", "10.5", "11")),
-        "strategy chan has no z-score on 2011-11-28: the last 2 spreads' standard deviation is 0",
+        with_closes((9, 10, 12, 13, 15, 16, 18), ("7.5", "8", "9", "9.5", "10.5", "11", "12")),
+        "strategy chan has no z-score on 2011-11-28: the last 3 spreads' standard deviation is 0",
     ),
     "an-unsettled-window": (
-        HAND.at(5, 4),
+        HAND.at(NEWEST, 5),
         "strategy chan cannot tell which unit it holds: no z-score from 2011-11-28 to 2011-11-28 "
         "settles both sides",
     ),
     "a-figure-past-the-codec": (
-        with_closes((9, 10, 11, 12, 13, 14), ("4e25", "2e25", "2.2e25", "2.1e25", "2.5e25", 1)),
-        "strategy chan cannot work out its forecast for 2011-11-28T21:00:00+00:00: CodecError: ",
+        with_closes(GOLD, tuple(f"{close}e25" for close in OIL)),
+        "strategy chan cannot store its forecast for 2011-11-28T21:00:00+00:00: ",
     ),
 }
 
@@ -830,30 +904,28 @@ def test_a_newest_bar_of_the_decisions_own_session_is_read(at) -> None:
 def test_a_window_past_the_walks_reach_is_not_fitted() -> None:
     # GLD's first three closes are equal, and the walk settles on z-scores that read none of them.
     held = made(
-        [date(2011, 11, 16), date(2011, 11, 17), *HAND_DAYS],
-        (5, 5, 5, 10, 11, 12, 13, 14),
-        (7, 8, 40, 20, 22, 21, 25, 22),
+        [date(2011, 11, 15), date(2011, 11, 16), *HAND_DAYS],
+        (10, 10, *GOLD),
+        (7, 8, *OIL),
     )
-    assert forecast_of(SMALL, held.at(7, 8)) == forecast_of(SMALL, HAND_SNAPSHOT)
+    assert forecast_of(SMALL, held.at(WHOLE + 1, WHOLE + 2)) == forecast_of(SMALL, HAND_SNAPSHOT)
 
 
-def nearly_flat(scale: Decimal) -> Snapshot:
-    """USO at 3 + GLD / 2 and a small pattern times `scale`."""
-    gold = (9, 10, 12, 13, 15, 16)
-    pattern = (0, 1, 0, 2, 0, 1)
-    uso = [d(3) + d(g) / 2 + p * scale for g, p in zip(gold, pattern, strict=True)]
-    return with_closes(gold, tuple(uso))
-
-
-def test_the_floor_under_a_bands_deviation_is_a_trillionth() -> None:
-    model = BollingerSpread(SMALL)
-    # The deviation is proportional to the scale, so one run gives the scale that reaches the floor.
-    unit = model._fits(nearly_flat(d(1))).band(5).deviation
-    floor = d("1e-12") / unit
-    with pytest.raises(Halt, match="has no z-score on 2011-11-28"):
-        model.forecast(nearly_flat(floor * d("0.99")))
-    fits = model._fits(nearly_flat(floor * d("1.01")))
-    assert fits.band(5).deviation > d("1e-12")
+@pytest.mark.parametrize(
+    ("gap", "halts"), [("0.9999999e-12", True), ("1e-12", True), ("1.0000001e-12", False)]
+)
+def test_the_floor_under_a_bands_deviation_is_a_trillionth(gap, halts) -> None:
+    # With a hedge ratio of 0 the last three spreads are USO's closes, 3 − e, 3 and 3 + e,
+    # whose deviation with the n − 1 divisor is e.
+    closes = (1, 2, 3, 4, d(3) - d(gap), 3, d(3) + d(gap))
+    with localcontext(Context(prec=28)):
+        fits = BollingerSpread(SMALL)._fits(with_closes(GOLD, closes))
+        fits.hedge = lambda at: d(0)
+        if halts:
+            with pytest.raises(Halt, match="has no z-score on 2011-11-28"):
+                fits.band(NEWEST)
+        else:
+            assert fits.band(NEWEST).deviation == d(gap)
 
 
 def test_a_spread_constant_in_exact_arithmetic_halts_though_rounding_moves_it() -> None:
@@ -861,8 +933,12 @@ def test_a_spread_constant_in_exact_arithmetic_halts_though_rounding_moves_it() 
     gold = [b.close for b in SYNTHETIC.gld[:LOOKBACK]]
     days = [b.session for b in SYNTHETIC.gld[:LOOKBACK]]
     held = made(days, gold, [d(3) + g / 7 for g in gold]).at(LOOKBACK - 1, LOOKBACK)
-    with pytest.raises(Halt, match=r"standard deviation is [0-9.]+E-2[0-9]$"):
+    with pytest.raises(Halt) as caught:
         forecast_of(CHAN, held)
+    found = re.search(r"standard deviation is ([0-9.]+E-2[0-9])$", caught.value.reason)
+    assert found is not None
+    # The figure carries the 28 digits the model works at.
+    assert len(d(found[1]).as_tuple().digits) == 28
 
 
 def test_a_halt_in_datas_result_is_passed_on_naming_it(tmp_path) -> None:
@@ -891,7 +967,7 @@ def test_a_decision_with_no_data_result_halts(tmp_path) -> None:
         run(handler(store(tmp_path), table_of(SMALL)), CLOSE)
 
 
-def test_a_forecast_of_another_strategy_halts(tmp_path) -> None:
+def test_a_forecast_of_another_strategy_halts(tmp_path, monkeypatch) -> None:
     table = table_of(SMALL)
     storage = store(tmp_path)
     data, file = write_data(storage, HAND_SNAPSHOT, table)
@@ -904,25 +980,39 @@ def test_a_forecast_of_another_strategy_halts(tmp_path) -> None:
             )
 
     before = blobs(tmp_path)
-    stage = AlphaStage(
-        SMALL,
-        storage,
-        stage="alpha/chan",
-        kind=StageKind.DETERMINISTIC,
-        data_stage="data",
-        deployment=DEPLOYMENT,
-        run=RUN,
-        release=RELEASE,
-        config_hashes=table.hashes_for("alpha/chan"),
-        build=lambda config: Foreign(),
-    )
-    result = run(stage, CLOSE)
+    monkeypatch.setattr("ithildinruntime.alpha.stage.build_model", lambda config: Foreign())
+    result = run(handler(storage, table), CLOSE)
     assert result.halt is not None and result.halt.cause is None and result.outputs == ()
     assert result.halt.reason == (
         "stage alpha/chan made a forecast of strategy other, and forecasts strategy chan"
     )
     assert dict(result.header.inputs) == {data.key: data.sha256, file.key: file.sha256}
     assert blobs(tmp_path) == before
+
+
+def test_the_model_is_built_again_at_each_decision(tmp_path, monkeypatch) -> None:
+    # A model that remembers would answer a run of decisions in one process otherwise
+    # than a worker that restarts between them.
+    ours = forecast_of(SMALL, HAND_SNAPSHOT)
+
+    class Remembers:
+        def __init__(self, config: StrategyConfig) -> None:
+            self.seen = 0
+
+        def forecast(self, held: Snapshot) -> ForecastSet:
+            self.seen += 1
+            return replace(ours, signals=(replace(ours.signals[0], value=d(self.seen)),))
+
+    monkeypatch.setattr("ithildinruntime.alpha.stage.build_model", Remembers)
+    table = table_of(SMALL)
+    storage = store(tmp_path)
+    stage = handler(storage, table)
+    for n in (NEWEST - 1, NEWEST):
+        held = HAND.at(n, WHOLE)
+        write_data(storage, held, table)
+        ref = run(stage, held.decision_at).outputs[1]
+        (signal,) = decode_output((tmp_path / ref.key).read_bytes(), Signal).entries
+        assert signal.value == 1
 
 
 def test_the_stage_stores_the_forecast_and_then_the_signals(tmp_path) -> None:
@@ -1107,7 +1197,7 @@ def test_the_loop_stores_one_strategys_forecast_and_another_files_halt(tmp_path)
     assert read.entries == (
         Forecast(
             strategy="chan",
-            basket=Basket({USO: d("1.00000000"), GLD: d("-0.50000000")}),
+            basket=Basket({USO: d("1.00000000"), GLD: d("-3.50000000")}),
             direction=0,
             horizon_sessions=1,
             confidence=d("1.00000000"),

@@ -132,9 +132,9 @@ Four facts make it the simplest candidate there.
 
 The replication has six quirks. The
 engine carries none of them: it runs any strategy, and it keeps a capital
-account. So each quirk lives in the strategy's own pieces or in test 1's
-comparison, never in a shared module, and a second strategy changes none of
-them.
+account. So each quirk lives in the strategy's own pieces or in how test 1 is
+set up and compared, never in a shared module's code, and a second strategy
+changes none of them.
 
 1. The strategy refits the hedge ratio every day, so its target resizes the
    GLD leg even on days the unit does not change. That is the alpha model's
@@ -157,15 +157,16 @@ them.
    it runs has terms above zero. Terms above zero are written before any
    strategy weighs a cost against what a trade would earn, and before live.
    Where they go is not settled, because test 1 pins this file at zero.
-5. The replication drops its first 20 rows, where the regression needs only 19
-   closes before the first one it can be fitted on. A decision on the dropped
-   session, 2006-06-20, would read a z-score of −1.075 and enter a day early,
-   the one day the two differ. So test 1's plan starts on 2006-06-21, and the
-   model carries no rule for it.
+5. The replication drops its first 20 rows, although the regression can be
+   fitted on the 20th, 2006-05-23. Without that row's spread, 2006-06-20, the
+   19th row it keeps, has no z-score there. A decision on that session would
+   read a z-score of −1.075 and enter a day early, the one day the two differ.
+   So test 1's plan starts on 2006-06-21, and the model carries no rule for it.
 6. The replication fills at the close whose price its signal read, which no
-   live order can do. Test 1 fills there too, and
+   live order can do. Test 1 fills there too, because its deployment decides at
+   the close through a simulated account whose cutoff is the close, as
    [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it)
-   says how the paper run differs.
+   says.
 
 Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking
@@ -209,15 +210,18 @@ knows, whatever the window's length, and a day that halted leaves no gap in
 it. `tests/test_alpha_replication.py` holds it to the replication's unit on
 each of test 1's 1,461 decisions. The longest walk among them reads 55
 sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
-513 halt and none is wrong. The strategy's lookback is 60 sessions, which
+513 halt and none is wrong. The lookback was chosen after the z-scores of
+2006 to 2012 and of 2012 to 2026 were both read, so "none halts" is exploratory,
+and a longer walk is rare rather than impossible. A settled unit does not
+depend on the lookback. The strategy's lookback is 60 sessions, which
 [#110](https://github.com/l3a0/ithildin-runtime/issues/110) writes in place of the 40 that data's settings state today.
 
-The price is that the unit worked out today can differ from the one the
-platform has been trading, in three ways.
+The price has three parts.
 
-1. A live decision reads a price before the close. An entry or an exit that the
-   close does not confirm is undone the next day, at the cost of one round
-   trip, and one the earlier price missed is taken a session late.
+1. A live decision reads a price before the close, so the unit worked out from
+   closes the next day can differ from the one traded. An entry or an exit that
+   the close does not confirm is undone then, at the cost of one round trip, and
+   one the earlier price missed is taken a session late.
 2. A bar corrected inside the window can change today's unit with no move of
    the market.
 3. A bar whose prices contradict each other halts every decision whose lookback
@@ -236,14 +240,21 @@ Where the spread does not return, the daily refit of `h` moves the spread's
 mean under it, and the caps and the daily loss stop are the only bound. A halt
 holds an open position as it is, because nothing in slice 1 unwinds one.
 
-The exit is a function of its own in `alpha`, so a random entry can be run
-with the same exit.
+The exit is a function of its own in `alpha`. So a backtest quoted as evidence
+for the entry can set it beside random entries under the same exit, as
+[A result is measured against the risk it took](../design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear)
+asks.
 
 ### What forces the spread back
 
 Nothing forces it back. Two prices are cointegrated when some fixed combination
 of them keeps returning to one level, and Chan states that GLD and USO are not.
-No test of it has run here. USO holds oil futures, so its price also carries
+quantitative-trading has run one test of it on these prices, an Engle-Granger
+test at one lag over all 1,500 sessions, which gives −1.5150 against a bar of
+−3.04 at 10 percent
+([Entry 21](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading)). So
+it does not find that they are, which is exploratory and no proof that they are
+not. This repository has run no test of its own. USO holds oil futures, so its price also carries
 the roll return, which is what a fund gains or loses as it replaces an expiring
 contract with the next one. Who the strategy trades against, and what kind each
 price is, go on its registration, [#41](https://github.com/l3a0/ithildin-runtime/issues/41).
@@ -251,7 +262,15 @@ price is, go on its registration, [#41](https://github.com/l3a0/ithildin-runtime
 ### What a pin on this data cannot show
 
 Both vintages were saved on 2012-04-10, so a result quoted from them can carry
-corrections made up to that day. The two 20-session windows are settings Chan
-tuned on the 2006 to 2012 sample by his own account, so no test can show that
-they were knowable before test 1's decisions. A replication pin owes neither,
-because it checks the engine, and a backtest quoted as evidence owes both.
+corrections made up to that day. Chan calls the 20-session windows near-optimal
+with the benefit of hindsight
+([Entry 26](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-26-bollinger-bands-on-gld-and-uso-chans-algorithmic-trading)),
+and states the thresholds, 1 and 0, without saying how they were chosen
+([the post](https://github.com/l3a0/quantitative-trading/blob/main/blog/bollinger-band-lessons.md)).
+So no test can show that any of the four settings was knowable before test 1's
+decisions.
+
+A backtest quoted as evidence names the corrections its vintage can carry, and
+tests that each value it was given was knowable before its first decision, as
+[A backtest uses nothing it could not have known](../design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition)
+requires. A replication pin owes neither, because it checks the engine.

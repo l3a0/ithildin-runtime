@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -720,11 +721,27 @@ def test_the_stage_reads_the_capture_that_counts_and_not_a_later_one(tmp_path) -
     assert set(result.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
 
 
-def test_a_data_result_that_lists_no_snapshot_halts(tmp_path) -> None:
+@pytest.mark.parametrize("times", [0, 2])
+def test_a_data_result_that_lists_the_snapshot_other_than_once_halts(tmp_path, times) -> None:
     storage = store(tmp_path)
-    storage.put_result(DATA_RESULT, DecisionResult(data_header(), (), None))
-    with pytest.raises(Halt, match="lists .*snapshot.json 0 times, not once"):
+    file = encode_output(Snapshot, OutputFile(data_header(), (SNAPSHOT,), False))
+    ref = storage.put(StageKind.CAPTURING, SNAPSHOT_KEY, file).ref
+    storage.put_result(DATA_RESULT, DecisionResult(data_header(), (ref,) * times, None))
+    with pytest.raises(Halt, match=f"lists .*snapshot.json {times} times, not once"):
         run(handler(storage))
+
+
+@pytest.mark.parametrize("days", [-1, 1], ids=["an-earlier", "a-later"])
+def test_a_snapshot_of_another_decision_halts(tmp_path, days) -> None:
+    storage = store(tmp_path)
+    other = AT + timedelta(days=days)
+    # The file's own header names this decision, so storage's check passes.
+    write_data(storage, entries=(replace(SNAPSHOT, decision_at=other),))
+    with pytest.raises(Halt) as caught:
+        run(handler(storage))
+    assert caught.value.reason == (
+        f"{SNAPSHOT_KEY} holds a snapshot of {other.isoformat()}, not of {AT.isoformat()}"
+    )
 
 
 @pytest.mark.parametrize(

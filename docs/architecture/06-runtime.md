@@ -298,7 +298,7 @@ flowchart LR
 | Phase | Who acts | What it produces | What stops it |
 | --- | --- | --- | --- |
 | 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
-| 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on |
+| 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on, or one of its own |
 | 3. Send | Execution, then monitoring | Orders at the broker, the decision's report and the heartbeat's ping | A failed check, a refused order or an order in doubt |
 | After the close | Execution, then the supervisor | A result on each open order, then the run's stop | A read that fails or runs late, which pages the owner, or a difference, which halts and pages |
 

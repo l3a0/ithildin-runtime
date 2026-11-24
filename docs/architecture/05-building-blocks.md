@@ -76,7 +76,7 @@ flowchart TB
     snap[("snapshot")]
     acct[("account<br/>book and broker account")]
     book[("reconciled book")]
-    fc[("forecast")]
+    fc[("forecast and the<br/>signals behind it")]
     cons[("constraints")]
     sched[("cost schedule")]
     target[("target portfolio")]
@@ -791,7 +791,9 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 | `horizon_sessions` | 1 for this strategy, because it remakes the forecast at each decision |
 | `confidence` | 1 for this strategy, because its rule grades no strength |
 
-The model returns a `ForecastSet`, its forecasts and the signals behind them, because both come from one calculation. A `Signal` is one value the model fitted, with the first and last session whose prices it read. The six this strategy writes are the hedge ratio, the spread, the spread's mean and standard deviation, the z-score and the unit. The types refuse what would read as nothing to do: a basket with no leg, a forecast out of its bounds, and a set with no forecast, no signal or two signals of one name.
+##### What the model returns and its stage stores
+
+The model returns a `ForecastSet`, its forecasts and the signals behind them, because both come from one calculation. A `Signal` is one value the model fitted, with the first and last session whose prices it read. The six this strategy writes are the hedge ratio, the spread, the spread's mean and standard deviation, the z-score and the unit. The types refuse a basket with no leg, a forecast out of its bounds, and a set with no forecast, no signal or two signals of one name.
 
 Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. A halt the model raises becomes the stage's result, whose header names data's result and the snapshot, so the halt says what it read.
 
@@ -1188,7 +1190,7 @@ An arrow means "may import". The diagram draws four rules.
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function, the lookup of the session a decision belongs to and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - the names of data's stage, of its snapshot and of alpha's two output files, so a stage that reads them imports no `data` and no `alpha`;
-   - `read_snapshot`, the steps every stage takes to read data's result, pass on its halt and read the one snapshot it lists;
+   - `read_snapshot`, the steps a model's stage takes to read data's result, pass on its halt and read the one snapshot it lists;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

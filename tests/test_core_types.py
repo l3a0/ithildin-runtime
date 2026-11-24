@@ -346,6 +346,7 @@ def test_a_forecast_takes_each_direction_and_each_bound_of_confidence(
         ({"confidence": Decimal("-0.00000001")}, "confidence -1E-8 is not between 0 and 1"),
         ({"confidence": Decimal("1.00000001")}, "confidence 1.00000001 is not between 0 and 1"),
         ({"confidence": Decimal("NaN")}, "confidence NaN is not between 0 and 1"),
+        ({"confidence": Decimal("Infinity")}, "confidence Infinity is not between 0 and 1"),
     ],
 )
 def test_a_forecast_out_of_its_bounds_is_refused(changes: dict, reason: str) -> None:

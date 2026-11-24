@@ -32,7 +32,6 @@ from typing import Protocol
 from ithildinruntime.core import (
     FORECAST_OUTPUT,
     SIGNALS_OUTPUT,
-    AlphaModel,
     BlobHeader,
     BlobRef,
     DecisionResult,
@@ -81,7 +80,6 @@ class AlphaStage:
         run: str,
         release: str,
         config_hashes: Mapping[str, str],
-        build: Callable[[StrategyConfig], AlphaModel] = build_model,
     ) -> None:
         self._strategy = strategy
         self._storage = storage
@@ -92,7 +90,6 @@ class AlphaStage:
         self._run = run
         self._release = release
         self._config_hashes = dict(config_hashes)
-        self._build = build
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
         at = item.decision_at
@@ -121,7 +118,7 @@ class AlphaStage:
     def _made(self, snapshot: Snapshot) -> ForecastSet:
         # The model is built at each decision, so it keeps nothing from the one
         # before, and a section it refuses halts this strategy's stage alone.
-        made = self._build(self._strategy).forecast(snapshot)
+        made = build_model(self._strategy).forecast(snapshot)
         for forecast in made.forecasts:
             if forecast.strategy != self._strategy.name:
                 raise Halt(

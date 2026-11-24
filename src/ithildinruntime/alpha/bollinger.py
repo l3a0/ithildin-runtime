@@ -32,6 +32,10 @@ A section halts the model, naming the strategy and the key, on each of these.
 4. A threshold that is no number, or thresholds outside −entry < exit < entry.
    With `exit` above `entry` one z-score would both enter and exit. Below
    −entry, an entry on one side would leave the other side held.
+5. An `entry` no z-score can reach. The newest of n spreads sits inside its own
+   mean and deviation, so its z-score stays within (n − 1)/√n, which is 4.2485
+   at 20 spreads. A strategy with a higher entry would never hold a unit. This
+   refuses what cannot happen, and no entry that is only rarely passed.
 
 A decision halts, naming the strategy and the instrument or the session, on
 each of these.
@@ -44,33 +48,25 @@ each of these.
 4. A newest bar that is not the decision's own session, meaning the latest
    session that opened by the decision. Data's newest bar before the close is
    the day before's, and it reads `fresh`, so without this check every signal
-   would trade a session late.
+   would trade a session late. A decision the calendar holds no session for
+   halts too.
 5. Fewer sessions than the newest z-score reads.
 6. A window of `independent` closes that are all equal, where the slope has no
    value, and a band window whose spreads do not move, where the z-score has
    none.
 7. A window that ends before it settles which unit is held.
-8. A figure the arithmetic below cannot hold, or a statistic the codec cannot.
+8. A statistic the codec cannot hold.
 
-Every figure is a `Decimal` at 28 digits with rounding half to even, worked
-out inside a context of the model's own, so nothing the caller set changes a
-byte. The model decides on the unrounded values and rounds only what it
-stores.
+Every figure is a `Decimal` at 28 digits, worked out inside a context of the
+model's own, so the context a caller set changes no byte. The model decides on
+the unrounded values and rounds only what it stores.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import date
-from decimal import (
-    ROUND_HALF_EVEN,
-    Context,
-    Decimal,
-    DivisionByZero,
-    InvalidOperation,
-    Overflow,
-    localcontext,
-)
+from decimal import Context, Decimal, localcontext
 from typing import NamedTuple
 
 from ithildinruntime.core import (
@@ -96,18 +92,7 @@ _KEYS = frozenset(
 )
 _INTERVAL = "1d"
 _ADJUSTED = "adjusted"
-# Named in full, because `Context(prec=28)` alone reads the rest from
-# `decimal.DefaultContext`, which any import can change.
-_ARITHMETIC = Context(
-    prec=28,
-    rounding=ROUND_HALF_EVEN,
-    Emin=-999999,
-    Emax=999999,
-    capitals=1,
-    clamp=0,
-    flags=[],
-    traps=[DivisionByZero, InvalidOperation, Overflow],
-)
+_ARITHMETIC = Context(prec=28)
 # A spread that never moves in exact arithmetic reads a deviation near 5e-27 at
 # 28 digits, so a band at or below this has no z-score.
 _FLAT = Decimal("1e-12")
@@ -234,16 +219,24 @@ class BollingerSpread:
                 f"has entry = {self._entry} and exit = {self._exit}, and an exit sits between "
                 "−entry and entry"
             )
+        # Squared and in whole numbers, so the comparison is exact. An entry equal
+        # to the bound is refused too, because a z-score on a threshold enters nothing.
+        spreads = self._band_sessions
+        top, bottom = self._entry.as_integer_ratio()
+        if top * top * spreads >= ((spreads - 1) * bottom) ** 2:
+            raise refuse(
+                f"has entry = {self._entry}, which no z-score over {spreads} spreads can pass"
+            )
 
     def forecast(self, snapshot: Snapshot) -> ForecastSet:
         """The basket, the unit held of it and the six fitted values behind them."""
         with localcontext(_ARITHMETIC):
             try:
                 return self._forecast(snapshot)
-            except (ArithmeticError, CodecError) as error:
+            except CodecError as error:
                 raise Halt(
-                    f"strategy {self._strategy} cannot work out its forecast for "
-                    f"{snapshot.decision_at.isoformat()}: {type(error).__name__}: {error}"
+                    f"strategy {self._strategy} cannot store its forecast for "
+                    f"{snapshot.decision_at.isoformat()}: {error}"
                 ) from error
 
     def _forecast(self, snapshot: Snapshot) -> ForecastSet:
@@ -307,7 +300,10 @@ class BollingerSpread:
                 f"{self._independent} have bars of different ones"
                 + (f", such as {apart[0]}" if apart else "")
             )
-        own = load_sessions().opened_by(snapshot.decision_at).day
+        try:
+            own = load_sessions().opened_by(snapshot.decision_at).day
+        except Halt as halt:
+            raise refuse(f"cannot place its decision on a session: {halt.reason}") from None
         newest = days[self._dependent][-1]
         if newest != own:
             raise refuse(

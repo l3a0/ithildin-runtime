@@ -182,6 +182,18 @@ def test_the_longest_walk_stays_inside_the_lookback(run) -> None:
     assert longest == [date(2010, 3, 3), date(2012, 3, 27)]
 
 
+def test_a_decision_on_the_session_before_the_first_would_enter_a_day_early(every_session) -> None:
+    days = [bar.session for bar in every_session.bars[GLD]["1d"]]
+    n = days.index(date(2006, 6, 20))
+    # The last of the replication's 20 dropped rows is its 20th session, and 2006-06-20 is
+    # the 19th it keeps, where it has no z-score.
+    assert days[19] == date(2006, 5, 23) and n - 19 == ROWS_BEFORE
+    made = build_model(CHAN).forecast(cut(every_session, n, LOOKBACK))
+    assert made.forecasts[0].direction == 1
+    (score,) = [s.value for s in made.signals if s.name == "z_score"]
+    assert score == Decimal("-1.07539456")
+
+
 def test_a_lookback_of_40_halts_where_it_cannot_settle_and_is_never_wrong(
     every_session, run
 ) -> None:

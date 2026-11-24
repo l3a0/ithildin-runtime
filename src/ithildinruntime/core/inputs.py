@@ -1,4 +1,4 @@
-"""The read every stage makes of data's result and the snapshot it lists.
+"""The read a model's stage makes of data's result and the snapshot it lists.
 
 Alpha, cost, risk and portfolio construction each read data's snapshot, and no
 worker module imports another, so the steps live here, once. docs/design.md's
@@ -45,7 +45,8 @@ def read_snapshot(
     A result that holds a halt gives the record the stage `stage` passes on,
     whose `cause` is that result. It raises `Halt` where data's result is
     missing, lists the snapshot that counts other than once, or lists one that
-    holds other than one snapshot, and where storage refuses either read.
+    holds other than one snapshot or one of another decision, and where storage
+    refuses either read.
     """
     key = result_key(deployment, run, decision_at, data_stage)
     data = storage.read_result(key, decision_at)
@@ -64,4 +65,12 @@ def read_snapshot(
     file = storage.read_output(key, data, listed[0], decision_at, Snapshot)
     if len(file.entries) != 1:
         raise Halt(f"{counts} holds {len(file.entries)} snapshots, not one")
-    return SnapshotInput(found, listed[0], file.entries[0])
+    snapshot = file.entries[0]
+    # Storage checks the decision the file's header names. A reader goes by the
+    # snapshot's own, which decides what is stale.
+    if snapshot.decision_at != decision_at:
+        raise Halt(
+            f"{counts} holds a snapshot of {snapshot.decision_at.isoformat()}, not of "
+            f"{decision_at.isoformat()}"
+        )
+    return SnapshotInput(found, listed[0], snapshot)
