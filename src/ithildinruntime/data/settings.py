@@ -98,7 +98,7 @@ def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
             spike_multiple=multiple,
         )
     except ValueError as error:
-        # A check `DataSettings` makes and this reader does not. Today it makes none.
+        # A check `DataSettings` makes and neither `core`'s reader nor this one does.
         files = ", ".join(strategy.source for strategy, _ in read)
         raise Halt(f"data's settings from {files} are refused: {error}") from None
 
