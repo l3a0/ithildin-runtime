@@ -4,14 +4,15 @@ This doc's rules are a proposal of #5, which the charter's data engineer owns.
 The flag never replaces the price, which stays as it arrived. A flag from the
 first rule halts the decision, because no real trade produces one, and
 `source.LakeSource.read` adds that halt, and `source.judge` adds it to a
-redelivered decision's first capture. A flag from the second rule halts
-nothing: monitoring alerts the owner, which #11 builds, and the decision trades
-on the price as it arrived. A backtest meets both as a live decision does.
+redelivered decision's first capture. A flag from the second or third rule
+halts nothing: monitoring alerts the owner, which #11 builds, and the decision
+trades on the price as it arrived. A backtest meets all three as a live
+decision does.
 
 1. **A bar whose prices contradict each other is flagged.** That is a high
    below its open, close or low, or any price at or below zero. A low above
-   the high is flagged as the high below it. A low above the open or the
-   close alone is not flagged by this rule.
+   the high is flagged as the high below it. A low above the
+   open or the close alone is not flagged by this rule.
 2. **A close-to-close move past a written multiple of the lookback's standard
    deviation of daily returns is flagged.** Each return is judged against the
    sample standard deviation of the lookback's other returns, so a spike does
@@ -21,6 +22,9 @@ on the price as it arrived. A backtest meets both as a live decision does.
    The charter discounts a spike that traded on
    little volume, and no volume threshold is written yet, so nothing is
    discounted. Each flag on a bar that carries no volume says so.
+3. **A close below its bar's low is flagged.** A close a few percent too low
+   moves too little for the second rule to flag, so this rule is what alerts
+   on it, whatever the size of the move.
 
 The arithmetic is decimal at 28 digits, so two runs flag the same bars.
 """
@@ -32,12 +36,21 @@ from decimal import Context, Decimal
 
 from ithildinruntime.core import Bar, SpikeFlag
 
-__all__ = ["CONTRADICT", "MOVE", "contradictions", "largest_multiple", "spike_flags"]
+__all__ = [
+    "BELOW_LOW",
+    "CONTRADICT",
+    "MOVE",
+    "below_low",
+    "contradictions",
+    "largest_multiple",
+    "spike_flags",
+]
 
-# Both rule names are recorded in every stored flag, so the record keeps the
+# Each rule name is recorded in every stored flag, so the record keeps the
 # name it was written under.
 CONTRADICT = "prices contradict each other"
 MOVE = "close-to-close move past the written multiple"
+BELOW_LOW = "close below the bar's low"
 _CONTEXT = Context(prec=28)
 _NO_VOLUME = "the bar carries no volume, so the flag weighs none"
 _VOLUME_NOT_WEIGHED = "no volume threshold is written, so the flag weighs no volume"
@@ -60,6 +73,13 @@ def contradictions(bar: Bar) -> list[SpikeFlag]:
     if bar.high < others:
         found.append(SpikeFlag(bar.session, "high", bar.high, others, CONTRADICT, _note(bar, "")))
     return found
+
+
+def below_low(bar: Bar) -> list[SpikeFlag]:
+    """The third rule's flag on one bar, which alerts and halts nothing."""
+    if bar.close >= bar.low:
+        return []
+    return [SpikeFlag(bar.session, "close", bar.close, bar.low, BELOW_LOW, _note(bar, ""))]
 
 
 def _returns(bars: Sequence[Bar]) -> list[Decimal | None]:
@@ -113,6 +133,7 @@ def spike_flags(bars: Sequence[Bar], multiple: Decimal) -> tuple[SpikeFlag, ...]
     found: list[SpikeFlag] = []
     for bar in bars:
         found.extend(contradictions(bar))
+        found.extend(below_low(bar))
     for i, size in _multiples(bars):
         if size > multiple:
             bar = bars[i]

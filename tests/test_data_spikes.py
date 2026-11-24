@@ -1,4 +1,4 @@
-"""The spike flag's two rules, and the measurement the spike multiple is stated beside.
+"""The spike flag's three rules, and the measurement the spike multiple is stated beside.
 
 Acceptance test 14 on #5. Each flag sits beside a price that stays as it
 arrived. The measurement over the Chan vintages is exploratory: it was found
@@ -18,7 +18,7 @@ import pytest
 
 from ithildinruntime.core import Bar, InstrumentId
 from ithildinruntime.data import largest_multiple, spike_flags
-from ithildinruntime.data.spikes import CONTRADICT, MOVE, contradictions
+from ithildinruntime.data.spikes import BELOW_LOW, CONTRADICT, MOVE, below_low, contradictions
 from tests.core_samples import sample
 
 START = date(2012, 1, 3)
@@ -83,16 +83,25 @@ def test_each_comparison_of_the_first_rule_is_made(
     assert (field, Decimal(against)) in {(f.field, f.against) for f in flags}
 
 
-@pytest.mark.parametrize(("open_", "close"), [("100.2000", "101.0000"), ("101.0000", "100.2000")])
-def test_a_low_above_its_open_or_close_alone_is_not_flagged(open_: str, close: str) -> None:
-    """The contradiction rule names no low above the open or the close."""
+@pytest.mark.parametrize(
+    ("open_", "close", "rules"),
+    [("100.2000", "101.0000", []), ("101.0000", "100.2000", [BELOW_LOW])],
+)
+def test_a_low_above_its_open_or_close_alone_is_no_contradiction(
+    open_: str, close: str, rules: list[str]
+) -> None:
+    """The contradiction rule names neither, and the below-the-low rule names the close alone."""
     odd = bar(0, close, high="101.0000", low="100.5000", open=open_)
-    assert spike_flags([odd], Decimal(100)) == ()
+    assert contradictions(odd) == []
+    assert [f.rule for f in spike_flags([odd], Decimal(100))] == rules
 
 
 def test_a_low_above_its_high_is_flagged_once_as_the_high_below_it() -> None:
+    """Its close sits below that low too, so the third rule flags it beside the contradiction."""
     odd = bar(0, "100.0000", high="100.0000", low="100.5000", open="100.0000")
-    (flag,) = spike_flags([odd], Decimal(100))
+    flags = spike_flags([odd], Decimal(100))
+    assert [f.field for f in flags if f.rule == BELOW_LOW] == ["close"]
+    (flag,) = [f for f in flags if f.rule == CONTRADICT]
     assert (flag.field, flag.price, flag.against) == (
         "high",
         Decimal("100.0000"),
@@ -184,6 +193,28 @@ def test_a_move_after_returns_that_are_all_equal_is_flagged() -> None:
     assert spike_flags(series("100", "100", "100", "100"), Decimal(1)) == ()
 
 
+# Rule 3: a close below its bar's low.
+
+
+@pytest.mark.parametrize(("close", "flagged"), [("99.9999", True), ("100.0000", False)])
+def test_a_close_one_step_below_its_low_is_flagged_and_one_at_it_is_not(
+    close: str, flagged: bool
+) -> None:
+    odd = bar(0, close, high="101.0000", low="100.0000", open="100.5000")
+    flags = spike_flags([odd], Decimal(100))
+    expected = [(BELOW_LOW, "close", Decimal(close), Decimal("100.0000"))] if flagged else []
+    assert [(f.rule, f.field, f.price, f.against) for f in flags] == expected
+    assert all("the bar carries no volume" in f.note for f in flags)
+
+
+def test_a_close_below_its_low_by_too_little_to_move_is_flagged_by_the_third_rule_alone() -> None:
+    """The gap the third rule closes: a close 5% too low, well inside the multiple."""
+    closes = ["100", "101", "99.99", "101", "100"]
+    bars = series(*closes) + [bar(5, "95.0000", high="101.0000", low="100.0000", open="100.5000")]
+    flags = spike_flags(bars, Decimal(10))
+    assert [(f.rule, f.field) for f in flags] == [(BELOW_LOW, "close")]
+
+
 def test_the_multiple_is_a_positive_decimal() -> None:
     for bad in (Decimal(0), Decimal(-1), 5):
         with pytest.raises(ValueError):
@@ -213,6 +244,6 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
         bars = snap.bars[instrument]["1d"]
         assert len(bars) == 1500
         assert [b for b in bars if b.low > min(b.open, b.close)] == []
-        assert [b for b in bars if contradictions(b)] == []
+        assert [b for b in bars if contradictions(b) or below_low(b)] == []
         found[instrument] = round(largest_multiple(bars, 40), 6)
     assert found == {"GLD": Decimal("6.592043"), "USO": Decimal("5.716228")}

@@ -90,7 +90,7 @@ from .reference import (
     load_master,
     load_price_kinds,
 )
-from .spikes import CONTRADICT, MOVE, contradictions, spike_flags
+from .spikes import CONTRADICT, MOVE, below_low, contradictions, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
@@ -452,7 +452,7 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     2. an instrument that is not fresh, or is fresh with no bar;
     3. each bar `LakeSource.read` halts on, through the same `_bar_halts`;
     4. each stored flag that is not the move rule's and that this release's
-       rule does not find in the bars. Within one release the bars raise
+       rules do not find in the bars. Within one release the bars raise
        every flag stored beside them, so such a flag means the record is not
        what this release wrote. Its reason states the record as stored
        rather than guess what it meant.
@@ -473,7 +473,7 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     for instrument, by_interval in snapshot.bars.items():
         bars = by_interval.get(DAILY, ())
         reasons.extend(_bar_halts(instrument, bars))
-        found.update(_key(instrument, f) for bar in bars for f in contradictions(bar))
+        found.update(_key(instrument, f) for bar in bars for f in _recomputed(bar))
     for instrument, flags in snapshot.flags.items():
         for flag in flags:
             if flag.rule != MOVE and _key(instrument, flag) not in found:
@@ -483,6 +483,11 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
                     f"by the rule {flag.rule!r}"
                 )
     return tuple(reasons)
+
+
+def _recomputed(bar: Bar) -> list[SpikeFlag]:
+    """The flags one bar raises by itself, which is every rule's but the move rule's."""
+    return contradictions(bar) + below_low(bar)
 
 
 def _key(instrument: InstrumentId, flag: SpikeFlag) -> tuple[object, ...]:
@@ -505,7 +510,8 @@ def _bar_halts(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
 def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:
     """A halt for each flag of the contradiction rule, which no real trade produces.
 
-    A flag of the move rule halts nothing, and monitoring alerts on it.
+    A flag of the move rule or the below-the-low rule halts nothing, and
+    monitoring alerts on it.
     """
     return [
         f"{instrument}'s bar for {f.session.isoformat()} has prices that contradict each "

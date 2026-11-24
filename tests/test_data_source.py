@@ -237,22 +237,33 @@ def test_1_a_contradicting_bar_halts_through_the_last_decision_whose_lookback_ho
         assert any("contradict each other" in r for r in reading.halts) is halts, day
 
 
-def test_1_a_lone_wrong_close_below_its_low_trips_the_move_rule_alone(
-    lake: Path, tmp_path: Path
+@pytest.mark.parametrize(
+    ("price", "rules"),
+    [(15.937, [spikes.BELOW_LOW, spikes.MOVE]), (150.0, [spikes.BELOW_LOW])],
+)
+def test_1_a_lone_wrong_close_below_its_low_alerts_and_halts_nothing(
+    lake: Path, tmp_path: Path, price: float, rules: list[str]
 ) -> None:
-    """A close at a tenth with the rest of the bar as it was alerts, and halts nothing."""
-    lakes.with_row(lake, "GLD", LAST, close=15.937)
+    """A close below its low with the rest of the bar as it was is flagged, however far it moved.
+
+    A close at a tenth also trips the move rule. A close of 150.0 moves too
+    little for it at a multiple of 10, so the below-the-low rule alone flags it.
+    """
+    lakes.with_row(lake, "GLD", LAST, close=price)
     reading = make(lake, tmp_path, spike_multiple=Decimal(10)).read(close(LAST))
-    # 158.91 is GLD's low on 2012-04-09 in Chan's vintage, and 15.937 the close written here.
-    (flag,) = reading.snapshot.flags[GLD]
-    assert (flag.rule, flag.field, flag.price) == (spikes.MOVE, "close", Decimal("15.937"))
+    # 158.91 is GLD's low on 2012-04-09 in Chan's vintage.
+    flags = reading.snapshot.flags[GLD]
+    assert [(f.rule, f.field, f.price) for f in flags] == [
+        (rule, "close", Decimal(str(price))) for rule in rules
+    ]
+    assert flags[0].against == Decimal("158.91")
     bar = reading.snapshot.bars[GLD]["1d"][-1]
     assert bar.close < bar.low == Decimal("158.91")
     assert reading.halts == ()
 
 
 def test_1_a_zero_close_halts_as_a_zero_price_alone(lake: Path, tmp_path: Path) -> None:
-    """No other rule flags it: the move rule judges no return on a close that is not positive."""
+    """The move rule judges no return on a close that is not positive, and no other rule halts."""
     lakes.with_row(lake, "GLD", LAST, close=0.0)
     reading = make(lake, tmp_path).read(close(LAST))
     contradicting = [r for r in reading.halts if "contradict each other" in r]
@@ -348,6 +359,17 @@ def test_1_judge_halts_on_a_stored_flag_of_a_rule_or_field_this_release_does_not
     flag = SpikeFlag(clean.session, field, Decimal(1), Decimal(2), rule, "")
     (reason,) = source.judge(_stored([clean], flags={GLD: (flag,)}), (GLD,))
     assert f"its {field} of 1 against 2, by the rule {rule!r}" in reason
+
+
+def test_1_judge_halts_on_no_stored_below_the_low_flag_its_bars_raise() -> None:
+    """It alerts and halts nothing. One the bars do not raise halts as a changed record."""
+    from tests.test_data_spikes import bar
+
+    odd = bar(0, "95", high="101", low="100", open="100")
+    (flag,) = spikes.below_low(odd)
+    assert source.judge(_stored([odd], flags={GLD: (flag,)}), (GLD,)) == ()
+    (reason,) = source.judge(_stored([bar(0, "100")], flags={GLD: (flag,)}), (GLD,))
+    assert f"its close of 95 against 100, by the rule {spikes.BELOW_LOW!r}" in reason
 
 
 def test_1_judge_halts_on_no_stored_flag_of_the_move_rule() -> None:

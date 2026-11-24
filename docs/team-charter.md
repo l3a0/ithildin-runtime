@@ -318,7 +318,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   its opening names, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
   Has a backtest read a price the live check flags as wrong as a live decision does, through the same
-  modules as live, and a backtest quoted as evidence count the sessions a contradiction halted or that read a price the move rule flagged, and
+  modules as live, and a backtest quoted as evidence count the sessions a contradiction halted or that read a price the move rule or the below-the-low rule flagged, and
   name each flagged price with any fill, fitted value or mark of the account that read it, and keeps the flag as a
   record beside the price,
   which stays as it arrived, under rule 3 of the design doc's
