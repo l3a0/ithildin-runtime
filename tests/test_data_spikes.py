@@ -118,6 +118,16 @@ def test_a_price_at_or_below_zero_is_flagged(field: str, price: str, flagged: bo
     assert any(f.field == field and f.against == 0 for f in flags) is flagged
 
 
+def test_the_move_rule_judges_no_return_on_a_zero_close() -> None:
+    """So a zero close is flagged by its own zero check alone.
+
+    Equal closes before it leave no spread, so any judged return on it would be flagged.
+    """
+    flags = spike_flags(series("1", "1", "1", "1", "0"), Decimal(100))
+    assert [f for f in flags if f.rule == MOVE] == []
+    assert {f.field for f in flags if f.rule == CONTRADICT and f.against == 0} >= {"close"}
+
+
 # Rule 2: a close-to-close move past the written multiple.
 
 # Returns of +0.01, -0.01 and 0, then +0.05. Judged against the other three,
