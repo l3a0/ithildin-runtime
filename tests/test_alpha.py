@@ -188,7 +188,7 @@ def test_the_model_decides_on_unrounded_values(series, stored, unit) -> None:
 
 
 # USO's closes of HAND taken from 60, which turns each spread s into 60 − s and so
-# each z-score over.
+# negates each z-score.
 MIRRORED = made(HAND_DAYS, GOLD, tuple(60 - close for close in OIL))
 
 
@@ -196,8 +196,8 @@ MIRRORED = made(HAND_DAYS, GOLD, tuple(60 - close for close in OIL))
     ("series", "stored"), [(HAND, "0.42857143"), (MIRRORED, "-0.42857143")], ids=["short", "long"]
 )
 def test_the_model_ends_a_position_on_unrounded_values(series, stored) -> None:
-    # 3/7 is 0.428571428571…, so the stored z-score sits on the exit, which ends nothing,
-    # and the one decided on sits inside it.
+    # 3/7 is 0.428571428571…, so the stored z-score sits on the exit, or on −exit for a
+    # long, which ends nothing, and the one decided on sits inside it.
     config = strategy(hedge_sessions=3, band_sessions=3, exit="0.42857143")
     made_set = forecast_of(config, series.at(NEWEST, 5))
     assert made_set.forecasts[0].direction == 0
