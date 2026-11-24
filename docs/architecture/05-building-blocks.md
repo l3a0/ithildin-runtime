@@ -1031,43 +1031,43 @@ The figure below is a C4 component diagram.
 ```mermaid
 flowchart LR
     order["The order"]
-    journal["The journal"]
-    book["The book"]
     snapshot["The snapshot"]
     file["The risk model's constraints file"]
+    now["The Clock port"]
+    journal["The journal"]
+    book["The book"]
+    inputs["GateInputs"]
     caps["The hard caps blob,<br/>which only the owner can write"]
     v["Recover's valuation file"]
     stop["The stop blob"]
-    inputs["GateInputs"]
-    now["The Clock port"]
     gate["The risk gate's check"]
     verdict["A Verdict"]
     halt["A halt naming the input"]
     order --> gate
-    journal -->|"OrderPath replays it<br/>just before each check"| book
-    book --> gate
     snapshot --> gate
     file -->|"one strategy's Constraints"| gate
+    now -->|"now, as the send stage reads it"| gate
+    book --> gate
+    inputs --> gate
+    journal -->|"OrderPath replays it<br/>just before each check"| book
+    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
     caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
     v -->|"OrderPath reads the session's Valuation"| inputs
     stop -->|"OrderPath reads its state before each check"| inputs
-    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
-    inputs --> gate
-    now -->|"now, as the send stage reads it"| gate
     gate -->|"an input is absent, stale or invalid"| halt
     gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
 ```
 
 ##### What the gate is handed
 
-`check` takes six things, and `loss`, which reads the day's loss with no order, takes the last five.
+`check` takes six things, and `loss`, which reads the day's loss with no order, takes all but the first.
 
 1. The order.
-2. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
-3. The snapshot.
-4. The strategy's `Constraints`.
-5. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the stop blob's state and, for a close, its close entry.
-6. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
+2. The snapshot.
+3. The strategy's `Constraints`.
+4. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
+5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
+6. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the stop blob's state and, for a close, its close entry.
 
 `OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
