@@ -213,8 +213,8 @@ sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
 513 halt and none is wrong. The lookback was chosen after the z-scores of
 2006 to 2012 and of 2012 to 2026 were both read, so "none halts" is exploratory,
 and a longer walk is rare rather than impossible. A settled unit does not
-depend on the lookback. The strategy's lookback is 60 sessions, which
-[#110](https://github.com/l3a0/ithildin-runtime/issues/110) writes in place of the 40 that data's settings state today.
+depend on the lookback. The strategy's lookback is 60 sessions, which the
+`[data]` section of its tracked file states.
 
 The price has three parts.
 
@@ -225,7 +225,8 @@ The price has three parts.
 2. A bar corrected inside the window can change today's unit with no move of
    the market.
 3. A bar whose prices contradict each other halts every decision whose lookback
-   reads it, which is up to 60 sessions.
+   reads it, which is up to 60 sessions. So does any other fault in a session of
+   the lookback that halts a decision, such as a session with no bar.
 
 ### What ends a position
 

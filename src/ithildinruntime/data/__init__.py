@@ -7,6 +7,8 @@ imports no adapter and every mode runs the same code.
 
 - `mirror` keeps the local copy of marketlake's bucket and checks every file
   against the manifest before a read.
+- `settings` builds `DataSettings` from the `[data]` section of every
+  strategy's tracked file.
 - `source` is the point-in-time read, `LakeSource`, which implements
   `core.DataSource`.
 - `reference` reads the security master and the price-kind contract, the two
@@ -20,6 +22,7 @@ It imports only the marketlake submodules the import rule names:
 
 from .mirror import Mirror
 from .reference import SecurityMaster, load_master, load_price_kinds
+from .settings import data_settings
 from .source import DAILY, DataSettings, LakeSource, Reading
 from .spikes import largest_multiple, spike_flags
 from .stage import SNAPSHOT, STAGE, DataStage, differences
@@ -34,6 +37,7 @@ __all__ = [
     "Mirror",
     "Reading",
     "SecurityMaster",
+    "data_settings",
     "differences",
     "largest_multiple",
     "load_master",

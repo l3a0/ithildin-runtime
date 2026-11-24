@@ -2,6 +2,18 @@
 # module that reads a setting of this strategy adds a section of its own.
 instruments = ["GLD", "USO"]
 
+# The bars each decision reads. Each first session says where the lake's series
+# starts, never where a strategy chooses to begin. `data/settings.py` holds the
+# form.
+[data]
+lookback = 60
+stale_lag = 0
+spike_multiple = 10
+
+[data.first_sessions]
+GLD = 2006-04-26
+USO = 2006-04-26
+
 # The replication charges no transaction cost, so every term is a written
 # zero. `cost/model.py` holds the form.
 [[cost.GLD]]
