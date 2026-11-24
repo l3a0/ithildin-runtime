@@ -561,7 +561,7 @@ class ReceiveLoop:
 
     def _drop_halt(self, key: str, halt: DecisionResult, what: str) -> None:
         reason = halt.halt.reason if halt.halt is not None else ""
-        said = f"{self._worker}'s halt for {key} {what}. Its reason: {reason}"
+        said = _escaped(f"{self._worker}'s halt for {key} {what}. Its reason: {reason}")
         with self._stored_lock:
             self._unstored_halts.pop(key, None)
             # LoopFailed names each, so the host's restart record keeps the
@@ -675,7 +675,7 @@ class ReceiveLoop:
                     # worker that hears nothing, which must not go on beating.
                     self._give_up(
                         f"stopped receiving: the queue refused every receive for "
-                        f"{refusing:.0f} seconds, last with {refused.answer}",
+                        f"{refusing:.0f} seconds, last with {_escaped(refused.answer)}",
                         refused,
                     )
                     return
@@ -711,7 +711,7 @@ class ReceiveLoop:
         try:
             self._alerts.alarm(
                 f"{self._worker}'s queue has answered no receive for {silent:.0f} seconds, "
-                f"last with {refused.answer}"
+                f"last with {_escaped(refused.answer)}"
             )
         except Exception:
             # The loop goes on, and the halt on the deaf queue still comes.
@@ -1065,7 +1065,7 @@ class ReceiveLoop:
             # Whatever the store raised, a halt already built is held.
             if result.halt is not None:
                 if running.ended is None:
-                    running.ended = f"Halt: {result.halt.reason}"
+                    running.ended = _escaped(f"Halt: {result.halt.reason}")
                 self._keep_halt(item, result)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
             running.ended = f"a result that could not be stored: {_said(error)}"
@@ -1165,12 +1165,14 @@ class ReceiveLoop:
 def _said(error: BaseException) -> str:
     """The error's type and text, or its type alone where reading its text raises."""
     try:
-        # Escaped as `Storage.halt_record` escapes a reason, so an alert channel
-        # can send it.
-        said = f"{type(error).__name__}: {error}"
-        return said.encode("utf-8", "backslashreplace").decode()
+        return _escaped(f"{type(error).__name__}: {error}")
     except BaseException:
         return f"{type(error).__name__}, whose text could not be read"
+
+
+def _escaped(text: str) -> str:
+    """The text as `Storage.halt_record` escapes a reason, so an alert channel can send it."""
+    return text.encode("utf-8", "backslashreplace").decode()
 
 
 def _is_ref(ref: object) -> bool:

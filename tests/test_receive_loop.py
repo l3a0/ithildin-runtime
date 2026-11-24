@@ -6,6 +6,7 @@ and #81's acceptance names the first three tests below.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from asyncio import CancelledError
 from datetime import UTC, datetime, timedelta
@@ -225,7 +226,7 @@ def _holds_alive(thread: threading.Thread, beats: list) -> bool:
     return thread.is_alive() and len(beats) > before
 
 
-@pytest.mark.parametrize("ends", ["raises", "returns-a-result"])
+@pytest.mark.parametrize("ends", ["raises", "raises-a-halt", "returns-a-halt", "returns-a-result"])
 def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     tmp_path, ends: str
 ) -> None:
@@ -240,6 +241,11 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     def alpha(item: Item, report):
         if ends == "raises":
             raise ValueError("broken")
+        if ends == "raises-a-halt":
+            raise Halt("the handler's own halt")
+        if ends == "returns-a-halt":
+            record = made._storage.halt_record(Halt("the handler's own halt"))
+            return DecisionResult(header("alpha", item.decision_at, {}), (), record)
         return handlers(holder["store"], holder["plan"], Calls())["alpha"](item, report)
 
     beats: list = []
@@ -284,15 +290,18 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     # Each retry is quiet, so the outage alarms once for each write the
     # handler's end made, however long it lasts: the halt alone, or the
     # result and the halt that replaces it.
-    writes = 1 if ends == "raises" else 2
+    writes = 2 if ends == "returns-a-result" else 1
     assert len([r for r in alarms.reasons if r.startswith("S3 did not store")]) == writes
     # What the item had ended with goes out beside the outage's own alarm.
     (detail,) = [r for r in alarms.reasons if "The item had ended with" in r]
     assert "S3 did not store" in detail and "because" not in detail
-    if ends == "raises":
-        assert detail.endswith("The item had ended with ValueError: broken")
-    else:
-        assert "The item had ended with a result that could not be stored" in detail
+    ended = {
+        "raises": "ValueError: broken",
+        "raises-a-halt": "Halt: the handler's own halt",
+        "returns-a-halt": "Halt: the handler's own halt",
+        "returns-a-result": "a result that could not be stored: Halt: S3 did not store",
+    }[ends]
+    assert f"The item had ended with {ended}" in detail
 
 
 def test_a_stop_waits_until_s3_stores_each_capture_the_process_holds(tmp_path) -> None:
@@ -1672,16 +1681,22 @@ def test_an_error_from_extend_other_than_an_unavailable_queue_ends_the_loop(tmp_
     assert alarms.reasons and "could not answer its queue" in alarms.reasons[0]
 
 
-@pytest.mark.parametrize("where", ["receive", "answer", "bug"])
-def test_an_error_whose_text_utf_8_cannot_encode_still_alarms(tmp_path, where: str) -> None:
-    """The text is escaped, so a channel that sends it over a wire takes the alarm."""
+@pytest.mark.parametrize("where", ["receive", "refused", "answer", "bug"])
+def test_an_error_whose_text_utf_8_cannot_encode_is_escaped(tmp_path, where: str) -> None:
+    """A channel that sends it over a wire takes each alarm that holds it."""
+    from ithildinruntime.core import QueueUnavailable
+
     error = OSError("no such pipe: \udcff")
     queue = StubQueue()
-    folder, the_plan, store, made, _, alarms = _stub_loop(tmp_path, decisions=1, queue=queue)
+    folder, the_plan, store, made, _, alarms = _stub_loop(
+        tmp_path, decisions=1, queue=queue, deaf_after=0.1
+    )
 
     def feed() -> None:
         if where == "receive":
             queue.error = error
+        elif where == "refused":
+            queue.error = QueueUnavailable(str(error))
         elif where == "answer":
             queue.done_error = error
         else:
@@ -1695,9 +1710,21 @@ def test_an_error_whose_text_utf_8_cannot_encode_still_alarms(tmp_path, where: s
 
     failures = _run_until_it_fails(made, feed)
     assert len(failures) == 1
+    # A bug in the loop's own code ends it with no alarm.
+    assert len(alarms.reasons) == (where != "bug")
     # What the alarms and the hold's alarm say of it.
     for reason in (*alarms.reasons, made._why_stopped()):
         assert "no such pipe: \\udcff" in reason and reason.encode()
+
+
+def test_a_silent_queues_answer_utf_8_cannot_encode_is_escaped_in_its_alarm(tmp_path) -> None:
+    from ithildinruntime.core import QueueUnavailable
+
+    _, _, _, made, _, alarms = _stub_loop(tmp_path, decisions=1, deaf_after=60.0)
+    made._unanswered_since = 0.0
+    made._alarm_unanswered(61.0, QueueUnavailable("no such pipe: \udcff"))
+    (reason,) = alarms.reasons
+    assert "no such pipe: \\udcff" in reason and reason.encode()
 
 
 def test_a_queue_that_refuses_every_receive_ends_the_loop_after_a_bound(tmp_path) -> None:
@@ -2374,7 +2401,10 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
     assert HARD_TO_RECORD[broken] in halt.reason
     if broken == "returned-not-utf-8":
         assert alarms.reasons == [] and halt.reason == HARD_TO_RECORD[broken]
-    elif not broken.startswith("outputs"):
+    elif broken.startswith("outputs"):
+        # Refused by the codec inside the store, which the stored halt alone says.
+        assert alarms.reasons == []
+    else:
         assert f"did not handle: {HARD_TO_RECORD[broken]}" in halt.reason
         assert len(alarms.reasons) == 1
 
@@ -2609,6 +2639,38 @@ def test_a_held_halt_whose_refusal_cannot_be_read_is_dropped_with_its_alarm(tmp_
     (reason,) = alarms.reasons
     assert "could not be stored: BrokenText, whose text could not be read" in reason
     assert "Its reason: the handler's own halt" in reason
+
+
+def test_a_halt_whose_record_the_codec_refuses_ends_the_loop_with_its_reason_alarmed(
+    tmp_path,
+) -> None:
+    """A record built by hand, so its reason is not escaped as `halt_record` escapes one."""
+    started: list[Item] = []
+
+    class Channel(Alarms):
+        def alarm(self, reason: str) -> None:
+            reason.encode()
+            super().alarm(reason)
+
+    def alpha(item: Item, report: Progress):
+        started.append(item)
+        record = made._storage.halt_record(Halt("why"))
+        record = dataclasses.replace(record, reason="why \udcff")
+        return DecisionResult(header("alpha", item.decision_at, {}), (), record)
+
+    folder, the_plan, store, made, queue, alarms = _stub_loop(
+        tmp_path, alpha, decisions=1, alarms=Channel()
+    )
+    thread, failures = _run_in_thread(made)
+    assert made.wait_started(10)
+    _feed(store, the_plan)
+    queue.put(_key("feed"))
+    thread.join(5)
+    assert not thread.is_alive() and len(started) == 1
+    assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+    assert not (folder.root / _key("alpha")).exists()
+    for part in ("The item had ended with Halt: why \\udcff", "Its reason: why \\udcff"):
+        assert len([r for r in alarms.reasons if part in r]) == 1 and part in str(failures[0])
 
 
 def _break_the_work(made: ReceiveLoop, raised: BaseException) -> None:
