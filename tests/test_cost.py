@@ -243,26 +243,29 @@ def test_zero_shares_cost_zero_at_any_price(kind, price) -> None:
 
 
 @pytest.mark.parametrize(
-    ("terms", "kind"),
+    ("terms", "kind", "absent"),
     [
-        ({}, None),
-        ({GLD: ()}, None),
-        ({USO: ()}, None),
-        ({USO: ()}, CostKind.CHARGE),
-        ("charge alone", CostKind.GAP),
-        ("charge alone", None),
+        ({}, None, "charge and no gap"),
+        ({GLD: ()}, None, "charge and no gap"),
+        ({USO: ()}, None, "charge and no gap"),
+        ({USO: ()}, CostKind.CHARGE, "charge"),
+        ("charge alone", CostKind.GAP, "gap"),
+        ("charge alone", None, "gap"),
+        ("gap alone", CostKind.CHARGE, "charge"),
+        ("gap alone", None, "charge"),
     ],
 )
 @pytest.mark.parametrize("qty", ["10", "-10", "0.000000001"])
 def test_an_instrument_with_no_term_asked_for_halts_rather_than_costing_nothing(
-    terms, kind, qty
+    terms, kind, absent, qty
 ) -> None:
     if terms == "charge alone":
         terms = {USO: schedule().terms[USO][:1]}
-    with pytest.raises(
-        Halt, match="USO has no (charge|gap|charge and no gap) term in the schedule"
-    ):
+    elif terms == "gap alone":
+        terms = {USO: schedule().terms[USO][-1:]}
+    with pytest.raises(Halt) as caught:
         CostSchedule(terms=terms).estimate(USO, d(qty), d("75.50"), kind)
+    assert caught.value.reason == f"USO has no {absent} term in the schedule"
 
 
 def test_the_smallest_price_above_zero_is_charged() -> None:
@@ -753,6 +756,19 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     halted = DecisionResult(header, (), HaltRecord("no feed", None, (), (), ()))
     storage.put_result(result_key(DEPLOYMENT, RUN, AT, "feed"), halted)
     assert run(stage).header.kind == "capturing"
+
+    # A capturing stage with no attempt key halts in its own words on other bytes.
+    storage = store(tmp_path / "second")
+    key = output_key(DEPLOYMENT, RUN, AT, "feed", "snapshot")
+    file = encode_output(Snapshot, OutputFile(header, (SNAPSHOT,), False))
+    ref = storage.put(StageKind.CAPTURING, key, file).ref
+    listed = DecisionResult(header, (ref,), None)
+    storage.put_result(result_key(DEPLOYMENT, RUN, AT, "feed"), listed)
+    storage.put(
+        StageKind.CAPTURING, output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule"), b"{}"
+    )
+    with pytest.raises(Halt, match="has no other key to go to"):
+        run(handler(storage, table=Table(stages=(feed, row), strategies=(CHAN,))))
 
 
 def test_the_cost_worker_loads_neither_marketlake_nor_pandas() -> None:

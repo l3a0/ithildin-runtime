@@ -43,7 +43,7 @@ def cost_handlers(
     """The cost worker's handlers for the receive loop, one per strategy's cost stage.
 
     Each reads its strategy's terms, instruments and configuration hash, and
-    its own kind and input, from `table`, as the receive loop checks them.
+    its own kind and input, from `table`.
     """
     made = {}
     for stage in table.stages_of(COMPONENT):
