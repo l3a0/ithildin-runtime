@@ -98,8 +98,8 @@ def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
         )
     except ValueError as error:
         # A check `DataSettings` makes and this reader does not yet.
-        names = ", ".join(strategy.name for strategy, _ in read)
-        raise Halt(f"data's settings from the files of {names} are refused: {error}") from None
+        files = ", ".join(strategy.source for strategy, _ in read)
+        raise Halt(f"data's settings from {files} are refused: {error}") from None
 
 
 def _shared[T](key: str, written: Sequence[tuple[StrategyConfig, T]]) -> T:

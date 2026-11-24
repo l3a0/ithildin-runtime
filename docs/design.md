@@ -2313,7 +2313,7 @@ The price is four things.
    ended by a release that corrects the file, or by rolling back to one whose
    file was good, and [a release changes only between
    sessions](#every-change-can-be-undone-or-switched-off), so the rest of that
-   session's decisions halt.
+   session's decisions halt. In live trading the owner also clears the halt.
 3. The spike multiple only alerts, yet retuning it moves the hash, so retuning it
    during a sample reads as a change of configuration.
 4. Adding a strategy changes no shared module only while its data settings agree
@@ -2333,7 +2333,7 @@ it read, by SHA-256 and bucket version, and comes before any snapshot is stored.
 A decision that runs again after a crash is judged on its first stored snapshot,
 which does not show the cut, so a check made after the store would pass it. A
 date too early needs no check, because the sessions before the series then halt
-as missing.
+as missing, or because the security master names no ticker for them.
 
 A manifest that lists nothing before the written date reads as the series'
 start, so the check cannot see a series whose whole head is gone.

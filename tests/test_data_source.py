@@ -602,6 +602,25 @@ def test_a_first_session_that_cuts_a_lookback_the_lake_could_fill_halts(
     assert list((tmp_path / "mirror" / "roots").iterdir()) == []
 
 
+def test_a_late_first_session_names_the_bucket_version_of_the_manifest_it_read(
+    lake: Path, tmp_path: Path
+) -> None:
+    """S3's version is no hash, and the folder's version is its file's SHA-256."""
+
+    class Versioned(Counting):
+        def read(self, key: str) -> BucketObject:
+            got = super().read(key)
+            return replace(got, version=f"version-{len(self.reads)}")
+
+    bucket = Versioned(FolderBucket(lake))
+    late_gld = {GLD: date(2006, 4, 27), USO: FIRST}
+    src = make(lake, tmp_path, bucket=bucket, first_sessions=late_gld)
+    for _ in range(2):
+        read = len(bucket.reads) + 1
+        assert late(src, FILLED).endswith(f"bucket version version-{read}")
+        assert bucket.reads[read - 1] == "manifest.jsonl"
+
+
 @pytest.mark.parametrize(
     ("at", "first"),
     [

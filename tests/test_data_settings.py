@@ -186,7 +186,7 @@ def test_2_a_check_of_the_settings_own_halts_too(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(Halt) as caught:
         data_settings([parsed("b"), parsed("a")])
     assert caught.value.reason == (
-        "data's settings from the files of a, b are refused: a check the reader does not make"
+        "data's settings from a.toml, b.toml are refused: a check the reader does not make"
     )
 
 
