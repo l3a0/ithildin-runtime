@@ -131,7 +131,7 @@ def test_the_move_rule_judges_no_return_on_a_close_that_is_not_positive(
     The returns before it are all 0.01, so any return judged into or out of it
     would differ from them, and a zero spread flags any return that differs.
     """
-    flags = spike_flags(series(*RISING, price, *after), Decimal(100))
+    flags = spike_flags(series(*RISING, price, *after), Decimal(1))
     assert [f for f in flags if f.rule == MOVE] == []
     assert {f.field for f in flags if f.rule == CONTRADICT and f.against == 0} >= {"close"}
 
