@@ -37,7 +37,8 @@ How the loop runs, in order.
 5. **The loop holds a message while its handler works.** It extends the
    message's visibility while the handler runs, deletes it once the result is
    stored, and returns at once a message it has no free handler for.
-6. **A handler's failure stays in its item.** A handler that raises writes a
+6. **A handler's failure stays in its item.** A handler that raises, other
+   than one ending on a stop as item 11 says, writes a
    halt as its stage's result for that decision, and one whose error it did
    not handle also alarms, naming the worker, the stage, the decision and the
    error. The other handlers go on. A halt that cannot be stored ends
@@ -87,14 +88,17 @@ How the loop runs, in order.
     extra. A handler's result whose configuration hashes differ from the ones
     the table gives its stage is stored as a halt, with an alarm, as item 6
     says of any error a handler did not handle.
-11. **A stop reaches a handler that waits.** `stop` asks it, and so does the
-    loop's end on a failure or a bug. A handler waiting through
-    `Progress.wait_for_stop`, as `Clock.wait_until` does under the wall
-    clock, wakes at once and ends with `Stopped`. The loop stores nothing for
-    its decision and alarms nothing, because a stop is no fault in the
-    decision. It returns the handler's messages to the queue rather than
-    deleting them, and starts nothing once a stop is asked, so the decision
-    runs again after the restart. A handler that raises `Stopped` when no
+11. **A stop ends a handler's wait on the clock.** `stop` asks it, and so
+    does the loop's end on a failure or a bug. A handler waiting in
+    `Clock.wait_until` under the wall clock, which waits through
+    `Progress.wait_for_stop`, wakes at once and ends with `Stopped`. The loop
+    stores nothing for its decision and alarms nothing, because a stop is no
+    fault in the decision. It returns the handler's messages to the queue
+    rather than deleting them, and starts nothing once a stop is asked. The
+    decision runs again, on another instance or when this one next starts. A
+    handler may wait this way only before it has written anything, and
+    tests/test_stop_rule.py lists the modules that do. Any other handler gets
+    the stop timeout, and its result is stored as usual. A handler that raises `Stopped` when no
     stop was asked has a bug, so its decision halts and alarms as item 6 says
     of any error a handler did not handle. Releasing it instead would start
     the decision again at once, for ever, while the worker beat as healthy.
@@ -161,11 +165,12 @@ class Handler(Protocol):
     `report` is called at every blob write, journal append and broker call
     the handler finishes, so the loop knows it is not hung. It never raises
     for a stop, because a raise there could end a send stage between the
-    broker's answer and the journal entry that records it. A handler that
-    waits hands `report` on, such as to `Clock.wait_until`, and lets the
-    `Stopped` that raises on a stop through. It waits before it writes, since
-    a stopped item starts again from nothing. A handler can run
-    more than once for one item, after a crash or on two instances at once, so
+    broker's answer and the journal entry that records it. A handler that has
+    written nothing may hand `report` to `Clock.wait_until`, and lets the
+    `Stopped` a stop raises there through, since a stopped item starts again
+    from nothing. A handler can run
+    more than once for one item, after a crash or a stop or on two instances
+    at once, so
     a stage that writes outside rests on a create-only record of its own, such
     as the send stage's claim, and on #10's lease on the account.
     """
@@ -817,7 +822,7 @@ class ReceiveLoop:
         for stage in self._stages:
             ready_here = 0
             for index in range(self._first_open[stage.name], len(self._decisions)):
-                if self._ending():
+                if self._stopping:
                     return [], cut_short
                 item = Item(self._decisions[index], stage.name)
                 if item in busy:
@@ -846,7 +851,7 @@ class ReceiveLoop:
 
     async def _check(self, full: bool) -> None:
         free = self._free()
-        if self._ending() or (free <= 0 and not full):
+        if self._stopping or (free <= 0 and not full):
             return
         busy = set(self._running)
         ready, cut_short = await self._in_io(self._ready_items, full, max(free, 0), busy)
@@ -920,11 +925,12 @@ class ReceiveLoop:
             result = returned
         except Halt as halt:
             result = self._halt_result(stage, item, halt)
-        except Stopped:
+        except Stopped as stopped:
             if self._stop_asked.is_set():
                 # `_handler_ended` marks it, and its messages go back to the queue.
                 raise
-            self._store_unhandled(stage, item, "Stopped, and no stop was asked", returned)
+            error = f"Stopped, and no stop was asked: {stopped}"
+            self._store_unhandled(stage, item, error, returned)
             return
         except Exception as error:
             self._store_unhandled(stage, item, f"{type(error).__name__}: {error}", returned)

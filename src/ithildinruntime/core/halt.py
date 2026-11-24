@@ -8,7 +8,8 @@ dataclass exception raised inside a `@contextmanager` block comes out as
 
 `Stopped` derives from `BaseException`, as `KeyboardInterrupt` does, so an
 `except Exception` inside a handler cannot turn a stop into a halt. A stop says
-nothing about the decision, which runs again after the restart.
+nothing about the decision, which runs again, on another instance or when this
+one next starts.
 """
 
 __all__ = ["Halt", "Stopped"]
@@ -25,6 +26,7 @@ class Halt(Exception):
 class Stopped(BaseException):
     """End a handler that was waiting when its loop was asked to stop.
 
-    The loop stores nothing for the decision and returns its message to the
-    queue. A handler raises it only where it waits and has written nothing.
+    When a stop was asked, the loop stores nothing for the decision and returns
+    its message to the queue. A clock's wait raises it, and a handler waits
+    that way only before it has written anything.
     """

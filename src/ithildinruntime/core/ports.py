@@ -71,6 +71,9 @@ class Progress(Protocol):
     def wait_for_stop(self, timeout: float) -> bool:
         """Wait up to `timeout` seconds, and return whether the loop was asked to stop.
 
+        Only a clock's wait calls it, and on a true answer it raises `Stopped`.
+        A handler never returns a result or raises `Halt` because of a stop,
+        since the loop stores either as the decision's result.
         It reports nothing while it waits, so a longer wait calls it in steps
         shorter than the heartbeat limit and reports between them.
         """
@@ -92,8 +95,9 @@ class Clock(Protocol):
         A history clock returns at once. A wall clock waits, calling `report`
         on its timer's interval, so the receive loop reads a handler that is
         waiting for its decision time as one that is not hung. A stop asked
-        while it waits raises `Stopped` at once. Once the clock reads `at` it
-        returns whether or not a stop was asked.
+        while it waits raises `Stopped` at once, so a handler calls this only
+        before it has written anything. A wait that finds the clock already at
+        `at` returns whether or not a stop was asked.
         """
         ...
 

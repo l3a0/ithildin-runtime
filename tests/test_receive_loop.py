@@ -1965,10 +1965,11 @@ def test_a_deaf_queue_alarms_on_time_while_a_backlog_keeps_the_pool_full(tmp_pat
 
 
 class WaitsForTheStop:
-    """An alpha handler that waits on the loop's stop, then raises `Stopped` after `delay`."""
+    """An alpha handler that waits on the loop's stop, then raises `Stopped`."""
 
-    def __init__(self, delay: float = 0.0) -> None:
-        self.delay = delay
+    def __init__(self, until: threading.Event | None = None) -> None:
+        # What the handler waits for between the stop and its end.
+        self.until = until
         self.started: list[Item] = []
         self.entered = threading.Event()
         self.returned = threading.Event()
@@ -1983,7 +1984,8 @@ class WaitsForTheStop:
             while time.monotonic() < end:
                 report()
                 if report.wait_for_stop(0.5):
-                    time.sleep(self.delay)
+                    if self.until is not None:
+                        assert self.until.wait(10)
                     raise Stopped("asked to stop")
             raise AssertionError("no stop came")
         finally:
@@ -2000,7 +2002,7 @@ def _waiting_on_an_event(made, store, the_plan, queue, entered: threading.Event)
     assert _wait(lambda: all(r.messages for r in list(made._running.values())), 5)
 
 
-@pytest.mark.parametrize("ends", ["stop", "queue-fails"])
+@pytest.mark.parametrize("ends", ["stop", "queue-fails", "bug"])
 def test_a_stop_ends_a_wall_clocks_wait_and_leaves_the_decision_for_later(
     tmp_path, ends: str
 ) -> None:
@@ -2030,14 +2032,24 @@ def test_a_stop_ends_a_wall_clocks_wait_and_leaves_the_decision_for_later(
     asked = time.monotonic()
     if ends == "stop":
         made.stop()
-    else:
+    elif ends == "queue-fails":
         queue.error = KeyError("ReceiptHandle")
+    else:
+
+        async def broken(events) -> None:
+            raise RuntimeError("a bug in the loop's own code")
+
+        made._on_events = broken
+        queue.put(_key("risk"))
     thread.join(4)
     assert not thread.is_alive() and returned and returned[0] - asked < 2.0
     assert queue.released == [_key("feed")] and queue.done_keys == []
     assert not (folder.root / _key("alpha")).exists()
     if ends == "stop":
         assert not failures and alarms.reasons == []
+    elif ends == "bug":
+        assert len(failures) == 1 and isinstance(failures[0], RuntimeError)
+        assert alarms.reasons == []
     else:
         assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
         assert len(alarms.reasons) == 1 and "stopped receiving" in alarms.reasons[0]
@@ -2073,16 +2085,67 @@ def test_a_handler_ending_before_the_loop_hears_the_stop_is_released_and_not_sta
 
 
 def test_a_handler_ending_on_a_stop_inside_the_drain_is_released(tmp_path) -> None:
-    alpha = WaitsForTheStop(delay=0.3)
+    draining = threading.Event()
+    alpha = WaitsForTheStop(until=draining)
     folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, alpha, decisions=1)
     thread, failures = _run_in_thread(made)
     _waiting_on_an_event(made, store, the_plan, queue, alpha.entered)
+    drain = made._drain
+
+    async def drains() -> None:
+        draining.set()
+        await drain()
+
+    made._drain = drains
     made.stop()
     thread.join(5)
     assert not thread.is_alive() and not failures and alpha.returned.is_set()
     assert queue.released == [_key("feed")] and queue.done_keys == []
     assert len(alpha.started) == 1
     assert not (folder.root / _key("alpha")).exists() and alarms.reasons == []
+
+
+def test_a_handler_that_finishes_after_a_stop_stores_its_result_and_reports(tmp_path) -> None:
+    """A stop cuts short only a wait, so work in hand ends as it would have without one."""
+    import time
+
+    entered = threading.Event()
+    stopped = threading.Event()
+    holder: list = []
+
+    def alpha(item: Item, report: Progress):
+        entered.set()
+        assert stopped.wait(10) and report.wait_for_stop(5)
+        # Works on past the heartbeat limit, reporting, which a stop never ends.
+        end = time.monotonic() + 1.2
+        while time.monotonic() < end:
+            report()
+            time.sleep(0.02)
+        ended.append(time.monotonic())
+        return handlers(*holder, Calls())["alpha"](item, report)
+
+    ended: list[float] = []
+    beats: list[float] = []
+    _, the_plan, store, made, queue, alarms = _stub_loop(
+        tmp_path,
+        alpha,
+        decisions=1,
+        tick=0.02,
+        heartbeat_limit=0.4,
+        beat=lambda: beats.append(time.monotonic()),
+    )
+    holder.extend((store, the_plan))
+    thread, failures = _run_in_thread(made)
+    _waiting_on_an_event(made, store, the_plan, queue, entered)
+    asked = time.monotonic()
+    made.stop()
+    stopped.set()
+    thread.join(5)
+    assert not thread.is_alive() and not failures
+    assert queue.done_keys == [_key("feed")] and queue.released == []
+    assert store.read_result(_key("alpha"), FIRST).halt is None and alarms.reasons == []
+    # The reports after the stop count, so the beat goes on while the handler works.
+    assert [b for b in beats if asked + 0.8 < b < ended[0]]
 
 
 class StopsDuringARead(RefusingResults):
@@ -2115,6 +2178,8 @@ def test_a_stop_asked_while_the_loop_reads_keys_starts_nothing(tmp_path, woken_b
     queue.put(key)
     assert _wait(lambda: key in queue.released + queue.done_keys, 5)
     assert _wait(made._stop_asked.is_set, 5)
+    # A handler the check started would have begun by now.
+    assert not alpha.entered.wait(0.3)
     made.stop()
     thread.join(5)
     assert not thread.is_alive() and not failures
@@ -2137,7 +2202,7 @@ def test_a_handler_that_raises_stopped_with_no_stop_asked_halts_and_alarms(tmp_p
         assert loops.wait_for(lambda: _key("feed") in queue.done_keys, 5)
     assert len(started) == 1 and queue.released == []
     reason = store.read_result(_key("alpha"), FIRST).halt.reason
-    assert "with an error it did not handle: Stopped, and no stop was asked" in reason
+    assert "an error it did not handle: Stopped, and no stop was asked: a bug" in reason
     assert alarms.reasons == [reason]
 
 

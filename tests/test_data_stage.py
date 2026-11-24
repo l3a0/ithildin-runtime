@@ -650,6 +650,7 @@ class FakeProgress:
     def wait_for_stop(self, timeout: float) -> bool:
         # A clock that waits on past the stop would otherwise wait for ever here.
         assert not self.stopped, "the clock waited on after the stop"
+        assert timeout > 0, "the clock waited for no time"
         end = self.time.at + timedelta(seconds=timeout)
         self.waited.append(timeout)
         if self.stop_at is not None and self.stop_at <= end:
@@ -676,13 +677,24 @@ def test_19_the_wall_clock_reports_while_it_waits_past_the_heartbeat_limit() -> 
 
 
 @pytest.mark.parametrize("stopped", [False, True])
-def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(stopped: bool) -> None:
-    """A stop asked after the decision time lets the handler read and store as usual."""
-    at = datetime(2012, 4, 9, 21, 0, tzinfo=UTC)
-    time = FakeTime(at)
+@pytest.mark.parametrize("past", [timedelta(0), timedelta(microseconds=1), timedelta(hours=1)])
+def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(
+    stopped: bool, past: timedelta
+) -> None:
+    """A stop asked at or after the decision time lets the handler read and store as usual."""
+    at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
+    time = FakeTime(at + past)
     report = FakeProgress(time, at if stopped else None)
-    WallClock(time).wait_until(datetime(2012, 4, 9, 20, 0, tzinfo=UTC), report)
-    assert report.waited == [] and time.now() == at
+    WallClock(time).wait_until(at, report)
+    assert report.waited == [] and time.now() == at + past
+
+
+def test_19_the_wall_clock_never_waits_past_the_time() -> None:
+    start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
+    time = FakeTime(start)
+    report = FakeProgress(time)
+    WallClock(time, interval=5.0).wait_until(start + timedelta(seconds=12), report)
+    assert report.waited == [5.0, 5.0, 2.0] and time.now() == start + timedelta(seconds=12)
 
 
 def test_a_stop_ends_the_wall_clocks_wait_at_once() -> None:
@@ -719,11 +731,14 @@ def test_a_stop_while_datas_stage_waits_reads_and_stores_nothing(
             raise Stopped("asked to stop")
 
     made, _, alarms = stage(lake, tmp_path, clock=Stopping())
+    reads: list[datetime] = []
+    made._source.read = reads.append
     with pytest.raises(Stopped):
         made(Item(close(LAST), "data"), Reports())
+    assert reads == []
     assert not [p for p in (tmp_path / "store").rglob("*") if p.is_file()]
     assert alarms.reasons == []
-    # The decision runs again after the restart, as if for the first time.
+    # The decision runs again at the next start, as if for the first time.
     again, _, alarms = stage(lake, tmp_path)
     result = again(Item(close(LAST), "data"), Reports())
     assert result.halt is None and len(result.outputs) == 1 and alarms.reasons == []
