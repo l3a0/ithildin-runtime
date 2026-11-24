@@ -3,9 +3,9 @@
 Every figure is made up. A test names what it changes and the rest is loose
 enough to pass, so a refusal or a halt has the one cause the test gives it.
 
-The decision is at close−20 on 2026-11-03 and the snapshot already holds that
-session's bar. Before #100 no real close−20 snapshot does, and the gate reads
-no bar's end, so this stands in for the price #100 brings.
+The decision is at close−20 on 2026-11-03 and the snapshot already holds a bar
+for that session, which ends at the decision. Before #100 no real close−20
+snapshot holds one, so this stands in for the price #100 brings.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from ithildinruntime.core import (
+    Bar,
     BarStatus,
     Book,
     Constraints,
@@ -124,7 +125,7 @@ def book(
     return Book(**fields | changes)  # type: ignore[arg-type]
 
 
-def stated(instrument: InstrumentId, day: date, close: Decimal) -> object:
+def stated(instrument: InstrumentId, day: date, close: Decimal) -> Bar:
     """A bar of stated kind. Its other prices differ, so a mark read from one answers otherwise."""
     made = bar(instrument, day, close)
     return replace(
@@ -134,6 +135,11 @@ def stated(instrument: InstrumentId, day: date, close: Decimal) -> object:
         delay="none",
         volume_counted="consolidated in shares",
     )
+
+
+def _by(made: Bar, at: datetime) -> Bar:
+    """The bar, ended and known by `at`."""
+    return replace(made, end=min(made.end, at), knowable_at=min(made.knowable_at, at))
 
 
 def snapshot(
@@ -151,7 +157,7 @@ def snapshot(
         bars[instrument] = {
             "1d": (
                 stated(instrument, before, earlier),
-                stated(instrument, day, d(price)),
+                _by(stated(instrument, day, d(price)), at),
             )
         }
     fields: dict[str, object] = {

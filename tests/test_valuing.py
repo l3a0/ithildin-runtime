@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_CEILING, ROUND_DOWN, Decimal
 
 import pytest
@@ -49,6 +49,10 @@ from tests.support.gates import (
     utc,
 )
 
+TICK = timedelta(microseconds=1)
+OPEN = TABLE.session(TODAY).open
+# A bar that ended and was known long before any decision here.
+LONG_AGO = {"end": utc(2026, 11, 1), "knowable_at": utc(2026, 11, 1)}
 MARKS = snapshot({GLD: "100.5", USO: 10}, prior={GLD: 99, USO: 11})
 
 
@@ -119,6 +123,35 @@ MARK_HALTS: dict[str, tuple[Snapshot, str]] = {
         _bars(session=utc(2026, 11, 3, 1)),
         "GLD has a bar for .*, not a date",
     ),
+    **{
+        f"a-decision-of-{at!r}": (
+            replace(MARKS, decision_at=at),
+            "the snapshot's decision_at is .*, not a UTC time",
+        )
+        for at in (None, "2026-11-03", 5)
+    },
+    "a-decision-a-microsecond-before-the-open": (
+        replace(_bars(**LONG_AGO), decision_at=OPEN - TICK),
+        "GLD has a bar for 2026-11-03, after the decision's session 2026-11-02",
+    ),
+    "a-bar-that-ends-after-the-decision": (
+        _bars(end=MARKS.decision_at + TICK),
+        "GLD's bar for 2026-11-03 ends at 2026-11-03T20:40:00.000001",
+    ),
+    "a-bar-knowable-after-the-decision": (
+        _bars(knowable_at=MARKS.decision_at + TICK),
+        "GLD's bar for 2026-11-03 was knowable at 2026-11-03T20:40:00.000001",
+    ),
+    "an-older-bar-knowable-after-the-decision": (
+        _with(
+            (
+                replace(MARKS.bars[GLD]["1d"][0], knowable_at=MARKS.decision_at + TICK),
+                MARKS.bars[GLD]["1d"][1],
+            )
+        ),
+        "GLD's bar for 2026-11-02 was knowable at",
+    ),
+    "a-bar-that-ends-at-no-time": (_bars(end=None), "when GLD's bar ends is None, not a UTC"),
     "a-decision-with-no-zone": (
         replace(MARKS, decision_at=MARKS.decision_at.replace(tzinfo=None)),
         "the snapshot's decision_at is .*, not a UTC time",
@@ -140,6 +173,23 @@ MARK_HALTS: dict[str, tuple[Snapshot, str]] = {
         "GLD has a quote, and no rule says which of its prices is the mark",
     ),
 }
+
+
+def test_5_a_bar_of_the_session_a_decision_opens_is_read_at_its_open() -> None:
+    at_open = replace(_bars(**LONG_AGO), decision_at=OPEN)
+    old, new = at_open.bars[GLD]["1d"]
+    at_open = replace(
+        at_open, bars={GLD: {"1d": (replace(old, **LONG_AGO), new)}}, status={GLD: BarStatus.FRESH}
+    )
+    assert mark(at_open, GLD, PRIOR) == d("100.5")
+    assert value_book(book({CHAN: {GLD: 1}}, cash=0), at_open, TODAY).value == d("100.5")
+    early = replace(at_open, decision_at=OPEN - TICK)
+    for read in (
+        lambda: mark(early, GLD, PRIOR),
+        lambda: value_book(book({CHAN: {GLD: 1}}), early, PRIOR),
+    ):
+        with pytest.raises(Halt, match="after the decision's session 2026-11-02"):
+            read()
 
 
 @pytest.mark.parametrize("name", MARK_HALTS)
@@ -302,8 +352,9 @@ def test_5_a_book_or_an_order_that_is_not_finite_halts_naming_it() -> None:
         exposure(book({CHAN: {GLD: "NaN"}}), GLD)
     with pytest.raises(Halt, match="the order old-1 is .*NaN"):
         exposure(book(opens=[order("NaN", name="old-1")]), GLD)
-    with pytest.raises(Halt, match="the order new-1 is .*Infinity"):
-        classify(book(), order("Infinity"))
+    for qty in ("Infinity", "NaN", "sNaN"):
+        with pytest.raises(Halt, match=f"the order new-1 is .*{qty}"):
+            classify(book(), order(qty))
     with pytest.raises(Halt, match="the book files o, an order of 'chan', under 'other'"):
         exposure(replace(book(), open_orders_by_strategy={OTHER: (order(1, name="o"),)}), GLD)
 

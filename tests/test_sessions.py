@@ -38,6 +38,23 @@ def test_a_date_with_no_session_halts() -> None:
     assert raised.value.reason == "the session table holds no session on 2026-11-26"
 
 
+@pytest.mark.parametrize(
+    "at",
+    [
+        None,
+        "2026-11-03T20:40:00Z",
+        date(2026, 11, 3),
+        datetime(2026, 11, 3, 20, 40),
+        datetime(2026, 11, 3, 15, 40, tzinfo=timezone(timedelta(hours=-5))),
+    ],
+)
+def test_a_time_that_is_not_utc_halts_by_name(at: object) -> None:
+    with pytest.raises(Halt, match="the decision is .*, not a UTC time"):
+        core.require_utc("the decision", at)
+    good = datetime(2026, 11, 3, 20, 40, tzinfo=UTC)
+    assert core.require_utc("the decision", good) == good
+
+
 def test_minutes_that_reach_back_past_any_date_halt() -> None:
     assert to_utc(date(2026, 11, 25), BeforeClose(10**6))
     for minutes in (10**10, 10**15, 10**30):

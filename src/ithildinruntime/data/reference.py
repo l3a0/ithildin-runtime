@@ -94,10 +94,6 @@ class Kind:
     delay: str
     volume_counted: str
 
-    @property
-    def stated(self) -> bool:
-        return UNSTATED not in (self.price_kind, self.venues, self.delay, self.volume_counted)
-
 
 NOT_STATED = Kind(UNSTATED, UNSTATED, UNSTATED, UNSTATED)
 

@@ -47,7 +47,7 @@ __all__ = [
     "to_decimal",
 ]
 
-_INT_LIMIT = 2**53
+INT_LIMIT = 2**53
 # A decimal the codec writes has at most this many digits, and its leading
 # digit sits within this many places of the decimal point, so a hostile
 # received value such as 1E+99999999 cannot make a writer allocate gigabytes.
@@ -337,7 +337,7 @@ def _plain_by_value(value: object, where: str) -> object:
 
 
 def _int(value: int, where: str) -> int:
-    if not -_INT_LIMIT < value < _INT_LIMIT:
+    if not -INT_LIMIT < value < INT_LIMIT:
         raise CodecError(f"{where} is {value}, whose magnitude reaches 2**53")
     return int(value)
 

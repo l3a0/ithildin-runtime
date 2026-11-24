@@ -40,6 +40,7 @@ from .sessions import (
     SessionTable,
     load_sessions,
     parse_sessions,
+    require_utc,
     to_utc,
 )
 from .storage import *  # noqa: F403
@@ -80,6 +81,7 @@ __all__ = [
     "parse_strategy",
     "places",
     "read_snapshot",
+    "require_utc",
     "to_decimal",
     "to_utc",
     *_exact,

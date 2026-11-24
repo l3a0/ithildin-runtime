@@ -807,7 +807,7 @@ class Valuation(_Record):
 
 
 class StopState(StrEnum):
-    """What a read of the loss stop's blob found: none, the blob, or any other answer."""
+    """What the order path found of the loss stop: no firing, one that stands, or no answer."""
 
     ABSENT = "absent"
     FIRED = "fired"

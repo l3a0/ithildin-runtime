@@ -129,25 +129,65 @@ def test_an_account_that_names_none_halts_whatever_the_blob_holds(account: objec
 
 
 @pytest.mark.parametrize("name", ["max_order_qty", "max_position"])
-@pytest.mark.parametrize("key", ["", "GLD ", "\ud800", "a/b", "A" * 81])
+@pytest.mark.parametrize("key", ["", " ", "GLD ", "GLD\n", "\ud800", "A" * 81])
 def test_an_instrument_that_could_not_be_stored_is_refused(name: str, key: str) -> None:
     with pytest.raises(Halt, match=f"the caps blob's {name} names .*, no instrument") as raised:
         parse_caps(with_(**{name: {key: "5"}}), "paper")
     assert core.encode(core.HaltRecord(raised.value.reason, None, (), (), ()))
 
 
-def test_a_halt_shows_no_more_than_a_little_of_what_it_refused() -> None:
-    for name in (*DECIMALS, "stress_vintage", "stress_through", "max_open_orders"):
-        with pytest.raises(Halt) as raised:
-            parse_caps(with_(**{name: "9" * 5_000}), "paper")
-        assert name in raised.value.reason and len(raised.value.reason) < 250
+@pytest.mark.parametrize("name", ["GLD", "BRK.B", "BRK/B", "^SPX", "A" * 80])
+def test_an_instrument_a_record_can_hold_is_read(name: str) -> None:
+    read = parse_caps(with_(max_order_qty={name: "5"}, max_position={name: "5"}), "paper")
+    assert core.decode(core.encode(read), HardCaps) == read
+
+
+LONG = "9" * 5_000
+DEEP = b"[" * 9_000 + b"]" * 9_000
+
+
+def _nested(data: bytes) -> bytes:
+    """The blob with a list nested too deep to be copied or shown where `data` marks."""
+    assert data.count(b'"@"') == 1
+    return data.replace(b'"@"', DEEP)
+
+
+SHOWN: dict[str, bytes] = {
+    **{name: with_(**{name: LONG}) for name in LIMITS},
+    **{f"{name}-nested": _nested(with_(**{name: "@"})) for name in LIMITS},
+    "unknown": with_(**{LONG: 5}),
+    "twice": b'{"format": 1, "%s": 1, "%s": 2}' % (LONG.encode(), LONG.encode()),
+    "format": blob(format=LONG),
+    "format-nested": _nested(blob(format="@")),
+    "account-nested": _nested(blob(account="@")),
+    "limits-nested": _nested(b'{"format": 1, "account": "paper", "limits": "@"}'),
+    "instrument": with_(max_order_qty={LONG: "5"}),
+    "instrument-value": with_(max_order_qty={"GLD": LONG}),
+    "instrument-value-nested": _nested(with_(max_order_qty={"GLD": "@"})),
+}
+
+
+@pytest.mark.parametrize("name", SHOWN)
+def test_a_halt_shows_no_more_than_a_little_of_what_it_refused(name: str) -> None:
+    assert len(SHOWN[name]) < 65_536
+    with pytest.raises(Halt) as raised:
+        parse_caps(SHOWN[name], "paper")
+    assert len(raised.value.reason) < 250
+    assert core.encode(core.HaltRecord(raised.value.reason, None, (), (), ()))
+
+
+@pytest.mark.parametrize("account", [123456789, "123456789", [123456789], None, 1.5])
+def test_the_account_a_blob_names_is_never_shown(account: object) -> None:
+    with pytest.raises(Halt, match="^the caps blob does not name the account 'paper'$"):
+        parse_caps(blob(account=account), "paper")
 
 
 @pytest.mark.parametrize("name", ["max_open_orders", "moc_cutoff", "stress_max_age_days"])
 def test_an_integer_a_record_cannot_hold_is_refused(name: str) -> None:
     assert parse_caps(with_(**{name: 2**53 - 1}), "paper")
-    with pytest.raises(Halt, match=f"{name} is a huge int, past what a record can hold"):
-        parse_caps(with_(**{name: 2**53}), "paper")
+    for huge in (2**53, -(2**53)):
+        with pytest.raises(Halt, match=f"{name} is a huge int, past what a record can hold"):
+            parse_caps(with_(**{name: huge}), "paper")
 
 
 DECIMALS = ("max_gross", "loss_stop", "share", "stress_move", "stress_low", "stress_high")
@@ -322,7 +362,7 @@ PARSED: dict[str, tuple[dict[str, object], str]] = {
 @pytest.mark.parametrize("name", PARSED)
 def test_a_blob_whose_value_is_out_of_range_halts_as_it_is_read(name: str) -> None:
     changes, reason = PARSED[name]
-    with pytest.raises(Halt, match=f"the hard caps' .*{reason}"):
+    with pytest.raises(Halt, match=f"the (hard caps'|caps blob's) .*{reason}"):
         parse_caps(with_(**changes), "paper")
 
 

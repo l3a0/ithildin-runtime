@@ -13,7 +13,7 @@ that holds a value that is not finite halts naming it.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
@@ -30,7 +30,7 @@ from .records import (
     Snapshot,
     Valuation,
 )
-from .sessions import load_sessions
+from .sessions import load_sessions, require_utc
 
 __all__ = [
     "Effect",
@@ -232,20 +232,24 @@ def _open(book: Book, strategy: str | None) -> Iterator[OrderIntent]:
 
 
 def _daily(snapshot: Snapshot, instrument: InstrumentId) -> tuple[Bar, ...]:
-    """The instrument's daily bars, none of them later than the decision's session.
+    """The instrument's daily bars, each ended and knowable by the decision.
 
-    `require_fresh` is the one test of a snapshot every module runs. A bar from
-    after the decision cannot have been known at it, so data never returns one,
-    and a book valued at one would hide a loss.
+    `require_fresh` is the one test of a snapshot every module runs. Data reads
+    no bar that ends or was knowable later than the decision, and a book valued
+    at one would hide a loss, so this refuses what data would never return.
     """
     snapshot.require_fresh({instrument: [DAILY]})
     bars = snapshot.bars[instrument][DAILY]
-    at = snapshot.decision_at
-    if at.utcoffset() != timedelta(0):
-        raise Halt(f"the snapshot's decision_at is {at!r}, not a UTC time")
+    at = require_utc("the snapshot's decision_at", snapshot.decision_at)
     for bar in bars:
         if type(bar.session) is not date:
             raise Halt(f"{instrument} has a bar for {bar.session!r}, not a date")
+        for what, when in (("ends", bar.end), ("was knowable", bar.knowable_at)):
+            if require_utc(f"when {instrument}'s bar {what}", when) > at:
+                raise Halt(
+                    f"{instrument}'s bar for {bar.session.isoformat()} {what} at "
+                    f"{when.isoformat()}, after the decision at {at.isoformat()}"
+                )
     table = load_sessions()
     today = table.opened_by(at).day
     newest = max(bar.session for bar in bars)

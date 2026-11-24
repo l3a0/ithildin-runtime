@@ -23,6 +23,7 @@ from ithildinruntime.core import (
     OrderType,
     StopState,
     TimeInForce,
+    Valuation,
     classify,
     exposure,
 )
@@ -78,6 +79,14 @@ def _net_limit(
         return Decimal(draw.randint(0, 80))
     orders = [*opens, intent] if draw.random() < 0.5 else opens
     return abs(_net(positions, orders, marks, draw.choice((-1, 1))))
+
+
+def _doubt(draw: random.Random, opens: list) -> tuple[InstrumentId, ...]:
+    """Some of the instruments with an open order, one in ten books."""
+    working = tuple(dict.fromkeys(o.instrument for o in opens))
+    if draw.random() > 0.15 or not working:
+        return ()
+    return working if draw.random() < 0.5 else (draw.choice(working),)
 
 
 def _world(seed: int) -> World:
@@ -137,7 +146,9 @@ def _world(seed: int) -> World:
             positions,
             opens,
             cash=_shares(draw, 100),
-            in_doubt=draw.choice(((),) * 27 + ((i,), instruments, (instruments[0],))),
+            in_doubt=_doubt(draw, opens),
+            # A book at V's own entry would hold V's positions, so this one is later.
+            replayed_through=8,
         ),
         snapshot=snapshot(marks),
         constraints=constraints(
@@ -155,7 +166,15 @@ def _world(seed: int) -> World:
     # V sits near the book's own value, so a loss stop can bind either way, and
     # the net cap is half of it.
     worth = made.losing(draw.randint(-30, 30)).inputs.valuation.value
-    return made.given(valuation=valuation(max(worth, Decimal(1))))
+    return made.given(valuation=_valued(draw, max(worth, Decimal(1)), instruments))
+
+
+def _valued(draw: random.Random, value: Decimal, instruments: tuple) -> Valuation:
+    """V at `value`, of holdings and cash of its own, since what was held then says nothing now."""
+    positions = {i: Decimal(draw.randint(-10, 10)) for i in instruments}
+    marks = {i: Decimal(draw.randint(1, 400)) / 10 for i in instruments}
+    held = sum((positions[i] * marks[i] for i in instruments), Decimal(0))
+    return valuation(value, cash=value - held, positions=positions, marks=marks)
 
 
 def _asked(world: World) -> Answer:

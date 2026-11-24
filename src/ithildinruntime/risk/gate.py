@@ -17,9 +17,6 @@ Two outcomes are kept apart.
 A figure is compared exactly and rounded only to be recorded. The worst loss
 rounds up, because a loss recorded smaller than it is would understate it, and
 every other figure rounds half to even.
-
-One check costs about as much as the instruments held times the open orders,
-0.7 ms at 2 instruments and 4 orders.
 """
 
 from __future__ import annotations
@@ -61,6 +58,7 @@ from ithildinruntime.core import (
     places,
     position,
     quotient,
+    require_utc,
     rounded,
     tighten,
     to_utc,
@@ -176,9 +174,9 @@ def _read(
     if not isinstance(inputs.stop, StopState):
         raise Halt(f"the loss stop's state is {inputs.stop!r}, which names none")
     table = load_sessions()
-    decision = _utc("the decision", snapshot.decision_at)
+    decision = require_utc("the decision", snapshot.decision_at)
     session = table.opened_by(decision)
-    if not decision <= _utc("now", now) <= session.close:
+    if not decision <= require_utc("now", now) <= session.close:
         raise Halt(
             f"now is {now.isoformat()}, not from the decision at {decision.isoformat()} to its "
             f"session's close at {session.close.isoformat()}"
@@ -217,12 +215,6 @@ def _read(
     )
 
 
-def _utc(what: str, at: object) -> datetime:
-    if not isinstance(at, datetime) or at.utcoffset() != timedelta(0):
-        raise Halt(f"{what} is {at!r}, not a UTC time")
-    return at
-
-
 def _names(value: object) -> bool:
     return isinstance(value, str) and value != ""
 
@@ -235,12 +227,13 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
     """
     finite("the book's cash", book.cash)
     corrected = book.corrected_through
-    for what, number in (
-        ("the valuation's replayed_through", valuation.replayed_through),
-        ("the book's replayed_through", book.replayed_through),
-        ("the book's corrected_through", 0 if corrected is None else corrected),
+    # A journal's first entry is number 1, and one with no entry is replayed through 0.
+    for what, number, least in (
+        ("the valuation's replayed_through", valuation.replayed_through, 0),
+        ("the book's replayed_through", book.replayed_through, 0),
+        ("the book's corrected_through", 1 if corrected is None else corrected, 1),
     ):
-        if type(number) is not int:
+        if type(number) is not int or number < least:
             raise Halt(f"{what} is {number!r}, not an entry's number")
     if not isinstance(book.in_doubt, tuple) or not all(_names(i) for i in book.in_doubt):
         raise Halt(f"the book's in_doubt is {book.in_doubt!r}, not a list of instruments")
@@ -248,14 +241,29 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
         if not isinstance(positions, Mapping):
             raise Halt(f"{name}'s positions are {positions!r}, not a mapping")
         for instrument, qty in positions.items():
+            if not _names(instrument):
+                raise Halt(f"{name} holds {instrument!r}, which names no instrument")
             finite(f"{name}'s position in {instrument}", qty)
+    seen: set[str] = set()
+    working: set[str] = set()
     for name, orders in book.open_orders_by_strategy.items():
         if not isinstance(orders, tuple) or not all(isinstance(o, OrderIntent) for o in orders):
             raise Halt(f"{name}'s open orders are {orders!r}, not a list of orders")
         for order in orders:
-            if not _names(order.client_order_id):
-                raise Halt(f"{name} has an open order whose id is {order.client_order_id!r}")
-            finite(f"{name}'s open order {order.client_order_id}", order.qty)
+            if not _names(order.client_order_id) or order.client_order_id in seen:
+                raise Halt(
+                    f"{name} has an open order whose id is {order.client_order_id!r}, which names "
+                    "none or another"
+                )
+            if not _names(order.instrument):
+                raise Halt(f"{name} has an open order in {order.instrument!r}, no instrument")
+            if finite(f"{name}'s open order {order.client_order_id}", order.qty) == 0:
+                raise Halt(f"{name}'s open order {order.client_order_id} has nothing left")
+            seen.add(order.client_order_id)
+            working.add(order.instrument)
+    # Every figure counts an order in doubt through the open order it is.
+    if uncounted := sorted(set(book.in_doubt) - working):
+        raise Halt(f"{uncounted[0]} is in doubt and the book holds no open order in it")
     if valuation.replayed_through > book.replayed_through:
         raise Halt(
             f"the valuation was replayed through entry {valuation.replayed_through}, past the "
@@ -267,7 +275,9 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
             f"through entry {valuation.replayed_through}"
         )
     if book.repositioned_at is not None:
-        at = _utc("the book's repositioned_at", book.repositioned_at)
+        if corrected is None:
+            raise Halt("the book's repositioned_at is set with no correction behind it")
+        at = require_utc("the book's repositioned_at", book.repositioned_at)
         if at > prior.close:
             raise Halt(
                 f"a position was corrected at {at.isoformat()}, after the valuation's session "

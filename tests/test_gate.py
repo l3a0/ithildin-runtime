@@ -1,8 +1,8 @@
 """The risk gate: each limit at its boundary, every halt, and orders that only reduce.
 
 docs/architecture/05-building-blocks.md's `#### The risk gate holds no state of
-its own` says what the gate reads, and `##### How the gate values the book` how
-each limit counts. Figures here are made up and small enough to check by hand.
+its own` says what the gate reads, and `##### What each limit compares` how each
+limit counts. Figures here are made up and small enough to check by hand.
 """
 
 from __future__ import annotations
@@ -180,7 +180,7 @@ def test_1_an_order_beside_one_in_doubt_is_refused_whichever_strategy_sent_it() 
     assert world.at(intent=order(1, USO)).check().approved
     assert world.at(book=book(opens=[doubtful])).check().approved
     # A pair whose two sends both got no answer leaves both legs in doubt.
-    both = book(opens=[doubtful, order(-1, USO, name="old-2")], in_doubt=(GLD, USO))
+    both = book(opens=[doubtful, order(-1, USO, name="old-2")], in_doubt=(USO, GLD))
     for leg in (GLD, USO):
         assert world.at(book=both, intent=order(1, leg)).check().limit is Limit.IN_DOUBT
 
@@ -564,7 +564,7 @@ def test_3_a_lower_stress_move_raises_the_net_cap() -> None:
 
 
 # 5. Every halt of the gate's own inputs. The caps', the limits' and the mark's are in
-# tests/test_limits.py and tests/test_exposure.py.
+# tests/test_limits.py and tests/test_valuing.py.
 
 
 def _dated(**changes: object) -> Callable[[World], World]:
@@ -636,7 +636,7 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(intent=replace(moc(1), type="market_on_cloze")),
         "a 'market_on_cloze' order for",
     ),
-    "an-instrument-neither-source-limits": (
+    "an-instrument-the-two-do-not-both-limit": (
         lambda w: w.at(intent=order(1, SPY), snapshot=snapshot({GLD: 1, USO: 1, SPY: 1})),
         "the constraints and the hard caps do not both limit SPY",
     ),
@@ -716,8 +716,14 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(book=book(corrected_through=8, replayed_through=9)),
         "entry 8 corrected the book after the valuation",
     ),
+    "a-reposition-with-no-correction": (
+        lambda w: w.at(book=book(repositioned_at=TABLE.session(PRIOR).close)),
+        "the book's repositioned_at is set with no correction behind it",
+    ),
     "a-reposition-after-vs-session": (
-        lambda w: w.at(book=book(repositioned_at=TABLE.session(PRIOR).close + TICK)),
+        lambda w: w.at(
+            book=book(corrected_through=7, repositioned_at=TABLE.session(PRIOR).close + TICK)
+        ),
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     # A split's restatement, or a broker's trade, journaled before V was built.
@@ -728,7 +734,7 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     "a-reposition-with-no-zone": (
-        lambda w: w.at(book=book(repositioned_at=datetime(2026, 1, 1))),
+        lambda w: w.at(book=book(corrected_through=1, repositioned_at=datetime(2026, 1, 1))),
         "the book's repositioned_at is .*, not a UTC time",
     ),
     "cash-not-finite": (lambda w: w.at(book=book(cash="NaN")), "the book's cash is"),
@@ -746,7 +752,7 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     ),
     **{
         f"{name}-of-{number!r}": (change, f"{shown} is .*, not an entry's number")
-        for number in (d("NaN"), True, "7", 7.0)
+        for number in (d("NaN"), True, False, "", "7", 7.0, -1)
         for name, shown, change in (
             (
                 "corrected-through",
@@ -765,6 +771,10 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
             ),
         )
     },
+    "corrected-through-no-entry": (
+        lambda w: w.at(book=book(corrected_through=0)),
+        "the book's corrected_through is 0, not an entry's number",
+    ),
     "a-book-replayed-through-nothing": (
         lambda w: w.at(book=book(replayed_through=None)),
         "the book's replayed_through is None, not an entry's number",
@@ -774,7 +784,7 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
             lambda w, n=doubt: w.at(book=replace(book(), in_doubt=n)),
             "the book's in_doubt is .*, not a list of instruments",
         )
-        for doubt in ("GLDM", None, (None,), ("",), (1,))
+        for doubt in ("GLDM", None, (None,), ("",), (1,), frozenset({GLD}))
     },
     "no-positions": (
         lambda w: w.at(book=replace(book(), positions_by_strategy=None)),
@@ -802,6 +812,34 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         )
         for name in ("", None, 5)
     },
+    "two-open-orders-of-one-id": (
+        lambda w: w.at(book=book(opens=[order(1, USO, name="a"), order(1, USO, OTHER, name="a")])),
+        "other has an open order whose id is 'a', which names none or another",
+    ),
+    "an-open-order-of-another-strategy-with-no-id": (
+        lambda w: w.at(book=book(opens=[order(1, USO, name="a"), order(1, USO, OTHER, name="")])),
+        "other has an open order whose id is ''",
+    ),
+    "another-strategys-orders-that-are-no-list": (
+        lambda w: w.at(book=replace(book(), open_orders_by_strategy={CHAN: (), OTHER: None})),
+        "other's open orders are None, not a list of orders",
+    ),
+    "an-open-order-with-nothing-left": (
+        lambda w: w.at(book=book(opens=[order(0, USO, OTHER, name="old-1")])),
+        "other's open order old-1 has nothing left",
+    ),
+    "an-open-order-in-no-instrument": (
+        lambda w: w.at(book=book(opens=[order(1, None, OTHER, name="old-1")])),
+        "other has an open order in None, no instrument",
+    ),
+    "a-position-in-no-instrument": (
+        lambda w: w.at(book=book({OTHER: {None: 1, GLD: 1}})),
+        "other holds None, which names no instrument",
+    ),
+    "in-doubt-with-no-open-order": (
+        lambda w: w.at(book=book(opens=[order(1, USO, name="old-1")], in_doubt=(USO, GLD))),
+        "GLD is in doubt and the book holds no open order in it",
+    ),
     "no-status": (
         lambda w: w.at(snapshot=replace(w.snapshot, status=None)),
         "the snapshot's status are None, not a mapping",
@@ -848,7 +886,7 @@ ORDERS_ALONE = {
     "a-market-order-at-the-close",
     "a-market-on-close-order-for-the-day",
     "a-misspelled-type",
-    "an-instrument-neither-source-limits",
+    "an-instrument-the-two-do-not-both-limit",
     "an-instrument-the-snapshot-lacks",
     "another-strategy",
     "an-id-already-open",
@@ -869,6 +907,14 @@ def test_5_the_loss_reading_halts_on_the_same_inputs(name: str) -> None:
 LEG_HALTS: dict[str, tuple[Callable[[Snapshot], Snapshot], str]] = {
     "older": (lambda s: _late_leg(s), "USO has no mark"),
     "later": (lambda s: _early_leg(s), "USO has a bar for 2026-11-04"),
+    "unended": (
+        lambda s: _newest(s, end=DECISION + TICK),
+        "USO's bar for 2026-11-03 ends at 2026-11-03T20:40:00.000001",
+    ),
+    "unknown": (
+        lambda s: _newest(s, knowable_at=DECISION + TICK),
+        "USO's bar for 2026-11-03 was knowable at 2026-11-03T20:40:00.000001",
+    ),
     "quoted": (lambda s: _quoted(s), "USO has a quote"),
     "stale": (
         lambda s: replace(s, status={**s.status, USO: BarStatus.STALE}),
@@ -915,10 +961,16 @@ def test_5_a_halt_comes_before_a_refusal_it_collides_with() -> None:
         large.at(book=book(corrected_through=8, replayed_through=9)).check()
 
 
+def test_5_a_journal_with_no_entry_is_replayed_through_0() -> None:
+    world = World(book=book(replayed_through=0))
+    assert world.given(valuation=valuation(replayed_through=0)).check().approved
+
+
 def test_5_a_correction_at_vs_own_entry_and_a_reposition_at_its_close_pass() -> None:
     world = World(book=book(corrected_through=7, repositioned_at=TABLE.session(PRIOR).close))
     assert world.check().approved
-    assert world.at(book=book(repositioned_at=utc(2026, 10, 1, 12))).check().approved
+    earlier = book(corrected_through=1, repositioned_at=utc(2026, 10, 1, 12))
+    assert world.at(book=earlier).check().approved
 
 
 def test_5_the_stress_moves_age_inside_at_and_past_its_bound() -> None:
@@ -960,6 +1012,38 @@ def test_6_a_fill_between_two_checks_moves_the_loss_by_its_price() -> None:
     after = before.at(book=bought)
     assert after.loss().loss == d("20.5")
     assert after.at(intent=order(1, name="new-2")).check().loss.loss == d("20.5")
+
+
+SOLD = {
+    # What V held of GLD at 10, what is left, and the price now. The loss is hand made.
+    "part-of-a-long-leg": (100, 40, 5, 500),
+    "all-of-a-long-leg": (100, 0, 5, 500),
+    "part-of-a-short-leg": (-100, -40, 15, 500),
+    "all-of-a-short-leg": (-100, 0, 15, 500),
+    "more-of-a-long-leg": (40, 100, 5, 500),
+}
+
+
+@pytest.mark.parametrize("name", SOLD)
+def test_6_the_loss_counts_what_is_held_now_and_what_a_trade_left(name: str) -> None:
+    """V held the leg at 10. What was traded went at the price now, so it lost as much as the rest.
+
+    The one that bought 60 more at 10 lost on all 100.
+    """
+    held, left, price, lost = SOLD[name]
+    marks = snapshot({GLD: price, USO: 1}, prior={GLD: 10, USO: 1})
+    v = value_book(book({CHAN: {GLD: held}}, cash=5000), marks, PRIOR)
+    assert v.positions == {GLD: held}
+    traded = held - left
+    cash = 5000 + traded * (10 if traded < 0 < held else price)
+    world = World(
+        book=book({CHAN: {GLD: left, USO: 3}}, cash=cash - 3), snapshot=marks, intent=order(1, USO)
+    ).given(valuation=v)
+    assert world.loss().loss == lost
+    assert world.held_to(loss_stop=d(lost)).check().approved
+    tight = world.held_to(loss_stop=lost - CENT)
+    assert tight.loss().past
+    assert refusal(tight) == (Limit.LOSS_STOP, lost, lost - CENT)
 
 
 def test_6_a_decision_at_the_close_reads_todays_bar_and_never_the_priors() -> None:

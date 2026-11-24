@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from datetime import date
 from decimal import ROUND_DOWN, Decimal
 
-from .codec import CodecError, from_received
+from .codec import INT_LIMIT, CodecError, from_received
 from .exact import exact_product, finite, quotient
 from .halt import Halt
 from .names import is_name, is_sha256
@@ -32,8 +32,6 @@ _FORMAT = 1
 _MAX_BYTES = 65_536
 # How much of a refused value a halt shows, since its reason is stored and sent.
 _SHOWN = 80
-# An integer the codec could not store.
-_INT_LIMIT = 2**53
 _NET_CAP_PLACES = 4
 _PLAIN = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -73,6 +71,8 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     if unknown := sorted(set(limits) - _FIELDS):
         raise Halt(f"the caps blob holds {_shown(unknown[0])}, which this release does not read")
     vintage = limits["stress_vintage"]
+    if not is_sha256(vintage):
+        raise Halt(f"the caps blob's stress_vintage is {_shown(vintage)}, not a SHA-256")
     caps = HardCaps(
         max_order_qty=_shares("max_order_qty", limits),
         max_position=_shares("max_position", limits),
@@ -232,7 +232,9 @@ def _once(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _shown(value: object) -> str:
-    text = repr(value) if not isinstance(value, int) or abs(value) < _INT_LIMIT else "a huge int"
+    if isinstance(value, int) and abs(value) >= INT_LIMIT:
+        return "a huge int"
+    text = repr(value)
     return text if len(text) <= _SHOWN else f"{text[:_SHOWN]}…"
 
 
@@ -254,7 +256,11 @@ def _shares(name: str, limits: Mapping[str, object]) -> dict[InstrumentId, Decim
     if not isinstance(value, dict):
         raise Halt(f"the caps blob's {name} is no JSON object of instruments")
     for instrument in value:
-        if not is_name(instrument) or len(instrument) > _SHOWN:
+        # A halt names the instrument, so it has to be one a record can hold.
+        if (
+            not instrument.isprintable()
+            or not 0 < len(instrument.strip()) == len(instrument) <= _SHOWN
+        ):
             raise Halt(f"the caps blob's {name} names {_shown(instrument)}, no instrument")
     return {InstrumentId(i): _decimal(f"{name} of {i}", v) for i, v in value.items()}
 
@@ -263,7 +269,7 @@ def _whole(name: str, limits: Mapping[str, object]) -> int:
     value = limits[name]
     if type(value) is not int:
         raise Halt(f"the caps blob's {name} is {_shown(value)}, not a JSON integer")
-    if abs(value) >= _INT_LIMIT:
+    if abs(value) >= INT_LIMIT:
         raise Halt(f"the caps blob's {name} is {_shown(value)}, past what a record can hold")
     return value
 

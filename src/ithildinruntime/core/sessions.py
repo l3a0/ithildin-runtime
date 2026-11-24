@@ -45,6 +45,7 @@ __all__ = [
     "SessionTable",
     "load_sessions",
     "parse_sessions",
+    "require_utc",
     "to_utc",
 ]
 
@@ -186,6 +187,13 @@ def parse_sessions(data: bytes, sha256: str) -> SessionTable:
 def load_sessions() -> SessionTable:
     """The committed session table, checked by its SHA-256."""
     return parse_sessions(TABLE.read_bytes(), TABLE_SHA256)
+
+
+def require_utc(what: str, at: object) -> datetime:
+    """`at`, which halts naming `what` unless it is a UTC time."""
+    if not isinstance(at, datetime) or at.utcoffset() != timedelta(0):
+        raise Halt(f"{what} is {at!r}, not a UTC time")
+    return at
 
 
 def to_utc(day: date, when: ScheduleTime, table: SessionTable | None = None) -> datetime:

@@ -440,8 +440,8 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 
 ```json
 {"format": 1, "account": "paper", "limits": {"max_order_qty": {"GLD": "10"}, "max_position": {"GLD": "5"},
-  "max_gross": "1000", "max_open_orders": 4, "loss_stop": "50", "moc_cutoff": 12,
-  "share": "0.01", "stress_move": "0.2", "stress_low": "0.1", "stress_high": "0.6",
+  "max_gross": "1000", "max_open_orders": 4, "loss_stop": "50", "moc_cutoff": 15,
+  "share": "0.02", "stress_move": "0.2", "stress_low": "0.1", "stress_high": "0.6",
   "stress_vintage": "<64 hex digits>", "stress_through": "2026-11-20", "stress_max_age_days": 365}}
 ```
 
@@ -449,20 +449,20 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 
 | Field | Form | Holds |
 | --- | --- | --- |
-| `max_order_qty`, `max_position` | An object of one decimal string per instrument, the same instruments in both | Shares, the first at or above the second |
+| `max_order_qty`, `max_position` | An object of one decimal string per instrument, the same instruments in both, each named in at most 80 printable characters | Shares, the first at or above the second |
 | `max_gross`, `loss_stop` | A decimal string | Dollars |
 | `max_open_orders` | A JSON integer | Orders |
 | `moc_cutoff` | A JSON integer | Minutes before the close |
 | `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
 | `stress_move` | A decimal string | The stress move, as a fraction |
 | `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
-| `stress_vintage` | 64 hex digits | The SHA-256 of the vintage the stress move was measured over |
+| `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over |
 | `stress_through` | `YYYY-MM-DD` | That vintage's last session |
 | `stress_max_age_days` | A JSON integer above zero | How many days past that session a decision may still use it |
 
-A decimal string is plain digits with an optional minus and fraction, with no exponent. The blob is at most 65,536 bytes. Two other sections may sit beside `limits`. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
+A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
 
-A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field, or a value out of its range. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
+A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field of `limits`, or a value out of its range. It shows little of a long value, and nothing of the account it found. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
 
 #### How a journal entry is hashed and checked
 

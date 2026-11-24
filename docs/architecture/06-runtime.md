@@ -392,7 +392,9 @@ sequenceDiagram
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>X: runs the daily loss stop's test,<br/>with no order needed
-    X->>F: creates stop.json from the stop test's result
+    opt the day's loss is past the stop
+        Note over X,J: execution records the firing<br/>and halts the decision
+    end
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
     X->>B: asks the broker for its clock
@@ -821,7 +823,7 @@ sequenceDiagram
 
 The gate has a second way to stop an order. An input that is absent, stale or
 invalid raises a halt rather than a refusal, and every halt comes before every
-refusal. So a refusal never hides such an input, apart from a stop blob that
+refusal. So a refusal never hides such an input, apart from a stop whose state
 could not be read, as
 [What halts and what refuses](05-building-blocks.md#what-halts-and-what-refuses)
 says. Execution then journals the
@@ -842,14 +844,14 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 #### How the day's loss is measured
 
-The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
+The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, at its `/stocks/v1/dividends` endpoint, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
 The mark is the newest daily bar's close, through `core.mark`, which portfolio construction sizes with too. Six gaps halt rather than read as no loss.
 
-1. The valuation, which this doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that recover lists, is missing, or is of any session but the one before the decision's. A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
+1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.
-3. A held instrument, or one with an open order, has no bar later than V's session, or has one later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
-4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Any other instrument of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
+3. A held instrument, or one with an open order, has no bar later than V's session, or has one of a session later than the decision's or one that ends or was knowable after the decision. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
+4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
 5. Something other than the platform's own fills or a broker record [on the closed list](../design.md#strategies-schedules-and-decisions) moved the book's cash or a position after the valuation, such as a deposit or a person's override.
 6. A position was corrected after V's session closed, whether or not V was built since, such as by a split's restatement. Marked at that session's close, the restated position would hide a loss.
 
@@ -865,22 +867,22 @@ The stop has a stated limit: no decision tests the price move from close−20 to
 
 A fired stop latches, which means it stays fired whatever the price does next. It takes four steps, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
 
-1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing, as a blob at `accounts/<account>/stop.json` created with a create-only write as the kill switch is, and as a journal entry, and halts the decision. A firing that reached either one reads as fired, and no order follows it until a person clears it, across a failed write and a restart. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds which of the two is written first.
-2. `OrderPath` reads that blob before every new order, as it reads the switch, and hands its state to the gate.
-3. The gate refuses every new order while the blob exists, across sessions, so a price that recovers never resumes trading on its own.
+1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. The record is a journal entry and a blob at `accounts/<account>/stop.json`, created with a create-only write as the kill switch is, and a firing that reached either one stands. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
+2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate.
+3. The gate refuses every new order while a firing stands, across sessions and apart from that exception, so a price that recovers never resumes trading on its own.
 4. `ithildin stop clear --account <a>` deletes the blob and journals the clear. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TD
-    fire["Step 1: execution finds the day's loss past the stop,<br/>records it in stop.json and in the journal,<br/>and halts the decision"]
-    read["Step 2: OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
+    fire["Step 1: execution finds the day's loss past the stop,<br/>records the firing and halts the decision"]
+    read["Step 2: OrderPath reads the stop's state before every<br/>new order and hands it to the gate"]
     refuse["Step 3: the gate refuses every new order"]
     clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
     fire --> read
     read --> refuse
-    refuse -->|"the price recovers, or a new session opens:<br/>the blob stays, so the gate keeps refusing"| read
+    refuse -->|"the price recovers, or a new session opens:<br/>the firing stands, so the gate keeps refusing"| read
     refuse -->|"only a person ends it"| clear
 ```
 
@@ -890,13 +892,13 @@ A fired stop has one exception. The close after a broker's trade closes a whole 
 
 A failed read must not open that exception, so an unreadable stop holds the close too. Any answer other than "no such blob" reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart.
 
-**Table:** What the gate does with each answer from reading `stop.json`
+**Table:** What the gate does with each state of the stop
 
-| Answer from the read | The stop's state | A decision's new order | An order under a valid close entry |
+| What `OrderPath` found | The stop's state | A decision's new order | An order under a valid close entry |
 | --- | --- | --- | --- |
-| "No such blob" | Not fired | Passes this check | Passes this check |
-| The blob | Fired | Refused | Passes this check |
-| Any other answer | Unreadable | Refused | Not sent |
+| No firing stands | `ABSENT` | Passes this check | Passes this check |
+| A firing stands | `FIRED` | Refused | Passes this check |
+| Whether one stands could not be read | `UNREADABLE` | Refused | Not sent |
 
 #### Why slice 1 only stops
 

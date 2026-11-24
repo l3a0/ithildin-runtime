@@ -904,7 +904,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
+A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated`, as a field that holds no word also reads, unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -1038,8 +1038,8 @@ flowchart LR
     book["The book"]
     inputs["GateInputs"]
     caps["The hard caps blob,<br/>which only the owner can write"]
-    v["Recover's valuation file"]
-    stop["The stop blob"]
+    v["The session's valuation file"]
+    stop["The loss stop's records"]
     gate["The risk gate's check"]
     verdict["A Verdict"]
     halt["A halt naming the input"]
@@ -1052,8 +1052,8 @@ flowchart LR
     journal -->|"OrderPath replays it<br/>just before each check"| book
     journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
     caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
-    v -->|"OrderPath reads the session's Valuation"| inputs
-    stop -->|"OrderPath reads its state before each check"| inputs
+    v -->|"OrderPath reads the Valuation it holds"| inputs
+    stop -->|"OrderPath reads the stop's state before each check"| inputs
     gate -->|"an input is absent, stale or invalid"| halt
     gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
 ```
@@ -1067,15 +1067,15 @@ flowchart LR
 3. The strategy's `Constraints`.
 4. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
 5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
-6. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the stop blob's state and, for a close, its close entry.
+6. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the loss stop's state and, for a close, its close entry.
 
-`OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
+`OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value or by hash, so that the verdict can be computed again. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds that.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds that.
 
 ##### What halts and what refuses
 
-A halt says an input is absent, stale or invalid, so nothing can be concluded. A refusal says a limit worked. The gate raises every halt before it answers, so a refusal never hides one. The one state read as a refusal is a stop blob that could not be read, as [Which orders a stop refuses](06-runtime.md#which-orders-a-stop-refuses) says.
+A halt says an input is absent, stale or invalid, so nothing can be concluded. A refusal says a limit worked. The gate raises every halt before it answers, so a refusal never hides one. The one state read as a refusal is a stop whose state could not be read, as [Which orders a stop refuses](06-runtime.md#which-orders-a-stop-refuses) says.
 
 A refusal names the first of these that applies, so the same order always names the same limit.
 
@@ -1091,7 +1091,7 @@ A refusal names the first of these that applies, so the same order always names 
 
 `OrderPath` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit. The order being checked is not yet in that book, and one whose id already is halts, because checking it would resend it.
 
-Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. A snapshot is also held to `Snapshot.require_fresh()`, so any instrument in it that is not fresh halts.
+Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. It reads no bar that ends or was knowable after the decision. It also holds the snapshot to `Snapshot.require_fresh()`, so once any instrument is priced, one that is not fresh halts.
 
 ##### What each limit compares
 
@@ -1107,7 +1107,7 @@ Each instrument has a range: what the account would hold if only its open sales 
 | `max_open_orders` | Orders whose outcome is unknown | Every open order, and the one being checked | No |
 | `max_net` | A leg left alone under the stress move | Every low end summed at its mark, and every high end, signed across instruments, whichever sum is further from zero | Yes |
 | `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
-| `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The time left to the close | No |
+| `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The instant that many minutes before the close, against `now` | No |
 
 `max_net` and the worst loss assume the stress move. `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
 
@@ -1320,10 +1320,10 @@ An arrow means "may import". The diagram draws four rules.
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
-   - the names of data's stage, of its snapshot and of alpha's two output files, so a stage that reads them imports no `data` and no `alpha`;
+   - the names of data's stage, of its snapshot, of alpha's two output files, of the daily interval and of a price kind no source states, so a stage that reads them imports no `data` and no `alpha`;
    - `read_snapshot`, the steps a model's stage takes to read data's result, pass on its halt and read the one snapshot it lists;
    - `parse_caps` and `tighten`, which read the hard caps blob and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
-   - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, because no worker may import another;
+   - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
