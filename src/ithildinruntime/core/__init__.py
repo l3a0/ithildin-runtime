@@ -16,7 +16,7 @@ from .codec import (
     places,
     to_decimal,
 )
-from .halt import Halt
+from .halt import Halt, Stopped
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
 from .names import DATA_STAGE, SNAPSHOT_OUTPUT
@@ -55,6 +55,7 @@ __all__ = [
     "Session",
     "STRATEGIES",
     "SessionTable",
+    "Stopped",
     "StrategyConfig",
     "build_plan",
     "decode",
