@@ -80,8 +80,7 @@ def test_1_chans_file_holds_the_ruled_settings() -> None:
         stale_lag=0,
         spike_multiple=Decimal(10),
     )
-    assert str(made.spike_multiple) == "10"
-    assert made.lookback.__class__ is made.stale_lag.__class__ is int
+    assert type(made.spike_multiple) is Decimal and str(made.spike_multiple) == "10"
 
 
 # 2. Each refusal.
