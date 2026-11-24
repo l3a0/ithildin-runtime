@@ -18,7 +18,7 @@ import pytest
 
 from ithildinruntime.core import Bar, InstrumentId
 from ithildinruntime.data import largest_multiple, spike_flags
-from ithildinruntime.data.spikes import CONTRADICT, MOVE
+from ithildinruntime.data.spikes import CONTRADICT, MOVE, contradictions
 from tests.core_samples import sample
 
 START = date(2012, 1, 3)
@@ -105,11 +105,17 @@ def test_a_bar_whose_prices_agree_is_not_flagged() -> None:
     assert spike_flags([fine], Decimal(100)) == ()
 
 
-@pytest.mark.parametrize(("low", "flagged"), [("-0.0001", True), ("0", True), ("0.0001", False)])
-def test_a_price_at_or_below_zero_is_flagged(low: str, flagged: bool) -> None:
-    odd = bar(0, "1.0000", high="1.0000", low=low, open="1.0000")
+@pytest.mark.parametrize("field", ["open", "high", "low", "close"])
+@pytest.mark.parametrize(("price", "flagged"), [("-0.0001", True), ("0", True), ("0.0001", False)])
+def test_a_price_at_or_below_zero_is_flagged(field: str, price: str, flagged: bool) -> None:
+    """Each field has its own zero check, since no other rule flags a zero close."""
+    prices = {"open": "1.0000", "high": "1.0000", "low": "0.0001", "close": "1.0000"} | {
+        field: price
+    }
+    close = prices.pop("close")
+    odd = bar(0, close, **prices)
     flags = spike_flags([odd], Decimal(100))
-    assert any(f.field == "low" and f.against == 0 for f in flags) is flagged
+    assert any(f.field == field and f.against == 0 for f in flags) is flagged
 
 
 # Rule 2: a close-to-close move past the written multiple.
@@ -168,7 +174,9 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
 ) -> None:
     """Exploratory, first pinned at ed9d1f7. GLD reaches 6.59 and USO 5.72.
 
-    So a multiple at or below 6.59 flags a GLD bar in test 1.
+    So a multiple at or below 6.59 flags a GLD bar in test 1. No bar of either
+    has a low above its open or close, which design.md's 2026-11-24 entry
+    quotes, and none contradicts itself.
     """
     from tests.support import lake as lakes
     from tests.test_data_source import FIRST, LAST, close, make
@@ -180,5 +188,7 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
     for instrument in (InstrumentId("GLD"), InstrumentId("USO")):
         bars = snap.bars[instrument]["1d"]
         assert len(bars) == 1500
+        assert [b for b in bars if b.low > min(b.open, b.close)] == []
+        assert [b for b in bars if contradictions(b)] == []
         found[instrument] = round(largest_multiple(bars, 40), 6)
     assert found == {"GLD": Decimal("6.592043"), "USO": Decimal("5.716228")}

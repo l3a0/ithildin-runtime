@@ -246,7 +246,18 @@ def test_1_a_lone_wrong_close_below_its_low_trips_the_move_rule_alone(
     # 158.91 is GLD's low on 2012-04-09 in Chan's vintage, and 15.937 the close written here.
     (flag,) = reading.snapshot.flags[GLD]
     assert (flag.rule, flag.field, flag.price) == (spikes.MOVE, "close", Decimal("15.937"))
+    bar = reading.snapshot.bars[GLD]["1d"][-1]
+    assert bar.close < bar.low == Decimal("158.91")
     assert reading.halts == ()
+
+
+def test_1_a_zero_close_halts_as_a_zero_price_alone(lake: Path, tmp_path: Path) -> None:
+    """No other rule flags it: the move rule judges no return on a close that is not positive."""
+    lakes.with_row(lake, "GLD", LAST, close=0.0)
+    reading = make(lake, tmp_path).read(close(LAST))
+    contradicting = [r for r in reading.halts if "contradict each other" in r]
+    assert len(contradicting) == 1
+    assert "its close of 0.0 is at or below zero" in contradicting[0]
 
 
 def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Path) -> None:
