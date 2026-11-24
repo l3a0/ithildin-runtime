@@ -218,6 +218,62 @@ def test_a_later_capture_that_differs_is_stored_at_its_attempt_key(spec: StoreSp
     assert spec.open().get(key) == b"read one"
 
 
+def test_explain_is_refused_on_a_deterministic_output(spec) -> None:
+    storage, _, _ = _storage(spec.open())
+    with pytest.raises(ValueError):
+        storage.put(StageKind.DETERMINISTIC, _snapshot_key(), b"one", explain=lambda first: "x")
+
+
+def test_an_explain_that_raises_leaves_the_alarm_saying_so(spec) -> None:
+    storage, _, alarms = _storage(spec.open())
+    key = _snapshot_key()
+    storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
+
+    def explain(first: bytes) -> str:
+        raise RuntimeError("the codec refused it")
+
+    storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt(), explain=explain)
+    (reason,) = alarms.reasons
+    assert reason.endswith(
+        "The difference could not be described: RuntimeError: the codec refused it"
+    )
+
+
+def test_an_attempts_alarm_says_when_the_first_capture_reads_as_missing(spec) -> None:
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    key = _snapshot_key()
+    storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
+    real = flaky.get
+    flaky.get = lambda read: None if read == key else real(read)
+    storage.put(StageKind.CAPTURING, key, b"read two", attempt=_attempt(), explain=lambda f: "x")
+    (reason,) = alarms.reasons
+    assert reason.endswith(f"{key} read as missing, so the difference is not known")
+
+
+def test_an_attempts_alarm_says_when_the_first_capture_cannot_be_read(spec) -> None:
+    """The description reads once, so it sends no outage alarm and waits out no deadline."""
+    flaky = Flaky(spec.open())
+    storage, timer, alarms = _storage(flaky)
+    key = _snapshot_key()
+    storage.put(StageKind.CAPTURING, key, b"read one", attempt=_attempt())
+    real = flaky.get
+
+    def get(read):
+        if read == key:
+            raise StoreUnavailable(read, "503 SlowDown: the endpoint is blocked")
+        return real(read)
+
+    flaky.get = get
+    stored = storage.put(
+        StageKind.CAPTURING, key, b"read two", attempt=_attempt(), explain=lambda first: "x"
+    )
+    assert stored.ref.key == _attempt()(2)
+    assert timer.elapsed == 0
+    (reason,) = alarms.reasons
+    assert "The difference could not be described: StoreUnavailable" in reason
+
+
 def test_a_capture_at_a_key_of_its_own_that_differs_halts_and_stays_held(spec: StoreSpec) -> None:
     storage, _, _ = _storage(spec.open())
     key = core.broker_read_key("ci", RUN, AT, 1)

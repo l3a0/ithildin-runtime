@@ -176,7 +176,7 @@ sets decides at the same minute.
 
 The data worker reads an unsealed day through the one reader marketlake
 publishes, [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004),
-which [#5](https://github.com/l3a0/ithildin-runtime/issues/5) waits on. The
+which [#100](https://github.com/l3a0/ithildin-runtime/issues/100), part B of [#5](https://github.com/l3a0/ithildin-runtime/issues/5), waits on. The
 reader comes from marketlake's package, a dependency at a pinned commit. The
 read takes three steps.
 
@@ -217,18 +217,17 @@ bucket, is a published input, and shadow measures the lag.
 | --- | --- |
 | A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
 | marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
-| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how the decision treats that quote |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) holds how the decision treats that quote |
 
 #### What is checked before deciding
 
-The data worker runs its own minimum checks before anything decides, and the send stage then tests the flags. Four checks halt or flag a decision.
+The data worker runs its own minimum checks before anything decides. Five checks halt or flag a decision.
 
 1. A missing or stale quote at the decision time halts the decision.
 2. A segment whose SHA-256 does not match its manifest entry halts it too.
-3. A price spike is flagged in the snapshot.
-4. The send stage's flag test halts the decision when the instrument is traded or held.
-
-This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the test runs with no order needed.
+3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
+4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
+5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
 
 #### Which read a decision uses
 
@@ -277,7 +276,7 @@ follow the seal.
 A missing result, or a sealed day that never arrives, pages and stops no
 decision.
 
-This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5),
+This doc proposes, for [#100](https://github.com/l3a0/ithildin-runtime/issues/100),
 that the comparison also takes the newest sealed row at or before the decision
 time, so a row whose segment landed after the decision shows as a difference.
 
@@ -305,7 +304,7 @@ does.
 #### What this rests on
 
 The provisional read is proposed for
-[#5](https://github.com/l3a0/ithildin-runtime/issues/5) and
+[#100](https://github.com/l3a0/ithildin-runtime/issues/100), part B of [#5](https://github.com/l3a0/ithildin-runtime/issues/5), and
 [#16](https://github.com/l3a0/ithildin-runtime/issues/16). It rests on five
 things about marketlake's segments.
 

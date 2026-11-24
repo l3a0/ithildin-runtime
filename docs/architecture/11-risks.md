@@ -13,6 +13,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [What the separate accounts cost](07-deployment.md#what-the-separate-accounts-cost)
 - [What the containers cost](07-deployment.md#what-the-containers-cost)
 - [What rolls back a VM image that fails after its refresh](07-deployment.md#what-rolls-back-a-vm-image-that-fails-after-its-refresh)
+- [Which other marketlake files the mirror holds](07-deployment.md#which-other-marketlake-files-the-mirror-holds)
 - [The price of four environments](07-deployment.md#the-price-of-four-environments)
 
 ## Prices in Crosscutting concepts
@@ -38,6 +39,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [Design for 10x, plan the rewrite before 100x, build at 1x](../design.md#design-for-10x-plan-the-rewrite-before-100x-build-at-1x)
 - [One runtime](../design.md#one-runtime)
+- [Rule 2: two kinds of stage, declared in one place](../design.md#rule-2-two-kinds-of-stage-declared-in-one-place)
 - [Rule 7: how a run stops](../design.md#rule-7-how-a-run-stops)
 - [Rule 9: what a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held)
 - [Rule 9: who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease)
@@ -69,4 +71,5 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [2026-11-11](../design.md#2026-11-11)
 - [2026-11-21](../design.md#2026-11-21)
 - [2026-11-22](../design.md#2026-11-22)
+- [2026-11-24](../design.md#2026-11-24)
 - [Considered and rejected](../design.md#considered-and-rejected)

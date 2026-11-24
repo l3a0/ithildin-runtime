@@ -13,7 +13,7 @@ build, and `Journal` lives in the `journal` package.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -22,6 +22,7 @@ from .records import (
     Ack,
     Book,
     BrokerRead,
+    BucketObject,
     Constraints,
     CostSchedule,
     Forecast,
@@ -38,6 +39,7 @@ __all__ = [
     "Alerts",
     "BlobStore",
     "Broker",
+    "Bucket",
     "Clock",
     "CostModel",
     "DataSource",
@@ -63,7 +65,14 @@ class Clock(Protocol):
 
     def sync_age(self) -> timedelta: ...
 
-    def wait_until(self, at: datetime) -> None: ...
+    def wait_until(self, at: datetime, report: Callable[[], None]) -> None:
+        """Return once the clock reads `at`, calling `report` while it waits.
+
+        A history clock returns at once. A wall clock waits, calling `report`
+        on its timer's interval, so the receive loop reads a handler that is
+        waiting for its decision time as one that is not hung.
+        """
+        ...
 
 
 class Timer(Protocol):
@@ -183,6 +192,20 @@ class BlobStore(Protocol):
         The folder delivers the event to each reader its routes name. S3 skips
         it, because S3 announced the blob when it stored it.
         """
+        ...
+
+
+class Bucket(Protocol):
+    """A bucket the platform may only read, such as marketlake's.
+
+    It holds no call that writes, because the data worker's grant on
+    marketlake's bucket allows none. A key that holds no object raises
+    `core.BlobMissing`, and any other refusal or no answer raises
+    `core.StoreUnavailable`, the same from every adapter.
+    """
+
+    def read(self, key: str) -> BucketObject:
+        """The object's bytes, with the bucket's version and stored SHA-256."""
         ...
 
 

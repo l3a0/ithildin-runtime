@@ -76,8 +76,8 @@ keeps the same way.
 
 From those three follows the architecture's one rule: **what is tested is what
 runs live.** Backtest, paper and live trading run the same modules through the
-same interfaces, and differ only in the adapter at each edge (data source,
-clock, broker). A backtester written separately from the live engine is a
+same interfaces, and differ only in the adapter at each edge (data source's
+bucket, clock, broker). A backtester written separately from the live engine is a
 second implementation of the strategy, and the two drift without either looking
 wrong. Narang names backtest software and feed handlers as places model risk
 lives (L4616).
@@ -317,9 +317,10 @@ time is the scarce resource, so work reaches the owner already reviewed.
   or the gate stopped from reading a price of unstated kind, and stores what a decision or the gate read or a halt refused, and each published text
   its opening names, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
-  Has a backtest halt on a price the live check flags as wrong, through the same modules as live, and a
-  backtest quoted as evidence count the sessions so halted and name each flagged price with any fill,
-  fitted value or mark of the account that read it, and keeps the flag as a record beside the price,
+  Has a backtest read a price the live check flags as wrong as a live decision does, through the same
+  modules as live, and a backtest quoted as evidence count the sessions a contradiction halted or that read a price the move rule or the below-the-low rule flagged, and
+  name each flagged price with any fill, fitted value or mark of the account that read it, and keeps the flag as a
+  record beside the price,
   which stays as it arrived, under rule 3 of the design doc's
   [A backtest uses nothing it could not have known](design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition).
   Checks that a backtest quoted as evidence of an order filled at the open or close names the kind of price

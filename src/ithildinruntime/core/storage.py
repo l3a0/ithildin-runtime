@@ -198,6 +198,7 @@ class _Held:
     sha256: str
     attempt: Callable[[int], str] | None
     trying: str
+    explain: Callable[[bytes], str] | None = None
 
 
 class _Deadline(Exception):
@@ -265,6 +266,7 @@ class Storage:
         data: bytes,
         *,
         attempt: Callable[[int], str] | None = None,
+        explain: Callable[[bytes], str] | None = None,
     ) -> Stored:
         """Create `key` holding `data`, under the rule for the stage's kind.
 
@@ -275,11 +277,16 @@ class Storage:
         at its key halts. A capture that is not stored, for any reason, is held
         and named by every later halt. A deterministic output is not held,
         since its stage can compute it again.
+
+        `explain` says how a later capture differs from the first. It is handed
+        the first capture's bytes, and what it returns ends the alarm that a
+        later capture is stored at its attempt key. An `explain` that raises
+        leaves the alarm saying so.
         """
         kind = StageKind(kind)
-        if kind is StageKind.DETERMINISTIC and attempt is not None:
+        if kind is StageKind.DETERMINISTIC and (attempt is not None or explain is not None):
             raise ValueError("a deterministic output has no attempt keys")
-        held = _Held(key, data, sha256_of(data), attempt, key)
+        held = _Held(key, data, sha256_of(data), attempt, key, explain)
         try:
             return self._place(kind, held)
         except _AlarmFailed as failed:
@@ -513,6 +520,7 @@ class Storage:
                     reason = (
                         f"{held.key} holds a capture with SHA-256 {counts.sha256}, and a "
                         f"later capture with SHA-256 {held.sha256} is stored at {key}"
+                        f"{self._explained(held)}"
                     )
                     done = Stored(BlobRef(key, held.sha256), counts)
                     try:
@@ -536,6 +544,20 @@ class Storage:
                     f"{held.sha256} has no other key to go to"
                 )
             n += 1
+
+    def _explained(self, held: _Held) -> str:
+        """What `held.explain` says of the difference, as the end of an alarm's reason."""
+        if held.explain is None:
+            return ""
+        try:
+            # One try with no retry, so a read that fails sends no outage alarm
+            # and does not hold back the alarm this reason belongs to.
+            first = self._read(held.key, True)
+            if first is None:
+                return f". {held.key} read as missing, so the difference is not known"
+            return f". {held.explain(first)}"
+        except Exception as error:
+            return f". The difference could not be described: {type(error).__name__}: {error}"
 
     def _create(self, key: str, data: bytes, sha: str, once: bool) -> str | None:
         """Create the key. `None` means stored, and a hash means the key holds that blob."""

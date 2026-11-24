@@ -246,7 +246,7 @@ The blobs also make a question such as "how did the backtest's z-score on a deci
 
 #### The security master
 
-The security master holds `INSTRUMENT`. It is a small committed file that changes only through a pull request. The file ships in the release image, so the digest records the mapping. This doc proposes, for [#5](https://github.com/l3a0/ithildin-runtime/issues/5), that rows only add, an id is never reused or removed, and a rename is a dated row, and [#5](https://github.com/l3a0/ithildin-runtime/issues/5) holds how. The price is that a renamed ticker needs a release.
+The security master holds `INSTRUMENT`. It is a small committed file, `src/ithildinruntime/data/security_master.csv`, that changes only through a pull request. The file ships in the release image, so the digest records the mapping. Each row holds the runtime's id, marketlake's ticker, and the first and last session the mapping holds. Rows only add, an id is never reused or removed, and a rename or a delisting is a new dated row, so a backtest's universe keeps the members that later failed. `tests/test_data_files.py` pins every row by hand, because CI's checkout holds no history to compare with. A decision that reads an instrument on a session no row covers halts. The price is that a renamed ticker needs a release.
 
 #### The journal
 
