@@ -592,7 +592,12 @@ classDiagram
         +monotonic() float
         +offset() timedelta
         +sync_age() timedelta
-        +wait_until(datetime, report)
+        +wait_until(datetime, Progress)
+    }
+    class Progress {
+        <<Protocol>>
+        +\_\_call\_\_()
+        +wait_for_stop(timeout) bool
     }
     class Bucket {
         <<Protocol>>
@@ -740,6 +745,7 @@ classDiagram
     OrderPath o-- RiskGate
     OrderPath o-- Broker
     DataSource ..> Snapshot
+    Clock ..> Progress
     Bucket ..> BucketObject
     AlphaModel ..> Forecast
     RiskModel ..> Constraints
@@ -1151,7 +1157,7 @@ An arrow means "may import". The diagram draws four rules.
    These live in `core`:
 
    - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
-   - the `Halt` exception;
+   - the `Halt` and `Stopped` exceptions;
    - every `Protocol`, including `RiskGate`;
    - the storage contract every worker uses:
      - the `BlobStore` port, writing a blob S3 refuses to replace, and the refusals every store gives;

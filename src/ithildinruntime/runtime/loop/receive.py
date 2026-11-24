@@ -61,8 +61,10 @@ How the loop runs, in order.
    heartbeat back.
 8. **Ending drains the pool.** However the loop ends, by `stop`, by a
    failure or by a bug, it stops receiving and gives each handler the stop
-   timeout to finish, beating by item 7's rule. A message whose handler did not finish goes back to
-   the queue, and so does one a receive answers after the loop stopped. A
+   timeout to finish, beating by item 7's rule. A handler that waits ends at
+   once, as item 11 says. A message whose handler did not finish, or ended on
+   the stop, goes back to the queue, and so does one a receive answers after
+   the loop stopped. A
    handler still working when the stop timeout passes ends with the
    process, as in a crash, and its decision is done again after the
    restart, unless item 9 keeps the process alive.
@@ -85,6 +87,17 @@ How the loop runs, in order.
     extra. A handler's result whose configuration hashes differ from the ones
     the table gives its stage is stored as a halt, with an alarm, as item 6
     says of any error a handler did not handle.
+11. **A stop reaches a handler that waits.** `stop` asks it, and so does the
+    loop's end on a failure or a bug. A handler waiting through
+    `Progress.wait_for_stop`, as `Clock.wait_until` does under the wall
+    clock, wakes at once and ends with `Stopped`. The loop stores nothing for
+    its decision and alarms nothing, because a stop is no fault in the
+    decision. It returns the handler's messages to the queue rather than
+    deleting them, and starts nothing once a stop is asked, so the decision
+    runs again after the restart. A handler that raises `Stopped` when no
+    stop was asked has a bug, so its decision halts and alarms as item 6 says
+    of any error a handler did not handle. Releasing it instead would start
+    the decision again at once, for ever, while the worker beat as healthy.
 
 Every limit is measured on the timer's monotonic reading.
 """
@@ -108,9 +121,11 @@ from ithildinruntime.core import (
     EventKind,
     Halt,
     Plan,
+    Progress,
     Queue,
     QueueUnavailable,
     Route,
+    Stopped,
     Storage,
     StoreUnavailable,
     Timer,
@@ -144,13 +159,18 @@ class Handler(Protocol):
     """A stage's work for one decision, returning the result the loop stores.
 
     `report` is called at every blob write, journal append and broker call
-    the handler finishes, so the loop knows it is not hung. A handler can run
+    the handler finishes, so the loop knows it is not hung. It never raises
+    for a stop, because a raise there could end a send stage between the
+    broker's answer and the journal entry that records it. A handler that
+    waits hands `report` on, such as to `Clock.wait_until`, and lets the
+    `Stopped` that raises on a stop through. It waits before it writes, since
+    a stopped item starts again from nothing. A handler can run
     more than once for one item, after a crash or on two instances at once, so
     a stage that writes outside rests on a create-only record of its own, such
     as the send stage's claim, and on #10's lease on the account.
     """
 
-    def __call__(self, item: Item, report: Callable[[], None]) -> DecisionResult: ...
+    def __call__(self, item: Item, report: Progress) -> DecisionResult: ...
 
 
 class LoopFailed(Exception):
@@ -167,7 +187,26 @@ class _Running:
     extended: float
     messages: list[Event] = field(default_factory=list)
     done: bool = False
+    # Whether the handler ended on a stop, with no result stored.
+    stopped: bool = False
     extending: bool = False
+
+
+class _Progress:
+    """The `report` one handler is handed, which reads the loop's stop and cannot ask it."""
+
+    __slots__ = ("_running", "_timer", "_wait")
+
+    def __init__(self, running: _Running, timer: Timer, wait: Callable[[float], bool]) -> None:
+        self._running = running
+        self._timer = timer
+        self._wait = wait
+
+    def __call__(self) -> None:
+        self._running.last_report = self._timer.monotonic()
+
+    def wait_for_stop(self, timeout: float) -> bool:
+        return self._wait(timeout)
 
 
 class _Fatal(Exception):
@@ -379,6 +418,9 @@ class ReceiveLoop:
                 self._failed_because = bug
             raise
         finally:
+            # However the loop ended, a handler that waits must not hold the
+            # process to the end of its wait.
+            self._stop_asked.set()
             ticker.cancel()
             if receiver is not None:
                 receiver.cancel()
@@ -559,6 +601,15 @@ class ReceiveLoop:
 
     # Receiving
 
+    def _ending(self) -> bool:
+        """Whether the loop is ending, so nothing starts.
+
+        `stop` sets `_stop_asked` at once and `_stopping` a moment later on the
+        event loop's thread. What happens between them counts too, such as a
+        handler that wakes on the stop and ends.
+        """
+        return self._stopping or self._stop_asked.is_set()
+
     def _free(self) -> int:
         return self._pool_size - len(self._running)
 
@@ -638,9 +689,7 @@ class ReceiveLoop:
 
     def _receive_or_return(self, limit: int) -> Sequence[Event]:
         events = self._queue.receive(limit)
-        # `stop` sets `_stop_asked` at once and `_stopping` a moment later on
-        # the event loop's thread, so a receive answered between them counts too.
-        if self._stopping or self._stop_asked.is_set():
+        if self._ending():
             # The loop stopped while this receive waited, so nothing will run them.
             for event in events:
                 try:
@@ -665,7 +714,7 @@ class ReceiveLoop:
                     unknown = True
                 if state != "ready":
                     continue
-                if self._free() > 0 and not self._stopping:
+                if self._free() > 0 and not self._ending():
                     started = self._start(item)
                     # The message travels with the first item it starts, so it
                     # is deleted once, when that item's result is stored.
@@ -768,7 +817,7 @@ class ReceiveLoop:
         for stage in self._stages:
             ready_here = 0
             for index in range(self._first_open[stage.name], len(self._decisions)):
-                if self._stopping:
+                if self._ending():
                     return [], cut_short
                 item = Item(self._decisions[index], stage.name)
                 if item in busy:
@@ -797,7 +846,7 @@ class ReceiveLoop:
 
     async def _check(self, full: bool) -> None:
         free = self._free()
-        if self._stopping or (free <= 0 and not full):
+        if self._ending() or (free <= 0 and not full):
             return
         busy = set(self._running)
         ready, cut_short = await self._in_io(self._ready_items, full, max(free, 0), busy)
@@ -806,7 +855,7 @@ class ReceiveLoop:
             # a decision with no later event still starts once S3 answers.
             self._recheck = cut_short
         for item in ready:
-            if self._free() <= 0 or self._stopping:
+            if self._free() <= 0 or self._ending():
                 break
             if item not in self._running:
                 self._start(item)
@@ -836,6 +885,7 @@ class ReceiveLoop:
     def _handler_ended(self, running: _Running, future: asyncio.Future) -> None:
         running.done = True
         error = future.exception() if not future.cancelled() else None
+        running.stopped = isinstance(error, Stopped)
         if isinstance(error, _Fatal):
             self._fail(error.__cause__ or error, f"{self._worker}: {error}")
         assert self._inbox is not None
@@ -850,18 +900,18 @@ class ReceiveLoop:
             self._slots.notify_all()
 
     async def _finish_messages(self, running: _Running) -> None:
+        # A handler that ended on a stop stored no result, so its messages go
+        # back to the queue for the decision to run again.
+        answer = self._queue.release if running.stopped else self._queue.done
         for message in running.messages:
-            await self._quietly(self._queue.done, message)
+            await self._quietly(answer, message)
         running.messages.clear()
 
     def _work(self, running: _Running) -> None:
         """Run one handler and store its result, in a handler thread."""
         item = running.item
         stage = self._table.stage(item.stage)
-
-        def report() -> None:
-            running.last_report = self._timer.monotonic()
-
+        report = _Progress(running, self._timer, self._stop_asked.wait)
         returned: object = None
         try:
             self._check_strategies(item)
@@ -870,22 +920,31 @@ class ReceiveLoop:
             result = returned
         except Halt as halt:
             result = self._halt_result(stage, item, halt)
-        except Exception as error:
-            reason = (
-                f"{self._worker} failed in stage {item.stage} at decision "
-                f"{decision_part(item.decision_at)} with an error it did not handle: "
-                f"{type(error).__name__}: {error}"
-            )
-            result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
-            # The alarm goes first, so the reason is sent even when its halt
-            # is never stored.
-            try:
-                self._alerts.alarm(reason)
-            except Exception:
-                # Monitoring alarms on every halt it reads.
-                pass
-            self._store(item, result)
+        except Stopped:
+            if self._stop_asked.is_set():
+                # `_handler_ended` marks it, and its messages go back to the queue.
+                raise
+            self._store_unhandled(stage, item, "Stopped, and no stop was asked", returned)
             return
+        except Exception as error:
+            self._store_unhandled(stage, item, f"{type(error).__name__}: {error}", returned)
+            return
+        self._store(item, result)
+
+    def _store_unhandled(self, stage: Stage, item: Item, error: str, returned: object) -> None:
+        """Alarm on an error the handler did not handle, and store it as the item's halt."""
+        reason = (
+            f"{self._worker} failed in stage {item.stage} at decision "
+            f"{decision_part(item.decision_at)} with an error it did not handle: {error}"
+        )
+        result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
+        # The alarm goes first, so the reason is sent even when its halt
+        # is never stored.
+        try:
+            self._alerts.alarm(reason)
+        except Exception:
+            # Monitoring alarms on every halt it reads.
+            pass
         self._store(item, result)
 
     def _own_outputs(self, item: Item, returned: object) -> tuple:

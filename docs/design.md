@@ -1607,7 +1607,7 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    therefore carries a timeout shorter than that limit.
 7. **Stopping drains the pool.** When the host stops the container, the loop
    stops receiving and lets each handler finish within the unit's stop
-   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way. A message whose handler did not finish returns to the queue,
+   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way. A handler waiting on the clock, such as data's for its decision time, ends at once. It stores no result, not even a halt, because a stop is no fault in the decision, and the decision runs again after the restart. A message whose handler did not finish, or ended this way, returns to the queue,
    and an execution send stage left unfinished is taken over as [Who takes over a dead send
    stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
 8. **The pool's size is configuration.** The deployment's config sets it

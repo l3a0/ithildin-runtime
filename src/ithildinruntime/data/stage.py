@@ -7,12 +7,10 @@ things, in order.
 1. **It waits for the decision time** through `Clock.wait_until`, handing the
    loop's `report` along, so a wall clock keeps the heartbeat beating while
    it waits and a history clock returns at once. Data holds no branch on the
-   mode. A stop does not reach a handler waiting here, because the receive
-   loop hands a handler no stop signal, so the process stays up until the
-   wait ends. The wait has written nothing, so a decision cut off by the
-   host's restart runs again safely, but a stop that should end the process
-   at once cannot yet. #107 holds the fix, because a stop that leaves the
-   decision for redelivery needs the loop to say so.
+   mode. A stop ends a wall clock's wait at once with `Stopped`, which this
+   handler lets through. The loop then stores nothing for the decision, and
+   the wait has written nothing, so the decision runs again safely after the
+   restart.
 2. **It reads the snapshot** through `LakeSource`. A read that cannot give a
    snapshot raises `Halt`, which the loop stores as data's result. The read
    comes before the store, so it halts this way even when a redelivery finds
@@ -50,7 +48,7 @@ things, in order.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -64,6 +62,7 @@ from ithildinruntime.core import (
     Halt,
     InstrumentId,
     OutputFile,
+    Progress,
     Snapshot,
     StageKind,
     Storage,
@@ -115,7 +114,7 @@ class DataStage:
         self._release = release
         self._config_hashes = dict(config_hashes)
 
-    def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
+    def __call__(self, item: _Item, report: Progress) -> DecisionResult:
         at = item.decision_at
         self._clock.wait_until(at, report)
         reading = self._source.read(at)

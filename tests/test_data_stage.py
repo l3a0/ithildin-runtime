@@ -24,6 +24,7 @@ from ithildinruntime.core import (
     Retry,
     Snapshot,
     StageKind,
+    Stopped,
     Storage,
     attempt_key,
     decode_output,
@@ -54,6 +55,9 @@ class Reports:
 
     def __call__(self) -> None:
         self.count += 1
+
+    def wait_for_stop(self, timeout: float) -> bool:
+        raise AssertionError("no clock here waits")
 
 
 def stage(lake: Path, tmp_path: Path, clock=None, **changes) -> tuple[DataStage, Storage, Alarms]:
@@ -615,11 +619,10 @@ def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
 
 
 class FakeTime:
-    """A timer and a sleep that advance together."""
+    """A timer a case advances."""
 
     def __init__(self, at: datetime) -> None:
         self.at = at
-        self.slept: list[float] = []
 
     def now(self) -> datetime:
         return self.at
@@ -630,30 +633,100 @@ class FakeTime:
     def after(self, seconds: float) -> object:
         raise NotImplementedError
 
-    def sleep(self, seconds: float) -> None:
-        self.slept.append(seconds)
-        self.at += timedelta(seconds=seconds)
+
+class FakeProgress:
+    """A handler's `report` on a `FakeTime`, whose loop is asked to stop at `stop_at`."""
+
+    def __init__(self, time: FakeTime, stop_at: datetime | None = None) -> None:
+        self.time = time
+        self.stop_at = stop_at
+        self.stopped = False
+        self.reported: list[datetime] = []
+        self.waited: list[float] = []
+
+    def __call__(self) -> None:
+        self.reported.append(self.time.now())
+
+    def wait_for_stop(self, timeout: float) -> bool:
+        # A clock that waits on past the stop would otherwise wait for ever here.
+        assert not self.stopped, "the clock waited on after the stop"
+        end = self.time.at + timedelta(seconds=timeout)
+        self.waited.append(timeout)
+        if self.stop_at is not None and self.stop_at <= end:
+            self.stopped = True
+            self.time.at = max(self.time.at, self.stop_at)
+            return True
+        self.time.at = end
+        return False
 
 
 def test_19_the_wall_clock_reports_while_it_waits_past_the_heartbeat_limit() -> None:
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
-    clock = WallClock(time, sleep=time.sleep, interval=5.0)
-    reported: list[datetime] = []
+    clock = WallClock(time, interval=5.0)
+    report = FakeProgress(time)
     # The receive loop's heartbeat limit is 30 seconds, and the wait is 7 hours.
     at = start + timedelta(hours=7)
-    clock.wait_until(at, lambda: reported.append(time.now()))
+    clock.wait_until(at, report)
     assert time.now() == at
+    reported = report.reported
     gaps = [(b - a).total_seconds() for a, b in zip([start, *reported], reported, strict=False)]
     assert max(gaps) <= 5.0
     assert len(reported) == 7 * 3600 / 5
 
 
-def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed() -> None:
-    time = FakeTime(datetime(2012, 4, 9, 21, 0, tzinfo=UTC))
-    clock = WallClock(time, sleep=time.sleep)
-    clock.wait_until(datetime(2012, 4, 9, 20, 0, tzinfo=UTC), lambda: None)
-    assert time.slept == []
+@pytest.mark.parametrize("stopped", [False, True])
+def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(stopped: bool) -> None:
+    """A stop asked after the decision time lets the handler read and store as usual."""
+    at = datetime(2012, 4, 9, 21, 0, tzinfo=UTC)
+    time = FakeTime(at)
+    report = FakeProgress(time, at if stopped else None)
+    WallClock(time).wait_until(datetime(2012, 4, 9, 20, 0, tzinfo=UTC), report)
+    assert report.waited == [] and time.now() == at
+
+
+def test_a_stop_ends_the_wall_clocks_wait_at_once() -> None:
+    start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
+    time = FakeTime(start)
+    stop_at = start + timedelta(seconds=12)
+    report = FakeProgress(time, stop_at)
+    with pytest.raises(Stopped, match="2012-04-09T20:00:00"):
+        WallClock(time, interval=5.0).wait_until(start + timedelta(hours=7), report)
+    assert time.now() == stop_at
+    assert report.waited == [5.0, 5.0, 5.0]
+
+
+def test_a_stop_already_asked_ends_the_wall_clocks_wait_before_any_time_passes() -> None:
+    start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
+    time = FakeTime(start)
+    with pytest.raises(Stopped):
+        WallClock(time).wait_until(start + timedelta(hours=7), FakeProgress(time, start))
+    assert time.now() == start
+
+
+def test_the_history_clock_ignores_a_stop() -> None:
+    at = close(LAST)
+    clock = HistoryClock()
+    clock.wait_until(at, FakeProgress(FakeTime(at), at))
+    assert clock.now() == at
+
+
+def test_a_stop_while_datas_stage_waits_reads_and_stores_nothing(
+    lake: Path, tmp_path: Path
+) -> None:
+    class Stopping(Clock):
+        def wait_until(self, at, report) -> None:
+            raise Stopped("asked to stop")
+
+    made, _, alarms = stage(lake, tmp_path, clock=Stopping())
+    with pytest.raises(Stopped):
+        made(Item(close(LAST), "data"), Reports())
+    assert not [p for p in (tmp_path / "store").rglob("*") if p.is_file()]
+    assert alarms.reasons == []
+    # The decision runs again after the restart, as if for the first time.
+    again, _, alarms = stage(lake, tmp_path)
+    result = again(Item(close(LAST), "data"), Reports())
+    assert result.halt is None and len(result.outputs) == 1 and alarms.reasons == []
 
 
 def test_19_the_history_clock_returns_at_once_and_reads_the_decision_time() -> None:
@@ -680,7 +753,7 @@ def test_19_the_stage_hands_the_loops_report_to_the_clock(lake: Path, tmp_path: 
 
 def test_a_clock_waits_only_until_a_utc_time() -> None:
     with pytest.raises(ValueError):
-        HistoryClock().wait_until(datetime(2012, 4, 9, 16, 0), lambda: None)
+        HistoryClock().wait_until(datetime(2012, 4, 9, 16, 0), Reports())
 
 
 def test_neither_clock_reports_an_offset_nothing_measured() -> None:

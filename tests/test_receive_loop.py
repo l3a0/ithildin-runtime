@@ -7,16 +7,19 @@ and #81's acceptance names the first three tests below.
 from __future__ import annotations
 
 import threading
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from ithildinruntime.adapters import WallClock
 from ithildinruntime.core import (
     BlobRef,
     DecisionResult,
     EventKind,
     Halt,
+    Progress,
     Retry,
+    Stopped,
     StoreUnavailable,
     output_key,
     result_key,
@@ -1956,3 +1959,206 @@ def test_a_deaf_queue_alarms_on_time_while_a_backlog_keeps_the_pool_full(tmp_pat
         assert started.threads["alpha"].is_alive()
         assert not (folder.root / _key("alpha", 29)).exists()
     assert sum("answered no receive" in r for r in alarms.reasons) == 1
+
+
+# A stop reaches a handler that waits.
+
+
+class WaitsForTheStop:
+    """An alpha handler that waits on the loop's stop, then raises `Stopped` after `delay`."""
+
+    def __init__(self, delay: float = 0.0) -> None:
+        self.delay = delay
+        self.started: list[Item] = []
+        self.entered = threading.Event()
+        self.returned = threading.Event()
+
+    def __call__(self, item: Item, report: Progress) -> DecisionResult:
+        import time
+
+        self.started.append(item)
+        self.entered.set()
+        try:
+            end = time.monotonic() + 10
+            while time.monotonic() < end:
+                report()
+                if report.wait_for_stop(0.5):
+                    time.sleep(self.delay)
+                    raise Stopped("asked to stop")
+            raise AssertionError("no stop came")
+        finally:
+            self.returned.set()
+
+
+def _waiting_on_an_event(made, store, the_plan, queue, entered: threading.Event) -> None:
+    """Start the one decision from its event, so its handler holds a message."""
+    assert made.wait_started(10)
+    _feed(store, the_plan)
+    queue.put(_key("feed"))
+    assert entered.wait(10)
+    # The message is attached on the event loop's thread, just after the start.
+    assert _wait(lambda: all(r.messages for r in list(made._running.values())), 5)
+
+
+@pytest.mark.parametrize("ends", ["stop", "queue-fails"])
+def test_a_stop_ends_a_wall_clocks_wait_and_leaves_the_decision_for_later(
+    tmp_path, ends: str
+) -> None:
+    import time
+
+    entered = threading.Event()
+    returned: list[float] = []
+
+    def alpha(item: Item, report: Progress):
+        entered.set()
+        try:
+            # The next report is 5 seconds off, so only the stop wakes it sooner.
+            clock = WallClock(SystemTimer(), interval=5.0)
+            clock.wait_until(datetime.now(UTC) + timedelta(seconds=8), report)
+        except Exception as error:
+            # A handler's own catch never turns a stop into a halt.
+            raise Halt("the wait failed") from error
+        finally:
+            returned.append(time.monotonic())
+        raise AssertionError("the wait was not stopped")
+
+    folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, alpha, decisions=1)
+    thread, failures = _run_in_thread(made)
+    _waiting_on_an_event(made, store, the_plan, queue, entered)
+    time.sleep(0.3)
+    assert not returned
+    asked = time.monotonic()
+    if ends == "stop":
+        made.stop()
+    else:
+        queue.error = KeyError("ReceiptHandle")
+    thread.join(4)
+    assert not thread.is_alive() and returned and returned[0] - asked < 2.0
+    assert queue.released == [_key("feed")] and queue.done_keys == []
+    assert not (folder.root / _key("alpha")).exists()
+    if ends == "stop":
+        assert not failures and alarms.reasons == []
+    else:
+        assert len(failures) == 1 and isinstance(failures[0], LoopFailed)
+        assert len(alarms.reasons) == 1 and "stopped receiving" in alarms.reasons[0]
+    # The restarted process decides it.
+    _, _, _, again, _, _ = _stub_loop(tmp_path, decisions=1)
+    with running({"alpha": again}) as started:
+        assert started.wait_for(lambda: (folder.root / _key("alpha")).exists(), 5)
+    assert store.read_result(_key("alpha"), FIRST).halt is None
+
+
+def test_a_handler_ending_before_the_loop_hears_the_stop_is_released_and_not_started_again(
+    tmp_path,
+) -> None:
+    """`stop` asks on its caller's thread, and the event loop hears it a moment later."""
+    import time
+
+    alpha = WaitsForTheStop()
+    folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, alpha, decisions=1)
+    thread, failures = _run_in_thread(made)
+    _waiting_on_an_event(made, store, the_plan, queue, alpha.entered)
+    # The window alone: asked, and not yet heard.
+    made._stop_asked.set()
+    assert _wait(lambda: queue.released == [_key("feed")], 5)
+    assert _wait(lambda: not made._running, 5)
+    # The check after the finished handler would have started it again by now.
+    time.sleep(0.3)
+    assert len(alpha.started) == 1 and thread.is_alive()
+    made.stop()
+    thread.join(5)
+    assert not thread.is_alive() and not failures
+    assert queue.released == [_key("feed")] and queue.done_keys == []
+    assert not (folder.root / _key("alpha")).exists() and alarms.reasons == []
+
+
+def test_a_handler_ending_on_a_stop_inside_the_drain_is_released(tmp_path) -> None:
+    alpha = WaitsForTheStop(delay=0.3)
+    folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, alpha, decisions=1)
+    thread, failures = _run_in_thread(made)
+    _waiting_on_an_event(made, store, the_plan, queue, alpha.entered)
+    made.stop()
+    thread.join(5)
+    assert not thread.is_alive() and not failures and alpha.returned.is_set()
+    assert queue.released == [_key("feed")] and queue.done_keys == []
+    assert len(alpha.started) == 1
+    assert not (folder.root / _key("alpha")).exists() and alarms.reasons == []
+
+
+class StopsDuringARead(RefusingResults):
+    """A store that asks a loop to stop as it answers a read of the feed's result."""
+
+    made: ReceiveLoop | None = None
+
+    def get(self, key):
+        if self.made is not None and key.endswith("/feed/result.json"):
+            self.made._stop_asked.set()
+        return self._store.get(key)
+
+
+@pytest.mark.parametrize("woken_by", ["event", "check"])
+def test_a_stop_asked_while_the_loop_reads_keys_starts_nothing(tmp_path, woken_by: str) -> None:
+    stores: list[StopsDuringARead] = []
+
+    def wrap(base):
+        stores.append(StopsDuringARead(base))
+        return stores[0]
+
+    alpha = WaitsForTheStop()
+    _, the_plan, store, made, queue, _ = _stub_loop(tmp_path, alpha, wrap=wrap, decisions=1)
+    thread, failures = _run_in_thread(made)
+    assert made.wait_started(10)
+    _feed(store, the_plan)
+    stores[0].made = made
+    # Both events wake a check. Only the feed's names a decision to start first.
+    key = _key("feed") if woken_by == "event" else _key("risk")
+    queue.put(key)
+    assert _wait(lambda: key in queue.released + queue.done_keys, 5)
+    assert _wait(made._stop_asked.is_set, 5)
+    made.stop()
+    thread.join(5)
+    assert not thread.is_alive() and not failures
+    assert alpha.started == []
+    if woken_by == "event":
+        assert queue.released == [key] and queue.done_keys == []
+
+
+def test_a_handler_that_raises_stopped_with_no_stop_asked_halts_and_alarms(tmp_path) -> None:
+    started: list[Item] = []
+
+    def alpha(item: Item, report: Progress):
+        started.append(item)
+        raise Stopped("a bug")
+
+    folder, the_plan, store, made, queue, alarms = _stub_loop(tmp_path, alpha, decisions=1)
+    with running({"alpha": made}) as loops:
+        _feed(store, the_plan)
+        queue.put(_key("feed"))
+        assert loops.wait_for(lambda: _key("feed") in queue.done_keys, 5)
+    assert len(started) == 1 and queue.released == []
+    reason = store.read_result(_key("alpha"), FIRST).halt.reason
+    assert "with an error it did not handle: Stopped, and no stop was asked" in reason
+    assert alarms.reasons == [reason]
+
+
+def test_a_handlers_report_reads_the_stop_and_cannot_ask_it(tmp_path) -> None:
+    seen: list[tuple[Progress, bool]] = []
+    entered = threading.Event()
+
+    def alpha(item: Item, report: Progress):
+        seen.append((report, report.wait_for_stop(0)))
+        entered.set()
+        assert report.wait_for_stop(10)
+        raise Stopped("asked to stop")
+
+    _, the_plan, store, made, _, _ = _stub_loop(tmp_path, alpha, decisions=1)
+    _feed(store, the_plan)
+    thread, failures = _run_in_thread(made)
+    assert entered.wait(10)
+    report, asked_first = seen[0]
+    assert asked_first is False
+    for offered in (report, Progress):
+        assert [name for name in dir(offered) if not name.startswith("_")] == ["wait_for_stop"]
+    made.stop()
+    thread.join(5)
+    assert not thread.is_alive() and not failures and report.wait_for_stop(0) is True
