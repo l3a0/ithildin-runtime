@@ -93,6 +93,9 @@ def test_a_records_mappings_and_lists_cannot_be_changed() -> None:
         cash=Decimal("0"),
         platform_realised_pnl=Decimal("0"),
         replayed_through=0,
+        in_doubt=(),
+        corrected_through=None,
+        repositioned_at=None,
     )
     inner[USO] = Decimal("5")
     assert book.positions_by_strategy["bollinger"][USO] == Decimal("1")
@@ -118,6 +121,14 @@ def test_instrument_id_is_a_new_type_over_str() -> None:
         (core.Forecast, "confidence", 8),
         (core.Signal, "value", 8),
         (core.Verdict, "value", 9),
+        (core.Verdict, "bound", 9),
+        (core.Verdict, "worst_loss", 4),
+        (core.LossReading, "loss", 4),
+        (core.Constraints, "max_position", 9),
+        (core.Constraints, "max_net", 4),
+        (core.HardCaps, "stress_move", 8),
+        (core.Valuation, "value", 4),
+        (core.Valuation, "positions", 9),
     ],
 )
 def test_each_kind_of_decimal_declares_places_that_never_shrink(kind, field, n) -> None:

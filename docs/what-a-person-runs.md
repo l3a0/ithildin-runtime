@@ -346,13 +346,14 @@ Monitoring's report after each decision ends with the same summary `ithildin sta
 
 #### When a writing command is needed
 
-Most alarms on shadow and paper need no writing command at all. A gate refusal, a pair leg left open, or a missing bar that has since arrived clears itself at the next decision, which plans again from the book, and the person's job is to read the reason and decide whether something larger is wrong. On live, every halt holds the account until the owner clears it.
+Most alarms on shadow and paper need no writing command at all. A missing bar that has since arrived, most gate refusals or a pair leg left open clear themselves at the next decision, which plans again from the book, and the person's job is to read the reason and decide whether something larger is wrong. A refusal repeats while what caused it stands. Examples are a fired stop, which `ithildin stop clear` ends, an order past `max_order_qty` or a `max_position` it adds to, an order that adds where a limit it counts toward is already past, and a pair's exit that would take net past its cap and further from zero, as [What may go out while a limit is past](design.md#rule-9-what-may-go-out-while-a-limit-is-past) says. On live, every halt holds the account until the owner clears it.
 
 The writing commands are for the cases the platform cannot resolve alone:
 
 - a book that disagrees with the broker
 - the causes that hold a shadow or paper account, which [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) names: an order the platform did not send and a snapshot that cannot be stored or confirmed
 - a kill switch
+- a fired loss stop
 - a halt of all trading that waits for a person, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says
 - any halt on live
 

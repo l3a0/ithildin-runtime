@@ -14,7 +14,13 @@ from pathlib import Path
 import pytest
 
 from ithildinruntime.core import Halt, InstrumentId
-from ithildinruntime.data.reference import MASTER, PRICE_KINDS, load_master, load_price_kinds
+from ithildinruntime.data.reference import (
+    MASTER,
+    PRICE_KINDS,
+    Kind,
+    load_master,
+    load_price_kinds,
+)
 
 MASTER_ROWS = [
     "2026-11-22,GLD,GLD,2004-11-18,",
@@ -117,9 +123,10 @@ def test_a_later_kind_row_states_what_an_earlier_one_left_unstated(tmp_path: Pat
     path = tmp_path / "kinds.csv"
     path.write_text(f"{HEAD}\n{silent}\n{named}\n")
     kinds = load_price_kinds(path)
-    assert not kinds.kind("s", date(2020, 6, 30)).stated
-    later = kinds.kind("s", date(2020, 7, 1))
-    assert later.stated and later.price_kind == "official close"
+    assert kinds.kind("s", date(2020, 6, 30)) == Kind(*("unstated",) * 4)
+    assert kinds.kind("s", date(2020, 7, 1)) == Kind(
+        "official close", "consolidated", "none", "all"
+    )
 
 
 def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent(

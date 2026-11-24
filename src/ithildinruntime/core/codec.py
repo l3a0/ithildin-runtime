@@ -47,11 +47,11 @@ __all__ = [
     "to_decimal",
 ]
 
-_INT_LIMIT = 2**53
+INT_LIMIT = 2**53
 # A decimal the codec writes has at most this many digits, and its leading
 # digit sits within this many places of the decimal point, so a hostile
 # received value such as 1E+99999999 cannot make a writer allocate gigabytes.
-_MAX_DIGITS = 38
+MAX_DIGITS = 38
 _MAX_MAGNITUDE = 30
 _RECEIVED = re.compile(r"-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?")
 _DECIMAL = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
@@ -153,13 +153,13 @@ def _bounded(value: Decimal, where: str) -> Decimal:
     digits, exponent = value.as_tuple().digits, value.as_tuple().exponent
     if value.is_zero():
         # A zero has one digit, so its places bound what it writes instead.
-        too_big = not isinstance(exponent, int) or not -_MAX_DIGITS <= exponent <= _MAX_MAGNITUDE
+        too_big = not isinstance(exponent, int) or not -MAX_DIGITS <= exponent <= _MAX_MAGNITUDE
     else:
-        too_big = len(digits) > _MAX_DIGITS or abs(value.adjusted()) > _MAX_MAGNITUDE
+        too_big = len(digits) > MAX_DIGITS or abs(value.adjusted()) > _MAX_MAGNITUDE
     if too_big:
         raise CodecError(
             f"{where} has {len(digits)} digits at magnitude {value.adjusted()}, "
-            f"past the codec's {_MAX_DIGITS} digits and magnitude {_MAX_MAGNITUDE}"
+            f"past the codec's {MAX_DIGITS} digits and magnitude {_MAX_MAGNITUDE}"
         )
     return value
 
@@ -337,7 +337,7 @@ def _plain_by_value(value: object, where: str) -> object:
 
 
 def _int(value: int, where: str) -> int:
-    if not -_INT_LIMIT < value < _INT_LIMIT:
+    if not -INT_LIMIT < value < INT_LIMIT:
         raise CodecError(f"{where} is {value}, whose magnitude reaches 2**53")
     return int(value)
 

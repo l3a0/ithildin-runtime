@@ -28,6 +28,7 @@ from .records import (
     ForecastSet,
     FoundOrder,
     GateInputs,
+    LossReading,
     OrderIntent,
     Snapshot,
     StoredBlob,
@@ -186,7 +187,20 @@ class RiskGate(Protocol):
         constraints: Constraints,
         inputs: GateInputs,
         now: datetime,
-    ) -> Verdict: ...
+    ) -> Verdict:
+        """Approve one order, or refuse it. An absent, stale or invalid input raises `Halt`."""
+        ...
+
+    def loss(
+        self,
+        book: Book,
+        snapshot: Snapshot,
+        constraints: Constraints,
+        inputs: GateInputs,
+        now: datetime,
+    ) -> LossReading:
+        """The day's loss, with `check`'s halts on its inputs and no order needed."""
+        ...
 
 
 class BlobStore(Protocol):

@@ -45,7 +45,7 @@ Each instrument's status follows from the sessions that hold a knowable bar.
 1. **`missing`** when no session of the lookback holds one, or a session older
    than the newest bar holds none. The halt names the session.
 2. **`stale`** when the newest bar's session lags the latest session ended by
-   more sessions than #7's written lag allows.
+   more sessions than the written lag allows.
 3. **`fresh`** otherwise. No gap is filled.
 """
 
@@ -68,6 +68,7 @@ from lake.manifest import ManifestError
 from lake.paths import LakePaths, parse_bars_rel
 
 from ithildinruntime.core import (
+    DAILY,
     Bar,
     BarStatus,
     Clock,
@@ -81,6 +82,7 @@ from ithildinruntime.core import (
     from_received,
     load_sessions,
     places,
+    unstated_fields,
 )
 from ithildinruntime.core.sessions import SessionTable
 
@@ -96,7 +98,6 @@ from .spikes import CONTRADICT, MOVE, below_low, contradictions, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
-DAILY = "1d"
 _PRICES = ("open", "high", "low", "close")
 _PLACES = places(Bar, "close")
 _CAPTURED = "captured"
@@ -121,7 +122,8 @@ class DataSettings:
       which a lookback holds no session rather than reading `missing`. One
       later than a session the lake lists halts a decision whose lookback it
       cuts.
-    - `stale_lag` is #7's written lag, in sessions. `None` halts every
+    - `stale_lag` is the written lag, in sessions. At 0, a bar that lags the
+      newest session ended by the decision is stale. `None` halts every
       decision, because an absent lag is a missing input. No file can write it.
     - `spike_multiple` is how many standard deviations of the lookback's daily
       returns a close-to-close move may reach before it is flagged.
@@ -146,6 +148,8 @@ class DataSettings:
             raise ValueError("the lookback is a whole number of sessions")
         if self.lookback < 1:
             raise ValueError("the lookback holds at least one session")
+        if self.stale_lag is not None and (type(self.stale_lag) is not int or self.stale_lag < 0):
+            raise ValueError("the stale lag is a whole number of sessions, 0 or more")
 
 
 @dataclass(frozen=True)
@@ -213,7 +217,7 @@ class LakeSource:
         """Read one decision's snapshot, raising `Halt` where no snapshot can be stored."""
         settings = self._settings
         if settings.stale_lag is None:
-            raise Halt("no stale lag is written, and #7's lag is a missing input")
+            raise Halt("no stale lag is written, and an absent lag is a missing input")
         latest = self._latest_ended(decision_at)
         plans = {i: self._plan(i, latest) for i in settings.instruments}
         start = self._timer.monotonic()
@@ -578,14 +582,7 @@ def _why(flag: SpikeFlag) -> str:
 
 def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
     for bar in bars:
-        fields = {
-            "price kind": bar.price_kind,
-            "venues": bar.venues,
-            "delay": bar.delay,
-            "volume counting": bar.volume_counted,
-        }
-        silent = [name for name, value in fields.items() if value == "unstated"]
-        if silent:
+        if silent := unstated_fields(bar):
             source = bar.source or CAPTURE_SOURCE
             return [
                 f"{instrument}'s bar for {bar.session.isoformat()} has unstated "

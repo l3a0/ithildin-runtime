@@ -434,6 +434,36 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 **Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The body holds two fields: `entries`, a list of the stage's own kind of record, and `trade_nothing`, the mark that means hold every position and send no order. A body that carries the mark holds no entries, and the codec refuses one that holds both. A reader halts on a body with no entries and no mark, as [An absent, stale or empty input halts](../design.md#rule-6-an-absent-stale-or-empty-input-halts) says. The header's `format` is a number per kind, raised when that kind's fields change. Of the types in `core`, a plan, a lease, a heartbeat, a restart record and a journal entry are each stored at a key of their own rather than as a stage's output file, and each carries a `format` field of its own instead. A `HaltRecord` travels inside a `DecisionResult`, whose header names its format. Any other blob stored at a key of its own, such as a book snapshot, a halt held in a folder, an override or a release, gets a format from the issue that defines it, because the data engineer in [the charter](../team-charter.md#data-engineer) vetoes a recorded format with no schema identifier. [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
 
+#### The hard caps blob
+
+Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a person writes by hand. So it is read by `core.parse_caps` rather than the codec, which refuses bytes that are not canonical, and spaces and any order of fields are allowed. The figures here are made up.
+
+```json
+{"format": 1, "account": "paper", "limits": {"max_order_qty": {"GLD": "10"}, "max_position": {"GLD": "5"},
+  "max_gross": "1000", "max_open_orders": 4, "loss_stop": "50", "moc_cutoff": 15,
+  "share": "0.02", "stress_move": "0.2", "stress_low": "0.1", "stress_high": "0.6",
+  "stress_vintage": "<64 hex digits>", "stress_through": "2026-11-20", "stress_max_age_days": 365}}
+```
+
+**Table:** Each field of `limits`, its form and what it holds
+
+| Field | Form | Holds |
+| --- | --- | --- |
+| `max_order_qty`, `max_position` | An object of one decimal string per instrument, the same instruments in both, each named in at most 80 printable characters | Shares, the first at or above the second |
+| `max_gross`, `loss_stop` | A decimal string | Dollars |
+| `max_open_orders` | A JSON integer | Orders |
+| `moc_cutoff` | A JSON integer | Minutes before the close |
+| `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
+| `stress_move` | A decimal string | The stress move, as a fraction |
+| `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
+| `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over |
+| `stress_through` | `YYYY-MM-DD` | That vintage's last session |
+| `stress_max_age_days` | A JSON integer from 1 to 365 | How many days past that session a decision may still use it |
+
+A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
+
+A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field of `limits`, or a value out of its range. The halt shows little of a long value, and nothing of the account the blob names. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
+
 #### How a journal entry is hashed and checked
 
 **A journal entry hashes its whole blob.** Each entry is one blob holding `seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those bytes exactly as stored, which the next entry carries as its `prev_hash`, and the first entry of an account carries sixty-four zeros. A hash of the body alone would leave an entry's number and its link outside what the next entry vouches for.
@@ -496,7 +526,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's forecast and its signal records, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
-| The account's `Valuation`, an output of the day's first recover stage, by this doc's proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7) and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
+| The account's `Valuation`, an output of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A takeover's broker order list, a capture named by the journaled takeover entry, whose form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json` |

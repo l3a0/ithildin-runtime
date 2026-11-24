@@ -381,7 +381,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   from the midpoint gap, lets no simulated fill calibrate the cost model, refuses a send whose entry names no stored
   snapshot where the gate read a price, shows each instrument's share of volume, raises the alert on a lone leg, and sends
   no order of the platform's own for one outside a decision, apart from the close after a broker's trade, while a person can act through the gate once no
-  halt holds it and no order in doubt blocks its instrument, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) says when an unwind may. Before the first
+  halt holds it and no order in doubt blocks its instrument, and [#124](https://github.com/l3a0/ithildin-runtime/issues/124) says when an unwind may, once one is proposed. Before the first
   limit order is sent, has its simulated fill name what it assumes, under the design doc's
   [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control).
 - **Vetoes:** an order path without a journal entry, a send before durable
