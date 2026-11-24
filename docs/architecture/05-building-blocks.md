@@ -1035,7 +1035,7 @@ A schedule maps each instrument the strategy trades to a list of terms. Each `Co
 
 Each strategy's terms are the `[cost]` section of its tracked file, so they are the same in backtest, shadow, paper and live, and the schedule's header names them by its `release` and `config_hashes`. That pair is the cost model's version. No simulated fill calibrates a term.
 
-A cost nobody wrote never reads as free. The cost stage halts, naming the strategy and the instrument, on a missing section, an instrument with no terms, one with no term of a kind that covers both sides, a term with a field missing, a negative figure, and a kind, a side or a source it cannot use. `cost/model.py` holds the whole list. A cost of zero is written as a term whose figures are zero. `estimate` halts too, on a trade in an instrument with no term of the kind asked for, on a price that is not above zero and on a quantity that is not finite. A test reads every tracked file's section, so a bad one fails CI before any run.
+A cost nobody wrote never reads as free. The cost stage halts, naming the strategy and the instrument, on a missing section, an instrument with no terms, one with no term of a kind that covers both sides, a term with a field missing, a negative figure, and a kind, a side or a source it cannot use. `cost/model.py` holds the whole list. A cost of zero is written as a term whose figures are zero. `estimate` halts too, on a trade in an instrument with no term of the kind asked for, or of either kind where none is named, on a price that is not above zero and on a quantity that is not finite. A test reads every tracked file's section, so a bad one fails CI before any run.
 
 The price is that each strategy states the broker's fees in its own file, so a changed fee is an edit to every strategy's file and nothing alerts when a published fee lapses. A term also carries one figure for every date, so a backtest over dates with another fee charges today's.
 
@@ -1162,6 +1162,7 @@ An arrow means "may import". The diagram draws four rules.
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
+   - the names of data's stage and of its snapshot, so a stage that reads them imports no `data`;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

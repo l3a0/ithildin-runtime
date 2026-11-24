@@ -35,7 +35,8 @@ instrument, on each of these.
 The check runs at each decision, inside the stage, so a section it refuses
 halts the cost stage with its reason stored. `core`'s strategy reader refuses
 some forms first, such as a blank `[[cost.USO]]` or a figure that is not
-finite, and those fail the load of every strategy named with it.
+finite, and those fail the load of every strategy named with it. It reads an
+empty table as absent.
 `tests/test_cost.py` reads every tracked strategy file both ways, so a bad one
 fails CI before any run.
 """
@@ -99,7 +100,7 @@ class LinearCostModel:
         if not isinstance(listed, tuple) or not listed:
             raise self._refuse(
                 instrument,
-                f"which holds no list of terms. Each term starts with [[{SECTION}.{instrument}]]",
+                f'which holds no list of terms. Each term starts with [[{SECTION}."{instrument}"]]',
             )
         terms = tuple(
             _term(entry, lambda what, n=n: self._refuse(instrument, f"whose term {n} {what}"))
@@ -124,14 +125,17 @@ def _term(entry: object, refuse: Callable[[str], Halt]) -> CostTerm:
         raise refuse(f"holds {', '.join(unknown)}, which no term has")
     source = entry["source"]
     if not isinstance(source, str) or not _named(source.strip()):
-        raise refuse(f"has the source {source!r}, which names no text and no reason")
+        raise refuse(
+            f"has the source {source!r}. Write a dated published text, or "
+            f"`{_PLACEHOLDER}` in lower case and a reason"
+        )
     return CostTerm(
         kind=_choice(CostKind, "kind", entry, refuse),
         side=_choice(CostSide, "side", entry, refuse),
         fixed=_figure("fixed", entry, refuse),
         per_share=_figure("per_share", entry, refuse),
         per_dollar=_figure("per_dollar", entry, refuse),
-        source=source,
+        source=source.strip(),
     )
 
 

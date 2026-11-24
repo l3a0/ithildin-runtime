@@ -221,16 +221,16 @@ def test_a_per_dollar_term_is_charged_at_the_price_the_caller_gives() -> None:
     # A million dollars sold pays the SEC's $20.60: 20,000 shares at $50.
     sec = CostTerm(CostKind.CHARGE, CostSide.SELL, d("0"), d("0"), d("0.0000206"), "SEC 2026-2")
     held = CostSchedule(terms={USO: (sec,)})
-    assert held.estimate(USO, d("-20000"), d("50")) == d("20.60")
-    assert held.estimate(USO, d("-20000"), d("25")) == d("10.30")
+    assert held.estimate(USO, d("-20000"), d("50"), CostKind.CHARGE) == d("20.60")
+    assert held.estimate(USO, d("-20000"), d("25"), CostKind.CHARGE) == d("10.30")
 
 
 def test_a_sale_only_term_charges_a_buy_nothing() -> None:
     term = CostTerm(CostKind.CHARGE, CostSide.SELL, d("3"), d("0.5"), d("0.01"), "a fee on sales")
     held = CostSchedule(terms={USO: (term,)})
-    assert held.estimate(USO, d("10"), d("20")) == 0
+    assert held.estimate(USO, d("10"), d("20"), CostKind.CHARGE) == 0
     # 3 + 0.5 × 10 + 0.01 × 10 × 20.
-    assert held.estimate(USO, d("-10"), d("20")) == d("10")
+    assert held.estimate(USO, d("-10"), d("20"), CostKind.CHARGE) == d("10")
 
 
 @pytest.mark.parametrize("price", ["75.50", "0", "-1", "NaN"])
@@ -250,6 +250,7 @@ def test_zero_shares_cost_zero_at_any_price(kind, price) -> None:
         ({USO: ()}, None),
         ({USO: ()}, CostKind.CHARGE),
         ("charge alone", CostKind.GAP),
+        ("charge alone", None),
     ],
 )
 @pytest.mark.parametrize("qty", ["10", "-10", "0.000000001"])
@@ -258,7 +259,9 @@ def test_an_instrument_with_no_term_asked_for_halts_rather_than_costing_nothing(
 ) -> None:
     if terms == "charge alone":
         terms = {USO: schedule().terms[USO][:1]}
-    with pytest.raises(Halt, match="USO has no (cost|charge|gap) term in the schedule"):
+    with pytest.raises(
+        Halt, match="USO has no (charge|gap|charge and no gap) term in the schedule"
+    ):
         CostSchedule(terms=terms).estimate(USO, d(qty), d("75.50"), kind)
 
 
@@ -349,6 +352,11 @@ def test_the_form_the_refusals_below_break_is_accepted() -> None:
     assert set(schedule(uso(TERM)).terms) == {USO}
 
 
+def test_a_source_is_stored_with_no_space_around_it() -> None:
+    made = schedule(uso({**TERM, "source": '"  placeholder: none "'}))
+    assert made.terms[USO][0].source == "placeholder: none"
+
+
 def test_a_figure_at_the_places_its_field_declares_is_stored_as_written() -> None:
     finest = {**TERM, "fixed": "0.0001", "per_share": "0.00000001", "per_dollar": "0.00000001"}
     term = schedule(uso(finest)).terms[USO][0]
@@ -394,6 +402,7 @@ BAD_TERMS = {
         {**TERM, "per_share": "true"},
         "has per_share = True, which is not a number",
     ),
+    "trailing-zeros-past-the-places": ({**TERM, "fixed": "1.00000"}, "more than the 4 places"),
     "too-many-places-for-money": ({**TERM, "fixed": "0.00001"}, "more than the 4 places"),
     "too-many-places-for-a-rate": (
         {**TERM, "per_share": "0.000000001"},
@@ -426,7 +435,7 @@ BAD_SECTIONS = {
     "an-empty-list": (b'instruments = ["USO"]\n[cost]\nUSO = []\n', "for USO, which holds no list"),
     "a-table-in-place-of-a-list": (
         b'instruments = ["USO"]\n[cost.USO]\nkind = "charge"\n',
-        "for USO, which holds no list of terms. Each term starts with [[cost.USO]]",
+        'for USO, which holds no list of terms. Each term starts with [[cost."USO"]]',
     ),
     "a-term-that-is-no-table": (
         b'instruments = ["USO"]\n[cost]\nUSO = ["charge"]\n',
@@ -728,6 +737,22 @@ def test_the_entry_point_gives_each_strategy_a_deterministic_row_that_reads_data
     assert [s.name for s in TABLE.stages_of("cost")] == ["cost/chan", "cost/other"]
     (heard,) = [r for r in routes(TABLE, DEPLOYMENT) if r.reader == "cost"]
     assert heard.key == f"runs/{DEPLOYMENT}/*/data/result.json"
+
+
+def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> None:
+    feed = Stage("feed", StageKind.CAPTURING)
+    row = Stage("cost/chan", StageKind.CAPTURING, inputs=("feed",), strategy="chan")
+    stage = handler(store(tmp_path), table=Table(stages=(feed, row), strategies=(CHAN,)))
+    with pytest.raises(Halt, match="/feed/result.json is not stored"):
+        run(stage)
+    header = BlobHeader(
+        **{f: getattr(data_header(), f) for f in BlobHeader.__dataclass_fields__}
+        | {"stage": "feed", "config_hashes": {"chan": CHAN.config_hash}}
+    )
+    storage = store(tmp_path)
+    halted = DecisionResult(header, (), HaltRecord("no feed", None, (), (), ()))
+    storage.put_result(result_key(DEPLOYMENT, RUN, AT, "feed"), halted)
+    assert run(stage).header.kind == "capturing"
 
 
 def test_the_cost_worker_loads_neither_marketlake_nor_pandas() -> None:

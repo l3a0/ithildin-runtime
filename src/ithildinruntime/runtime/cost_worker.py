@@ -13,7 +13,6 @@ from collections.abc import Iterable
 
 from ithildinruntime.core import (
     DATA_STAGE,
-    SNAPSHOT_OUTPUT,
     StageKind,
     Storage,
     StrategyConfig,
@@ -43,21 +42,21 @@ def cost_handlers(
 ) -> dict[str, CostStage]:
     """The cost worker's handlers for the receive loop, one per strategy's cost stage.
 
-    Each reads its strategy's terms, instruments and configuration hash from
-    `table`, as the receive loop checks them.
+    Each reads its strategy's terms, instruments and configuration hash, and
+    its own kind and input, from `table`, as the receive loop checks them.
     """
-    return {
-        stage.name: CostStage(
+    made = {}
+    for stage in table.stages_of(COMPONENT):
+        (data_stage,) = stage.inputs
+        made[stage.name] = CostStage(
             LinearCostModel(table.strategy(stage.strategy)),
             storage,
             stage=stage.name,
             kind=stage.kind,
-            data_stage=DATA_STAGE,
-            snapshot=SNAPSHOT_OUTPUT,
+            data_stage=data_stage,
             deployment=deployment,
             run=run,
             release=release,
             config_hashes=table.hashes_for(stage.name),
         )
-        for stage in table.stages_of(COMPONENT)
-    }
+    return made

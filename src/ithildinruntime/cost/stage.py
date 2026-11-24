@@ -18,8 +18,8 @@ Its handler does three things, in order.
 3. **It stores the schedule, then returns the result**, which the loop stores
    last.
 
-The entry point hands in the stage's name and kind, as the stage table
-declares them, and the names of data's stage and of its snapshot.
+The entry point hands in the stage's name, its kind and the stage it reads, as
+the stage table declares them.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
+    SNAPSHOT_OUTPUT,
     BlobHeader,
     BlobRef,
     CostModel,
@@ -71,7 +72,6 @@ class CostStage:
         stage: str,
         kind: StageKind,
         data_stage: str,
-        snapshot: str,
         deployment: str,
         run: str,
         release: str,
@@ -82,7 +82,6 @@ class CostStage:
         self._stage = stage
         self._kind = StageKind(kind)
         self._data_stage = data_stage
-        self._snapshot = snapshot
         self._deployment = deployment
         self._run = run
         self._release = release
@@ -105,7 +104,7 @@ class CostStage:
             )
         # Data lists the capture that counts under its own key, and any later
         # capture that differed under an attempt key.
-        counts = output_key(self._deployment, self._run, at, self._data_stage, self._snapshot)
+        counts = output_key(self._deployment, self._run, at, self._data_stage, SNAPSHOT_OUTPUT)
         listed = [ref for ref in data.outputs if ref.key == counts]
         if len(listed) != 1:
             raise Halt(f"{data_key} lists {counts} {len(listed)} times, not once")

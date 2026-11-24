@@ -463,8 +463,8 @@ class CostSchedule(_Record):
         """What trading `qty` shares at `price` would cost, rounded to no field's places.
 
         `qty` is negative for a sale, and `price` is the one the caller sizes
-        the trade at. `kind` picks the charge or the gap alone, and `None` adds
-        both. Zero shares cost zero, at any price and with any terms, so a leg
+        the trade at. `kind` picks the charge or the gap alone, and `None` asks
+        for both and adds them. Zero shares cost zero, at any price and with any terms, so a leg
         that does not trade needs none.
 
         A trade in an instrument with no term of a kind asked for halts,
@@ -476,9 +476,10 @@ class CostSchedule(_Record):
             raise Halt(f"{instrument} has a trade of {qty} shares, which has no cost")
         if qty == 0:
             return Decimal(0)
-        terms = [t for t in self.terms.get(instrument, ()) if kind is None or t.kind == kind]
-        if not terms:
-            raise Halt(f"{instrument} has no {kind or 'cost'} term in the schedule")
+        asked = tuple(CostKind) if kind is None else (kind,)
+        terms = [t for t in self.terms.get(instrument, ()) if t.kind in asked]
+        if absent := [k for k in asked if k not in {t.kind for t in terms}]:
+            raise Halt(f"{instrument} has no {' and no '.join(absent)} term in the schedule")
         if not price.is_finite() or price <= 0:
             raise Halt(f"{instrument} has a trade priced at {price}, which has no cost")
         shares = abs(qty)
