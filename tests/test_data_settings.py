@@ -68,7 +68,10 @@ def edit(data: bytes, old: str, new: str) -> bytes:
 @pytest.mark.parametrize("name", tracked())
 def test_1_every_tracked_strategys_data_section_builds_settings(name: str) -> None:
     (strategy,) = load_strategies(STRATEGIES, [name])
-    assert data_settings([strategy]).instruments == strategy.instruments
+    made = data_settings([strategy])
+    assert made.instruments == strategy.instruments
+    # docs/architecture/06-runtime.md's `### A missing or stale bar` sets it.
+    assert made.stale_lag == 0
 
 
 def test_1_chans_file_holds_the_ruled_settings() -> None:

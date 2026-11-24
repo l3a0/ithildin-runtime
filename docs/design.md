@@ -2338,7 +2338,10 @@ Data captures one snapshot per decision for every strategy of a deployment, so
 it reads one of each of these settings.
 
 - The lookback is how many sessions of bars each decision reads.
-- The stale lag is how many sessions an instrument's newest bar may be behind.
+- The stale lag is how many sessions an instrument's newest bar may be behind,
+  which is 0, as [A missing or stale
+  bar](architecture/06-runtime.md#a-missing-or-stale-bar) says. A test reads
+  every tracked file and fails on any other value.
 - The spike multiple is how many standard deviations a close may move before it
   is flagged.
 
