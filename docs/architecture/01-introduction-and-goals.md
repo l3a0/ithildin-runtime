@@ -150,13 +150,9 @@ them.
    configuration, `chan_bollinger.toml`, writes every cost term as zero, and
    test 1 runs the cost model on that file. A strategy's file is the same in
    every environment, so paper estimates a cost of zero too until the strategy
-   it runs has terms above zero. A paper result after costs then needs the fees
-   and the slippage recorded, and an open position's cost to close still reads
-   as zero. Terms above zero are written before any strategy weighs a cost
-   against what a trade would earn, and before live. Writing them changes the
-   strategy's decision path, meaning the code, configuration and cost model its
-   decisions rest on, so it closes an open sample ([A strategy is judged over a
-   sample, and runs unchanged through it](../design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it)).
+   it runs has terms above zero. Terms above zero are written before any
+   strategy weighs a cost against what a trade would earn, and before live.
+   Where they go is not settled, because test 1 pins this file at zero.
 
 Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking
