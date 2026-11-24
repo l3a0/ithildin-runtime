@@ -39,7 +39,8 @@ trade. Strategies that write different values are refused, naming the key and
 each strategy with its value. `spike_multiple` is compared as written, so 10
 and 10.0 differ, because a stored flag's note prints it.
 
-Every refusal is a `Halt`, which data's stage raises at each decision.
+Every refusal is a `Halt`, which data's stage raises at each decision. A value
+`DataSettings` refuses itself with a `ValueError` halts too, naming every file.
 tests/test_data_settings.py reads every tracked strategy file, so a bad section
 fails CI before any run.
 """

@@ -654,6 +654,8 @@ def test_a_partition_before_the_calendars_first_session_is_an_earlier_one(
     """GLD traded from 2004-11-18, and the session table starts in 2006."""
     earlier = date(2005, 12, 30)
     assert earlier < TABLE.first
+    # Listed after a later day, as a backfill is, and named as the earliest.
+    list_partition(lake, lakes.partition_key("GLD", date(2006, 1, 3)))
     list_partition(lake, lakes.partition_key("GLD", earlier))
     assert f"the lake lists {lakes.partition_key('GLD', earlier)} before it" in late(
         make(lake, tmp_path), EARLY
@@ -696,7 +698,7 @@ def test_only_an_earlier_daily_partition_of_the_instruments_own_ticker_halts(
     if halts:
         assert f"the lake lists {partition} before it" in caught.value.reason
     else:
-        assert "first session is written as" not in caught.value.reason
+        assert caught.value.reason.startswith("QQQ missing for the decision")
 
 
 # 3. End time.

@@ -140,6 +140,16 @@ def test_2_a_bad_number_halts_naming_the_key(name: str, bad: str) -> None:
         ("GLD = 2006-04-26\nUSO = 2006-04-27\n", "", "states no first_sessions"),
         ("USO = 2006-04-27\n", "", "states no first_sessions date for USO"),
         (
+            "GLD = 2006-04-26\nUSO = 2006-04-27\n",
+            "SPY = 2006-01-03\n",
+            "states no first_sessions date for GLD, USO",
+        ),
+        (
+            "USO = 2006",
+            "SPY = 2006-01-03\nQQQ = 2006-01-03\nUSO = 2006",
+            "holds a first_sessions date for QQQ, SPY, which the strategy does not trade",
+        ),
+        (
             "USO = 2006",
             "SPY = 2006-01-03\nUSO = 2006",
             "holds a first_sessions date for SPY, which the strategy does not trade",
@@ -177,7 +187,7 @@ def test_2_every_setting_is_a_key_a_file_writes_and_none_has_a_default() -> None
 
 
 def test_2_a_check_of_the_settings_own_halts_too(monkeypatch: pytest.MonkeyPatch) -> None:
-    """So a check `DataSettings` gains stops no worker that the reader lets through."""
+    """So a `ValueError` the reader does not foresee halts a decision, and stops no worker."""
 
     def stricter(self) -> None:
         raise ValueError("a check the reader does not make")

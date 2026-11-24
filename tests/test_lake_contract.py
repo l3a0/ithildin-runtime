@@ -6,7 +6,8 @@ here exercises each over the built lake. A raise of the pin that changes one
 fails here first.
 
 1. `lake.loader.load_bars`, its `LoadError` family and the columns it returns.
-2. `lake.paths.is_reader_file`.
+2. `lake.paths.is_reader_file`, and `lake.paths.parse_bars_rel`, which inverts
+   `LakePaths.bars_partition_path`.
 3. `lake.manifest.latest_entries`, for each file's SHA-256.
 4. `lake.bar_import.import_vintages`, in tests only, which built the lake.
 5. `lake.calendar`, which must agree with `core.sessions` on every session.
@@ -22,7 +23,7 @@ import pytest
 from lake.calendar import ExchangeCalendar
 from lake.loader import BarsAbsent, LoadError, load_bars
 from lake.manifest import latest_entries
-from lake.paths import is_reader_file
+from lake.paths import LakePaths, is_reader_file, parse_bars_rel
 
 from ithildinruntime.core import load_sessions
 from tests.support import lake as lakes
@@ -114,6 +115,18 @@ def test_23_load_bars_returns_around_a_session_missing_inside_a_range(
         lake_root=lake,
     )
     assert table.num_rows == 4
+
+
+def test_23_parse_bars_rel_reads_back_every_partition_the_lake_lists(built_lake: Path) -> None:
+    bars = [key for key in latest_entries(built_lake) if key.startswith("bars/")]
+    assert bars
+    paths = LakePaths(built_lake)
+    for key in bars:
+        read = parse_bars_rel(key)
+        assert read is not None, key
+        assert read.freq == "1d"
+        assert paths.bars_partition_path(read.ticker, read.freq, read.day) == built_lake / key
+    assert parse_bars_rel("bars/ticker=GLD/freq=1d/date=2006-04-26") is None
 
 
 @pytest.mark.parametrize(
