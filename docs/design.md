@@ -2310,11 +2310,9 @@ The price is four things.
 2. A bad section, or a bar missing for an instrument only one strategy trades,
    halts every strategy of the deployment. Switching that strategy off does not
    end the halt, because data reads every strategy's section and instruments. A
-   missing bar's halt ends when the lake holds the bar or the lookback passes its
-   session. A bad section's halt ends with a release whose file is good, or once the
-   deployment no longer lists the strategy. [A release changes only between
-   sessions](#every-change-can-be-undone-or-switched-off), so the rest of that
-   session's decisions halt. In live trading the owner also clears either halt.
+   corrected file ships in a release, and [a release changes only between
+   sessions](#every-change-can-be-undone-or-switched-off), so a bad section halts
+   every decision left in its session.
 3. The spike multiple only alerts, yet retuning it moves the hash, so retuning it
    during a sample reads as a change of configuration.
 4. Adding a strategy changes no shared module only while its data settings agree
@@ -2329,14 +2327,17 @@ would cut a session the lake lost out of the lookback, and the bars after that
 hole would read `fresh`.
 
 So a decision halts where a first session cuts its lookback and the manifest
-lists an earlier daily partition of the instrument. The halt names the manifest
-it read, by SHA-256 and bucket version, and comes before any snapshot is stored.
-marketlake keeps a replaced manifest for 30 days, as [Which other marketlake
-files the mirror holds](architecture/07-deployment.md#which-other-marketlake-files-the-mirror-holds) says.
-A decision that runs again after a crash is judged on its first stored snapshot,
-which does not show the cut, so a check made after the store would pass it. A
-date too early needs no check, because the sessions before the series then halt
-as missing, or because the security master names no ticker for them.
+lists an earlier daily partition of the instrument. The halt comes before any
+snapshot is stored. A decision that runs again after a crash is judged on its
+first stored snapshot, which does not show the cut, so a check made after the
+store would pass it. A date too early needs no check, because the sessions before
+the series then halt as missing, or because the security master names no ticker
+for them.
+
+The halt names the manifest it read, by SHA-256 and bucket version. marketlake
+keeps a replaced manifest for 30 days, as [Which other marketlake files the
+mirror holds](architecture/07-deployment.md#which-other-marketlake-files-the-mirror-holds)
+says, so that version can be fetched only that long.
 
 A manifest that lists nothing before the written date reads as the series'
 start, so the check cannot see a series whose whole head is gone. Nor does it see
@@ -2352,10 +2353,10 @@ missing until the lookback passes the gap.
 
 #### What the spike multiple is measured against
 
-The spike multiple is 10. It was chosen after the same moves over 40-session
-lookbacks were seen, where Yahoo's USO reached 10.47 on 2020-03-09, so it stays
-exploratory. The table measures them over the 60-session lookback. Each return is
-judged against the other returns of its lookback.
+The spike multiple is 10. It was set after the Chan vintages' moves over
+40-session lookbacks were seen, so it stays exploratory. The table measures moves
+over the 60-session lookback, with each return judged against the other returns of
+its lookback.
 
 **Table:** The largest close-to-close move in any 60-session lookback, in standard deviations. Exploratory
 

@@ -226,8 +226,7 @@ The price has three parts.
    the market.
 3. A bar whose prices contradict each other halts every decision whose lookback
    reads it, which is up to 60 sessions. So does any other fault in a session of
-   the lookback that halts a decision, such as a session with no bar, as [Alarms
-   on data](../halts-and-drills.md#alarms-on-data) lists them.
+   the lookback that halts a decision, such as a session with no bar.
 
 ### What ends a position
 

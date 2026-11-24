@@ -81,13 +81,7 @@ The newest z-score needs 39 of them: 20 to fit the hedge ratio of the oldest
 spread in its 20-day window, and one more for each of the 19 spreads after that.
 The other 21 reach the earlier sessions whose z-scores settle
 [which unit is held](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds).
-So the download and capture together have to hold 60 sessions. The download holds
-the 40 from 2026-09-04 to 2026-10-30, as
-[l3a0/marketlake#951](https://github.com/l3a0/marketlake/issues/951) says, so the
-first full lookback on captured and downloaded bars ends at the close of
-2026-11-30. A shadow, paper or live decision before that halts on the sessions its
-lookback lacks, until [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025)
-imports the ones up to 2026-09-03.
+So the download and capture together have to hold 60 sessions.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported

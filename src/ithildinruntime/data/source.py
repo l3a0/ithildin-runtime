@@ -612,8 +612,8 @@ def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime |
 def _read_from(checked: Checked) -> str:
     """The file a halt read, as the bucket versions it.
 
-    The bucket keeps every version of a partition, and a replaced manifest for
-    30 days.
+    marketlake's bucket keeps every version of a partition, and a replaced
+    manifest for 30 days.
     """
     return f"Read from {checked.key} at SHA-256 {checked.sha256}, bucket version {checked.version}"
 

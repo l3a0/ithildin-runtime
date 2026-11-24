@@ -660,7 +660,8 @@ def test_a_partition_before_the_calendars_first_session_is_an_earlier_one(
     assert f"the lake lists {lakes.partition_key('GLD', earlier)} before it" in late(
         make(lake, tmp_path), EARLY
     )
-    # The master names no USO ticker that day, so the partition is none of USO's.
+    # The master names no USO ticker that day, so this partition is none of USO's.
+    list_partition(lake, lakes.partition_key("USO", earlier))
     uso = make(lake, tmp_path, instruments=(USO,), first_sessions={USO: FIRST})
     assert uso.read(close(EARLY)).halts == ()
 
