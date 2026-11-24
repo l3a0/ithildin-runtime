@@ -37,6 +37,7 @@ from ithildinruntime.core import (
     ForecastSet,
     Halt,
     HaltRecord,
+    InstrumentId,
     Mode,
     OutputFile,
     Plan,
@@ -174,12 +175,16 @@ def test_a_long_is_held_inside_the_band_from_the_z_score_below_it() -> None:
     assert found["unit"] == ("1.00000000", date(2011, 11, 18), date(2011, 11, 28))
 
 
-def test_the_model_decides_on_unrounded_values() -> None:
-    # The z-score is 8/7 = 1.142857142857…, which the stored 1.14285714 is below.
-    config = strategy(hedge_sessions=3, band_sessions=3, entry="1.14285714")
-    made_set = forecast_of(config, SHORT.at(NEWEST, 5))
-    assert made_set.forecasts[0].direction == -1
-    assert written(made_set.signals)["z_score"][0] == "1.14285714"
+@pytest.mark.parametrize(
+    ("series", "stored", "unit"), [(SHORT, "1.14285714", -1), (LONG, "-0.71428571", 1)]
+)
+def test_the_model_decides_on_unrounded_values(series, stored, unit) -> None:
+    # 8/7 is 1.142857142857… and 5/7 is 0.714285714285…, so each stored z-score sits on
+    # the entry it was rounded to, and the one decided on sits past it.
+    config = strategy(hedge_sessions=3, band_sessions=3, entry=stored.removeprefix("-"))
+    made_set = forecast_of(config, series.at(NEWEST, 5))
+    assert made_set.forecasts[0].direction == unit
+    assert written(made_set.signals)["z_score"][0] == stored
 
 
 def zero_hedge(last: object) -> ForecastSet:
@@ -800,6 +805,12 @@ HALTS = {
             },
         ),
         "USO has no 1d bar for the session",
+    ),
+    "another-instrument-stale": (
+        replace(
+            HAND_SNAPSHOT, status={**HAND_SNAPSHOT.status, InstrumentId("SPY"): BarStatus.STALE}
+        ),
+        "SPY stale for the session",
     ),
     "a-bar-as-traded": (
         basis(GLD, 0),

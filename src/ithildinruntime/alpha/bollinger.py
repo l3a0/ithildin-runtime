@@ -40,7 +40,8 @@ A section halts the model, naming the strategy and the key, on each of these.
 A decision halts, naming the strategy and the instrument or the session, on
 each of these.
 
-1. A leg that is missing, stale or has no daily bar, in
+1. A leg that is missing, stale or has no daily bar, or any other instrument
+   in the snapshot that is missing, stale or has no bar, in
    `Snapshot.require_fresh`'s own words.
 2. A bar whose basis is not `adjusted`, because a split inside a window of
    prices as traded would read as a move of the market.

@@ -731,10 +731,14 @@ def test_a_data_result_that_lists_the_snapshot_other_than_once_halts(tmp_path, t
         run(handler(storage))
 
 
-@pytest.mark.parametrize("days", [-1, 1], ids=["an-earlier", "a-later"])
-def test_a_snapshot_of_another_decision_halts(tmp_path, days) -> None:
+@pytest.mark.parametrize(
+    "apart",
+    [timedelta(days=-1), timedelta(days=1), timedelta(minutes=-20), timedelta(microseconds=1)],
+    ids=str,
+)
+def test_a_snapshot_of_another_decision_halts(tmp_path, apart) -> None:
     storage = store(tmp_path)
-    other = AT + timedelta(days=days)
+    other = AT + apart
     # The file's own header names this decision, so storage's check passes.
     write_data(storage, entries=(replace(SNAPSHOT, decision_at=other),))
     with pytest.raises(Halt) as caught:

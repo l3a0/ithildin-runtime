@@ -152,7 +152,7 @@ flowchart LR
     exec -->|"7.2 account file, book"| d1
     d3 -->|"7.3 replay"| exec
     d1 -->|"8.1 snapshot, book"| models
-    models -->|"8.2 forecast, constraints,<br/>costs, target"| d1
+    models -->|"8.2 forecast, signals,<br/>constraints, costs, target"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3

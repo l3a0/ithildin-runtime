@@ -249,24 +249,26 @@ asks.
 
 Nothing forces it back. Two prices are cointegrated when some fixed combination
 of them keeps returning to one level, and Chan states that GLD and USO are not.
-quantitative-trading has run one test of it on these prices, an Engle-Granger
-test at one lag over all 1,500 sessions, which gives −1.5150 against a bar of
-−3.04 at 10 percent
-([Entry 21](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading)). So
-it does not find that they are, which is exploratory and no proof that they are
-not. This repository has run no test of its own. USO holds oil futures, so its price also carries
-the roll return, which is what a fund gains or loses as it replaces an expiring
-contract with the next one. Who the strategy trades against, and what kind each
-price is, go on its registration, [#41](https://github.com/l3a0/ithildin-runtime/issues/41).
+No test quantitative-trading has run on this pair finds that they are
+([Entry 21](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading) and
+[Entry 29](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-29-gld-gdx-and-uso-around-july-2008-chans-algorithmic-trading)).
+Those tests are exploratory, and each counts as a try, as
+[A backtest uses nothing it could not have known](../design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition)
+says. This repository has run none of its own.
+
+USO holds oil futures, so its price also carries the roll return, which is what
+a fund gains or loses as it replaces an expiring contract with the next one.
+Who the strategy trades against, and what kind each price is, go on its
+registration, [#41](https://github.com/l3a0/ithildin-runtime/issues/41).
 
 ### What a pin on this data cannot show
 
 Both vintages were saved on 2012-04-10, so a result quoted from them can carry
 corrections made up to that day. Chan calls the 20-session windows near-optimal
 with the benefit of hindsight
-([Entry 26](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-26-bollinger-bands-on-gld-and-uso-chans-algorithmic-trading)),
+([Entry 21](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading)),
 and states the thresholds, 1 and 0, without saying how they were chosen
-([the post](https://github.com/l3a0/quantitative-trading/blob/main/blog/bollinger-band-lessons.md)).
+([Entry 26](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-26-bollinger-bands-on-gld-and-uso-chans-algorithmic-trading)).
 So no test can show that any of the four settings was knowable before test 1's
 decisions.
 
