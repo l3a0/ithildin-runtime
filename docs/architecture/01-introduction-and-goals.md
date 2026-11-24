@@ -252,9 +252,7 @@ of them keeps returning to one level, and Chan states that GLD and USO are not.
 No test quantitative-trading has run on this pair finds that they are
 ([Entry 21](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-21-price-spread-log-price-spread-and-ratio-chans-algorithmic-trading) and
 [Entry 29](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-29-gld-gdx-and-uso-around-july-2008-chans-algorithmic-trading)).
-Those tests are exploratory, and each counts as a try, as
-[A backtest uses nothing it could not have known](../design.md#a-backtest-uses-nothing-it-could-not-have-known-and-each-figure-it-quotes-has-one-definition)
-says. This repository has run none of its own.
+Those tests are exploratory, and this repository has run none of its own.
 
 USO holds oil futures, so its price also carries the roll return, which is what
 a fund gains or loses as it replaces an expiring contract with the next one.

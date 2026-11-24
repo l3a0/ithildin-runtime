@@ -187,6 +187,23 @@ def test_the_model_decides_on_unrounded_values(series, stored, unit) -> None:
     assert written(made_set.signals)["z_score"][0] == stored
 
 
+# USO's closes of HAND taken from 60, which turns each spread s into 60 − s and so
+# each z-score over.
+MIRRORED = made(HAND_DAYS, GOLD, tuple(60 - close for close in OIL))
+
+
+@pytest.mark.parametrize(
+    ("series", "stored"), [(HAND, "0.42857143"), (MIRRORED, "-0.42857143")], ids=["short", "long"]
+)
+def test_the_model_ends_a_position_on_unrounded_values(series, stored) -> None:
+    # 3/7 is 0.428571428571…, so the stored z-score sits on the exit, which ends nothing,
+    # and the one decided on sits inside it.
+    config = strategy(hedge_sessions=3, band_sessions=3, exit="0.42857143")
+    made_set = forecast_of(config, series.at(NEWEST, 5))
+    assert made_set.forecasts[0].direction == 0
+    assert written(made_set.signals)["z_score"][0] == stored
+
+
 def zero_hedge(last: object) -> ForecastSet:
     """LONG with USO closing at `last` on 11-28, and 17 on 11-23."""
     closes = made(HAND_DAYS, GOLD, (26, 35, 29, 24, 17, 24, last))
