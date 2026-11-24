@@ -1146,7 +1146,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
-3. The stress move's vintage is a SHA-256, and its age a whole number of days above zero. The gate halts a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
+3. The stress move's vintage is a SHA-256, and its age a whole number of days from 1 to 365, since a larger one would switch the next check off. The gate halts a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
 4. V is above zero.
 5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.

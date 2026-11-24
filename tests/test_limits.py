@@ -184,7 +184,9 @@ def test_the_account_a_blob_names_is_never_shown(account: object) -> None:
 
 @pytest.mark.parametrize("name", ["max_open_orders", "moc_cutoff", "stress_max_age_days"])
 def test_an_integer_a_record_cannot_hold_is_refused(name: str) -> None:
-    assert parse_caps(with_(**{name: 2**53 - 1}), "paper")
+    # The stress move's age has a ceiling of its own.
+    largest = 365 if name == "stress_max_age_days" else 2**53 - 1
+    assert parse_caps(with_(**{name: largest}), "paper")
     for huge in (2**53, -(2**53)):
         with pytest.raises(Halt, match=f"{name} is a huge int, past what a record can hold"):
             parse_caps(with_(**{name: huge}), "paper")
@@ -308,7 +310,15 @@ CAPS_ALONE: dict[str, tuple[dict[str, object], str]] = {
         {"stress_through": datetime(2026, 11, 20)},
         "stress_through is .*, not a date",
     ),
-    "age-zero": ({"stress_max_age_days": 0}, "stress_max_age_days is 0, not a whole number above"),
+    "age-zero": ({"stress_max_age_days": 0}, "stress_max_age_days is 0, not .* from 1 to 365"),
+    "age-past-its-ceiling": (
+        {"stress_max_age_days": 366},
+        "stress_max_age_days is 366, not a whole number of days from 1 to 365",
+    ),
+    "age-far-past-its-ceiling": (
+        {"stress_max_age_days": 10**20},
+        "stress_max_age_days is 100000000000000000000, not .* from 1 to 365",
+    ),
     "age-negative": ({"stress_max_age_days": -1}, "stress_max_age_days is -1, not a whole number"),
     "age-a-bool": ({"stress_max_age_days": True}, "stress_max_age_days is True, not a whole"),
 }
@@ -348,6 +358,10 @@ PARSED: dict[str, tuple[dict[str, object], str]] = {
     "stress_vintage": ({"stress_vintage": "x"}, "stress_vintage is 'x', not a SHA-256"),
     "stress_vintage_number": ({"stress_vintage": 5}, "stress_vintage is 5, not a SHA-256"),
     "stress_max_age_days": ({"stress_max_age_days": 0}, "stress_max_age_days is 0, not a whole"),
+    "stress_max_age_days_past": (
+        {"stress_max_age_days": 366},
+        "stress_max_age_days is 366, not a whole number of days from 1 to 365",
+    ),
     "max_gross": ({"max_gross": "-1"}, "max_gross is -1, below zero"),
     "loss_stop": ({"loss_stop": "-1"}, "loss_stop is -1, below zero"),
     "max_open_orders": ({"max_open_orders": -1}, "max_open_orders is -1, below zero"),
@@ -379,7 +393,8 @@ def test_5_each_end_of_each_range_is_allowed() -> None:
     assert tighten(constraints(), narrow, valuation())
     assert tighten(constraints(), caps(share=d("0.00000001")), valuation())
     assert tighten(constraints(), caps(share=d("0.99999999")), valuation())
-    assert tighten(constraints(), caps(stress_max_age_days=1), valuation())
+    for age in (1, 2, 364, 365):
+        assert tighten(constraints(), caps(stress_max_age_days=age), valuation())
 
 
 TIGHTER: dict[str, tuple[object, object, Callable[[Constraints], object]]] = {

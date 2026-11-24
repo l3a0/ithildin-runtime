@@ -30,6 +30,9 @@ _FORMAT = 1
 # A caps blob is written by hand and read before every order, so one far past
 # any a person would write is refused before it is parsed.
 _MAX_BYTES = 65_536
+# The longest a decision may use a stress move past its vintage's last session. A
+# larger age would switch that check off.
+_MAX_STRESS_AGE_DAYS = 365
 # How much of a refused value a halt shows, since its reason is stored and sent.
 _SHOWN = 80
 _NET_CAP_PLACES = 4
@@ -167,8 +170,11 @@ def _check_caps(caps: HardCaps) -> None:
     if type(caps.stress_through) is not date:
         raise Halt(f"{where} stress_through is {caps.stress_through!r}, not a date")
     age = _integer(f"{where} stress_max_age_days", caps.stress_max_age_days)
-    if age < 1:
-        raise Halt(f"{where} stress_max_age_days is {age}, not a whole number above zero")
+    if not 1 <= age <= _MAX_STRESS_AGE_DAYS:
+        raise Halt(
+            f"{where} stress_max_age_days is {age}, not a whole number of days from 1 to "
+            f"{_MAX_STRESS_AGE_DAYS}"
+        )
 
 
 def _check_shared(source: Constraints | HardCaps, where: str) -> None:

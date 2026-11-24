@@ -458,7 +458,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
 | `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over |
 | `stress_through` | `YYYY-MM-DD` | That vintage's last session |
-| `stress_max_age_days` | A JSON integer above zero | How many days past that session a decision may still use it |
+| `stress_max_age_days` | A JSON integer from 1 to 365 | How many days past that session a decision may still use it |
 
 A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
 
