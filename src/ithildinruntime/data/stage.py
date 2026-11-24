@@ -9,8 +9,8 @@ things, in order.
    it waits and a history clock returns at once. Data holds no branch on the
    mode. A stop ends a wall clock's wait at once with `Stopped`, which this
    handler lets through. The loop then stores nothing for the decision, and
-   nothing is written before the wait, so a later check starts the decision
-   again safely.
+   nothing is written before the wait, so a later check that finds no result
+   stored starts the decision again safely.
 2. **It reads the snapshot** through `LakeSource`. A read that cannot give a
    snapshot raises `Halt`, which the loop stores as data's result. The read
    comes before the store, so it halts this way even when a redelivery finds
