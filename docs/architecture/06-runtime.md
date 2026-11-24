@@ -325,7 +325,7 @@ Alpaca [rejects a market-on-close order](https://docs.alpaca.markets/docs/orders
 also checks the cutoff again just before each broker call, and keeps a pair
 whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening. Monitoring then reports how far the decision's price and the fills sat from it.
 
-That the recover stage reads the hard caps, and stores them as read with the session's valuation, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+That the recover stage reads the hard caps, and stores the book, the hard caps as read and the session's valuation for the risk model, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 The figure below is a C4 dynamic diagram.
 

@@ -1948,7 +1948,8 @@ deployment names the strategies it runs, and the reader loads only those, so
 adding a strategy adds a file and rows, never a change to a shared module, while
 its data settings agree with the others', as [What data reads for several
 strategies](#what-data-reads-for-several-strategies) says, and once the risk
-stage can write two strategies' limits, as item 1 of the list below says. A
+stage can write two strategies' limits, as [What halts the risk
+stage](architecture/05-building-blocks.md#what-halts-the-risk-stage) says. A
 stage that belongs to one strategy is named `<component>/<strategy>`, and
 every other stage is shared by the deployment's strategies. No shared stage
 takes a two-part name whose second part is a declared strategy, so a strategy

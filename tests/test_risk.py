@@ -1006,6 +1006,14 @@ def test_3_a_held_instrument_with_no_mark_halts_the_stage(tmp_path, held) -> Non
     assert result.header == risk_header(inputs)
 
 
+def test_3_a_held_instrument_with_no_bar_halts_the_stage(tmp_path) -> None:
+    storage = store(tmp_path)
+    inputs = write_data(storage, snapshot({GLD: 380})) | write_recover(storage)
+    result = own_halt(tmp_path, storage)
+    assert result.halt.reason == "USO missing for the session"
+    assert result.header == risk_header(inputs)
+
+
 def test_3_a_stress_move_past_its_age_halts_the_stage(tmp_path) -> None:
     storage = store(tmp_path)
     old = replace(CAPS, stress_max_age_days=3)
@@ -1070,6 +1078,18 @@ def test_3_an_input_with_no_result_halts(tmp_path, stage) -> None:
     key = result_key(DEPLOYMENT, RUN, DECISION, stage)
     assert result.halt.reason == f"{key} is not stored, and stage risk reads it"
     assert dict(result.header.inputs) == {k: v for k, v in named.items() if k == DATA_RESULT}
+
+
+@pytest.mark.parametrize("stage", ["data", RECOVER_STAGE])
+def test_3_a_result_storage_refuses_halts_and_is_not_named(tmp_path, stage) -> None:
+    storage = store(tmp_path)
+    data = write_both(storage)
+    key = result_key(DEPLOYMENT, RUN, DECISION, stage)
+    (tmp_path / key).write_bytes(b"{}")
+    result = own_halt(tmp_path, storage)
+    assert result.halt.reason.startswith(f"{key} holds no decision result the codec reads")
+    named = {} if stage == "data" else {DATA_RESULT: data[DATA_RESULT]}
+    assert result.header == risk_header(named)
 
 
 def test_3_constraints_already_stored_with_other_bytes_halt(tmp_path) -> None:
@@ -1151,6 +1171,10 @@ def test_a_halt_of_the_stages_own_after_one_it_caught_names_no_cause(tmp_path) -
         decision.result("data")
     assert decision.halted(later.value).halt.cause == BlobRef(DATA_RESULT, data[DATA_RESULT])
     assert decision.halted(caught.value).halt.cause == cause
+    # A halted result halts each time it is asked for.
+    with pytest.raises(Halt) as again:
+        decision.result(RECOVER_STAGE)
+    assert decision.halted(again.value).halt.cause == cause
 
 
 # The entry point

@@ -1196,7 +1196,7 @@ A strategy's own limits are the `[risk]` section of its tracked file. It holds e
 A halt in data's result or in recover's is passed on. Every other halt the handler meets is the stage's own result, whose header names each result and file it had read and storage had accepted. The receive loop stores the few it raises itself, such as a decision whose strategies are not the table's, with no input named. The stage halts on each of these.
 
 1. A `[risk]` section that is absent, leaves a field out, holds one the form lacks, names other instruments than the strategy's in a table, or holds a value `core` refuses. The check runs at each decision, so a bad section stops this stage and never the worker's start.
-2. An input with no result, a result that lists one of the four files other than once, a file storage refuses or that holds other than one entry, and a snapshot of another decision.
+2. An input with no result or one storage refuses, a result that lists one of the four files other than once, a file storage refuses or that holds other than one entry, and a snapshot of another decision.
 3. Caps or a valuation that `core.tighten` refuses, a V of any session but the one before the decision's, and a stress move past its age.
 4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position or has an open order.
 5. Two strategies in one deployment, because what scope each one's limits take is not decided.
