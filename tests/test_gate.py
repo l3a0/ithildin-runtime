@@ -17,17 +17,20 @@ import pytest
 
 from ithildinruntime import core
 from ithildinruntime.core import (
+    Bar,
     BarStatus,
     Halt,
     InstrumentId,
     JournalEntry,
     Limit,
     OrderType,
+    Snapshot,
     StopState,
     TimeInForce,
     value_book,
 )
 from ithildinruntime.risk import Gate
+from tests.core_samples import sample
 from tests.support.gates import (
     CENT,
     CHAN,
@@ -176,6 +179,10 @@ def test_1_an_order_beside_one_in_doubt_is_refused_whichever_strategy_sent_it() 
     assert world.at(intent=order(-1)).check().limit is Limit.IN_DOUBT
     assert world.at(intent=order(1, USO)).check().approved
     assert world.at(book=book(opens=[doubtful])).check().approved
+    # A pair whose two sends both got no answer leaves both legs in doubt.
+    both = book(opens=[doubtful, order(-1, USO, name="old-2")], in_doubt=(GLD, USO))
+    for leg in (GLD, USO):
+        assert world.at(book=both, intent=order(1, leg)).check().limit is Limit.IN_DOUBT
 
 
 def test_1_an_order_naming_no_strategy_is_refused_for_its_position() -> None:
@@ -207,6 +214,9 @@ def test_1_a_replacement_counts_the_order_it_replaces_until_its_cancel_settles()
     part = book({CHAN: {GLD: 12}}, opens=[order(18, name="old-1")])
     assert refusal(world.at(book=part)) == (Limit.MAX_POSITION, d(60), d(50))
     assert world.at(book=book()).check().approved
+    # Filled whole during its cancel, all of it is held.
+    whole = world.at(book=book({CHAN: {GLD: 30}}))
+    assert refusal(whole) == (Limit.MAX_POSITION, d(60), d(50))
 
 
 EARLY = date(2026, 11, 27)
@@ -232,9 +242,13 @@ def test_1_a_day_order_passes_after_the_cutoff() -> None:
     assert world.at(intent=order(1)).check().approved
 
 
-def test_1_a_cutoff_of_any_size_is_read_as_one() -> None:
-    world = World(intent=moc(1)).held_to(moc_cutoff=10**15)
-    assert world.check().limit is Limit.MOC_CUTOFF
+def test_1_a_cutoff_is_one_instant_and_one_that_is_no_time_halts() -> None:
+    late = World(intent=moc(1)).held_to(moc_cutoff=10**6)
+    assert late.check().limit is Limit.MOC_CUTOFF
+    # It halts whatever the order is, so that a halt comes before every refusal.
+    for intent in (moc(1), order(1), order(LOOSE + 1)):
+        with pytest.raises(Halt, match="1000000000000000 minutes before the close is no time"):
+            World(intent=intent).held_to(moc_cutoff=10**15).check()
 
 
 def test_1_a_wide_book_names_the_first_limit_in_the_tables_order() -> None:
@@ -281,6 +295,25 @@ def test_1_a_wide_book_names_the_first_limit_in_the_tables_order() -> None:
         assert verdict.loss.past is (world.constraints.loss_stop == d(10))
         world = loosen(world)
     assert world.check().approved
+
+
+def test_1_a_holding_the_constraints_do_not_limit_still_counts() -> None:
+    """A strategy's constraints need not name another's instruments, and the account holds both."""
+    marks = snapshot({GLD: 1, SPY: 2})
+    other = World(book=book({OTHER: {SPY: 20}}), snapshot=marks, intent=order(10))
+    for change, limit, figure in (
+        ({"max_gross": d(49)}, Limit.MAX_GROSS, 50),
+        ({"max_net": d(49)}, Limit.MAX_NET, 50),
+    ):
+        assert refusal(other.held_to(**change)) == (limit, figure, 49)
+    assert other.check().worst_loss == 2
+    mine = other.at(book=book({CHAN: {SPY: 20}}))
+    assert mine.check().worst_loss == 10
+    # An open order alone counts too.
+    resting = other.at(book=book(opens=[order(-20, SPY, OTHER, name="old-1")]))
+    assert refusal(resting.held_to(max_gross=d(49))) == (Limit.MAX_GROSS, 50, 49)
+    fallen = other.losing(0).at(snapshot=snapshot({GLD: 1, SPY: 1}))
+    assert fallen.loss().loss == fallen.check().loss.loss == 20
 
 
 # 2. Orders that only reduce.
@@ -380,18 +413,27 @@ def test_2_a_limit_put_past_by_a_lowered_cap_a_price_or_a_fall_in_v() -> None:
     held = World(book=book({CHAN: {GLD: 40}}, cash=1000), intent=order(-10)).losing(0)
     more = held.at(intent=order(10))
     assert held.check().past == ()
-    # A lowered cap, for each of the three.
-    for change in ({"max_position": {GLD: d(30), USO: d(30)}}, {"max_gross": d(30)}):
-        assert held.capped(**change).check().approved
-        assert not more.capped(**change).check().approved
+    # A lowered cap, for each of the three. A share of V of 0.1 over 0.2 is half of V.
+    half = {"share": d("0.005")}
+    for change, limit in (
+        ({"max_position": {GLD: d(30), USO: d(30)}}, Limit.MAX_POSITION),
+        ({"max_gross": d(30)}, Limit.MAX_GROSS),
+        (half, Limit.MAX_NET),
+    ):
+        out = held.capped(**change).check()
+        assert out.approved and [p.limit for p in out.past] == [limit]
+        assert more.capped(**change).check().limit is limit
     # A price that doubled, for gross and net.
-    for change in ({"max_gross": d(60)}, {"max_net": d(60)}):
+    for change, limit in (
+        ({"max_gross": d(60)}, Limit.MAX_GROSS),
+        ({"max_net": d(60)}, Limit.MAX_NET),
+    ):
         calm = held.held_to(**change)
         assert calm.check().past == ()
         dear = calm.at(snapshot=snapshot({GLD: 2, USO: 1}))
-        assert [p.value for p in dear.check().past] == [80]
-        assert dear.check().approved
-        assert not dear.at(intent=order(10)).check().approved
+        out = dear.check()
+        assert out.approved and [(p.limit, p.value) for p in out.past] == [(limit, 80)]
+        assert dear.at(intent=order(10)).check().limit is limit
     # A V that fell, for net: half of V is the cap here.
     rich = held.capped(share=d("0.1")).given(valuation=valuation(100))
     assert rich.check().past == ()
@@ -418,9 +460,15 @@ def test_2_past_names_each_limit_over_its_bound_in_the_tables_order() -> None:
     ).check()
     assert level.approved and level.past == ()
     assert world.given(stop=StopState.FIRED).check().past == verdict.past
-    adding = world.at(intent=order(QTY)).check()
-    assert adding.limit is Limit.MAX_POSITION
-    assert [p.value for p in adding.past] == [40 + QTY] * 3
+    adding = world.at(intent=order(QTY))
+    for limit in (Limit.MAX_POSITION, Limit.MAX_GROSS, Limit.MAX_NET):
+        refused = adding.check()
+        assert (refused.limit, refused.value) == (limit, 40 + QTY)
+        assert refused.past[0].limit is limit
+        assert [p.value for p in refused.past] == [40 + QTY] * len(refused.past)
+        loose = BOTH if limit is Limit.MAX_POSITION else LOOSE
+        adding = adding.held_to(**{str(limit): loose})
+    assert adding.check().approved and adding.check().past == ()
 
 
 def test_2_past_counts_the_order_being_checked() -> None:
@@ -476,7 +524,7 @@ def test_2_an_order_that_only_reduces_halts_with_no_valid_price() -> None:
             {GLD: 1, USO: 1},
             status={i: BarStatus.STALE if i == instrument else BarStatus.FRESH for i in (GLD, USO)},
         )
-        with pytest.raises(Halt, match=f"{instrument} is stale"):
+        with pytest.raises(Halt, match=f"{instrument} stale for the session"):
             world.at(snapshot=unpriced).check()
 
 
@@ -523,7 +571,29 @@ def _dated(**changes: object) -> Callable[[World], World]:
     return lambda w: w.given(valuation=replace(w.inputs.valuation, **changes))
 
 
-LATER = DECISION + timedelta(minutes=5)
+def _leg(snap: Snapshot, *bars: Bar) -> Snapshot:
+    return replace(snap, bars={**snap.bars, USO: {"1d": bars}})
+
+
+def _newest(snap: Snapshot, **changes: object) -> Snapshot:
+    """The snapshot with fields of USO's newest bar replaced."""
+    old, new = snap.bars[USO]["1d"]
+    return _leg(snap, old, replace(new, **changes))
+
+
+def _late_leg(snap: Snapshot) -> Snapshot:
+    """USO's newest bar is V's session's own, and GLD's is today's."""
+    return _leg(snap, snap.bars[USO]["1d"][0])
+
+
+def _early_leg(snap: Snapshot) -> Snapshot:
+    return _newest(snap, session=date(2026, 11, 4))
+
+
+def _quoted(snap: Snapshot) -> Snapshot:
+    return replace(snap, quotes={USO: replace(sample(core.Quote), instrument=USO)})
+
+
 HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     "now-before-the-decision": (
         lambda w: w.at(now=DECISION - TICK),
@@ -568,23 +638,23 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     ),
     "an-instrument-neither-source-limits": (
         lambda w: w.at(intent=order(1, SPY), snapshot=snapshot({GLD: 1, USO: 1, SPY: 1})),
-        "neither source limits SPY",
+        "the constraints and the hard caps do not both limit SPY",
     ),
     "an-instrument-the-snapshot-lacks": (
         lambda w: w.at(snapshot=snapshot({USO: 1})),
-        "GLD is not in the snapshot",
+        "GLD missing for the session",
     ),
     "a-held-instrument-the-snapshot-lacks": (
         lambda w: w.at(book=book({OTHER: {SPY: 1}})),
-        "SPY is not in the snapshot",
+        "SPY missing for the session",
     ),
     "an-open-order-in-an-instrument-the-snapshot-lacks": (
         lambda w: w.at(book=book(opens=[order(1, SPY, name="old-1")])),
-        "SPY is not in the snapshot",
+        "SPY missing for the session",
     ),
     "a-held-instrument-flat-across-strategies": (
         lambda w: w.at(book=book({CHAN: {SPY: 1}, OTHER: {SPY: -1}})),
-        "SPY is not in the snapshot",
+        "SPY missing for the session",
     ),
     "another-strategy": (
         lambda w: w.at(intent=order(1, strategy=OTHER)),
@@ -592,6 +662,11 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     ),
     "an-id-already-open": (
         lambda w: w.at(book=book(opens=[order(1, strategy=OTHER)])),
+        "new-1 is already open, and this resends it",
+    ),
+    # A strategy's own retry, which is the usual resend.
+    "its-own-id-already-open": (
+        lambda w: w.at(book=book(opens=[order(1)])),
         "new-1 is already open, and this resends it",
     ),
     "an-open-order-filed-under-another-strategy": (
@@ -611,12 +686,45 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(snapshot=snapshot({GLD: 1, USO: 1}, day=PRIOR)),
         "GLD has no mark: its newest bar is for 2026-11-02",
     ),
+    "a-held-legs-mark-no-later-than-v": (
+        lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_late_leg(w.snapshot)),
+        "USO has no mark: its newest bar is for 2026-11-02",
+    ),
+    "a-working-legs-mark-no-later-than-v": (
+        lambda w: w.at(
+            book=book(opens=[order(1, USO, OTHER, name="old-1")]), snapshot=_late_leg(w.snapshot)
+        ),
+        "USO has no mark: its newest bar is for 2026-11-02",
+    ),
+    "a-held-leg-with-a-quote": (
+        lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_quoted(w.snapshot)),
+        "USO has a quote",
+    ),
+    "a-bar-after-the-decision": (
+        lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_early_leg(w.snapshot)),
+        "USO has a bar for 2026-11-04, after the decision's session 2026-11-03",
+    ),
+    "a-held-leg-of-no-stated-kind": (
+        lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_newest(w.snapshot, venues="")),
+        "USO's bar for 2026-11-03 has unstated venues",
+    ),
+    "a-stress-move-past-its-age": (
+        lambda w: w.capped(stress_max_age_days=3),
+        "stress_through is 2026-10-30, 4 days before the decision",
+    ),
     "a-correction-after-v": (
         lambda w: w.at(book=book(corrected_through=8, replayed_through=9)),
         "entry 8 corrected the book after the valuation",
     ),
     "a-reposition-after-vs-session": (
         lambda w: w.at(book=book(repositioned_at=TABLE.session(PRIOR).close + TICK)),
+        "a position was corrected at 2026-11-02T21:00:00.000001",
+    ),
+    # A split's restatement, or a broker's trade, journaled before V was built.
+    "a-reposition-v-was-replayed-past": (
+        lambda w: w.at(
+            book=book(corrected_through=6, repositioned_at=TABLE.session(PRIOR).close + TICK)
+        ),
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     "a-reposition-with-no-zone": (
@@ -636,6 +744,84 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(book=book({CHAN: {GLD: "1E+200"}, OTHER: {GLD: 1}})),
         "the position in GLD has no exact sum: Inexact",
     ),
+    **{
+        f"{name}-of-{number!r}": (change, f"{shown} is .*, not an entry's number")
+        for number in (d("NaN"), True, "7", 7.0)
+        for name, shown, change in (
+            (
+                "corrected-through",
+                "the book's corrected_through",
+                lambda w, n=number: w.at(book=book(corrected_through=n)),
+            ),
+            (
+                "a-book-replayed-through",
+                "the book's replayed_through",
+                lambda w, n=number: w.at(book=book(replayed_through=n)),
+            ),
+            (
+                "a-valuation-replayed-through",
+                "the valuation's replayed_through",
+                lambda w, n=number: w.given(valuation=valuation(replayed_through=n)),
+            ),
+        )
+    },
+    "a-book-replayed-through-nothing": (
+        lambda w: w.at(book=book(replayed_through=None)),
+        "the book's replayed_through is None, not an entry's number",
+    ),
+    **{
+        f"in-doubt-of-{doubt!r}": (
+            lambda w, n=doubt: w.at(book=replace(book(), in_doubt=n)),
+            "the book's in_doubt is .*, not a list of instruments",
+        )
+        for doubt in ("GLDM", None, (None,), ("",), (1,))
+    },
+    "no-positions": (
+        lambda w: w.at(book=replace(book(), positions_by_strategy=None)),
+        "the book's positions are None, not a mapping",
+    ),
+    "no-open-orders": (
+        lambda w: w.at(book=replace(book(), open_orders_by_strategy=None)),
+        "the book's open orders are None, not a mapping",
+    ),
+    "positions-that-are-no-mapping": (
+        lambda w: w.at(book=replace(book(), positions_by_strategy={CHAN: None})),
+        "chan's positions are None, not a mapping",
+    ),
+    **{
+        f"open-orders-of-{orders!r}": (
+            lambda w, n=orders: w.at(book=replace(book(), open_orders_by_strategy={CHAN: n})),
+            "chan's open orders are .*, not a list of orders",
+        )
+        for orders in (None, 5, ("new-1",))
+    },
+    **{
+        f"an-open-order-with-an-id-of-{name!r}": (
+            lambda w, n=name: w.at(book=book(opens=[order(1, USO, name=n)])),
+            "chan has an open order whose id is",
+        )
+        for name in ("", None, 5)
+    },
+    "no-status": (
+        lambda w: w.at(snapshot=replace(w.snapshot, status=None)),
+        "the snapshot's status are None, not a mapping",
+    ),
+    "a-valuation-of-no-session": (
+        lambda w: w.given(valuation=valuation(session=None)),
+        "the valuation's session is None, not a date",
+    ),
+    "a-valuation-of-a-time": (
+        lambda w: w.given(valuation=valuation(session=DECISION)),
+        "the valuation's session is .*, not a date",
+    ),
+    "no-order": (lambda w: w.at(intent=None), "the order is missing"),
+    **{
+        f"an-order-with-an-id-of-{name!r}": (
+            lambda w, n=name: w.at(intent=replace(w.intent, client_order_id=n)),
+            "an order's client order id is .*, which names none",
+        )
+        for name in ("", None, 5)
+    },
     "a-stop-that-names-no-state": (lambda w: w.given(stop="absent"), "the loss stop's state is"),
     "no-caps": (lambda w: w.given(caps=None), "the hard caps are missing"),
     "no-constraints": (lambda w: w.at(constraints=None), "the constraints are missing"),
@@ -666,7 +852,10 @@ ORDERS_ALONE = {
     "an-instrument-the-snapshot-lacks",
     "another-strategy",
     "an-id-already-open",
+    "its-own-id-already-open",
     "a-mark-no-later-than-v",
+    "no-order",
+    *(name for name in HALTS if name.startswith("an-order-with-an-id-of-")),
 }
 
 
@@ -677,10 +866,48 @@ def test_5_the_loss_reading_halts_on_the_same_inputs(name: str) -> None:
         broken(World()).loss()
 
 
+LEG_HALTS: dict[str, tuple[Callable[[Snapshot], Snapshot], str]] = {
+    "older": (lambda s: _late_leg(s), "USO has no mark"),
+    "later": (lambda s: _early_leg(s), "USO has a bar for 2026-11-04"),
+    "quoted": (lambda s: _quoted(s), "USO has a quote"),
+    "stale": (
+        lambda s: replace(s, status={**s.status, USO: BarStatus.STALE}),
+        "USO stale for the session",
+    ),
+    "unstated": (lambda s: _newest(s, delay="unstated"), "has unstated delay"),
+    "free": (lambda s: _newest(s, close=d(0)), "USO's close for 2026-11-03 is 0"),
+    "two": (lambda s: _leg(s, *s.bars[USO]["1d"], s.bars[USO]["1d"][1]), "USO has 2 daily bars"),
+}
+
+
+@pytest.mark.parametrize("read", ["check", "loss"])
+@pytest.mark.parametrize("resting", [False, True], ids=["held", "working"])
+@pytest.mark.parametrize("name", LEG_HALTS)
+def test_5_a_leg_beside_the_order_halts_on_its_price_as_the_orders_own_does(
+    name: str, resting: bool, read: str
+) -> None:
+    """A book holds it or has an order in it, and neither read can value it."""
+    broken, reason = LEG_HALTS[name]
+    beside = [order(1, USO, OTHER, name="old-1")] if resting else []
+    world = World(book=book({} if resting else {CHAN: {USO: 10}}, opens=beside))
+    assert getattr(world, read)() is not None
+    with pytest.raises(Halt, match=reason):
+        getattr(world.at(snapshot=broken(world.snapshot)), read)()
+
+
+@pytest.mark.parametrize("name", sorted(ORDERS_ALONE - {"another-strategy", "no-order"}))
+def test_5_an_order_that_names_no_strategy_meets_the_same_halts(name: str) -> None:
+    """It would be refused for its position, and every halt comes before that."""
+    broken, reason = HALTS[name]
+    world = broken(World())
+    with pytest.raises(Halt, match=reason):
+        world.at(intent=replace(world.intent, strategy="")).check()
+
+
 def test_5_a_halt_comes_before_a_refusal_it_collides_with() -> None:
     fired = World().given(stop=StopState.FIRED)
     assert fired.check().limit is Limit.STOP
-    with pytest.raises(Halt, match="GLD is not in the snapshot"):
+    with pytest.raises(Halt, match="GLD missing for the session"):
         fired.at(snapshot=snapshot({USO: 1})).check()
     large = World(intent=order(LOOSE + 1))
     assert large.check().limit is Limit.MAX_ORDER_QTY
@@ -812,19 +1039,56 @@ def _wrong(prices: dict[InstrumentId, object], held: bool) -> World:
     )
 
 
-WRONG = {
-    # Prices, then the first limit each order names, or None where nothing stops it:
-    # a buy of 5 GLD, a sale of 10 USO, and the day's loss read.
-    ("right", False): ({}, None, None, 0),
-    ("GLD-high", False): ({GLD: 10_000}, Limit.MAX_GROSS, None, 0),
-    ("GLD-low", False): ({GLD: 1}, None, None, 0),
-    ("USO-high", False): ({USO: 5_000}, None, Limit.MAX_GROSS, 0),
-    ("USO-low", False): ({USO: d("0.5")}, None, None, 0),
-    ("right", True): ({}, None, None, 0),
-    ("GLD-high", True): ({GLD: 10_000}, Limit.MAX_GROSS, Limit.MAX_GROSS, -49_500),
-    ("GLD-low", True): ({GLD: 1}, Limit.LOSS_STOP, Limit.LOSS_STOP, 495),
-    ("USO-high", True): ({USO: 5_000}, Limit.MAX_GROSS, Limit.MAX_GROSS, 49_500),
-    ("USO-low", True): ({USO: d("0.5")}, None, None, -495),
+# A buy of 5 GLD and a sale of 10 USO, each checked twice: as the limits stand, and with
+# gross loosened, so that net decides. Then the day's loss read.
+type Answered = tuple[Limit, object, object] | None
+WRONG: dict[tuple[str, bool], tuple[dict, Answered, Answered, Answered, Answered, object]] = {
+    ("right", False): ({}, None, None, None, None, 0),
+    ("GLD-high", False): (
+        {GLD: 10_000},
+        (Limit.MAX_GROSS, 50_000, 3_000),
+        (Limit.MAX_NET, 50_000, 1_500),
+        None,
+        None,
+        0,
+    ),
+    ("GLD-low", False): ({GLD: 1}, None, None, None, None, 0),
+    ("USO-high", False): (
+        {USO: 5_000},
+        None,
+        None,
+        (Limit.MAX_GROSS, 50_000, 3_000),
+        (Limit.MAX_NET, 50_000, 1_500),
+        0,
+    ),
+    ("USO-low", False): ({USO: d("0.5")}, None, None, None, None, 0),
+    # Held, the book is worth 10,000 in cash, 500 of GLD and −500 of USO.
+    ("right", True): ({}, None, None, None, None, 0),
+    ("GLD-high", True): (
+        {GLD: 10_000},
+        (Limit.MAX_GROSS, 100_500, 3_000),
+        (Limit.MAX_NET, 99_500, 1_500),
+        (Limit.MAX_GROSS, 51_000, 3_000),
+        (Limit.MAX_NET, 49_500, 1_500),
+        -49_500,
+    ),
+    ("GLD-low", True): (
+        {GLD: 1},
+        (Limit.LOSS_STOP, 495, 100),
+        (Limit.LOSS_STOP, 495, 100),
+        (Limit.LOSS_STOP, 495, 100),
+        (Limit.LOSS_STOP, 495, 100),
+        495,
+    ),
+    ("USO-high", True): (
+        {USO: 5_000},
+        (Limit.MAX_GROSS, 51_000, 3_000),
+        (Limit.MAX_NET, 49_500, 1_500),
+        (Limit.MAX_GROSS, 100_500, 3_000),
+        (Limit.MAX_NET, 99_500, 1_500),
+        49_500,
+    ),
+    ("USO-low", True): ({USO: d("0.5")}, None, None, None, None, -495),
 }
 # What no cap stops, because the wrong price reads every dollar figure small and the
 # share caps read no price: an order on a leg read 100 times low, one beside it, and,
@@ -843,19 +1107,25 @@ NO_CAP_STOPS = {
 
 @pytest.mark.parametrize(("leg", "held"), WRONG)
 def test_7_a_wrong_price_against_the_dollar_limits(leg: str, held: bool) -> None:
-    prices, buy, sell, loss = WRONG[(leg, held)]
+    prices, buy, buy_on_net, sell, sell_on_net, loss = WRONG[(leg, held)]
     world = _wrong(prices, held)
     assert world.loss().loss == loss
-    assert world.at(intent=order(5, GLD)).check().limit is buy
-    assert world.at(intent=order(-10, USO)).check().limit is sell
+    for intent, stands, on_net in (
+        (order(5), buy, buy_on_net),
+        (order(-10, USO), sell, sell_on_net),
+    ):
+        asked = world.at(intent=intent)
+        for answered, expected in ((asked, stands), (asked.held_to(max_gross=LOOSE), on_net)):
+            assert refusal(answered) == (expected or (None, None, None))
 
 
 def test_7_the_cases_no_cap_stops_are_listed() -> None:
-    passed = set()
-    for (leg, held), (prices, buy, sell, _) in WRONG.items():
-        if leg != "right":
-            assert prices
-            passed |= {(leg, held, i) for i, limit in ((GLD, buy), (USO, sell)) if limit is None}
+    passed = {
+        (leg, held, intent.instrument)
+        for (leg, held), (prices, *_) in WRONG.items()
+        for intent in (order(5), order(-10, USO))
+        if leg != "right" and _wrong(prices, held).at(intent=intent).check().approved
+    }
     assert passed == NO_CAP_STOPS
 
 

@@ -25,7 +25,7 @@ from types import MappingProxyType
 from typing import Annotated, NewType
 
 from .codec import Places, encode
-from .exact import exact_product, exact_total, rounded
+from .exact import rounded, worth
 from .halt import Halt
 from .names import is_name, is_sha256
 
@@ -276,8 +276,8 @@ class Snapshot(_Record):
         snapshot halts, rather than reading as nothing to trade. Every other
         instrument the snapshot holds must be fresh and hold a bar too.
 
-        It judges no age. Data fills `status` under #7's rule, and this only
-        reads it. An empty snapshot, or a caller that names nothing it needs,
+        It judges no age. Data fills `status` under the written lag, and this
+        only reads it. An empty snapshot, or a caller that names nothing it needs,
         halts, because an empty input counts as a missing one (hard limit 3).
         """
         if not isinstance(needed, Mapping) or any(
@@ -674,8 +674,6 @@ class Verdict(_Record):
             raise ValueError(f"a refusal on {self.limit} leaves it out of past")
         if self.approved and self.adding and named:
             raise ValueError(f"an approval that adds is past {', '.join(named)}")
-        if self.approved and self.loss.past:
-            raise ValueError("an approval reads a loss past the stop")
         if self.limit == Limit.LOSS_STOP and not self.loss.past:
             raise ValueError("a refusal on loss_stop reads a loss inside the stop")
         if self.approved and (self.worst_loss is None or not self.worst_loss.is_finite()):
@@ -795,16 +793,10 @@ class Valuation(_Record):
         if unmarked := sorted(set(self.positions) - set(self.marks)):
             raise ValueError(f"a valuation holds {unmarked[0]} with no mark")
         try:
-            whole = exact_total(
-                "the valuation's value",
-                (
-                    self.cash,
-                    *(
-                        exact_product(f"the valuation's {i}", qty, self.marks[i])
-                        for i, qty in self.positions.items()
-                    ),
-                ),
-            )
+            whole = worth("the valuation's value", self.cash, self.positions, self.marks)
+            # A change of `Money`'s places would refuse the valuations already
+            # stored, and a release rolled back would refuse the new ones. So a
+            # release that reads both ships before one that writes the new.
             parts = rounded("the valuation's value", whole, _MONEY_PLACES)
         except Halt as error:
             raise ValueError(error.reason) from error

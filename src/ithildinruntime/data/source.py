@@ -66,6 +66,7 @@ from lake.manifest import ManifestError
 from lake.paths import LakePaths
 
 from ithildinruntime.core import (
+    DAILY,
     Bar,
     BarStatus,
     Clock,
@@ -79,6 +80,7 @@ from ithildinruntime.core import (
     from_received,
     load_sessions,
     places,
+    unstated_fields,
 )
 from ithildinruntime.core.sessions import SessionTable
 
@@ -94,7 +96,6 @@ from .spikes import CONTRADICT, MOVE, below_low, contradictions, spike_flags
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
-DAILY = "1d"
 _PRICES = ("open", "high", "low", "close")
 _PLACES = places(Bar, "close")
 _CAPTURED = "captured"
@@ -535,14 +536,7 @@ def _why(flag: SpikeFlag) -> str:
 
 def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
     for bar in bars:
-        fields = {
-            "price kind": bar.price_kind,
-            "venues": bar.venues,
-            "delay": bar.delay,
-            "volume counting": bar.volume_counted,
-        }
-        silent = [name for name, value in fields.items() if value == "unstated"]
-        if silent:
+        if silent := unstated_fields(bar):
             source = bar.source or CAPTURE_SOURCE
             return [
                 f"{instrument}'s bar for {bar.session.isoformat()} has unstated "

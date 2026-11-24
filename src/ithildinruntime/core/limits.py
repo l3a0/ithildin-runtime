@@ -21,12 +21,19 @@ from decimal import ROUND_DOWN, Decimal
 from .codec import CodecError, from_received
 from .exact import exact_product, finite, quotient
 from .halt import Halt
-from .names import is_sha256
+from .names import is_name, is_sha256
 from .records import Constraints, HardCaps, InstrumentId, Valuation
 
 __all__ = ["parse_caps", "tighten"]
 
 _FORMAT = 1
+# A caps blob is written by hand and read before every order, so one far past
+# any a person would write is refused before it is parsed.
+_MAX_BYTES = 65_536
+# How much of a refused value a halt shows, since its reason is stored and sent.
+_SHOWN = 80
+# An integer the codec could not store.
+_INT_LIMIT = 2**53
 _NET_CAP_PLACES = 4
 _PLAIN = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -49,20 +56,22 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     release rolled back past a new cap stops new orders rather than trading
     without it.
     """
+    if not is_name(account):
+        raise Halt(f"the account whose caps are asked for is {account!r}, which names none")
     blob = _json(data)
     written = blob.get("format")
     if type(written) is not int or written != _FORMAT:
-        raise Halt(f"the caps blob's format is {written!r}, not {_FORMAT}")
-    named = blob.get("account")
-    if named != account:
-        raise Halt(f"the caps blob's account is {named!r}, not {account!r}")
+        raise Halt(f"the caps blob's format is {_shown(written)}, not {_FORMAT}")
+    if blob.get("account") != account:
+        # What was found there is never shown, since it could be a broker's number.
+        raise Halt(f"the caps blob does not name the account {account!r}")
     limits = blob.get("limits")
     if not isinstance(limits, dict):
         raise Halt("the caps blob's limits is missing or no JSON object")
     if absent := sorted(_FIELDS - set(limits)):
         raise Halt(f"the caps blob holds no {absent[0]}")
     if unknown := sorted(set(limits) - _FIELDS):
-        raise Halt(f"the caps blob holds {unknown[0]!r}, which this release does not read")
+        raise Halt(f"the caps blob holds {_shown(unknown[0])}, which this release does not read")
     vintage = limits["stress_vintage"]
     caps = HardCaps(
         max_order_qty=_shares("max_order_qty", limits),
@@ -154,7 +163,7 @@ def _check_caps(caps: HardCaps) -> None:
             f"{caps.stress_high}"
         )
     if not is_sha256(caps.stress_vintage):
-        raise Halt(f"{where} stress_vintage is {caps.stress_vintage!r}, not a SHA-256")
+        raise Halt(f"{where} stress_vintage is {_shown(caps.stress_vintage)}, not a SHA-256")
     if type(caps.stress_through) is not date:
         raise Halt(f"{where} stress_through is {caps.stress_through!r}, not a date")
     age = _integer(f"{where} stress_max_age_days", caps.stress_max_age_days)
@@ -168,6 +177,8 @@ def _check_shared(source: Constraints | HardCaps, where: str) -> None:
         if not isinstance(limits, Mapping) or not limits:
             raise Halt(f"{where} {name} limits no instrument")
         for instrument, limit in limits.items():
+            if not isinstance(instrument, str) or not instrument:
+                raise Halt(f"{where} {name} names {instrument!r}, no instrument")
             _not_negative(f"{where} {name} of {instrument}", limit)
     if odd := sorted(set(source.max_order_qty) ^ set(source.max_position)):
         raise Halt(f"{where} max_order_qty and max_position do not both limit {odd[0]}")
@@ -196,12 +207,16 @@ def _integer(what: str, value: object) -> int:
 
 
 def _json(data: bytes) -> dict[str, object]:
+    if not isinstance(data, bytes):
+        raise Halt("the caps blob is missing")
+    if len(data) > _MAX_BYTES:
+        raise Halt(f"the caps blob is {len(data)} bytes, past the {_MAX_BYTES} allowed")
     try:
         parsed = json.loads(
             data.decode("utf-8"), object_pairs_hook=_once, parse_constant=_no_constant
         )
     except (UnicodeDecodeError, ValueError, RecursionError) as error:
-        raise Halt(f"the caps blob is not JSON: {error}") from error
+        raise Halt(f"the caps blob is not JSON: {_shown(str(error))}") from error
     if not isinstance(parsed, dict):
         raise Halt("the caps blob is not a JSON object")
     return parsed
@@ -211,9 +226,14 @@ def _once(pairs: list[tuple[str, object]]) -> dict[str, object]:
     found: dict[str, object] = {}
     for key, value in pairs:
         if key in found:
-            raise Halt(f"the caps blob holds {key!r} twice")
+            raise Halt(f"the caps blob holds {_shown(key)} twice")
         found[key] = value
     return found
+
+
+def _shown(value: object) -> str:
+    text = repr(value) if not isinstance(value, int) or abs(value) < _INT_LIMIT else "a huge int"
+    return text if len(text) <= _SHOWN else f"{text[:_SHOWN]}…"
 
 
 def _no_constant(text: str) -> None:
@@ -222,31 +242,36 @@ def _no_constant(text: str) -> None:
 
 def _decimal(name: str, value: object) -> Decimal:
     if not isinstance(value, str) or not _PLAIN.fullmatch(value):
-        raise Halt(f"the caps blob's {name} is {value!r}, not a decimal written as a string")
+        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a decimal written as a string")
     try:
         return from_received(value)
     except CodecError as error:
-        raise Halt(f"the caps blob's {name} cannot be read: {error}") from error
+        raise Halt(f"the caps blob's {name} cannot be read: {_shown(str(error))}") from error
 
 
 def _shares(name: str, limits: Mapping[str, object]) -> dict[InstrumentId, Decimal]:
     value = limits[name]
     if not isinstance(value, dict):
         raise Halt(f"the caps blob's {name} is no JSON object of instruments")
+    for instrument in value:
+        if not is_name(instrument) or len(instrument) > _SHOWN:
+            raise Halt(f"the caps blob's {name} names {_shown(instrument)}, no instrument")
     return {InstrumentId(i): _decimal(f"{name} of {i}", v) for i, v in value.items()}
 
 
 def _whole(name: str, limits: Mapping[str, object]) -> int:
     value = limits[name]
     if type(value) is not int:
-        raise Halt(f"the caps blob's {name} is {value!r}, not a JSON integer")
+        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a JSON integer")
+    if abs(value) >= _INT_LIMIT:
+        raise Halt(f"the caps blob's {name} is {_shown(value)}, past what a record can hold")
     return value
 
 
 def _day(name: str, limits: Mapping[str, object]) -> date:
     value = limits[name]
     if not isinstance(value, str) or not _DATE.fullmatch(value):
-        raise Halt(f"the caps blob's {name} is {value!r}, not a date")
+        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a date")
     try:
         return date.fromisoformat(value)
     except ValueError as error:

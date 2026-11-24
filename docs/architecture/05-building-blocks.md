@@ -1031,29 +1031,29 @@ The figure below is a C4 component diagram.
 ```mermaid
 flowchart LR
     order["The order"]
-    snapshot["The snapshot"]
-    file["The risk model's constraints file"]
-    now["The Clock port"]
     journal["The journal"]
     book["The book"]
-    inputs["GateInputs"]
+    snapshot["The snapshot"]
+    file["The risk model's constraints file"]
     caps["The hard caps blob,<br/>which only the owner can write"]
     v["Recover's valuation file"]
     stop["The stop blob"]
+    inputs["GateInputs"]
+    now["The Clock port"]
     gate["The risk gate's check"]
     verdict["A Verdict"]
     halt["A halt naming the input"]
     order --> gate
+    journal -->|"OrderPath replays it<br/>just before each check"| book
+    book --> gate
     snapshot --> gate
     file -->|"one strategy's Constraints"| gate
-    now -->|"now, as the send stage reads it"| gate
-    book --> gate
-    inputs --> gate
-    journal -->|"OrderPath replays it<br/>just before each check"| book
-    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
     caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
     v -->|"OrderPath reads the session's Valuation"| inputs
     stop -->|"OrderPath reads its state before each check"| inputs
+    journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
+    inputs --> gate
+    now -->|"now, as the send stage reads it"| gate
     gate -->|"an input is absent, stale or invalid"| halt
     gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
 ```
@@ -1071,6 +1071,8 @@ flowchart LR
 
 `OrderPath` reads the stop blob and hands that state to the gate. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
+Every argument of `check` is journaled with its verdict, by value or by hash, so that the verdict can be computed again. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds that.
+
 ##### What halts and what refuses
 
 A halt says an input is absent, stale or invalid, so nothing can be concluded. A refusal says a limit worked. The gate raises every halt before it answers, so a refusal never hides one. The one state read as a refusal is a stop blob that could not be read, as [Which orders a stop refuses](06-runtime.md#which-orders-a-stop-refuses) says.
@@ -1083,15 +1085,17 @@ A refusal names the first of these that applies, so the same order always names 
 4. An order that names no strategy, which has no position to count a worst loss against.
 5. The seven limits, in the order of the table below. A figure at its limit passes, for all seven.
 
-`Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, is refused as it is built.
+`Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, raises an error as it is built.
 
 ##### How the gate values the book
 
 `OrderPath` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit. The order being checked is not yet in that book, and one whose id already is halts, because checking it would resend it.
 
-Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. It halts unless that bar is later than the session V was valued at, so a decision never enters on a price it could not leave on.
+Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. A snapshot is also held to `Snapshot.require_fresh()`, so any instrument in it that is not fresh halts.
 
-Each instrument has a range: what the account would hold if only its open sales filled, and if only its open buys did, the order included. `core.exposure` gives it, for the account or one strategy.
+##### What each limit compares
+
+Each instrument has a range: what the account would hold if only its open sales filled, and if only its open buys did, the order included. `core.exposure` gives it, for the account or one strategy. An order already open counts at its unfilled remainder, and never twice.
 
 **Table:** The seven limits, the exposure each bounds, and how it counts
 
@@ -1107,7 +1111,14 @@ Each instrument has a range: what the account would hold if only its open sales 
 
 `max_net` and the worst loss assume the stress move. `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
 
-An order that adds is refused while `max_position`, `max_gross` or `max_net` is past with it counted. One that only reduces, which `core.classify` says, goes out past them, unless it makes net larger in some case of which other open orders fill ([What may go out while a limit is past](../design.md#rule-9-what-may-go-out-while-a-limit-is-past)). Only one sum can grow: the low ends for a sale and the high ends for a buy. The gate reads that sum before and after the order, because a larger breach at the other end would hide the change, and equal is not larger.
+The **worst loss** a verdict carries is the strategy's own: each leg's range, the order included, at its further end and its mark, summed over legs, times the stress move. A larger loss an exit rule fixes at a price level would count too, and the gate reads none, because no strategy has such an exit ([#33](https://github.com/l3a0/ithildin-runtime/issues/33)).
+
+##### Which orders go out past a limit
+
+An order either adds or only reduces, as `core.classify` says, under [What may go out while a limit is past](../design.md#rule-9-what-may-go-out-while-a-limit-is-past).
+
+1. **One that adds** is refused while `max_position`, `max_gross` or `max_net` is past with it counted.
+2. **One that only reduces** goes out past them, unless in some case of which other open orders fill it makes net larger and past its limit. A sale moves the sum of the low ends and a buy the sum of the high ends, so the gate reads that one sum before and after the order. A larger breach at the other end would hide the change, so that end is not read. Equal is not larger.
 
 **Table:** Orders under one limit of 50, at marks of 1
 
@@ -1123,21 +1134,22 @@ An order that adds is refused while `max_position`, `max_gross` or `max_net` is 
 | `max_net` | GLD 60, a buy of 100 GLD working, USO −60 | Sale of 60 GLD | The low sum grows from 0 to −60. The high sum stays 100 and would hide it | Refused at 60 |
 | `max_net` | GLD 100 alone | Sale of 100 USO, its missing leg | It adds, and net is already past | Refused at 100 |
 
-The **worst loss** a verdict carries is the strategy's own: each leg's range, the order included, at its further end and its mark, summed over legs, times the stress move.
-
 ##### How the gate reads the cutoff
 
-`moc_cutoff` is minutes before the close. The gate counts back from the decision's own session's close, so an early close moves the cutoff, and it refuses a market-on-close order past it, at the time execution hands it. A decision belongs to the session `core`'s calendar function gives it. That is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says.
+`moc_cutoff` is minutes before the close. The one calendar function in `core` turns it into a UTC instant from the decision's own session's close, so an early close moves the cutoff, and the gate compares only that instant. The gate refuses a market-on-close order past it, at the time execution hands it. That refusal is a backstop to execution's own clock checks, which journal an order past the cutoff `Abandoned`, as [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says.
 
 ##### Where the limits come from
 
-Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write. So a constraints file can tighten a limit and never loosen it. `core.tighten` takes both, and the gate calls it itself, on the caps as they read just before each check. So no caller can hand the gate a looser limit, and a cap the owner lowers binds at once.
+Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The gate takes the tighter itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
-`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and the gate halts otherwise, naming the source and the field. Three checks go further.
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and the gate halts otherwise, naming the source and the field. Six checks go further.
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
-2. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
-3. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument neither limits halts.
+2. The stress move lies inside its sane range, whose lower end is above zero.
+3. The stress move's vintage is a SHA-256, and its age a whole number of days above zero. The gate halts a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
+4. V is above zero.
+5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
+6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
 
 **Table:** Which value of each pair applies
 

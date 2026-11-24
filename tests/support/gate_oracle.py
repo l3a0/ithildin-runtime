@@ -45,6 +45,12 @@ class Answer:
     loss_bound: Fraction
     loss_past: bool
     past: tuple[tuple[str, Fraction, Fraction], ...]
+    # Each instrument's least and most shares over every case, the order included.
+    account: Mapping[str, tuple[Fraction, Fraction]]
+    strategy: Mapping[str, tuple[Fraction, Fraction]]
+    # The same with no order counted but the open ones.
+    account_resting: Mapping[str, tuple[Fraction, Fraction]]
+    strategy_resting: Mapping[str, tuple[Fraction, Fraction]]
 
 
 def answer(
@@ -143,6 +149,9 @@ def answer(
         )
         worst = Fraction(math.ceil(worst * 10**4), 10**4)
 
+    def ends(all_cases: Cases) -> dict[str, tuple[Fraction, Fraction]]:
+        return {k: (min(c[k] for c in all_cases), max(c[k] for c in all_cases)) for k in prices}
+
     held = start(None)
     loss = v - _f(cash) - sum((held[k] * prices[k] for k in prices), Fraction(0))
     stop = min(_f(constraints.loss_stop), _f(caps.loss_stop))
@@ -188,4 +197,8 @@ def answer(
             for n in ("max_position", "max_gross", "max_net")
             if further[n] > bounds[n]
         ),
+        account=ends(every),
+        strategy=ends(cases(intent.strategy, [*mine, intent], [])),
+        account_resting=ends(before),
+        strategy_resting=ends(cases(intent.strategy, mine, [])),
     )

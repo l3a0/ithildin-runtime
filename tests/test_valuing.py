@@ -10,10 +10,12 @@ import pytest
 
 from ithildinruntime import core
 from ithildinruntime.core import (
+    Bar,
     BarStatus,
     Effect,
     Exposure,
     Halt,
+    InstrumentId,
     Snapshot,
     Valuation,
     classify,
@@ -27,6 +29,7 @@ from ithildinruntime.core import (
     quotient,
     rounded,
     value_book,
+    worth,
 )
 from tests.core_samples import sample
 from tests.support.gates import (
@@ -36,47 +39,101 @@ from tests.support.gates import (
     PRIOR,
     QTY,
     SPY,
+    TABLE,
     TODAY,
     USO,
     book,
     d,
     order,
     snapshot,
+    utc,
 )
 
 MARKS = snapshot({GLD: "100.5", USO: 10}, prior={GLD: 99, USO: 11})
 
 
+def _with(
+    series: tuple[Bar, ...], instrument: InstrumentId = GLD, interval: str = "1d"
+) -> Snapshot:
+    """The snapshot with one instrument's daily bars replaced, and the other's left."""
+    return replace(MARKS, bars={**MARKS.bars, instrument: {interval: series}})
+
+
 def _bars(**changes: object) -> Snapshot:
     """The snapshot with fields of GLD's newest bar replaced."""
     old, new = MARKS.bars[GLD]["1d"]
-    return replace(MARKS, bars={GLD: {"1d": (old, replace(new, **changes))}})
+    return _with((old, replace(new, **changes)))
+
+
+def _weekend() -> dict:
+    """GLD's newest bar moved to a Saturday, which a Monday's decision would else read."""
+    old, new = MARKS.bars[GLD]["1d"]
+    return {**MARKS.bars, GLD: {"1d": (old, replace(new, session=date(2026, 11, 7)))}}
+
+
+def _status(instrument: InstrumentId, status: BarStatus) -> Snapshot:
+    return replace(MARKS, status={**MARKS.status, instrument: status})
 
 
 def test_the_mark_is_the_newest_daily_bars_close() -> None:
     assert mark(MARKS, GLD, PRIOR) == d("100.5")
-    backwards = replace(MARKS, bars={GLD: {"1d": tuple(reversed(MARKS.bars[GLD]["1d"]))}})
-    assert mark(backwards, GLD, PRIOR) == d("100.5")
+    assert mark(_with(tuple(reversed(MARKS.bars[GLD]["1d"]))), GLD, PRIOR) == d("100.5")
 
 
+FOUR = {
+    "price_kind": "price kind",
+    "venues": "venues",
+    "delay": "delay",
+    "volume_counted": "volume counting",
+}
 MARK_HALTS: dict[str, tuple[Snapshot, str]] = {
-    "not-held": (replace(MARKS, status={}), "GLD is not in the snapshot"),
-    "missing": (replace(MARKS, status={GLD: BarStatus.MISSING}), "GLD is missing in the snapshot"),
-    "stale": (replace(MARKS, status={GLD: BarStatus.STALE}), "GLD is stale in the snapshot"),
-    "no-bars": (replace(MARKS, bars={}), "GLD has no daily bar"),
-    "no-daily-bar": (replace(MARKS, bars={GLD: {"1m": ()}}), "GLD has no daily bar"),
-    "an-empty-series": (replace(MARKS, bars={GLD: {"1d": ()}}), "GLD has no daily bar"),
-    "two-bars-of-a-session": (
+    "not-held": (
+        replace(MARKS, status={USO: BarStatus.FRESH}, bars={USO: MARKS.bars[USO]}),
+        "GLD missing for the session",
+    ),
+    "empty": (replace(MARKS, status={}, bars={}), "the snapshot for .* is empty"),
+    "missing": (_status(GLD, BarStatus.MISSING), "GLD missing for the session"),
+    "stale": (_status(GLD, BarStatus.STALE), "GLD stale for the session"),
+    # One stale instrument halts every module that reads the snapshot, the gate included.
+    "another-stale": (_status(USO, BarStatus.STALE), "USO stale for the session"),
+    "no-bars": (replace(MARKS, bars={USO: MARKS.bars[USO]}), "GLD is fresh and has no bar"),
+    "no-daily-bar": (
+        _with((replace(MARKS.bars[GLD]["1d"][1], interval="1m"),), interval="1m"),
+        "GLD has no 1d bar",
+    ),
+    "an-empty-series": (_with(()), "GLD is fresh and has no bar"),
+    "no-later-bar": (
         _bars(session=PRIOR),
         "GLD has no mark: its newest bar is for 2026-11-02, not later than 2026-11-02",
+    ),
+    "a-bar-after-the-decision": (
+        _bars(session=date(2026, 11, 4)),
+        "GLD has a bar for 2026-11-04, after the decision's session 2026-11-03",
+    ),
+    "a-bar-of-no-session": (
+        replace(MARKS, decision_at=utc(2026, 11, 9, 20, 40), bars=_weekend()),
+        "the session table holds no session on 2026-11-07",
+    ),
+    "a-bar-of-no-date": (_bars(session=None), "GLD has a bar for None, not a date"),
+    "a-bar-of-a-time": (
+        _bars(session=utc(2026, 11, 3, 1)),
+        "GLD has a bar for .*, not a date",
+    ),
+    "a-decision-with-no-zone": (
+        replace(MARKS, decision_at=MARKS.decision_at.replace(tzinfo=None)),
+        "the snapshot's decision_at is .*, not a UTC time",
     ),
     "zero": (_bars(close=d(0)), "GLD's close for 2026-11-03 is 0, not above zero"),
     "negative": (_bars(close=d(-1)), "GLD's close for 2026-11-03 is -1, not above zero"),
     "nan": (_bars(close=d("NaN")), "GLD's close for 2026-11-03 is .*not a finite decimal"),
     "infinite": (_bars(close=d("Infinity")), "GLD's close for 2026-11-03 is .*not a finite"),
     **{
-        f"unstated-{name}": (_bars(**{name: "unstated"}), "GLD's bar for 2026-11-03 is of unstated")
-        for name in ("price_kind", "venues", "delay", "volume_counted")
+        f"unstated-{name}-{said!r}": (
+            _bars(**{name: said}),
+            f"GLD's bar for 2026-11-03 has unstated {shown}",
+        )
+        for name, shown in FOUR.items()
+        for said in ("unstated", "", " ", None)
     },
     "a-quote": (
         replace(MARKS, quotes={GLD: replace(sample(core.Quote), instrument=GLD)}),
@@ -93,7 +150,7 @@ def test_5_the_mark_halts_naming_the_instrument(name: str) -> None:
 
 
 def test_5_two_bars_of_one_session_halt() -> None:
-    twice = replace(MARKS, bars={GLD: {"1d": (*MARKS.bars[GLD]["1d"], MARKS.bars[GLD]["1d"][1])}})
+    twice = _with((*MARKS.bars[GLD]["1d"], MARKS.bars[GLD]["1d"][1]))
     with pytest.raises(Halt, match="GLD has 2 daily bars for 2026-11-03, not one"):
         mark(twice, GLD, PRIOR)
 
@@ -140,6 +197,57 @@ def test_an_order_already_in_the_book_is_never_counted_twice() -> None:
     assert exposure(working, GLD, sale) == Exposure(d(40), d(100))
     assert classify(working, sale) is Effect.REDUCES
     assert classify(working, order(-60, name="exit-2")) is Effect.ADDS
+
+
+@pytest.mark.parametrize("flip", [1, -1], ids=["long", "short"])
+def test_a_partly_filled_order_counts_at_its_remainder(flip: int) -> None:
+    """Long 100 and a sale of 100, of which 40 filled: 60 held, and 60 still to sell."""
+    whole = order(flip * -100, name="exit-1")
+    part = book({CHAN: {GLD: flip * 60}}, opens=[order(flip * -60, name="exit-1")])
+    reached = exposure(part, GLD, whole)
+    assert sorted((reached.low, reached.high)) == sorted((d(0), d(flip * 60)))
+    assert exposure(part, GLD, whole, CHAN) == reached
+    assert classify(part, whole) is Effect.REDUCES
+    # The part still open crosses zero, so it adds, whatever the first order was.
+    past = book({CHAN: {GLD: flip * 59}}, opens=[order(flip * -60, name="exit-1")])
+    assert classify(past, whole) is Effect.ADDS
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"instrument": USO},
+        {"strategy": OTHER},
+        {"qty": d(5)},
+        {"type": core.OrderType.MARKET_ON_CLOSE},
+        {"time_in_force": core.TimeInForce.CLS},
+        {"qty": d(0)},
+    ],
+    ids=["instrument", "strategy", "side", "type", "time-in-force", "nothing-left"],
+)
+def test_another_order_under_the_same_id_halts(changes: dict) -> None:
+    """Counting it as the same order would drop its exposure."""
+    working = order(-5, name="one")
+    other = replace(working, **changes)
+    for holding, asked in (
+        (book({CHAN: {GLD: 9}}, opens=[working]), other),
+        (book({CHAN: {GLD: 9}}, opens=[other]), working),
+    ):
+        for read in (lambda b, i: exposure(b, GLD, i), classify):
+            with pytest.raises(Halt, match="the book holds another order under the id one"):
+                read(holding, asked)
+
+
+@pytest.mark.parametrize("flip", [1, -1], ids=["buy", "sale"])
+def test_more_left_open_than_the_order_asked_for_halts(flip: int) -> None:
+    asked = order(flip * 5, name="one")
+    for left, same in ((5, True), (QTY, True), (5 + QTY, False), (0, False), (-QTY, False)):
+        working = book(opens=[order(flip * left, name="one")])
+        if same:
+            assert exposure(working, GLD, asked) == exposure(working, GLD)
+        else:
+            with pytest.raises(Halt, match="the book holds another order under the id one"):
+                exposure(working, GLD, asked)
 
 
 def test_held_names_what_any_strategy_holds_or_has_an_order_in() -> None:
@@ -192,7 +300,7 @@ def test_3_an_order_reduces_the_strategys_position_and_the_accounts(flip: int) -
 def test_5_a_book_or_an_order_that_is_not_finite_halts_naming_it() -> None:
     with pytest.raises(Halt, match="chan's position in GLD is .*NaN"):
         exposure(book({CHAN: {GLD: "NaN"}}), GLD)
-    with pytest.raises(Halt, match="the open order old-1 is .*NaN"):
+    with pytest.raises(Halt, match="the order old-1 is .*NaN"):
         exposure(book(opens=[order("NaN", name="old-1")]), GLD)
     with pytest.raises(Halt, match="the order new-1 is .*Infinity"):
         classify(book(), order("Infinity"))
@@ -212,23 +320,26 @@ def test_v_is_cash_plus_each_position_at_its_sessions_close() -> None:
 
 def test_5_v_halts_without_its_sessions_bar_though_an_older_and_a_newer_are_there() -> None:
     holding = book({CHAN: {GLD: 1}})
-    for session in (date(2026, 11, 2), date(2026, 11, 3)):
+    for session in (PRIOR, TODAY):
         assert value_book(holding, MARKS, session).session == session
-    gap = snapshot({GLD: 5}, day=date(2026, 11, 5))
-    old = replace(gap.bars[GLD]["1d"][0], session=PRIOR)
-    gap = replace(gap, bars={GLD: {"1d": (old, gap.bars[GLD]["1d"][1])}})
+    later = date(2026, 11, 5)
+    gap = snapshot({GLD: 5}, day=later, at=TABLE.session(later).close)
+    old, new = gap.bars[GLD]["1d"]
+    gap = replace(gap, bars={GLD: {"1d": (replace(old, session=PRIOR), new)}})
     with pytest.raises(Halt, match="GLD has 0 daily bars for 2026-11-03, not one"):
         value_book(holding, gap, TODAY)
 
 
 def test_5_v_halts_on_what_the_mark_halts_on() -> None:
     holding = book({CHAN: {GLD: 1}})
-    with pytest.raises(Halt, match="GLD is stale"):
-        value_book(holding, replace(MARKS, status={GLD: BarStatus.STALE}), PRIOR)
+    with pytest.raises(Halt, match="GLD stale for the session"):
+        value_book(holding, _status(GLD, BarStatus.STALE), PRIOR)
     with pytest.raises(Halt, match="the book's cash is"):
         value_book(book(cash="NaN"), MARKS, PRIOR)
-    with pytest.raises(Halt, match="GLD is not in the snapshot"):
+    with pytest.raises(Halt, match="GLD missing for the session"):
         value_book(holding, snapshot({USO: 1}), PRIOR)
+    with pytest.raises(Halt, match="after the decision's session"):
+        value_book(holding, _bars(session=date(2026, 11, 4)), PRIOR)
 
 
 def test_v_is_rounded_once_to_four_places_from_the_exact_sum() -> None:
@@ -263,6 +374,12 @@ def test_a_value_that_is_no_finite_decimal_halts(value: object) -> None:
         quotient("the size", d(1), value, 4)
     with pytest.raises(Halt, match="the size is"):
         rounded("the size", value, 4)
+
+
+def test_worth_is_cash_and_each_holding_at_its_price() -> None:
+    assert worth("x", d(5), {GLD: d(2), USO: d(-3)}, {GLD: d(10), USO: d(4), SPY: d(9)}) == 13
+    with pytest.raises(Halt, match="x, of USO is .*not a finite decimal"):
+        worth("x", d(5), {USO: d(1)}, {USO: d("NaN")})
 
 
 def test_a_quotient_and_a_record_round_the_way_they_are_asked() -> None:
@@ -330,7 +447,6 @@ CONTRADICTIONS: dict[str, tuple[dict[str, object], str]] = {
     "past-out-of-order": (ON_NET | {"past": (NET, GROSS)}, "out of order or twice"),
     "past-twice": (ON_NET | {"past": (NET, NET)}, "out of order or twice"),
     "an-approval-that-adds-past-one": ({"past": (NET,)}, "an approval that adds is past max_net"),
-    "an-approval-past-the-stop": ({"loss": PAST_STOP}, "an approval reads a loss past the stop"),
     "a-loss-refusal-inside-the-stop": (
         REFUSED | {"limit": core.Limit.LOSS_STOP},
         "a refusal on loss_stop reads a loss inside the stop",
@@ -358,6 +474,8 @@ def test_5_a_verdict_that_contradicts_itself_is_refused(name: str) -> None:
 def test_5_a_verdict_that_agrees_with_itself_builds() -> None:
     for changes in (
         {},
+        # A close after a broker's trade goes out past a fired stop, once #117 reads its entry.
+        {"adding": False, "loss": PAST_STOP},
         ON_NET,
         {"adding": False, "past": (GROSS, NET), "worst_loss": d(0)},
         REFUSED | {"limit": core.Limit.LOSS_STOP, "loss": PAST_STOP},
@@ -419,6 +537,12 @@ def test_5_a_valuation_that_contradicts_itself_is_refused() -> None:
     ):
         with pytest.raises(ValueError, match=reason):
             replace(made, **changes)
+    # A valuation stored at four places, rounded from more, stays readable.
+    stored = (
+        b'{"cash":"2","marks":{"GLD":"10.1234"},"positions":{"GLD":"1.234567"},'
+        b'"replayed_through":7,"session":"2026-11-02","value":"14.4980"}'
+    )
+    assert core.decode(stored, Valuation).value == d("14.4980")
     data = core.encode(made).replace(b'"value":"12.0000"', b'"value":"13.0000"')
     with pytest.raises(core.CodecError, match="a valuation of 13.0000 is not its cash"):
         core.decode(data, Valuation)

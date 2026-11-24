@@ -13,28 +13,38 @@ that holds a value that is not finite halts naming it.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-from .exact import exact_product, exact_total, finite, rounded
+from .codec import places
+from .exact import exact_total, finite, rounded, worth
 from .halt import Halt
+from .names import DAILY, UNSTATED
 from .records import (
     Bar,
-    BarStatus,
     Book,
     InstrumentId,
     OrderIntent,
     Snapshot,
     Valuation,
 )
+from .sessions import load_sessions
 
-__all__ = ["Effect", "Exposure", "classify", "exposure", "held", "mark", "position", "value_book"]
+__all__ = [
+    "Effect",
+    "Exposure",
+    "classify",
+    "exposure",
+    "held",
+    "mark",
+    "position",
+    "unstated_fields",
+    "value_book",
+]
 
-_DAILY = "1d"
-_UNSTATED = "unstated"
-_VALUE_PLACES = 4
+_VALUE_PLACES = places(Valuation, "value")
 
 
 class Effect(StrEnum):
@@ -59,9 +69,9 @@ class Exposure(NamedTuple):
 def mark(snapshot: Snapshot, instrument: InstrumentId, after: date) -> Decimal:
     """The one price an instrument is valued at: its newest daily bar's close.
 
-    It halts unless that bar's session is later than `after`, and on a snapshot
-    that holds a quote for the instrument, until #100 says which of a quote's
-    prices is read.
+    It halts unless that bar's session is later than `after` and no later than
+    the decision's own, and on a snapshot that holds a quote for the
+    instrument, until #100 says which of a quote's prices is read.
     """
     if instrument in snapshot.quotes:
         raise Halt(f"{instrument} has a quote, and no rule says which of its prices is the mark")
@@ -95,25 +105,22 @@ def exposure(
 ) -> Exposure:
     """The range of shares one instrument could reach, for the account or one strategy.
 
-    The intent counts as one more order. An open order with the intent's
-    client order id is the intent itself, and is never counted twice.
+    The intent counts as one more order. An open order that carries its client
+    order id is the intent itself, already sent, so the book's unfilled
+    remainder stands for it and the intent is not counted again. An open order
+    that carries the id and differs in anything but size halts. An intent that
+    was sent and is no longer open has no remainder to stand for it, so a caller
+    never hands one in.
     """
+    orders = [order for order in _open(book, strategy) if order.instrument == instrument]
+    if intent is not None and _sent(book, intent) is None:
+        if intent.instrument == instrument and strategy in (None, intent.strategy):
+            orders.append(intent)
+    sizes = [finite(f"the order {order.client_order_id}", order.qty) for order in orders]
     shares = position(book, instrument, strategy)
-    orders = [
-        finite(f"the open order {order.client_order_id}", order.qty)
-        for order in _open(book, strategy)
-        if order.instrument == instrument
-        and (intent is None or order.client_order_id != intent.client_order_id)
-    ]
-    if (
-        intent is not None
-        and intent.instrument == instrument
-        and strategy in (None, intent.strategy)
-    ):
-        orders.append(finite(f"the order {intent.client_order_id}", intent.qty))
     return Exposure(
-        low=exact_total(f"{instrument}'s sales", (shares, *(q for q in orders if q < 0))),
-        high=exact_total(f"{instrument}'s buys", (shares, *(q for q in orders if q > 0))),
+        low=exact_total(f"{instrument}'s sales", (shares, *(q for q in sizes if q < 0))),
+        high=exact_total(f"{instrument}'s buys", (shares, *(q for q in sizes if q > 0))),
     )
 
 
@@ -124,9 +131,10 @@ def classify(book: Book, intent: OrderIntent) -> Effect:
     account's under every case of which open orders fill. An order with any
     part past zero in some case adds.
     """
+    finite(f"the order {intent.client_order_id}", intent.qty)
+    sale, buy = intent.qty < 0, intent.qty > 0
     for strategy in (intent.strategy, None):
         reached = exposure(book, intent.instrument, intent, strategy)
-        sale, buy = intent.qty < 0, intent.qty > 0
         if not (sale and reached.low >= 0 or buy and reached.high <= 0):
             return Effect.ADDS
     return Effect.REDUCES
@@ -153,21 +161,62 @@ def value_book(book: Book, snapshot: Snapshot, session: date) -> Valuation:
     """
     positions = {i: shares for i in held(book) if (shares := position(book, i)) != 0}
     marks = {i: _close(i, _daily(snapshot, i), session) for i in positions}
-    value = exact_total(
-        "the value of the book",
-        (
-            finite("the book's cash", book.cash),
-            *(exact_product(f"the value of {i}", qty, marks[i]) for i, qty in positions.items()),
-        ),
-    )
+    cash = finite("the book's cash", book.cash)
     return Valuation(
         session=session,
-        value=rounded("the value of the book", value, _VALUE_PLACES),
-        cash=book.cash,
+        value=rounded(
+            "the value of the book",
+            worth("the value of the book", cash, positions, marks),
+            _VALUE_PLACES,
+        ),
+        cash=cash,
         positions=positions,
         marks=marks,
         replayed_through=book.replayed_through,
     )
+
+
+def unstated_fields(bar: Bar) -> tuple[str, ...]:
+    """Which of a bar's four price-kind fields its source states nothing for.
+
+    A field that holds no word states nothing either, so a bar built or stored
+    without one never reads as stated.
+    """
+    fields = {
+        "price kind": bar.price_kind,
+        "venues": bar.venues,
+        "delay": bar.delay,
+        "volume counting": bar.volume_counted,
+    }
+    return tuple(
+        name
+        for name, said in fields.items()
+        if not isinstance(said, str) or said.strip() in ("", UNSTATED)
+    )
+
+
+def _sent(book: Book, intent: OrderIntent) -> OrderIntent | None:
+    """The open order that carries the intent's id, which halts unless it is the same order.
+
+    It reads the whole book, since one filed under another strategy or
+    instrument is the case to catch. What is left open is never more than the
+    intent, and never nothing.
+    """
+    for order in _open(book, None):
+        if order.client_order_id != intent.client_order_id:
+            continue
+        left = finite(f"the order {order.client_order_id}", order.qty)
+        whole = finite(f"the order {intent.client_order_id}", intent.qty)
+        same = ("strategy", "instrument", "type", "time_in_force")
+        if any(getattr(order, f) != getattr(intent, f) for f in same) or not (
+            0 < left <= whole or whole <= left < 0
+        ):
+            raise Halt(
+                f"the book holds another order under the id {intent.client_order_id} than the "
+                "one handed in"
+            )
+        return order
+    return None
 
 
 def _open(book: Book, strategy: str | None) -> Iterator[OrderIntent]:
@@ -183,14 +232,29 @@ def _open(book: Book, strategy: str | None) -> Iterator[OrderIntent]:
 
 
 def _daily(snapshot: Snapshot, instrument: InstrumentId) -> tuple[Bar, ...]:
-    status = snapshot.status.get(instrument)
-    if status is None:
-        raise Halt(f"{instrument} is not in the snapshot")
-    if status != BarStatus.FRESH:
-        raise Halt(f"{instrument} is {status} in the snapshot")
-    bars = snapshot.bars.get(instrument, {}).get(_DAILY, ())
-    if not bars:
-        raise Halt(f"{instrument} has no daily bar")
+    """The instrument's daily bars, none of them later than the decision's session.
+
+    `require_fresh` is the one test of a snapshot every module runs. A bar from
+    after the decision cannot have been known at it, so data never returns one,
+    and a book valued at one would hide a loss.
+    """
+    snapshot.require_fresh({instrument: [DAILY]})
+    bars = snapshot.bars[instrument][DAILY]
+    at = snapshot.decision_at
+    if at.utcoffset() != timedelta(0):
+        raise Halt(f"the snapshot's decision_at is {at!r}, not a UTC time")
+    for bar in bars:
+        if type(bar.session) is not date:
+            raise Halt(f"{instrument} has a bar for {bar.session!r}, not a date")
+    table = load_sessions()
+    today = table.opened_by(at).day
+    newest = max(bar.session for bar in bars)
+    if newest > today:
+        raise Halt(
+            f"{instrument} has a bar for {newest.isoformat()}, after the decision's session "
+            f"{today.isoformat()}"
+        )
+    table.session(newest)
     return bars
 
 
@@ -198,10 +262,9 @@ def _close(instrument: InstrumentId, bars: tuple[Bar, ...], session: date) -> De
     found = [bar for bar in bars if bar.session == session]
     if len(found) != 1:
         raise Halt(f"{instrument} has {len(found)} daily bars for {session.isoformat()}, not one")
-    bar = found[0]
-    kind = (bar.price_kind, bar.venues, bar.delay, bar.volume_counted)
-    if _UNSTATED in kind:
-        raise Halt(f"{instrument}'s bar for {session.isoformat()} is of unstated kind")
+    (bar,) = found
+    if silent := unstated_fields(bar):
+        raise Halt(f"{instrument}'s bar for {session.isoformat()} has unstated {', '.join(silent)}")
     price = finite(f"{instrument}'s close for {session.isoformat()}", bar.close)
     if price <= 0:
         raise Halt(f"{instrument}'s close for {session.isoformat()} is {price}, not above zero")

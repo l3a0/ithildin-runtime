@@ -17,6 +17,7 @@ import pytest
 from ithildinruntime.core import (
     Book,
     Effect,
+    InstrumentId,
     Limit,
     OrderIntent,
     OrderType,
@@ -56,6 +57,29 @@ def _shares(draw: random.Random, top: int) -> Decimal:
     return Decimal(draw.randint(-top * 10**9, top * 10**9)).scaleb(-9)
 
 
+def _net(positions: dict, orders: list, marks: dict, side: int) -> Decimal:
+    """Net with only the orders on one side filled."""
+    held = (marks[i] * q for book in positions.values() for i, q in book.items())
+    filled = (marks[o.instrument] * o.qty for o in orders if o.qty * side > 0)
+    return sum((*held, *filled), Decimal(0))
+
+
+def _net_limit(
+    draw: random.Random, positions: dict, opens: list, intent: OrderIntent, marks: dict
+) -> Decimal:
+    """A net limit that is loose, or drawn, or one of the book's own nets before or after the order.
+
+    The last lands a reducing order's net on its bound, which a drawn one rarely does.
+    """
+    kind = draw.random()
+    if kind < 0.45:
+        return LOOSE
+    if kind < 0.75:
+        return Decimal(draw.randint(0, 80))
+    orders = [*opens, intent] if draw.random() < 0.5 else opens
+    return abs(_net(positions, orders, marks, draw.choice((-1, 1))))
+
+
 def _world(seed: int) -> World:
     draw = random.Random(seed)
     instruments = NAMES[: draw.randint(1, 3)]
@@ -71,6 +95,7 @@ def _world(seed: int) -> World:
         for n in range(draw.randint(0, 3))
         if (q := _shares(draw, 6)) != 0
     ]
+    marks = {k: Decimal(draw.randint(1, 40)) / draw.choice((1, 4, 10)) for k in instruments}
     i = draw.choice(instruments)
     held = positions[CHAN][i]
     qty = {
@@ -88,22 +113,17 @@ def _world(seed: int) -> World:
         OrderType.MARKET_ON_CLOSE if at_close else OrderType.MARKET,
         TimeInForce.CLS if at_close else TimeInForce.DAY,
     )
-    marks = {k: Decimal(draw.randint(1, 40)) / draw.choice((1, 4, 10)) for k in instruments}
     now = CLOSE if draw.random() < 0.3 else DECISION
 
     def tight(chance: float, value: object) -> object:
         return value if draw.random() < chance else LOOSE
 
-    def per(chance: float, low: int, high: int) -> dict:
-        return {k: tight(chance, Decimal(draw.randint(low, high))) for k in instruments}
-
-    def limits(chance: float) -> dict:
-        position = per(chance, 0, 12)
+    def limits(chance: float, limited: tuple[InstrumentId, ...]) -> dict:
+        position = {k: tight(chance, Decimal(draw.randint(0, 12))) for k in limited}
         return {
             "max_position": position,
             "max_order_qty": {
-                k: max(q, v)
-                for (k, q), v in zip(per(0.1, 2, 12).items(), position.values(), strict=True)
+                k: max(tight(0.1, Decimal(draw.randint(2, 12))), v) for k, v in position.items()
             },
             "max_gross": tight(chance, Decimal(draw.randint(5, 200))),
             "max_open_orders": draw.choice((2, 3, 100, 100)),
@@ -114,12 +134,19 @@ def _world(seed: int) -> World:
     made = World(
         intent=intent,
         book=book(
-            positions, opens, cash=_shares(draw, 100), in_doubt=draw.choice(((),) * 9 + ((i,),))
+            positions,
+            opens,
+            cash=_shares(draw, 100),
+            in_doubt=draw.choice(((),) * 27 + ((i,), instruments, (instruments[0],))),
         ),
         snapshot=snapshot(marks),
-        constraints=constraints(**limits(0.3), max_net=tight(0.4, Decimal(draw.randint(0, 80)))),
+        constraints=constraints(
+            # The strategy's limits need not name every instrument the account holds.
+            **limits(0.3, tuple(k for k in instruments if k == i or draw.random() < 0.7)),
+            max_net=_net_limit(draw, positions, opens, intent, marks),
+        ),
         inputs=inputs(
-            caps=caps(**limits(0.15), share=Decimal("0.1")),
+            caps=caps(**limits(0.15, instruments), share=Decimal("0.1")),
             stop=draw.choice((StopState.ABSENT,) * 30 + (StopState.FIRED, StopState.UNREADABLE)),
             valuation=valuation(1),
         ),
@@ -149,7 +176,18 @@ def _asked(world: World) -> Answer:
         loss_bound=f(verdict.loss.bound),
         loss_past=verdict.loss.past,
         past=tuple((str(p.limit), f(p.value), f(p.bound)) for p in verdict.past),
+        account=_ends(world, world.intent, None),
+        strategy=_ends(world, world.intent, world.intent.strategy),
+        account_resting=_ends(world, None, None),
+        strategy_resting=_ends(world, None, world.intent.strategy),
     )
+
+
+def _ends(
+    world: World, intent: OrderIntent | None, strategy: str | None
+) -> dict[str, tuple[Fraction, Fraction]]:
+    reached = {i: exposure(world.book, i, intent, strategy) for i in sorted(world.snapshot.bars)}
+    return {i: (Fraction(str(r.low)), Fraction(str(r.high))) for i, r in reached.items()}
 
 
 def _expected(world: World) -> Answer:
@@ -166,6 +204,18 @@ def _expected(world: World) -> Answer:
         world.now,
         CLOSE,
     )
+
+
+def _net_end(world: World, with_order: bool) -> Decimal:
+    """The size of net at the end the order moves, with it counted or not."""
+    opens = [o for orders in world.book.open_orders_by_strategy.values() for o in orders]
+    marks = {i: by["1d"][1].close for i, by in world.snapshot.bars.items()}
+    orders = [*opens, world.intent] if with_order else opens
+    return abs(_net(world.book.positions_by_strategy, orders, marks, _side(world)))
+
+
+def _side(world: World) -> int:
+    return -1 if world.intent.qty < 0 else 1
 
 
 @pytest.fixture(scope="module")
@@ -189,11 +239,21 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         seen["legs on one side"] += len(signs) == 1 and len([q for q in mine.values() if q]) > 1
         held = mine[intent.instrument]
         seen["crosses zero"] += held * (held + intent.qty) < 0
-        seen["nine places"] += intent.qty.as_tuple().exponent == -9
+        seen["nine places"] += intent.qty * 10**8 % 1 != 0
+        limited = world.constraints.max_position
+        seen["held outside the constraints"] += any(
+            i not in limited for held in (mine, theirs) for i, q in held.items() if q
+        )
+        seen["in doubt elsewhere"] += bool(b.in_doubt) and intent.instrument not in b.in_doubt
+        seen["two in doubt"] += len(b.in_doubt) > 1
         if not verdict.adding and verdict.approved:
             for entry in verdict.past:
                 seen[f"approved past {entry.limit}"] += 1
         seen["reducing refused on net"] += not verdict.adding and verdict.limit is Limit.MAX_NET
+        if not verdict.adding:
+            bound = min(world.constraints.max_net, world.inputs.valuation.value / 2)
+            before, after = (_net_end(world, with_order) for with_order in (False, True))
+            seen["reducing to net's bound"] += after == bound < before
         seen["adding"] += verdict.adding
         seen["approved"] += verdict.approved
         if verdict.limit is not None:
@@ -207,6 +267,10 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         "approved past max_gross",
         "approved past max_net",
         "reducing refused on net",
+        "reducing to net's bound",
+        "held outside the constraints",
+        "in doubt elsewhere",
+        "two in doubt",
         "adding",
         "approved",
         *(f"refused on {limit}" for limit in Limit if limit is not Limit.CLOSE_ENTRY),

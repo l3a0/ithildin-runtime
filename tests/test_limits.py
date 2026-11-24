@@ -72,7 +72,10 @@ BAD_BLOBS: dict[str, tuple[bytes, str]] = {
     "not-json": (b"{", "the caps blob is not JSON"),
     "not-utf-8": (b"\xff", "the caps blob is not JSON"),
     "a-nan": (b'{"format": 1, "x": NaN}', "the caps blob is not JSON"),
-    "nested-too-deep": (b"[" * 100_000, "the caps blob is not JSON"),
+    "nested-too-deep": (b"[" * 60_000, "the caps blob is not JSON"),
+    "too-long": (blob(reasons="x" * 65_536), "the caps blob is 66.* bytes, past the 65536 allowed"),
+    "no-blob": (None, "the caps blob is missing"),  # type: ignore[dict-item]
+    "text-for-bytes": (blob().decode(), "the caps blob is missing"),  # type: ignore[dict-item]
     "a-list": (b"[]", "the caps blob is not a JSON object"),
     "a-repeated-key": (blob().replace(b'"account"', b'"format"', 1), "holds 'format' twice"),
     "a-repeated-limit": (
@@ -86,8 +89,8 @@ BAD_BLOBS: dict[str, tuple[bytes, str]] = {
     "no-format": (blob().replace(b'"format"', b'"fromat"', 1), "format is None, not 1"),
     "another-format": (blob(format=2), "format is 2, not 1"),
     "a-true-format": (blob(format=True), "format is True, not 1"),
-    "another-account": (blob(account="live"), "account is 'live', not 'paper'"),
-    "no-account": (blob(account=None), "account is None, not 'paper'"),
+    "another-account": (blob(account="live"), "^the caps blob does not name the account 'paper'$"),
+    "no-account": (blob(account=None), "does not name the account 'paper'"),
     "no-limits": (
         blob(limits=None, limit={}).replace(b'"limits"', b'"li"', 1),
         "limits is missing",
@@ -110,6 +113,41 @@ def test_a_blob_that_cannot_be_read_halts_naming_what(name: str) -> None:
     data, reason = BAD_BLOBS[name]
     with pytest.raises(Halt, match=reason):
         parse_caps(data, "paper")
+
+
+def test_the_longest_blob_allowed_parses() -> None:
+    short = blob(reasons="")
+    longest = blob(reasons="x" * (65_536 - len(short)))
+    assert len(longest) == 65_536
+    assert parse_caps(longest, "paper") == parse_caps(blob(), "paper")
+
+
+@pytest.mark.parametrize("account", [None, "", "../paper", 5])
+def test_an_account_that_names_none_halts_whatever_the_blob_holds(account: object) -> None:
+    with pytest.raises(Halt, match="the account whose caps are asked for is"):
+        parse_caps(blob(account=account), account)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("name", ["max_order_qty", "max_position"])
+@pytest.mark.parametrize("key", ["", "GLD ", "\ud800", "a/b", "A" * 81])
+def test_an_instrument_that_could_not_be_stored_is_refused(name: str, key: str) -> None:
+    with pytest.raises(Halt, match=f"the caps blob's {name} names .*, no instrument") as raised:
+        parse_caps(with_(**{name: {key: "5"}}), "paper")
+    assert core.encode(core.HaltRecord(raised.value.reason, None, (), (), ()))
+
+
+def test_a_halt_shows_no_more_than_a_little_of_what_it_refused() -> None:
+    for name in (*DECIMALS, "stress_vintage", "stress_through", "max_open_orders"):
+        with pytest.raises(Halt) as raised:
+            parse_caps(with_(**{name: "9" * 5_000}), "paper")
+        assert name in raised.value.reason and len(raised.value.reason) < 250
+
+
+@pytest.mark.parametrize("name", ["max_open_orders", "moc_cutoff", "stress_max_age_days"])
+def test_an_integer_a_record_cannot_hold_is_refused(name: str) -> None:
+    assert parse_caps(with_(**{name: 2**53 - 1}), "paper")
+    with pytest.raises(Halt, match=f"{name} is a huge int, past what a record can hold"):
+        parse_caps(with_(**{name: 2**53}), "paper")
 
 
 DECIMALS = ("max_gross", "loss_stop", "share", "stress_move", "stress_low", "stress_high")
@@ -155,6 +193,14 @@ SHARED: dict[str, tuple[dict[str, object], str]] = {
     "no-order-cap": ({"max_order_qty": {}}, "max_order_qty limits no instrument"),
     "no-position-cap": ({"max_position": {}}, "max_position limits no instrument"),
     "order-caps-absent": ({"max_order_qty": None}, "max_order_qty limits no instrument"),
+    "an-order-cap-of-no-instrument": (
+        {"max_order_qty": {None: LOOSE}},
+        "max_order_qty names None, no instrument",
+    ),
+    "a-position-cap-of-an-empty-name": (
+        {"max_position": {"": LOOSE}},
+        "max_position names '', no instrument",
+    ),
     "maps-that-differ": (
         {"max_order_qty": {GLD: LOOSE}},
         "max_order_qty and max_position do not both limit USO",

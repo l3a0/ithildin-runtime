@@ -191,7 +191,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
-| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
+| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every run record is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
@@ -821,7 +821,10 @@ sequenceDiagram
 
 The gate has a second way to stop an order. An input that is absent, stale or
 invalid raises a halt rather than a refusal, and every halt comes before every
-refusal, so a refusal always means a limit worked. Execution then journals the
+refusal. So a refusal never hides such an input, apart from a stop blob that
+could not be read, as
+[What halts and what refuses](05-building-blocks.md#what-halts-and-what-refuses)
+says. Execution then journals the
 order `Abandoned` with the reason and halts the decision, as
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
 
@@ -839,15 +842,15 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 #### How the day's loss is measured
 
-The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open, and neither GLD nor USO pays a dividend.
+The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
 The mark is the newest daily bar's close, through `core.mark`, which portfolio construction sizes with too. Six gaps halt rather than read as no loss.
 
-1. The valuation is missing, or is of any session but the one before the decision's. A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
+1. The valuation, which this doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that recover lists, is missing, or is of any session but the one before the decision's. A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.
-3. A held instrument, or one with an open order, has no bar later than V's session. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
-4. An instrument with a price is missing, stale, of unstated kind, not above zero, or has a quote, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read.
-5. Something other than the platform's own fills or a listed broker record moved the book's cash or a position after the valuation, such as a deposit or a person's override.
+3. A held instrument, or one with an open order, has no bar later than V's session, or has one later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
+4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Any other instrument of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
+5. Something other than the platform's own fills or a broker record [on the closed list](../design.md#strategies-schedules-and-decisions) moved the book's cash or a position after the valuation, such as a deposit or a person's override.
 6. A position was corrected after V's session closed, whether or not V was built since, such as by a split's restatement. Marked at that session's close, the restated position would hide a loss.
 
 The price of the last two is no trading for the rest of that session.
@@ -862,7 +865,7 @@ The stop has a stated limit: no decision tests the price move from close−20 to
 
 A fired stop latches, which means it stays fired whatever the price does next. It takes four steps, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
 
-1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution creates a blob at `accounts/<account>/stop.json` with a create-only write, as the kill switch is created, journals it and halts the decision. No order follows a firing until a person clears it, across a failed write and a restart.
+1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing, as a blob at `accounts/<account>/stop.json` created with a create-only write as the kill switch is, and as a journal entry, and halts the decision. A firing that reached either one reads as fired, and no order follows it until a person clears it, across a failed write and a restart. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds which of the two is written first.
 2. `OrderPath` reads that blob before every new order, as it reads the switch, and hands its state to the gate.
 3. The gate refuses every new order while the blob exists, across sessions, so a price that recovers never resumes trading on its own.
 4. `ithildin stop clear --account <a>` deletes the blob and journals the clear. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say.
@@ -871,7 +874,7 @@ The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TD
-    fire["Step 1: execution finds the day's loss past the stop,<br/>creates stop.json, journals it and halts the decision"]
+    fire["Step 1: execution finds the day's loss past the stop,<br/>records it in stop.json and in the journal,<br/>and halts the decision"]
     read["Step 2: OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
     refuse["Step 3: the gate refuses every new order"]
     clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
@@ -1077,7 +1080,8 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>the gate halts on an input, or a restart
+    Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>or a restart
+    Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
@@ -1090,8 +1094,7 @@ stateDiagram-v2
     Sending --> Abandoned: a check before the broker call fails
     note left of Abandoned
         A failed check on the switch, a run or account halt,
-        its own result key, the lease tag or the cutoff also halts,
-        and so does the gate's halt on an input.
+        its own result key, the lease tag or the cutoff also halts.
         A switched-off strategy abandons without halting.
         A close reads the checks as design.md's
         checks before a broker call say.

@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ithildinruntime.core import Halt, InstrumentId
+from ithildinruntime.core import UNSTATED, Halt, InstrumentId
 
 __all__ = [
     "CAPTURE_SOURCE",
@@ -51,7 +51,6 @@ __all__ = [
 
 MASTER = Path(__file__).with_name("security_master.csv")
 PRICE_KINDS = Path(__file__).with_name("price_kinds.csv")
-UNSTATED = "unstated"
 # The source a captured row reads as in the price-kind contract. marketlake
 # writes no `source` on a row it captured itself.
 CAPTURE_SOURCE = "marketlake:capture"

@@ -38,6 +38,13 @@ def test_a_date_with_no_session_halts() -> None:
     assert raised.value.reason == "the session table holds no session on 2026-11-26"
 
 
+def test_minutes_that_reach_back_past_any_date_halt() -> None:
+    assert to_utc(date(2026, 11, 25), BeforeClose(10**6))
+    for minutes in (10**10, 10**15, 10**30):
+        with pytest.raises(Halt, match="minutes before the close is no time at all"):
+            to_utc(date(2026, 11, 25), BeforeClose(minutes))
+
+
 @pytest.mark.parametrize("day", [date(2005, 12, 30), date(2028, 1, 3)])
 def test_a_date_outside_the_tables_range_halts(day: date) -> None:
     with pytest.raises(Halt) as raised:

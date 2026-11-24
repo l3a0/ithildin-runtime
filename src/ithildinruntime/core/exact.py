@@ -14,7 +14,7 @@ the value (hard limit 3).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from decimal import (
     ROUND_HALF_EVEN,
     Context,
@@ -29,7 +29,7 @@ from decimal import (
 from .codec import MAX_DIGITS, CodecError, from_received
 from .halt import Halt
 
-__all__ = ["exact_product", "exact_total", "finite", "quotient", "rounded"]
+__all__ = ["exact_product", "exact_total", "finite", "quotient", "rounded", "worth"]
 
 # A product here takes at most three factors, such as a size, a price and the
 # stress move.
@@ -78,6 +78,14 @@ def exact_product(what: str, *values: Decimal) -> Decimal:
     except DecimalException as error:
         raise Halt(f"{what} has no exact product: {type(error).__name__}") from error
     return result
+
+
+def worth[K](
+    what: str, cash: Decimal, shares: Mapping[K, Decimal], prices: Mapping[K, Decimal]
+) -> Decimal:
+    """Cash plus each holding at its price, the one sum V and the day's loss are read from."""
+    held = (exact_product(f"{what}, of {i}", qty, prices[i]) for i, qty in shares.items())
+    return exact_total(what, (cash, *held))
 
 
 def quotient(
