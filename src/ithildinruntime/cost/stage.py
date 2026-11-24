@@ -20,7 +20,7 @@ Its handler does three things, in order.
    last.
 
 A halt at any of the three becomes the stage's result, whose header names
-each blob read by then.
+each blob read and accepted by then.
 
 The entry point hands in the stage's name, its kind and the stage it reads, as
 the stage table declares them.
@@ -86,13 +86,11 @@ class CostStage:
         )
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
-        decision = self._run.decision(item.decision_at)
+        decision = self._run.decision(item.decision_at, report)
         try:
             snapshot = decision.snapshot(self._data_stage)
-            report()
             schedule = self._model.schedule(snapshot)
             stored = decision.put(SCHEDULE, CostSchedule, (schedule,))
-            report()
         except Halt as halt:
             return decision.halted(halt)
         return decision.done(stored)

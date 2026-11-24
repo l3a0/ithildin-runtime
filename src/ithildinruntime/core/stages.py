@@ -5,15 +5,19 @@ and the files they list, write files under one header, and return a result.
 No worker module imports another, so the steps live here, once.
 
 A handler builds one `StageDecision` per decision, does its whole work inside
-one `try`, and turns any `Halt` into its result through `halted`. The header
-of that result names each blob the stage had read, so a stored halt says what
-it was judged from. docs/design.md's `### Rule 7: a halt is passed on` says
-what a stage does with a halt it reads.
+one `try`, and turns any `Halt` it meets into its result through `halted`. The
+header of that result names each blob the stage had read and storage had
+accepted, so a stored halt says what it was judged from. docs/design.md's
+`### Rule 7: a halt is passed on` says what a stage does with a halt it reads.
+
+It serves a deterministic stage whose inputs each hold one entry. A stage that
+needs another form, such as a file of several entries or a capture stored at an
+attempt key, extends this class rather than writing beside it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 
 from .codec import encode
@@ -54,23 +58,28 @@ class StageRun:
         self.release = release
         self.config_hashes = dict(config_hashes)
 
-    def decision(self, at: datetime) -> StageDecision:
-        return StageDecision(self, at)
+    def decision(self, at: datetime, report: Callable[[], None]) -> StageDecision:
+        """One decision, which calls `report`, the loop's, after each read and each write."""
+        return StageDecision(self, at, report)
 
 
 class StageDecision:
     """One decision of one stage: the blobs it has read, what it writes and its result.
 
     A stage reads everything before it writes, because a file's header names
-    the blobs read by the time it is written.
+    the blobs read by the time it is written. A read of another blob after the
+    first write raises `RuntimeError`, which the loop alarms on and stores as a
+    halt.
     """
 
-    def __init__(self, run: StageRun, at: datetime) -> None:
+    def __init__(self, run: StageRun, at: datetime, report: Callable[[], None]) -> None:
         self._run = run
         self._at = at
+        self._report = report
         self._read: dict[str, BlobRef] = {}
         self._results: dict[str, DecisionResult] = {}
-        self._cause: BlobRef | None = None
+        self._passed_on: tuple[Halt, BlobRef] | None = None
+        self._wrote = False
 
     def result(self, upstream: str) -> DecisionResult:
         """The result stage `upstream` stored for this decision.
@@ -85,10 +94,11 @@ class StageDecision:
                 raise Halt(f"{key} is not stored, and stage {self._run.stage} reads it")
             # The codec reads only canonical bytes, so this is the stored blob's SHA-256.
             ref = BlobRef(key, sha256_of(encode(found)))
-            self._read[key] = ref
+            self._note(ref)
             if found.halt is not None:
-                self._cause = ref
-                raise Halt(f"{key} holds a halt: {found.halt.reason}")
+                halt = Halt(f"{key} holds a halt: {found.halt.reason}")
+                self._passed_on = (halt, ref)
+                raise halt
             self._results[upstream] = found
         return self._results[upstream]
 
@@ -109,7 +119,7 @@ class StageDecision:
         if len(listed) != 1:
             raise Halt(f"{key} lists {counts} {len(listed)} times, not once")
         file = run.storage.read_output(key, result, listed[0], self._at, kind)
-        self._read[counts] = listed[0]
+        self._note(listed[0])
         if len(file.entries) != 1:
             raise Halt(f"{counts} holds {len(file.entries)} entries, not one")
         return file.entries[0]
@@ -134,7 +144,10 @@ class StageDecision:
         run = self._run
         key = output_key(run.deployment, run.run, self._at, run.stage, name)
         data = encode_output(kind, OutputFile(self._header(), entries, False))
-        return run.storage.put(run.kind, key, data).ref
+        self._wrote = True
+        ref = run.storage.put(run.kind, key, data).ref
+        self._report()
+        return ref
 
     def done(self, *outputs: BlobRef) -> DecisionResult:
         """The result that lists `outputs`, which the loop stores last."""
@@ -143,11 +156,21 @@ class StageDecision:
     def halted(self, halt: Halt) -> DecisionResult:
         """The result that holds `halt`.
 
-        Its `cause` is the result whose halt it passes on, and empty where
-        nothing upstream halted, which is what monitoring alarms on.
+        Its `cause` is the result whose halt `result` raised, and empty for any
+        other halt, which is what monitoring alarms on.
         """
-        record = self._run.storage.halt_record(halt, cause=self._cause)
+        cause = None
+        if self._passed_on is not None and halt is self._passed_on[0]:
+            cause = self._passed_on[1]
+        record = self._run.storage.halt_record(halt, cause=cause)
         return DecisionResult(header=self._header(), outputs=(), halt=record)
+
+    def _note(self, ref: BlobRef) -> None:
+        """Name a blob the stage has read in every header from here on."""
+        if self._wrote and ref.key not in self._read:
+            raise RuntimeError(f"stage {self._run.stage} read {ref.key} after it had written")
+        self._read[ref.key] = ref
+        self._report()
 
     def _header(self) -> BlobHeader:
         run = self._run

@@ -153,7 +153,9 @@ Two groups of workers run at the same time.
    own send result for the decision before, so it reads the broker at the
    decision's own time, and reconciles the book with the broker itself, halting on a difference. Monitoring's reconcile repeats the check for its report and alarm, and no decision waits on it.
 2. Alpha and cost need only the snapshot, and risk also needs the reconciled
-   book, so the three models overlap.
+   book, the hard caps as recover read them and the session's valuation, so the
+   three models overlap. That recover stores those three files for risk is this
+   doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 Execution sends only what the target portfolio asks for, so nothing it sends
 can come from a snapshot or a book that is not stored yet. When it sends, it
@@ -883,7 +885,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 
 The model returns a `ForecastSet`, its forecasts and the signals behind them, because both come from one calculation. A `Signal` is one value the model fitted, with the first and last session whose prices it read. The six this strategy writes are the hedge ratio, the spread, the spread's mean and standard deviation, the z-score and the unit. The types refuse a basket with no leg, a forecast out of its bounds, and a set with no forecast, no signal or two signals of one name.
 
-Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. Any halt becomes the stage's result, whose header names each result and file it had read, so the halt says what it read.
+Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. Any halt the handler meets becomes the stage's result, whose header names each result and file it had read and storage had accepted, so the halt says what it was judged from.
 
 #### A bar carries where it came from
 
@@ -1143,7 +1145,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
-`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Six checks go further.
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Seven checks go further.
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
@@ -1151,6 +1153,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 4. V is above zero.
 5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
+7. Each count, `max_open_orders` and `moc_cutoff`, is below 2**53, the largest a record can hold.
 
 **Table:** Which value of each pair applies
 
@@ -1186,17 +1189,19 @@ The stage never reads the owner's caps blob, which the owner can rewrite between
 
 ##### Where a strategy's own limits come from
 
-A strategy's own limits are the `[risk]` section of its tracked file. It holds each field of `Constraints` but the strategy's name, with the two share limits as tables keyed by instrument. `risk/model.py` holds the form. A limit there is what the strategy was tested under, and a hard cap is what the owner allows, so a limit in a tracked file only tightens. A test asserts that no tracked strategy file holds `share`, `stress_move` or `holds`, or names an account.
+A strategy's own limits are the `[risk]` section of its tracked file. It holds each field of `Constraints` but the strategy's name, with the two share limits as tables keyed by instrument. `risk/model.py` holds the form. A limit there is what the strategy was tested under, and a hard cap is what the owner allows, so a limit in a tracked file only tightens. A test asserts that no tracked strategy file holds a field only the hard caps have, such as `share` or `stress_move`, a key named `holds` or `account`, or the text `accounts/`.
 
 ##### What halts the risk stage
 
-A halt in data's result or in recover's is passed on. Every other halt is the stage's own result, whose header names each result and file it had read. It halts on each of these.
+A halt in data's result or in recover's is passed on. Every other halt the handler meets is the stage's own result, whose header names each result and file it had read and storage had accepted. The receive loop stores the few it raises itself, such as a decision whose strategies are not the table's, with no input named. The stage halts on each of these.
 
 1. A `[risk]` section that is absent, leaves a field out, holds one the form lacks, names other instruments than the strategy's in a table, or holds a value `core` refuses. The check runs at each decision, so a bad section stops this stage and never the worker's start.
-2. A result that lists one of the four files other than once, and a file that holds other than one entry.
+2. A result that lists one of the four files other than once, a file that holds other than one entry, and a snapshot of another decision.
 3. Caps or a valuation that `core.tighten` refuses, a V of any session but the one before the decision's, and a stress move past its age.
-4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position.
+4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position or has an open order.
 5. Two strategies in one deployment, because what scope each one's limits take is not decided.
+
+The stage does not hold V against the book's corrections or the entry it was replayed through, and does not check the book's open orders or orders in doubt. The gate does, at the send stage, so a target sized on a V the gate refuses sends nothing.
 
 #### The book comes from the journal
 
@@ -1360,7 +1365,7 @@ An arrow means "may import". The diagram draws four rules.
    - the names of data's stage and its snapshot, of alpha's two output files, of the risk stage and its constraints, of execution's recover stage and the three files risk reads, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result and the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
-   - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, with the price alone read by the risk model too, and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

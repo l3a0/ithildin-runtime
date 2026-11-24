@@ -23,7 +23,8 @@ Its handler does four things, in order.
    the loop stores last.
 
 A halt at any of the four becomes the stage's result, whose header names each
-blob read by then, and whose `cause` is empty unless it passes one on.
+blob read and accepted by then, and whose `cause` is empty unless it passes one
+on.
 
 The entry point hands in the stage's name, its kind and the stages it reads,
 as the stage table declares them.
@@ -98,7 +99,7 @@ class RiskStage:
         )
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
-        decision = self._run.decision(item.decision_at)
+        decision = self._run.decision(item.decision_at, report)
         try:
             # Both results first, so a halt in either is passed on whatever the
             # other's files hold.
@@ -108,10 +109,8 @@ class RiskStage:
             book = decision.entry(self._recover_stage, BOOK_OUTPUT, Book)
             caps = decision.entry(self._recover_stage, CAPS_OUTPUT, HardCaps)
             valuation = decision.entry(self._recover_stage, VALUATION_OUTPUT, Valuation)
-            report()
             limits = self._model().constraints(book, snapshot, caps, valuation)
             stored = decision.put(CONSTRAINTS_OUTPUT, Constraints, (limits,))
-            report()
         except Halt as halt:
             return decision.halted(halt)
         return decision.done(stored)
@@ -119,7 +118,7 @@ class RiskStage:
     def _model(self) -> LimitRisk:
         # The model is built at each decision, so it keeps nothing from the one before.
         if len(self._strategies) != 1:
-            names = ", ".join(strategy.name for strategy in self._strategies) or "none"
+            names = ", ".join(strategy.name for strategy in self._strategies)
             raise Halt(
                 f"the deployment runs {len(self._strategies)} strategies ({names}), and the scope "
                 "each one's limits take is decided for one alone"

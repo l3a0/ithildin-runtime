@@ -8,12 +8,13 @@ stage and for execution's recover stage, which #10 builds.
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sys
 import tomllib
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -42,7 +43,9 @@ from ithildinruntime.core import (
     PlanDecision,
     Retry,
     Snapshot,
+    StageDecision,
     StageKind,
+    StageRun,
     Storage,
     StrategyConfig,
     Valuation,
@@ -194,8 +197,18 @@ def test_1_a_book_with_nothing_held_needs_no_mark() -> None:
         book({"chan": {USO: 1}, OTHER: {USO: -1}}),
         book(opens=[order(1, USO, "chan", name="old-1")]),
         book(opens=[order(-1, USO, OTHER, name="old-1")]),
+        # A pair whose other leg the snapshot marks.
+        HELD,
     ],
-    ids=["long", "short", "another-strategys", "offset", "an-open-buy", "another-strategys-sale"],
+    ids=[
+        "long",
+        "short",
+        "another-strategys",
+        "offset",
+        "an-open-buy",
+        "another-strategys-sale",
+        "the-second-leg-of-a-pair",
+    ],
 )
 def test_3_a_held_instrument_the_snapshot_cannot_mark_halts(held) -> None:
     late_leg = replace(MARKED, bars={**MARKED.bars, USO: SEALED.bars[USO]})
@@ -225,6 +238,30 @@ def test_a_v_of_another_session_than_the_one_before_the_decisions_halts(day) -> 
         f"the valuation is of {day.isoformat()}, not of 2026-11-02, the session before the "
         "decision's"
     )
+
+
+@pytest.mark.parametrize(
+    ("at", "prior"),
+    [
+        # After the session's close on 2026-11-03, whose UTC date is the next day.
+        (datetime(2026, 11, 4, 2, 0, tzinfo=UTC), PRIOR),
+        # A Saturday, whose last session is Friday's.
+        (datetime(2026, 11, 7, 15, 0, tzinfo=UTC), date(2026, 11, 5)),
+    ],
+    ids=["after-the-close", "a-saturday"],
+)
+def test_vs_session_is_counted_from_the_session_a_decision_belongs_to(at, prior) -> None:
+    flat = book()
+    asked = replace(MARKED, decision_at=at)
+    assert limits(held=flat, marked=asked, v=valuation(5000, session=prior)) == EXPECTED
+    with pytest.raises(Halt, match=f"not of {prior.isoformat()}, the session before"):
+        limits(held=flat, marked=asked, v=valuation(5000, session=TABLE.before(prior).day))
+    # The vintage's last session is 2026-10-30, so the age counts to the session too.
+    days = (TABLE.opened_by(at).day - CAPS.stress_through).days
+    aged = {"held": flat, "marked": asked, "v": valuation(5000, session=prior)}
+    assert limits(owners=replace(CAPS, stress_max_age_days=days), **aged) == EXPECTED
+    with pytest.raises(Halt, match=f"{days} days before the decision"):
+        limits(owners=replace(CAPS, stress_max_age_days=days - 1), **aged)
 
 
 def test_a_stress_move_past_its_age_halts() -> None:
@@ -280,6 +317,10 @@ def test_2_a_section_is_read_exactly() -> None:
     assert made.max_gross == d("0.00000001") and made.max_net == 7
     assert (made.max_open_orders, made.moc_cutoff) == (0, 13)
     assert made.max_position[USO] == d("0.5")
+    # More digits than Python's default context holds, and every zero as written.
+    long = "1.234567890123456789012345678901234567"
+    assert str(limits(strategy(section(max_net=long))).max_net) == long
+    assert str(limits().max_gross) == "1000.00"
 
 
 FIELDS = (
@@ -334,6 +375,18 @@ BAD_SECTIONS: dict[str, tuple[str, str]] = {
         for f in ("max_order_qty", "max_position")
     },
     "an-unknown-field": (section(share="0.02"), "holds share, which this form does not have"),
+    "six-unknown-fields": (
+        # Six, so a set's own order is seldom the sorted one.
+        section(**{name: "1" for name in "fbdaec"}),
+        "holds a, b, c, d, e, f, which this form does not have",
+    ),
+    **{
+        f"a-{f}-of-six-other-instruments": (
+            section(**{f: "{GLD = 10, USO = 20, F = 1, B = 1, D = 1, A = 1, E = 1, C = 1}"}),
+            f"holds a {f} for A, B, C, D, E, F, which the strategy does not trade",
+        )
+        for f in ("max_order_qty", "max_position")
+    },
     "the-strategys-name": (
         section(strategy='"chan"'),
         "holds strategy, which this form does not have",
@@ -439,8 +492,23 @@ def test_2_a_number_the_strategy_reader_refuses_fails_the_load(written) -> None:
 
 # Each tracked strategy with no limits written yet, and the issue that writes them.
 WITHOUT_LIMITS = {"chan_bollinger": "#9"}
-# A field of the hard caps, or of the caps blob, that no tracked file may hold.
-CAP_NAMES = frozenset({"share", "stress_move", "holds", "account"})
+# Each field of the hard caps that a strategy's limits lack, and the caps blob's own names.
+CAP_NAMES = (
+    {f.name for f in dataclasses.fields(HardCaps)}
+    - {f.name for f in dataclasses.fields(Constraints)}
+) | {"holds", "account"}
+# Written out, so a name lost from the set above fails its case below.
+EACH_CAP_NAME = (
+    "share",
+    "stress_move",
+    "stress_low",
+    "stress_high",
+    "stress_vintage",
+    "stress_through",
+    "stress_max_age_days",
+    "holds",
+    "account",
+)
 
 
 def tracked() -> list[str]:
@@ -497,15 +565,14 @@ def caps_held(data: bytes) -> set[str]:
             for key, inner in value.items():
                 if key in CAP_NAMES:
                     yield key
-                yield from walk(key)
                 yield from walk(inner)
         elif isinstance(value, list):
             for inner in value:
                 yield from walk(inner)
-        elif isinstance(value, str) and "accounts/" in value:
-            yield "account"
 
-    return set(walk(tomllib.loads(data.decode())))
+    found = set(walk(tomllib.loads(data.decode())))
+    # The text counts anywhere, a comment included.
+    return found | {"account"} if b"accounts/" in data else found
 
 
 def test_4_no_tracked_strategy_file_holds_a_hard_cap_or_an_accounts_key() -> None:
@@ -515,7 +582,11 @@ def test_4_no_tracked_strategy_file_holds_a_hard_cap_or_an_accounts_key() -> Non
         assert caps_held((STRATEGIES / f"{name}.toml").read_bytes()) == set(), name
 
 
-@pytest.mark.parametrize("name", sorted(CAP_NAMES))
+def test_4_the_names_looked_for_are_the_ones_written_out() -> None:
+    assert set(EACH_CAP_NAME) == CAP_NAMES
+
+
+@pytest.mark.parametrize("name", EACH_CAP_NAME)
 @pytest.mark.parametrize(
     "form",
     [
@@ -538,8 +609,9 @@ def test_4_a_file_that_holds_one_is_found(name, form) -> None:
         '[risk]\nfrom = "accounts/paper/caps.json"\n',
         '[risk]\n"accounts/paper/caps.json" = 1\n',
         '[risk]\nfrom = ["s3://bucket/accounts/paper/caps.json"]\n',
+        "[risk] # accounts/paper/caps.json\n",
     ],
-    ids=["a-value", "a-name", "in-a-list"],
+    ids=["a-value", "a-name", "in-a-list", "in-a-comment"],
 )
 def test_4_an_accounts_key_is_found_wherever_it_is_written(text) -> None:
     assert caps_held(text.encode()) == {"account"}
@@ -727,12 +799,29 @@ def test_1_mappings_built_in_another_order_store_the_same_bytes(tmp_path) -> Non
     assert made[0] == made[1]
 
 
-def test_the_stage_reports_after_its_reads_and_after_its_write(tmp_path) -> None:
+def test_the_stage_reports_after_each_read_and_after_its_write(tmp_path) -> None:
     storage = store(tmp_path)
     write_both(storage)
     seen: list[bool] = []
     run(handler(storage), lambda: seen.append((tmp_path / STORED).exists()))
-    assert seen == [False, True]
+    # Two results, four files, then the constraints, so no read is silent for long.
+    assert seen == [False] * 6 + [True]
+
+
+def test_a_second_decision_of_one_handler_names_only_its_own_inputs(tmp_path) -> None:
+    storage = store(tmp_path)
+    write_both(storage)
+    stage = handler(storage)
+    assert run(stage).halt is None
+    later = DECISION + timedelta(minutes=1)
+    second = stage(Item(later, RISK_STAGE), lambda: None)
+    assert second.halt is not None and dict(second.header.inputs) == {}
+    # It passes nothing on either, after a first decision that did.
+    other = store(tmp_path / "other")
+    write_data(other, halt="GLD missing")
+    stage = handler(other)
+    assert run(stage).halt.cause is not None
+    assert stage(Item(later, RISK_STAGE), lambda: None).halt.cause is None
 
 
 def test_the_stage_reads_nothing_of_the_accounts(tmp_path) -> None:
@@ -903,6 +992,49 @@ def test_3_a_held_instrument_with_no_mark_halts_the_stage(tmp_path) -> None:
     assert result.header == risk_header(inputs)
 
 
+def test_3_a_stress_move_past_its_age_halts_the_stage(tmp_path) -> None:
+    storage = store(tmp_path)
+    old = replace(CAPS, stress_max_age_days=3)
+    inputs = write_data(storage) | write_recover(
+        storage, {**RECOVERED, CAPS_OUTPUT: (HardCaps, (old,))}
+    )
+    result = own_halt(tmp_path, storage)
+    assert "stress_through is 2026-10-30, 4 days before the decision" in result.halt.reason
+    assert result.header == risk_header(inputs)
+
+
+def test_3_a_v_not_above_zero_halts_the_stage(tmp_path) -> None:
+    storage = store(tmp_path)
+    inputs = write_data(storage) | write_recover(
+        storage, {**RECOVERED, VALUATION_OUTPUT: (Valuation, (valuation(0),))}
+    )
+    result = own_halt(tmp_path, storage)
+    assert result.halt.reason == "the valuation's value is 0, not above zero"
+    assert result.header == risk_header(inputs)
+
+
+def test_3_an_instrument_the_caps_do_not_limit_halts_the_stage(tmp_path) -> None:
+    storage = store(tmp_path)
+    gld = replace(CAPS, max_order_qty={GLD: d(8)}, max_position={GLD: d(6)})
+    inputs = write_data(storage) | write_recover(
+        storage, {**RECOVERED, CAPS_OUTPUT: (HardCaps, (gld,))}
+    )
+    result = own_halt(tmp_path, storage)
+    assert result.halt.reason == "the constraints limit USO, which the hard caps do not"
+    assert result.header == risk_header(inputs)
+
+
+def test_3_a_snapshot_of_another_decision_halts_the_stage(tmp_path) -> None:
+    storage = store(tmp_path)
+    # The file's own header names this decision, so storage's check passes.
+    older = replace(MARKED, decision_at=DECISION - timedelta(minutes=1))
+    data = write_data(storage, older)
+    recover = write_recover(storage, {**RECOVERED, BOOK_OUTPUT: (Book, (book(),))})
+    result = own_halt(tmp_path, storage)
+    assert result.halt.reason.startswith(f"{SNAPSHOT_KEY} holds a snapshot of")
+    assert result.header == risk_header(data | {RECOVER_RESULT: recover[RECOVER_RESULT]})
+
+
 def test_3_a_v_of_another_session_halts_the_stage(tmp_path) -> None:
     storage = store(tmp_path)
     older = replace(V, session=TABLE.before(PRIOR).day)
@@ -952,6 +1084,53 @@ def test_the_stage_reads_the_capture_that_counts_and_not_a_later_one(tmp_path) -
     assert result.halt is None and set(result.header.inputs) == EVERY_INPUT
     (made_limits,) = decode_output((tmp_path / STORED).read_bytes(), Constraints).entries
     assert made_limits == EXPECTED
+
+
+# The steps every model's stage shares
+
+
+def decided(storage: Storage, **changes: object) -> StageDecision:
+    made = {
+        "format": 2,
+        "stage": RISK_STAGE,
+        "kind": StageKind.DETERMINISTIC,
+        "deployment": DEPLOYMENT,
+        "run": RUN,
+        "release": RELEASE,
+        "config_hashes": ONE.hashes_for(RISK_STAGE),
+    }
+    return StageRun(storage, **made | changes).decision(DECISION, lambda: None)  # type: ignore[arg-type]
+
+
+def test_a_file_with_no_entries_never_says_trade_nothing_and_carries_the_stages_format(
+    tmp_path,
+) -> None:
+    ref = decided(store(tmp_path)).put(CONSTRAINTS_OUTPUT, Constraints, ())
+    file = decode_output((tmp_path / ref.key).read_bytes(), Constraints)
+    assert (file.entries, file.trade_nothing, file.header.format) == ((), False, 2)
+
+
+def test_a_read_of_another_blob_after_a_write_is_an_error(tmp_path) -> None:
+    storage = store(tmp_path)
+    write_both(storage)
+    decision = decided(storage)
+    decision.snapshot("data")
+    decision.put(CONSTRAINTS_OUTPUT, Constraints, (EXPECTED,))
+    # A blob already read is named in the file's header, so reading it again is no error.
+    assert decision.snapshot("data") == MARKED
+    with pytest.raises(RuntimeError, match=f"read {RECOVER_RESULT} after it had written"):
+        decision.result(RECOVER_STAGE)
+
+
+def test_a_halt_of_the_stages_own_after_one_it_caught_names_no_cause(tmp_path) -> None:
+    storage = store(tmp_path)
+    recover = write_recover(storage, {}, halt="book differs")
+    decision = decided(storage)
+    with pytest.raises(Halt) as caught:
+        decision.result(RECOVER_STAGE)
+    cause = BlobRef(RECOVER_RESULT, recover[RECOVER_RESULT])
+    assert decision.halted(caught.value).halt.cause == cause
+    assert decision.halted(Halt("a fault of the stage's own")).halt.cause is None
 
 
 # The entry point

@@ -998,6 +998,23 @@ def test_a_decision_with_no_data_result_halts(tmp_path) -> None:
     assert dict(halted.header.inputs) == {}
 
 
+def test_a_snapshot_of_another_decision_halts(tmp_path) -> None:
+    table = table_of(SMALL)
+    # The file's own header names this decision, so storage's check passes.
+    older = replace(HAND_SNAPSHOT, decision_at=CLOSE - timedelta(minutes=1))
+    other = store(tmp_path)
+    header = data_header(CLOSE, table)
+    key = output_key(DEPLOYMENT, RUN, CLOSE, "data", "snapshot")
+    file = encode_output(Snapshot, OutputFile(header, (older,), False))
+    ref = other.put(StageKind.CAPTURING, key, file).ref
+    other.put_result(
+        result_key(DEPLOYMENT, RUN, CLOSE, "data"), DecisionResult(header, (ref,), None)
+    )
+    halted = run(handler(other, table), CLOSE)
+    assert halted.halt is not None and halted.halt.cause is None
+    assert f"{key} holds a snapshot of {older.decision_at.isoformat()}" in halted.halt.reason
+
+
 def test_a_forecast_of_another_strategy_halts(tmp_path, monkeypatch) -> None:
     table = table_of(SMALL)
     storage = store(tmp_path)
@@ -1058,8 +1075,9 @@ def test_the_stage_stores_the_forecast_and_then_the_signals(tmp_path) -> None:
     result = handler(storage, table)(
         Item(CLOSE, "alpha/chan"), lambda: seen.append([(tmp_path / k).exists() for k in keys])
     )
-    # It reports once it has read, once the forecast is stored and once the signals are.
-    assert seen == [[False, False], [True, False], [True, True]]
+    # It reports once it has read each of data's result and the snapshot, once the
+    # forecast is stored and once the signals are.
+    assert seen == [[False, False], [False, False], [True, False], [True, True]]
     assert [ref.key for ref in result.outputs] == keys
     made_set = forecast_of(SMALL, HAND_SNAPSHOT)
     forecast = decode_output((tmp_path / keys[0]).read_bytes(), Forecast)
@@ -1077,7 +1095,7 @@ def test_a_crash_between_the_two_files_stores_the_same_bytes_again(tmp_path) -> 
 
     def crash() -> None:
         beats.append(None)
-        if len(beats) == 2:
+        if len(beats) == 3:
             raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):

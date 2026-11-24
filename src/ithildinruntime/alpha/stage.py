@@ -19,7 +19,7 @@ Its handler does three things, in order.
    between the two writes stores the same bytes again.
 
 A halt at any of the three becomes the stage's result, whose header names
-each blob read by then.
+each blob read and accepted by then.
 
 The entry point hands in the stage's name, its kind and the stage it reads, as
 the stage table declares them.
@@ -92,15 +92,12 @@ class AlphaStage:
         )
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
-        decision = self._run.decision(item.decision_at)
+        decision = self._run.decision(item.decision_at, report)
         try:
             snapshot = decision.snapshot(self._data_stage)
-            report()
             made = self._made(snapshot)
             forecast = decision.put(FORECAST_OUTPUT, Forecast, made.forecasts)
-            report()
             signals = decision.put(SIGNALS_OUTPUT, Signal, made.signals)
-            report()
         except Halt as halt:
             return decision.halted(halt)
         return decision.done(forecast, signals)

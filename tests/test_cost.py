@@ -653,7 +653,7 @@ def test_a_second_run_that_writes_other_bytes_halts_as_not_deterministic(tmp_pat
     assert set(halted.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
 
 
-def test_the_stage_reports_after_its_read_and_after_its_write(tmp_path) -> None:
+def test_the_stage_reports_after_each_read_and_after_its_write(tmp_path) -> None:
     storage = store(tmp_path)
     write_data(storage)
     stored: list[bool] = []
@@ -661,7 +661,8 @@ def test_the_stage_reports_after_its_read_and_after_its_write(tmp_path) -> None:
     handler(storage)(
         Item(AT, "cost/chan"), lambda: stored.append((tmp_path / schedule_key).exists())
     )
-    assert stored == [False, True]
+    # Data's result, the snapshot, then the schedule.
+    assert stored == [False, False, True]
 
 
 def test_a_halt_in_datas_result_is_passed_on_naming_it(tmp_path) -> None:
@@ -819,6 +820,10 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     )
     halted = run(handler(storage, table=Table(stages=(feed, row), strategies=(CHAN,))))
     assert "has no other key to go to" in halted.halt.reason
+    # A capture storage has not stored is named by the halt.
+    assert [ref.key for ref in halted.halt.unstored] == [
+        output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule")
+    ]
 
 
 def test_the_cost_worker_loads_neither_marketlake_nor_pandas() -> None:
