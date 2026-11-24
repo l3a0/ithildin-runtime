@@ -25,8 +25,13 @@ MAY_USE = {
     "wait_until": {"data/stage.py"},
     # The wall clock waits on it. The loop's `_Progress` defines it.
     "wait_for_stop": {"adapters/clocks.py"},
-    # The wall clock raises it, and the loop catches it.
-    "Stopped": {"adapters/clocks.py", "runtime/loop/receive.py"},
+    # `core` exports it, the wall clock raises it, and the loop catches it.
+    "Stopped": {
+        "adapters/clocks.py",
+        "core/__init__.py",
+        "core/halt.py",
+        "runtime/loop/receive.py",
+    },
 }
 
 
@@ -54,9 +59,6 @@ def test_only_the_listed_modules_wait_on_the_clock_or_end_on_a_stop() -> None:
     found: dict[str, set[str]] = {name: set() for name in MAY_USE}
     for path in sorted(SOURCE.rglob("*.py")):
         module = path.relative_to(SOURCE).as_posix()
-        if module.startswith("core/"):
-            # `core` defines and exports the three, and holds no stage.
-            continue
         for name in uses(ast.parse(path.read_text(encoding="utf-8"))):
             found[name].add(module)
     assert found == MAY_USE

@@ -95,7 +95,8 @@ How the loop runs, in order.
     stores nothing for its decision and alarms nothing, because a stop is no
     fault in the decision. It returns the handler's messages to the queue
     rather than deleting them, and starts nothing once a stop is asked. The
-    decision runs again, on another instance or when this one next starts. A
+    decision runs again, on another instance or when this one next starts,
+    unless a result, such as the supervisor's halt, is stored by then. A
     handler may wait this way only before it has written anything, and
     tests/test_stop_rule.py lists the modules that do. Any other handler gets
     the stop timeout, and its result is stored as usual. A handler that raises `Stopped` when no
@@ -321,8 +322,8 @@ class ReceiveLoop:
         """Run until `stop` is called, or raise `LoopFailed` if a halt could not be stored,
         or a queue could not be read or answered.
 
-        Either way it returns only once each handler has had the stop timeout
-        to finish and nothing is held: S3 has stored every halt and capture
+        Either way it returns only once each handler has ended or had the stop
+        timeout, and nothing is held: S3 has stored every halt and capture
         this process holds, apart from a halt S3 answered and will not store,
         which is dropped with an alarm.
         """

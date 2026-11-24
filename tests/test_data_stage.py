@@ -681,12 +681,20 @@ def test_19_the_wall_clock_reports_while_it_waits_past_the_heartbeat_limit() -> 
 def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(
     stopped: bool, past: timedelta
 ) -> None:
-    """A stop asked at or after the decision time lets the handler read and store as usual."""
+    """A wait that starts at or after the time returns, whether or not a stop was asked."""
     at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
     time = FakeTime(at + past)
     report = FakeProgress(time, at if stopped else None)
     WallClock(time).wait_until(at, report)
     assert report.waited == [] and time.now() == at + past
+
+
+def test_19_the_wall_clock_waits_out_the_last_microsecond() -> None:
+    at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
+    time = FakeTime(at - timedelta(microseconds=1))
+    report = FakeProgress(time)
+    WallClock(time).wait_until(at, report)
+    assert report.waited == [1e-06] and time.now() == at
 
 
 def test_19_the_wall_clock_never_waits_past_the_time() -> None:
