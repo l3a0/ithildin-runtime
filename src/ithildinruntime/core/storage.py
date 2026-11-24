@@ -308,6 +308,11 @@ class Storage:
             raise self._halt(
                 f"{held.trying} was not stored: {type(error).__name__}: {error}"
             ) from error
+        except BaseException:
+            # Raised on as it is, such as `KeyboardInterrupt`. The capture is
+            # held all the same, so the halt its handler ends in names it.
+            self._hold(kind, held)
+            raise
 
     def put_result(self, key: str, result: DecisionResult, *, once: bool = False) -> DecisionResult:
         """Create a decision's result, and return the result its key holds.

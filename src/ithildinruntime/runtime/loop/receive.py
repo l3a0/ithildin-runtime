@@ -45,14 +45,17 @@ How the loop runs, in order.
    raised in a handler's thread ends nothing else. The other handlers go on.
    A halt that cannot be stored ends
    receiving, and the loop raises `LoopFailed` once item 9 lets it, so the
-   host restarts the process. So does an error in the loop's own work on an
-   item, such as building its halt, which alarms first and returns the item's
-   messages to the queue. Going on would start the decision again at once,
-   for ever. So does any error from the queue other than
-   `QueueUnavailable`, and a queue that has refused every receive for longer
-   than `deaf_after`, because a loop that can no longer receive must not go
-   on beating as if it worked. Each queue failure alarms
-   first. The refusals count from the first one since the queue last
+   host restarts the process. An error in a handler's thread that leaves its
+   item with no result stored or held, such as one raised while its halt is
+   built, ends the loop the same way, because going on would start the
+   decision again at once, for ever. It alarms, naming the worker, the stage,
+   the decision, the error and what the item had ended with, and the item's
+   messages go back to the queue. An error in the loop's own checks ends the
+   loop with no alarm of its own. Any error from the queue other than
+   `QueueUnavailable` ends it with `LoopFailed`, and so does a queue that has
+   refused every receive for longer than `deaf_after`, because a loop that
+   can no longer receive must not go on beating as if it worked. Each queue
+   failure alarms first. The refusals count from the first one since the queue last
    answered or every handler was last busy, so a pool busy for a while and
    then refused once goes on. A queue that has answered nothing for longer
    than `deaf_after` while a backlog keeps every handler busy alarms once,
@@ -68,9 +71,9 @@ How the loop runs, in order.
 8. **Ending drains the pool.** However the loop ends, by `stop`, by a
    failure or by a bug, it stops receiving and gives each handler the stop
    timeout to finish, beating by item 7's rule. A handler that waits ends at
-   once, as item 11 says. A message whose handler did not finish, ended on
-   the stop, or met an error in the loop's own work goes back to the queue,
-   and so does one a receive answers after the loop stopped. A
+   once, as item 11 says. A message whose handler did not finish, or whose
+   item ended on the stop or with no result stored or held, goes back to the
+   queue, and so does one a receive answers after the loop stopped. A
    handler still working when the stop timeout passes ends with the
    process, as in a crash, and its decision is done again after the
    restart, unless item 9 keeps the process alive.
@@ -126,6 +129,7 @@ from typing import Protocol
 from ithildinruntime.core import (
     Alerts,
     BlobHeader,
+    BlobRef,
     DecisionResult,
     Event,
     EventKind,
@@ -176,8 +180,9 @@ class Handler(Protocol):
     `Stopped` a stop raises there through, since a check starts a stopped item
     again, from nothing, where it finds no result stored for it. A handler can
     run more than once for one item, after a crash or a stop or on two
-    instances at once, so a stage that writes outside rests on a create-only record of its own, such
-    as the send stage's claim, and on #10's lease on the account.
+    instances at once, so a stage that writes outside rests on a create-only
+    record of its own, such as the send stage's claim, and on #10's lease on
+    the account.
     """
 
     def __call__(self, item: Item, report: Progress) -> DecisionResult: ...
@@ -198,8 +203,8 @@ class _Running:
     extended: float
     messages: list[Event] = field(default_factory=list)
     done: bool = False
-    # Whether the item ended with no result stored or held, on a stop or on an
-    # error in `_work` itself, so its messages go back to the queue.
+    # Whether the item ended with no result known to be stored or held, on a
+    # stop or on an error in `_work` itself, so its messages go back.
     unfinished: bool = False
     extending: bool = False
 
@@ -904,11 +909,15 @@ class ReceiveLoop:
             # later check would find no result and start the decision again,
             # for ever, so the loop ends and the host restarts the process.
             running.unfinished = True
-            self._give_up(
+            what = (
                 f"could not finish stage {running.item.stage} at decision "
-                f"{decision_part(running.item.decision_at)}: {type(error).__name__}: {error}",
-                error,
+                f"{decision_part(running.item.decision_at)}: {_said(error)}"
             )
+            if error.__context__ is not None:
+                # What the item ended with, such as the halt that could not be
+                # built, whose reason no result holds.
+                what += f". The item had ended with {_said(error.__context__)}"
+            self._give_up(what, error)
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
 
@@ -921,9 +930,8 @@ class ReceiveLoop:
             self._slots.notify_all()
 
     async def _finish_messages(self, running: _Running) -> None:
-        # An unfinished item stored no result, so its messages go back to the
-        # queue, for a check to start the decision again where it finds no
-        # result stored for it.
+        # An unfinished item's messages go back to the queue, for a check to
+        # start the decision again where it finds no result stored for it.
         answer = self._queue.release if running.unfinished else self._queue.done
         for message in running.messages:
             await self._quietly(answer, message)
@@ -952,7 +960,7 @@ class ReceiveLoop:
         except BaseException as error:
             # `SystemExit` and `KeyboardInterrupt` too. The pool keeps either in
             # its future, so one raised here would end nothing.
-            self._store_unhandled(stage, item, f"{type(error).__name__}: {error}", returned)
+            self._store_unhandled(stage, item, _said(error), returned)
             return
         self._store(item, result)
 
@@ -966,18 +974,24 @@ class ReceiveLoop:
         # cannot be built or is never stored.
         try:
             self._alerts.alarm(reason)
-        except Exception:
-            # Monitoring alarms on every halt it reads.
+        except BaseException:
+            # Monitoring alarms on every halt it reads, so nothing the channel
+            # raises may keep the halt from being stored.
             pass
         result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
         self._store(item, result)
 
     def _own_outputs(self, item: Item, returned: object) -> tuple:
         """The outputs a rejected result names under the item's own prefix, which a halt keeps."""
+        # A result the handler built wrongly can hold anything, and naming its
+        # outputs must not keep its halt from being stored.
         if not isinstance(returned, DecisionResult):
             return ()
+        if not isinstance(returned.outputs, (tuple, list)):
+            return ()
+        refs = (ref for ref in returned.outputs if isinstance(ref, BlobRef))
         prefix = self._key(item).removesuffix("result.json")
-        return tuple(ref for ref in returned.outputs if ref.key.startswith(prefix))
+        return tuple(ref for ref in refs if ref.key.startswith(prefix))
 
     def _check_strategies(self, item: Item) -> None:
         """Halt a stage at a decision whose strategies are not exactly the table's.
@@ -1026,18 +1040,19 @@ class ReceiveLoop:
             # supervisor's halt, which is final for the decision, as
             # `Storage.put_result` says. Nothing stored is overwritten.
             self._storage.put_result(self._key(item), result)
-        except Exception as error:
+        except BaseException as error:
+            # Whatever the store raised, a halt already built is held.
             if result.halt is not None:
                 self._keep_halt(item, result)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
             halt = Halt(
                 f"{self._worker} could not store the result of stage {item.stage} at decision "
-                f"{decision_part(item.decision_at)}: {type(error).__name__}: {error}"
+                f"{decision_part(item.decision_at)}: {_said(error)}"
             )
             fallback = self._halt_result(stage, item, halt, self._own_outputs(item, result))
             try:
                 self._storage.put_result(self._key(item), fallback)
-            except Exception as second:
+            except BaseException as second:
                 self._keep_halt(item, fallback)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from second
         with self._stored_lock:
@@ -1121,6 +1136,14 @@ class ReceiveLoop:
             await self._in_io(self._storage.retry_held)
         finally:
             self._retrying = False
+
+
+def _said(error: BaseException) -> str:
+    """The error's type and text, or its type alone where reading its text raises."""
+    try:
+        return f"{type(error).__name__}: {error}"
+    except BaseException:
+        return f"{type(error).__name__}, whose text could not be read"
 
 
 def _hashes(hashes: Mapping[str, str]) -> str:

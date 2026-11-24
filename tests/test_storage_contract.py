@@ -490,6 +490,22 @@ def test_an_error_no_refusal_names_still_holds_the_capture_and_halts(spec: Store
         storage.put(StageKind.DETERMINISTIC, core.output_key("ci", RUN, AT, "alpha", "f"), b"f")
 
 
+def test_a_capture_is_held_when_its_write_ends_on_a_base_exception(spec: StoreSpec) -> None:
+    """The error is raised on, and the capture is stored once the store answers."""
+    flaky = Flaky(spec.open())
+    storage, _, _ = _storage(flaky)
+    flaky.broken = SystemExit("out")
+    key = _snapshot_key()
+    with pytest.raises(SystemExit):
+        storage.put(StageKind.CAPTURING, key, b"one", attempt=_attempt())
+    assert storage.unstored() == (BlobRef(key, sha256_of(b"one")),)
+    with pytest.raises(SystemExit):
+        storage.put(StageKind.DETERMINISTIC, core.output_key("ci", RUN, AT, "alpha", "f"), b"f")
+    assert len(storage.unstored()) == 1
+    flaky.broken = None
+    assert [s.ref.key for s in storage.retry_held()] == [key]
+
+
 def test_a_store_that_refuses_every_write_halts_and_holds_the_capture(spec: StoreSpec) -> None:
     """A bucket that does not exist, or a folder nobody can write, is an outage, never a gap."""
     if spec.kind == "folder":
