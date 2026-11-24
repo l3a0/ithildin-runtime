@@ -19,6 +19,7 @@ from .codec import (
 from .halt import Halt
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
+from .names import DATA_STAGE, SNAPSHOT_OUTPUT
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
 from .ports import __all__ as _ports
@@ -41,7 +42,9 @@ from .storage import __all__ as _storage
 from .strategy import STRATEGIES, StrategyConfig, load_strategies, parse_strategy
 
 __all__ = [
+    "DATA_STAGE",
     "PLAN_FORMAT",
+    "SNAPSHOT_OUTPUT",
     "BeforeClose",
     "BuiltPlan",
     "CodecError",

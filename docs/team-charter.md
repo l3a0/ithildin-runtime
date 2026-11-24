@@ -121,10 +121,10 @@ flowchart LR
     research -->|"a registered strategy"| alpha
     data -->|"point-in-time data"| alpha
     data -->|"positions, data"| risk
-    data -->|"liquidity, own fills"| cost
+    data -->|"snapshot"| cost
     alpha -->|"forecast"| pc
     risk -->|"constraints"| pc
-    cost -->|"cost estimate"| pc
+    cost -->|"cost schedule"| pc
     pc -->|"target portfolio"| exec
     exec -->|"orders"| broker
     broker -->|"fills"| exec
@@ -152,13 +152,13 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Data | Capture, clean, timestamp and serve point-in-time data (L3605) | Vendor feeds, broker fills | Vintages, a security master, bars | Data engineer |
 | Alpha model | Forecast return or direction per instrument (L1033, L2029) | Point-in-time data | Forecast, with horizon and confidence | Quant researcher |
 | Risk model | Limit or remove exposures nobody chose (L928, L2089) | Positions, data | Constraints and penalties | Risk engineer |
-| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | Order size, liquidity, own real fills | Cost estimate | Trading systems engineer |
+| Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | The decision's snapshot, the strategy's cost terms, and own real fills once they calibrate it | A cost schedule per strategy and decision | Trading systems engineer |
 | Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above | Target positions | Trading systems engineer |
 | Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current | Orders, then fills | Trading systems engineer |
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
 | Monitoring | Watch exposure, P&L, execution and systems (L4973) | Everything above | Alerts, a halt | Operator |
 
-Three packages under `src/ithildinruntime` are shared code rather than modules, so the table leaves them out. `core` holds the types, the interfaces, the one codec, the key builders, the calendar and the storage contract that every module imports. `adapters` holds what stands behind `core`'s ports, the folder and S3 stores and the named-pipe and SQS queues today, and only `runtime` imports it. `journal` holds the journal's writer and reader, and only execution, monitoring, the supervisor and the `ithildin` tool may import it. [Package layout and the import rule](architecture/05-building-blocks.md#package-layout-and-the-import-rule) draws all three. A fourth package, `runtime`, puts the modules together, and today holds only the receive loop every worker and the supervisor run, with the table of stages it reads.
+Three packages under `src/ithildinruntime` are shared code rather than modules, so the table leaves them out. `core` holds the types, the interfaces, the one codec, the key builders, the calendar and the storage contract that every module imports. `adapters` holds what stands behind `core`'s ports, the folder and S3 stores and read-only buckets, the named-pipe and SQS queues and the history and wall clocks today, and only `runtime` imports it. `journal` holds the journal's writer and reader, and only execution, monitoring, the supervisor and the `ithildin` tool may import it. [Package layout and the import rule](architecture/05-building-blocks.md#package-layout-and-the-import-rule) draws all three. A fourth package, `runtime`, puts the modules together, and today holds the receive loop every worker and the supervisor run, with the table of stages it reads, and the data and cost workers' entry points.
 
 Narang's build-or-buy advice sets what the team writes itself. Adequate
 off-the-shelf solutions exist for data, risk models, portfolio construction and

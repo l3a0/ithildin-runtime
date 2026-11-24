@@ -1,3 +1,37 @@
 # Chan's Bollinger band on the price spread between GLD and USO. Each
 # module that reads a setting of this strategy adds a section of its own.
 instruments = ["GLD", "USO"]
+
+# The replication charges no transaction cost, so every term is a written
+# zero. `cost/model.py` holds the form.
+[[cost.GLD]]
+kind = "charge"
+side = "both"
+fixed = 0
+per_share = 0
+per_dollar = 0
+source = "placeholder: the replication this file reproduces charges no transaction cost"
+
+[[cost.GLD]]
+kind = "gap"
+side = "both"
+fixed = 0
+per_share = 0
+per_dollar = 0
+source = "placeholder: the replication this file reproduces charges no transaction cost"
+
+[[cost.USO]]
+kind = "charge"
+side = "both"
+fixed = 0
+per_share = 0
+per_dollar = 0
+source = "placeholder: the replication this file reproduces charges no transaction cost"
+
+[[cost.USO]]
+kind = "gap"
+side = "both"
+fixed = 0
+per_share = 0
+per_dollar = 0
+source = "placeholder: the replication this file reproduces charges no transaction cost"

@@ -423,9 +423,26 @@ classDiagram
         +str missing_term
     }
     class CostSchedule {
-        +dict per_share
-        +dict fixed
-        +estimate(instrument, qty) Decimal
+        +dict terms
+        +estimate(instrument, qty, price, kind) Decimal
+    }
+    class CostTerm {
+        +CostKind kind
+        +CostSide side
+        +Decimal fixed
+        +Decimal per_share
+        +Decimal per_dollar
+        +str source
+    }
+    class CostKind {
+        <<enumeration>>
+        CHARGE
+        GAP
+    }
+    class CostSide {
+        <<enumeration>>
+        BOTH
+        SELL
     }
     class BrokerAccount {
         +dict positions
@@ -547,6 +564,9 @@ classDiagram
     HaltRecord o-- BlobRef
     HaltRecord o-- RestartRecord
     FoundOrder o-- BrokerOrder
+    CostSchedule o-- CostTerm
+    CostTerm --> CostKind
+    CostTerm --> CostSide
 ```
 
 ### The interfaces
@@ -990,7 +1010,34 @@ A constraints file can tighten a limit and never loosen it. This is a proposal f
 
 #### The cost model writes a schedule rather than answering calls
 
-Portfolio construction priced each candidate trade by calling the cost model. With each module in its own process, the cost model instead writes a `CostSchedule` per decision, a fixed and a per-share cost for each instrument, and portfolio construction evaluates it. Slice 1's flat or linear model fits that shape. This is a proposal for [#8](https://github.com/l3a0/ithildin-runtime/issues/8).
+Portfolio construction needs the cost of each trade it considers. Each module is a process of its own, so a call to the cost model per candidate trade would cross a process boundary every time. Instead each strategy's cost stage, `cost/<strategy>`, writes one `CostSchedule` per decision, and portfolio construction works out each trade's cost from it by calling `estimate` in its own process.
+
+##### What a schedule holds
+
+A schedule maps each instrument the strategy trades to a list of terms. Each `CostTerm` holds one figure's parts and where they came from.
+
+**Table:** What a `CostTerm` holds
+
+| Field | What it holds |
+| --- | --- |
+| `kind` | `charge`, for a commission or a fee the broker books, or `gap`, for the estimate of the gap from the quote's midpoint to the fill. The two stay apart, as the commission line in [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) asks |
+| `side` | `both`, or `sell` for a fee charged on sales alone |
+| `fixed` | The cost of one trade, however large |
+| `per_share` | The cost of each share |
+| `per_dollar` | The cost of each dollar traded, such as 0.0000206 for the SEC's fee of $20.60 per million dollars sold, in force from 2026-04-04 ([advisory 2026-2](https://www.sec.gov/rules-regulations/fee-rate-advisories/2026-2)) |
+| `source` | A dated published text, or `placeholder:` and the reason no such text was read |
+
+##### How a trade's cost is worked out
+
+`estimate(instrument, qty, price, kind)` reads a quantity that is negative for a sale, and the price the caller sizes the trade at. It sums `fixed`, plus `per_share` times the shares, plus `per_dollar` times the shares times the price, over each term of that kind that applies to the trade's side. With no kind named, it sums both kinds. Zero shares cost zero. The model reads no quote.
+
+##### Where the figures come from
+
+Each strategy's terms are the `[cost]` section of its tracked file, so they are the same in backtest, shadow, paper and live, and the schedule's header names them by its `release` and `config_hashes`. That pair is the cost model's version. No simulated fill calibrates a term.
+
+A cost nobody wrote never reads as free. The cost stage halts, naming the strategy and the instrument, on a missing section, an instrument with no terms, one with no term of a kind that covers both sides, a term with a field missing, a negative figure, and a kind, a side or a source it cannot use. `cost/model.py` holds the whole list. A cost of zero is written as a term whose figures are zero. `estimate` halts too, on a trade in an instrument with no term of the kind asked for, or with either kind's term missing where none is named, on a price that is not above zero and on a quantity that is not finite. A test reads every tracked file's section, so a bad one fails CI before any run.
+
+The price is that each strategy states the broker's fees in its own file, so a changed fee is an edit to every strategy's file and nothing alerts when a published fee lapses. A term also carries one figure for every date, so a backtest over dates with another fee charges today's.
 
 #### Every type that crosses between workers has a file form
 
@@ -1045,7 +1092,7 @@ The figure below is a C4 component diagram.
 flowchart TB
     core["ithildinruntime.core<br/>the code every module shares"]
     journal["ithildinruntime.journal<br/>the journal's writer and reader"]
-    adapters["adapters<br/>S3, memory-backed folder, SQS, named pipe"]
+    adapters["adapters<br/>S3 and folder stores and buckets,<br/>SQS and named-pipe queues, two clocks"]
     data["data"]
     alpha["alpha"]
     risk["risk"]
@@ -1115,6 +1162,7 @@ An arrow means "may import". The diagram draws four rules.
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
+   - the names of data's stage and of its snapshot, so a stage that reads them imports no `data`;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

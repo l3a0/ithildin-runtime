@@ -2,7 +2,7 @@
 
 docs/architecture/05-building-blocks.md's `## Package layout and the import
 rule` draws which module may import which, and tests/support/import_rule.py
-holds that rule as a checker. The package holds only `core` and `adapters` so far, so most
+holds that rule as a checker. Most
 tests here write small trees under `tmp_path`, plant one import, and show
 the checker fails it, naming the file, the line, the import and the arrow
 the diagram lacks.

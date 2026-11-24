@@ -6,7 +6,7 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Only `core`, the types and shared code every module imports, the two stores and the two queues in `adapters`, the journal's writer and reader in `journal`, and the receive loop in `runtime.loop` are built so far. The first milestone is a walking skeleton that runs in
+Only `core`, the types and shared code every module imports, the two stores, the two read-only buckets, the two queues and the two clocks in `adapters`, the journal's writer and reader in `journal`, the daily bars of `data`, the transaction cost model in `cost`, and in `runtime` the receive loop and the data and cost workers' entry points are built so far. The first milestone is a walking skeleton that runs in
 shadow mode and trades on Alpaca's paper account, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 

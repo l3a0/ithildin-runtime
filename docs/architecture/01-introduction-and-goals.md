@@ -146,9 +146,13 @@ them.
 
    The sketch, also from the blog post, shows why the divisor matters. Look
    for the days one divisor's dot crosses +1 and the other's does not.
-4. The replication charges no transaction cost, so the cost model in
-   [#8](https://github.com/l3a0/ithildin-runtime/issues/8) runs at zero in this strategy's configuration for test 1.
-   Paper trading then charges a flat or linear cost.
+4. The replication charges no transaction cost, so this strategy's
+   configuration, `chan_bollinger.toml`, writes every cost term as zero, and
+   test 1 runs the cost model on that file. A strategy's file is the same in
+   every environment, so paper estimates a cost of zero too until the strategy
+   it runs has terms above zero. Terms above zero are written before any
+   strategy weighs a cost against what a trade would earn, and before live.
+   Where they go is not settled, because test 1 pins this file at zero.
 
 Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking

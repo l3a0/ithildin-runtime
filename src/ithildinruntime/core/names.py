@@ -1,16 +1,23 @@
-"""The rules a name and a SHA-256 meet to become part of a key, shared by the keys and the records.
+"""The rules a name and a SHA-256 meet to become part of a key, and the names modules share.
 
 `keys.py` builds every key from names such as a deployment, a stage or a
 strategy, and from SHA-256 digests. `records.py` checks a header's strategy
 names and hashes by the same rules, and cannot import `keys.py`, which
 imports it. So the rules live here, once.
+
+Data's stage and its snapshot are named here because the stages that read
+them import no `data`. A worker that imported it for two names would load
+marketlake's reader and pandas with it.
 """
 
 from __future__ import annotations
 
 import re
 
-__all__ = ["is_name", "is_sha256"]
+__all__ = ["DATA_STAGE", "SNAPSHOT_OUTPUT", "is_name", "is_sha256"]
+
+DATA_STAGE = "data"
+SNAPSHOT_OUTPUT = "snapshot"
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")

@@ -421,7 +421,7 @@ The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it 
 
 **A value the platform computes is rounded once, in one place.** The types in `core` hold `Decimal`.
 
-- A statistic, such as the alpha model's hedge ratio and z-score or the cost model's estimate, may be computed in floats and converted at the stage's output by `core.to_decimal`, which takes the float's shortest form and rounds it half to even to the field's declared places.
+- A statistic, such as the alpha model's hedge ratio and z-score, may be computed in floats and converted at the stage's output by `core.to_decimal`, which takes the float's shortest form and rounds it half to even to the field's declared places.
 - The risk gate, the order manager, `Journal.replay` and reconciliation compute in `Decimal` throughout, and the quantity journaled for an order is the exact string the broker adapter sends and the gate checks.
 
 A `dict` field's values take the declared places of their value type, such as a share count in `TargetPortfolio.shares`. A field's declared places never shrink in a later release.

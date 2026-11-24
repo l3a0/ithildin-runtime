@@ -7,6 +7,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 ## Prices in Building blocks
 
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
+- [Where the figures come from](05-building-blocks.md#where-the-figures-come-from)
 
 ## Prices in Deployment
 

@@ -41,7 +41,10 @@ __all__ = [
     "BrokerRead",
     "BucketObject",
     "Constraints",
+    "CostKind",
     "CostSchedule",
+    "CostSide",
+    "CostTerm",
     "DecisionResult",
     "Fill",
     "Forecast",
@@ -81,8 +84,8 @@ InstrumentId = NewType("InstrumentId", str)
 # - A price carries four, the finest tick US equities quote below a dollar.
 # - A quantity carries nine, because Alpaca takes fractional shares to nine.
 # - An amount of money carries four, so a sub-cent fee survives.
-# - A per-share rate and a statistic carry eight, for a hedge ratio or a fee
-#   rate finer than a cent.
+# - A rate per share or per dollar and a statistic carry eight, for a hedge
+#   ratio or a fee rate finer than a cent.
 Price = Annotated[Decimal, Places(4)]
 Quantity = Annotated[Decimal, Places(9)]
 Money = Annotated[Decimal, Places(4)]
@@ -407,22 +410,87 @@ class Verdict(_Record):
     missing_term: str | None
 
 
+class CostKind(StrEnum):
+    """What a cost term estimates.
+
+    A `charge` is a commission or a fee the broker books. A `gap` is the gap
+    from the quote's midpoint at the decision to the fill. The two stay apart,
+    as docs/design.md's commission line asks, so a broker that charges no
+    commission never reads as costing nothing.
+    """
+
+    CHARGE = "charge"
+    GAP = "gap"
+
+
+class CostSide(StrEnum):
+    """The side of a trade a cost term applies to: either one, or a sale alone."""
+
+    BOTH = "both"
+    SELL = "sell"
+
+
+@dataclass(frozen=True)
+class CostTerm(_Record):
+    """One figure of an instrument's cost, and where it came from.
+
+    `fixed` is charged once per trade, `per_share` on each share, and
+    `per_dollar` on each dollar traded. `source` is a dated published text, or
+    `placeholder:` and the reason no such text was read.
+    """
+
+    kind: CostKind
+    side: CostSide
+    fixed: Money
+    per_share: Rate
+    per_dollar: Rate
+    source: str
+
+
 @dataclass(frozen=True)
 class CostSchedule(_Record):
-    """A fixed and a per-share cost for each instrument, written once per decision."""
+    """Each instrument's cost terms, written once per strategy and decision."""
 
-    per_share: Mapping[InstrumentId, Rate]
-    fixed: Mapping[InstrumentId, Money]
+    terms: Mapping[InstrumentId, tuple[CostTerm, ...]]
 
-    def estimate(self, instrument: InstrumentId, qty: Decimal) -> Decimal:
-        """The cost of trading `qty` shares, unrounded. A missing instrument halts.
+    def estimate(
+        self,
+        instrument: InstrumentId,
+        qty: Decimal,
+        price: Decimal,
+        kind: CostKind | None = None,
+    ) -> Decimal:
+        """What trading `qty` shares at `price` would cost, rounded to no field's places.
 
-        The formula, a fixed cost plus a per-share cost, follows 05's proposal
-        for #8, which owns it and may change it.
+        `qty` is negative for a sale, and `price` is the one the caller sizes
+        the trade at. `kind` picks the charge or the gap alone, and `None` asks
+        for both and adds them. Zero shares cost zero, at any price and with any terms, so a leg
+        that does not trade needs none.
+
+        A trade in an instrument with no term of a kind asked for halts,
+        because an absent term never reads as a cost of zero (hard limit 3).
+        So does a quantity that is not finite, and a price that is not above
+        zero, since a price of zero would charge nothing per dollar.
         """
-        if instrument not in self.per_share or instrument not in self.fixed:
-            raise Halt(f"{instrument} has no cost in the schedule")
-        return self.fixed[instrument] + self.per_share[instrument] * abs(qty)
+        if not qty.is_finite():
+            raise Halt(f"{instrument} has a trade of {qty} shares, which has no cost")
+        if qty == 0:
+            return Decimal(0)
+        asked = tuple(CostKind) if kind is None else (kind,)
+        terms = [t for t in self.terms.get(instrument, ()) if t.kind in asked]
+        if absent := [k for k in asked if k not in {t.kind for t in terms}]:
+            raise Halt(f"{instrument} has no {' and no '.join(absent)} term in the schedule")
+        if not price.is_finite() or price <= 0:
+            raise Halt(f"{instrument} has a trade priced at {price}, which has no cost")
+        shares = abs(qty)
+        return sum(
+            (
+                t.fixed + t.per_share * shares + t.per_dollar * shares * price
+                for t in terms
+                if t.side == CostSide.BOTH or qty < 0
+            ),
+            Decimal(0),
+        )
 
 
 @dataclass(frozen=True)
