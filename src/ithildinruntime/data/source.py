@@ -11,7 +11,8 @@ How one decision is read, in order.
 1. **The lookback.** Each instrument reads the `lookback` sessions the
    calendar holds up to the latest session ended by the decision, from the
    series' first session on where its settings name one. A first session that
-   cuts a lookback the lake could fill halts, as `_refuse_late` says.
+   cuts a lookback halts where the lake lists an earlier partition, as
+   `_refuse_late` says.
 2. **One read per session.** marketlake's `load_bars` returns around a session
    missing inside a range with no error, and a row carries no session. So the
    source calls it once per session, with `start` and `end` both that
@@ -83,7 +84,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.core.sessions import SessionTable
 
-from .mirror import MANIFEST, LakeRoot, Mirror
+from .mirror import MANIFEST, Checked, LakeRoot, Mirror
 from .reference import (
     CAPTURE_SOURCE,
     PriceKinds,
@@ -125,8 +126,8 @@ class DataSettings:
     - `spike_multiple` is how many standard deviations of the lookback's daily
       returns a close-to-close move may reach before it is flagged.
       `spikes.largest_multiple` measured the largest the Chan vintages reach,
-      which tests/test_data_spikes.py pins and docs/design.md's `## Configuration`
-      states beside the setting, labelled exploratory.
+      which tests/test_data_spikes.py pins and docs/design.md's `#### What the
+      spike multiple is measured against` states, labelled exploratory.
 
     docs/design.md's `## Configuration` states the values the first strategy
     writes.
@@ -300,8 +301,9 @@ class LakeSource:
         Written later than that, it would drop a session the lake lost from the
         lookback, and the bars after the hole would read `fresh`. Only the
         manifest shows it, so this raises before any snapshot is stored, where
-        a redelivery halts as the first delivery did. The manifest is read
-        rather than the calendar, which starts later than some series do.
+        a redelivery halts as the first delivery did, and names the manifest it
+        read. The manifest is read rather than the calendar, which starts later
+        than some series do.
         """
         oldest = self._lookback(latest)[0]
         firsts = {
@@ -323,7 +325,8 @@ class LakeSource:
                 raise Halt(
                     f"{instrument}'s first session is written as {first.isoformat()}, which cuts "
                     "the decision's lookback, and the lake lists "
-                    f"{_partition_key(start.ticker, start.day)} before it"
+                    f"{_partition_key(start.ticker, start.day)} before it. "
+                    + _read_from(root.manifest)
                 )
 
     # The read
@@ -348,11 +351,8 @@ class LakeSource:
                 if checked is None:
                     raise
                 # No snapshot is stored for this decision, so the halt names the
-                # file it read, which the bucket keeps by this version.
-                raise Halt(
-                    f"{halt}. Read from {key} at SHA-256 {checked.sha256}, "
-                    f"bucket version {checked.version}"
-                ) from None
+                # file it read.
+                raise Halt(f"{halt}. {_read_from(checked)}") from None
             if bar.end <= decision_at and bar.knowable_at <= decision_at:
                 held.append(bar)
         return held
@@ -607,6 +607,11 @@ def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime |
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise Halt(f"{where} has a {name} {value!r} with no zone, so it is not usable")
     return value, parsed.astimezone(UTC)
+
+
+def _read_from(checked: Checked) -> str:
+    """The file a halt read, which the bucket keeps by this version."""
+    return f"Read from {checked.key} at SHA-256 {checked.sha256}, bucket version {checked.version}"
 
 
 def _partition_key(ticker: str, day: date) -> str:

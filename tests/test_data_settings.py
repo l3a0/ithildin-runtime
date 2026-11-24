@@ -7,6 +7,7 @@ tests/test_data_source.py, beside the code they read.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -118,15 +119,15 @@ def test_2_every_missing_key_is_named() -> None:
 
 
 def test_2_an_unknown_key_halts_naming_it() -> None:
-    reason = refused(edit(GOOD, "lookback = 20", "lookback = 20\nlook_back = 20"))
-    assert "holds look_back, which this form does not have" in reason
+    reason = refused(edit(GOOD, "lookback = 20", "lookback = 20\nlook_back = 20\nlag = 1"))
+    assert "holds lag, look_back, which this form does not have" in reason
 
 
 @pytest.mark.parametrize(
     ("name", "bad"),
     [("lookback", b) for b in ("0", "-1", "true", "1.5", '"60"')]
     + [("stale_lag", b) for b in ("-1", "true", "0.5", '"0"')]
-    + [("spike_multiple", b) for b in ("0", "-1", "true", '"10"')],
+    + [("spike_multiple", b) for b in ("0", "-1", "0.0", "-0.5", "true", '"10"')],
 )
 def test_2_a_bad_number_halts_naming_the_key(name: str, bad: str) -> None:
     old = KEYS[name].strip()
@@ -144,6 +145,7 @@ def test_2_a_bad_number_halts_naming_the_key(name: str, bad: str) -> None:
             "holds a first_sessions date for SPY, which the strategy does not trade",
         ),
         ("2006-04-27", "2006-04-27T00:00:00Z", "has first_sessions.USO = datetime"),
+        ("2006-04-26", "2006-04-26T00:00:00Z", "has first_sessions.GLD = datetime"),
         ("2006-04-27", '"2006-04-27"', "has first_sessions.USO = '2006-04-27'"),
         ("2006-04-27", "20060427", "has first_sessions.USO = 20060427"),
     ],
@@ -165,6 +167,27 @@ def test_2_first_sessions_that_are_no_table_halt(bad: str) -> None:
 def test_2_each_least_value_passes(name: str, value: str, read: object) -> None:
     made = data_settings([parsed("s", edit(GOOD, KEYS[name].strip(), f"{name} = {value}"))])
     assert getattr(made, name) == read
+
+
+def test_2_every_setting_is_a_key_a_file_writes_and_none_has_a_default() -> None:
+    """A setting outside the files would move no hash."""
+    fields = dataclasses.fields(DataSettings)
+    assert {f.name for f in fields} == {"instruments", *KEYS}
+    assert all(f.default is f.default_factory is dataclasses.MISSING for f in fields)
+
+
+def test_2_a_check_of_the_settings_own_halts_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So a check `DataSettings` gains stops no worker that the reader lets through."""
+
+    def stricter(self) -> None:
+        raise ValueError("a check the reader does not make")
+
+    monkeypatch.setattr(DataSettings, "__post_init__", stricter)
+    with pytest.raises(Halt) as caught:
+        data_settings([parsed("b"), parsed("a")])
+    assert caught.value.reason == (
+        "data's settings from the files of a, b are refused: a check the reader does not make"
+    )
 
 
 # 3. Several strategies.

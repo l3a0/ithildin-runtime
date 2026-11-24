@@ -16,7 +16,9 @@ its instruments are the file's own `instruments`, which it does not repeat.
 `lookback` is how many sessions of bars each decision reads, and `stale_lag`
 how many sessions an instrument's newest bar may be behind. `spike_multiple`
 is how many standard deviations a close may move before it is flagged, and
-`first_sessions` says where the lake's series of each instrument starts.
+`first_sessions` says where the lake's series of each instrument starts. A
+date later than that start halts each decision whose lookback it cuts, as
+`LakeSource._refuse_late` says.
 
 Every key is written, because an absent value never reads as a default (hard
 limit 3). A file is refused, naming the strategy, the file and the key, on
@@ -83,15 +85,21 @@ def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
                 if instrument in section.first_sessions
             ],
         )
-    return DataSettings(
-        instruments=tuple(firsts),
-        lookback=_shared("lookback", [(s, section.lookback) for s, section in read]),
-        first_sessions=firsts,
-        stale_lag=_shared("stale_lag", [(s, section.stale_lag) for s, section in read]),
-        spike_multiple=_shared(
-            "spike_multiple", [(s, section.spike_multiple) for s, section in read]
-        ),
-    )
+    lookback = _shared("lookback", [(s, section.lookback) for s, section in read])
+    stale_lag = _shared("stale_lag", [(s, section.stale_lag) for s, section in read])
+    multiple = _shared("spike_multiple", [(s, section.spike_multiple) for s, section in read])
+    try:
+        return DataSettings(
+            instruments=tuple(firsts),
+            lookback=lookback,
+            first_sessions=firsts,
+            stale_lag=stale_lag,
+            spike_multiple=multiple,
+        )
+    except ValueError as error:
+        # A check `DataSettings` makes and this reader does not yet.
+        names = ", ".join(strategy.name for strategy, _ in read)
+        raise Halt(f"data's settings from the files of {names} are refused: {error}") from None
 
 
 def _shared[T](key: str, written: Sequence[tuple[StrategyConfig, T]]) -> T:

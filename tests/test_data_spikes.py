@@ -253,6 +253,8 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
 ) -> None:
     """Exploratory, measured over the lookback Chan's tracked file states.
 
+    First pinned at ed9d1f7 over 40 sessions, at 6.592043 for GLD and 5.716228
+    for USO, and pinned again over 60 in #110, which moved the lookback.
     GLD's largest move is between 6.80 and 6.81 standard deviations and USO's
     between 5.30 and 5.31. So a multiple of 6.80 or below flags a GLD bar in
     test 1, one of 5.30 or below flags both series, and 6.81 and up flags

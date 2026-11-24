@@ -225,7 +225,9 @@ The price has three parts.
 2. A bar corrected inside the window can change today's unit with no move of
    the market.
 3. A bar whose prices contradict each other halts every decision whose lookback
-   reads it, which is up to 60 sessions.
+   reads it, which is up to 60 sessions. So does any other fault in a session of
+   the lookback that halts a decision, such as a missing session, a quarantined
+   partition or an unstated price kind.
 
 ### What ends a position
 
