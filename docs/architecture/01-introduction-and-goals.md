@@ -17,7 +17,7 @@ Acceptance test 1 asks the backtest to reproduce a strategy that
 already replicated. A mismatch then points at the platform rather than the
 idea, because the strategy's numbers are already pinned there.
 
-The proposal is Chan's Bollinger band on the price spread between GLD, a gold
+The strategy is Chan's Bollinger band on the price spread between GLD, a gold
 ETF, and USO, an oil ETF. It is Example 3.2 of *Algorithmic Trading* and
 [Entry 26](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/docs/replication-log.md#entry-26-bollinger-bands-on-gld-and-uso-chans-algorithmic-trading) of that repository's replication log, and
 [a post in its blog](https://github.com/l3a0/quantitative-trading/blob/main/blog/bollinger-band-lessons.md)
