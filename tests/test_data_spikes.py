@@ -70,8 +70,8 @@ def test_a_high_below_its_open_alone_is_flagged() -> None:
 @pytest.mark.parametrize(
     ("high", "low", "open_", "close", "field", "against"),
     [
-        ("101.0000", "100.5000", "100.2000", "101.0000", "low", "100.2000"),
-        ("101.0000", "100.5000", "101.0000", "100.2000", "low", "100.2000"),
+        ("100.0000", "99.0000", "100.5000", "100.0000", "high", "100.5000"),
+        ("100.0000", "99.0000", "100.0000", "100.5000", "high", "100.5000"),
         ("100.0000", "100.5000", "100.0000", "100.0000", "high", "100.5000"),
     ],
 )
@@ -83,10 +83,21 @@ def test_each_comparison_of_the_first_rule_is_made(
     assert (field, Decimal(against)) in {(f.field, f.against) for f in flags}
 
 
-def test_a_low_above_its_open_is_flagged() -> None:
-    odd = bar(0, "100.0000", high="101.0000", low="100.5000", open="100.2000")
+@pytest.mark.parametrize(("open_", "close"), [("100.2000", "101.0000"), ("101.0000", "100.2000")])
+def test_a_low_above_its_open_or_close_alone_is_not_flagged(open_: str, close: str) -> None:
+    """The contradiction rule names no low above the open or the close."""
+    odd = bar(0, close, high="101.0000", low="100.5000", open=open_)
+    assert spike_flags([odd], Decimal(100)) == ()
+
+
+def test_a_low_above_its_high_is_flagged_once_as_the_high_below_it() -> None:
+    odd = bar(0, "100.0000", high="100.0000", low="100.5000", open="100.0000")
     (flag,) = spike_flags([odd], Decimal(100))
-    assert (flag.field, flag.against) == ("low", Decimal("100.0000"))
+    assert (flag.field, flag.price, flag.against) == (
+        "high",
+        Decimal("100.0000"),
+        Decimal("100.5000"),
+    )
 
 
 def test_a_bar_whose_prices_agree_is_not_flagged() -> None:

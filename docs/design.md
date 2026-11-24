@@ -2088,7 +2088,7 @@ Five rules keep a day of decisions safe.
       The close−20 decision reads marketlake's segments before sealing,
       where a price is flagged in the snapshot by one of two rules, and
       either flag stays a record beside the price.
-      1. The contradiction rule flags a price at or below zero, a high below the open, close or low, or a low above them. No real
+      1. The contradiction rule flags a price at or below zero, or a high below the open, close or low. No real
          trade produces one, so that decision halts. On shadow and paper it holds
          no account and needs no person to clear it, so the next decision runs
          on its own and halts again while the bar stays in its lookback.
@@ -2099,11 +2099,10 @@ Five rules keep a day of decisions safe.
          The price is that a wrong price large enough to flag reaches the
          order path, where the gate values exposure at that same price,
          such as a whole bar at a tenth of its true value or a split the
-         record missed. A lone close below its bar's low halts today only
-         through the low-above case, which the code flags under the
-         contradiction rule and the owner has not yet confirmed, as
-         [2026-11-22](#2026-11-22) records, and a lone close above its bar's high halts by the
-         ruling's high-below case.
+         record missed. A lone close below its bar's low is no
+         contradiction, so it alerts through the move rule when it moves
+         far enough and is not flagged otherwise. A lone close above its
+         bar's high halts as a high below the close.
 
 An account belongs to one environment and carries one deployment there, and the supervisor refuses a
 plan whose account another deployment names. Execution, the risk gate, the
@@ -3959,6 +3958,10 @@ This section lists every decision made on the project, oldest first, one heading
 14. The owner ruled that a spike flag no longer halts a decision. The flag is recorded beside the price as before, the owner is alerted, and the decision trades on the price as it arrived. Every order still passes the risk gate. This changes entry 7 of [2026-11-05](#2026-11-05), which kept the halt, and the part of entry 13 of [2026-11-09](#2026-11-09) that ended a replication run at the halt. Both entries stay as the record. Turned down: keeping the halt. The price is that a wrong price large enough to flag, such as a close of 6.5 for 65, reaches the order path, where the gate values exposure at that same price. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-7087100728), [#7](https://github.com/l3a0/ithildin-runtime/issues/7#issuecomment-7087100972), [#46](https://github.com/l3a0/ithildin-runtime/issues/46#issuecomment-7087101189) Governs: `### Strategies, schedules and decisions`, `### A backtest names what it could not have traded, and each model states how it fails`, `### A backtest uses nothing it could not have known, and each figure it quotes has one definition` and `### Rule 7: a halt is final for its decision` in design.md, `#### What is checked before deciding` in architecture/03-context-and-scope.md, the send stage in architecture/06-runtime.md, and `### Alarms on data` in halts-and-drills.md.
 15. The owner narrowed entry 14, answering the risk engineer's veto in review round 2 of [PR #105](https://github.com/l3a0/ithildin-runtime/pull/105). A flag from the move rule, a close past the written multiple of the lookback's standard deviation, alerts the owner and the decision trades on the price as it arrived. A flag from the contradiction rule, a price at or below zero or a high below the open, close or low, halts the decision, because no real trade produces one. The rule as `data/spikes.py` writes it also flags a low above the open, close or high, which the ruling's words do not name. Both flags stay recorded beside the price, which is never replaced. Entry 14 stays as the record. The price of the move rule's alert is that a wrong price large enough to flag reaches the order path, where the gate values exposure at that same price, such as a whole bar at a wrong scale or a split the record missed, and a contradiction halts a decision only on a price no real trade produced. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-7087420454), [#7](https://github.com/l3a0/ithildin-runtime/issues/7#issuecomment-7087420662), [#46](https://github.com/l3a0/ithildin-runtime/issues/46#issuecomment-7087420866) Governs: the same sections as entry 14, `### Alarms on data` in halts-and-drills.md, which keeps one row per rule, `##### What a quote and a snapshot's flags carry` in architecture/05-building-blocks.md, `## The life of a run` in architecture/06-runtime.md, `## Considered and rejected` and the rules on search results and `#### What each book's rules add` in design.md, and the data engineer's duties in team-charter.md.
 16. The owner ruled that a contradiction flag halts only its own decision. It places no hold on a shadow or paper account and needs no person to clear it, so the next decision runs on its own, and it halts again while the contradicting bar stays in its lookback. Turned down: holding the account until a person clears it, as the spike flag did before 2026-11-22. The price is that a bad bar halts every decision whose 40-session lookback reads it, until the bar leaves the lookback or marketlake corrects it. While data's stage is shared, that is every strategy's decision at that time, whichever strategy trades the instrument. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-7088256151) Governs: `### Rule 7: a halt is final for its decision` and `### Strategies, schedules and decisions` in design.md, `### Who clears a halt` in architecture/06-runtime.md `### Alarms on data` in halts-and-drills.md and the causes that hold an account in what-a-person-runs.md.
+
+### 2026-11-23
+
+1. The owner answered "no" to whether a low above the open, close or high is part of the contradiction rule. The rule flags a price at or below zero, or a high below the open, close or low, and a low above the high is flagged as the high below it. This settles what entry 15 of [2026-11-22](#2026-11-22) left open. Turned down: flagging a low above the open or the close, which `data/spikes.py` did until this entry. The price is that a lone close below its bar's low, such as a close at a tenth of its true value, no longer halts its decision. It alerts through the move rule when it moves past the written multiple, and the decision trades on it through the risk gate. On Chan's 1,500 sessions of GLD and USO, no bar has a low above its open or close. [#5](https://github.com/l3a0/ithildin-runtime/issues/5#issuecomment-7118193179) Governs: `### Strategies, schedules and decisions` in design.md.
 
 ## Considered and rejected
 

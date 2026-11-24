@@ -237,17 +237,16 @@ def test_1_a_contradicting_bar_halts_through_the_last_decision_whose_lookback_ho
         assert any("contradict each other" in r for r in reading.halts) is halts, day
 
 
-def test_1_a_lone_wrong_close_trips_both_rules_and_halts(lake: Path, tmp_path: Path) -> None:
-    """A close at a tenth with the rest of the bar as it was: a move and a contradiction."""
+def test_1_a_lone_wrong_close_below_its_low_trips_the_move_rule_alone(
+    lake: Path, tmp_path: Path
+) -> None:
+    """A close at a tenth with the rest of the bar as it was alerts, and halts nothing."""
     lakes.with_row(lake, "GLD", LAST, close=15.937)
     reading = make(lake, tmp_path, spike_multiple=Decimal(10)).read(close(LAST))
-    rules = {f.rule for f in reading.snapshot.flags[GLD]}
-    assert rules == {spikes.MOVE, spikes.CONTRADICT}
     # 158.91 is GLD's low on 2012-04-09 in Chan's vintage, and 15.937 the close written here.
-    assert reading.halts == (
-        f"GLD's bar for {LAST.isoformat()} has prices that contradict each other: "
-        "its low of 158.91 is above the smallest of its open, close and high, 15.937",
-    )
+    (flag,) = reading.snapshot.flags[GLD]
+    assert (flag.rule, flag.field, flag.price) == (spikes.MOVE, "close", Decimal("15.937"))
+    assert reading.halts == ()
 
 
 def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Path) -> None:
@@ -265,17 +264,13 @@ def test_1_each_contradiction_on_a_bar_has_its_own_halt(lake: Path, tmp_path: Pa
     assert any("its low of 0.0 is at or below zero" in r for r in reading.halts)
 
 
-def test_1_a_low_above_a_zero_open_reads_as_a_low_above_it_not_as_a_zero_price(
-    lake: Path, tmp_path: Path
-) -> None:
-    """The zero branch of the reason belongs to the price at or below zero alone."""
+def test_1_a_zero_open_halts_as_a_zero_price_alone(lake: Path, tmp_path: Path) -> None:
+    """A low above a zero open is no contradiction of its own."""
     lakes.with_row(lake, "GLD", LAST, open=0.0)
     reading = make(lake, tmp_path).read(close(LAST))
-    assert any("its open of 0.0 is at or below zero" in r for r in reading.halts)
-    assert any(
-        "its low of" in r and "is above the smallest of its open, close and high, 0.0" in r
-        for r in reading.halts
-    )
+    contradicting = [r for r in reading.halts if "contradict each other" in r]
+    assert len(contradicting) == 1
+    assert "its open of 0.0 is at or below zero" in contradicting[0]
 
 
 def test_1_judge_halts_on_what_the_read_halts_on(lake: Path, tmp_path: Path) -> None:

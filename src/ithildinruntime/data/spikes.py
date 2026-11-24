@@ -9,8 +9,9 @@ nothing: monitoring alerts the owner, which #11 builds, and the decision trades
 on the price as it arrived. A backtest meets both as a live decision does.
 
 1. **A bar whose prices contradict each other is flagged.** That is a high
-   below its open, close or low, a low above them, or any price at or below
-   zero.
+   below its open, close or low, or any price at or below zero. A low above
+   the high is flagged as the high below it. A low above the open or the
+   close alone is not flagged by this rule.
 2. **A close-to-close move past a written multiple of the lookback's standard
    deviation of daily returns is flagged.** Each return is judged against the
    sample standard deviation of the lookback's other returns, so a spike does
@@ -58,9 +59,6 @@ def contradictions(bar: Bar) -> list[SpikeFlag]:
     others = max(bar.open, bar.close, bar.low)
     if bar.high < others:
         found.append(SpikeFlag(bar.session, "high", bar.high, others, CONTRADICT, _note(bar, "")))
-    others = min(bar.open, bar.close, bar.high)
-    if bar.low > others:
-        found.append(SpikeFlag(bar.session, "low", bar.low, others, CONTRADICT, _note(bar, "")))
     return found
 
 

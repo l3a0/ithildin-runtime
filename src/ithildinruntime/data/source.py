@@ -518,13 +518,8 @@ def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[
 def _why(flag: SpikeFlag) -> str:
     if flag.price <= 0 and flag.against == 0:
         return f"its {flag.field} of {flag.price} is at or below zero"
-    if flag.field == "high":
-        return (
-            f"its high of {flag.price} is below the largest of its open, close and low, "
-            f"{flag.against}"
-        )
     return (
-        f"its low of {flag.price} is above the smallest of its open, close and high, {flag.against}"
+        f"its high of {flag.price} is below the largest of its open, close and low, {flag.against}"
     )
 
 
