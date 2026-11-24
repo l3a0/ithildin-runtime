@@ -8,16 +8,18 @@ the release and the strategy's file, and it reads no clock, mode or book.
 Its handler does three things, in order.
 
 1. **It reads data's result and the snapshot it lists**, through
-   `core.read_snapshot`. A result that holds a halt is passed on, as
+   `core.StageDecision`. A result that holds a halt is passed on, as
    docs/design.md's `### Rule 7: a halt is passed on` says, naming data's
    result as its cause, before the strategy's section is read.
 2. **It builds the model and asks it for the forecasts.** A halt from either,
-   or a forecast that names another strategy, becomes the stage's own halt.
-   Its header names data's result and the snapshot, so the halt says what it
-   read, and its `cause` is empty because nothing upstream halted.
+   or a forecast that names another strategy, becomes the stage's own halt,
+   whose `cause` is empty because nothing upstream halted.
 3. **It stores the forecasts and then the signals, then returns the result**,
    which lists both in that order and which the loop stores last. A crash
    between the two writes stores the same bytes again.
+
+A halt at any of the three becomes the stage's result, whose header names
+each blob read by then.
 
 The entry point hands in the stage's name, its kind and the stage it reads, as
 the stage table declares them.
@@ -32,22 +34,16 @@ from typing import Protocol
 from ithildinruntime.core import (
     FORECAST_OUTPUT,
     SIGNALS_OUTPUT,
-    BlobHeader,
-    BlobRef,
     DecisionResult,
     Forecast,
     ForecastSet,
     Halt,
-    HaltRecord,
-    OutputFile,
     Signal,
     Snapshot,
     StageKind,
+    StageRun,
     Storage,
     StrategyConfig,
-    encode_output,
-    output_key,
-    read_snapshot,
 )
 
 from .models import build_model
@@ -82,38 +78,32 @@ class AlphaStage:
         config_hashes: Mapping[str, str],
     ) -> None:
         self._strategy = strategy
-        self._storage = storage
         self._stage = stage
-        self._kind = StageKind(kind)
         self._data_stage = data_stage
-        self._deployment = deployment
-        self._run = run
-        self._release = release
-        self._config_hashes = dict(config_hashes)
+        self._run = StageRun(
+            storage,
+            format=_FORMAT,
+            stage=stage,
+            kind=kind,
+            deployment=deployment,
+            run=run,
+            release=release,
+            config_hashes=config_hashes,
+        )
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
-        at = item.decision_at
-        read = read_snapshot(
-            self._storage,
-            deployment=self._deployment,
-            run=self._run,
-            decision_at=at,
-            stage=self._stage,
-            data_stage=self._data_stage,
-        )
-        if isinstance(read, HaltRecord):
-            return DecisionResult(header=self._header(at, read.cause), outputs=(), halt=read)
-        report()
-        header = self._header(at, read.result, read.file)
+        decision = self._run.decision(item.decision_at)
         try:
-            made = self._made(read.snapshot)
+            snapshot = decision.snapshot(self._data_stage)
+            report()
+            made = self._made(snapshot)
+            forecast = decision.put(FORECAST_OUTPUT, Forecast, made.forecasts)
+            report()
+            signals = decision.put(SIGNALS_OUTPUT, Signal, made.signals)
+            report()
         except Halt as halt:
-            return DecisionResult(header=header, outputs=(), halt=self._storage.halt_record(halt))
-        forecast = self._put(at, FORECAST_OUTPUT, Forecast, header, made.forecasts)
-        report()
-        signals = self._put(at, SIGNALS_OUTPUT, Signal, header, made.signals)
-        report()
-        return DecisionResult(header=header, outputs=(forecast, signals), halt=None)
+            return decision.halted(halt)
+        return decision.done(forecast, signals)
 
     def _made(self, snapshot: Snapshot) -> ForecastSet:
         # The model is built at each decision, so it keeps nothing from the one
@@ -126,23 +116,3 @@ class AlphaStage:
                     f"forecasts strategy {self._strategy.name}"
                 )
         return made
-
-    def _put[T](
-        self, at: datetime, name: str, entry: type[T], header: BlobHeader, entries: tuple[T, ...]
-    ) -> BlobRef:
-        key = output_key(self._deployment, self._run, at, self._stage, name)
-        data = encode_output(entry, OutputFile(header, entries, False))
-        return self._storage.put(self._kind, key, data).ref
-
-    def _header(self, at: datetime, *read: BlobRef) -> BlobHeader:
-        return BlobHeader(
-            format=_FORMAT,
-            deployment=self._deployment,
-            run=self._run,
-            stage=self._stage,
-            kind=str(self._kind),
-            decision_at=at,
-            inputs={ref.key: ref.sha256 for ref in read},
-            release=self._release,
-            config_hashes=self._config_hashes,
-        )

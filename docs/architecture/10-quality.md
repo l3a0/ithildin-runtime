@@ -68,7 +68,7 @@ package.
 | Reading the day before marketlake seals it, and the fields `Quote` gains | [#100](https://github.com/l3a0/ithildin-runtime/issues/100) |
 | Bollinger band alpha model, the signal records, `Signal` and `ForecastSet`, the checks `Basket` and `Forecast` make, the form of each strategy's alpha section, the read of data's snapshot that the models' stages share | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`' share caps by instrument, `HardCaps`, the caps blob's reader and the tightening of both, `Verdict`, `LossReading` and the contradictions they reject, the mark, the exposure and the valuation that the gate, sizing and execution share, the risk gate that implements `RiskGate`, the loss reading, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
-| The risk model's stage, which writes each decision's `Constraints` | [#115](https://github.com/l3a0/ithildin-runtime/issues/115) |
+| The risk model `LimitRisk`, the `[risk]` section of a strategy's file, and the risk stage, which writes each decision's `Constraints`, with the steps `core` gives every model's stage | [#115](https://github.com/l3a0/ithildin-runtime/issues/115) |
 | The stress move's measurement and the check that holds the caps to it | [#116](https://github.com/l3a0/ithildin-runtime/issues/116) |
 | The gate's reading of a close after a broker's trade | [#117](https://github.com/l3a0/ithildin-runtime/issues/117) |
 | The flat and linear cost model, `CostSchedule` and `CostTerm`, the form of each strategy's cost section | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |

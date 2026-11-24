@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta
 
-from .names import is_name, is_sha256
+from .names import RECOVER_STAGE, VALUATION_OUTPUT, is_name, is_sha256
 from .records import Mode
 
 __all__ = [
@@ -195,7 +195,7 @@ def output_key(deployment: str, run: str, decision_at: datetime, stage: str, nam
 
 
 def valuation_key(deployment: str, run: str, decision_at: datetime) -> str:
-    return output_key(deployment, run, decision_at, "execution/recover", "valuation")
+    return output_key(deployment, run, decision_at, RECOVER_STAGE, VALUATION_OUTPUT)
 
 
 def broker_read_key(deployment: str, run: str, decision_at: datetime, attempt: int) -> str:

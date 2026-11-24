@@ -149,9 +149,10 @@ flowchart LR
     secret -->|"5 broker key"| exec
     brokerx -->|"6 order states, fills, positions, cash, records"| exec
     exec -->|"7.1 journal entries"| d3
-    exec -->|"7.2 account file, book"| d1
+    exec -->|"7.2 account file, book,<br/>caps as read, valuation"| d1
     d3 -->|"7.3 replay"| exec
-    d1 -->|"8.1 snapshot, book"| models
+    d5 -->|"7.4 hard caps"| exec
+    d1 -->|"8.1 snapshot, book,<br/>caps as read, valuation"| models
     models -->|"8.2 forecast, signals,<br/>constraints, costs, target"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
@@ -188,7 +189,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
+| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model, and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
@@ -366,7 +367,8 @@ sequenceDiagram
     X->>J: journals each record as an outside entry
     X->>F: stores the account file, naming<br/>the journal entry it replayed through
     X->>X: does the book from the journal<br/>agree with the broker?
-    X->>F: stores the reconciled book<br/>and execution's recover result
+    X->>F: reads the hard caps blob
+    X->>F: stores the reconciled book, the hard caps as read,<br/>the session's valuation and execution's recover result
     F-->>M: sends an event for execution's recover result
     M->>F: stores monitoring's reconcile result,<br/>which no decision waits on
     Note over V,P: Phase 2, decide
@@ -496,19 +498,19 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap. Portfolio construction builds the target portfolio within them.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TB
     data["Data's result"] --> alpha["Alpha model<br/>writes the forecast and<br/>the signals behind it"]
-    data --> risk["Risk model<br/>writes the constraints"]
+    data -->|"the snapshot"| risk["Risk model<br/>writes the constraints,<br/>each limit the tighter of<br/>the strategy's and the owner's"]
     data --> cost["Cost model<br/>writes each strategy's cost schedule"]
     alpha --> pc["Portfolio construction<br/>writes the target portfolio"]
     risk --> pc
     cost --> pc
-    recover["Execution's<br/>recover result"] --> risk
+    recover["Execution's<br/>recover result"] -->|"the book,<br/>the hard caps as read<br/>and the session's valuation"| risk
     recover --> pc
 ```
 

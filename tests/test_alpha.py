@@ -991,8 +991,11 @@ def test_a_halt_in_datas_result_is_passed_on_before_the_section_is_read(tmp_path
 
 
 def test_a_decision_with_no_data_result_halts(tmp_path) -> None:
-    with pytest.raises(Halt, match="data/result.json is not stored, and stage alpha/chan reads it"):
-        run(handler(store(tmp_path), table_of(SMALL)), CLOSE)
+    halted = run(handler(store(tmp_path), table_of(SMALL)), CLOSE)
+    assert halted.halt is not None and halted.halt.cause is None
+    key = result_key(DEPLOYMENT, RUN, CLOSE, "data")
+    assert halted.halt.reason == f"{key} is not stored, and stage alpha/chan reads it"
+    assert dict(halted.header.inputs) == {}
 
 
 def test_a_forecast_of_another_strategy_halts(tmp_path, monkeypatch) -> None:
@@ -1092,11 +1095,13 @@ def test_a_crash_between_the_two_files_stores_the_same_bytes_again(tmp_path) -> 
 def test_a_second_run_that_writes_other_bytes_halts_as_not_deterministic(tmp_path) -> None:
     table = table_of(SMALL)
     storage = store(tmp_path)
-    write_data(storage, HAND_SNAPSHOT, table)
+    data, file = write_data(storage, HAND_SNAPSHOT, table)
     key = output_key(DEPLOYMENT, RUN, CLOSE, "alpha/chan", FORECAST_OUTPUT)
     storage.put(StageKind.DETERMINISTIC, key, b"{}")
-    with pytest.raises(Halt, match="so the step is not deterministic"):
-        run(handler(storage, table), CLOSE)
+    halted = run(handler(storage, table), CLOSE)
+    assert halted.halt is not None and halted.halt.cause is None and halted.outputs == ()
+    assert "so the step is not deterministic" in halted.halt.reason
+    assert dict(halted.header.inputs) == {data.key: data.sha256, file.key: file.sha256}
 
 
 @pytest.mark.parametrize("config", [SMALL, strategy(entry="0.333333333", exit="-0.1")])
@@ -1136,8 +1141,7 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     row = Stage("alpha/chan", StageKind.CAPTURING, inputs=("feed",), strategy="chan")
     table = Table(stages=(feed, row), strategies=(SMALL,))
     storage = store(tmp_path)
-    with pytest.raises(Halt, match="/feed/result.json is not stored"):
-        run(handler(storage, table), CLOSE)
+    assert "/feed/result.json is not stored" in run(handler(storage, table), CLOSE).halt.reason
     header = replace(data_header(CLOSE, table_of(SMALL)), stage="feed")
     key = output_key(DEPLOYMENT, RUN, CLOSE, "feed", "snapshot")
     file = encode_output(Snapshot, OutputFile(header, (HAND_SNAPSHOT,), False))
@@ -1155,8 +1159,7 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     )
     taken = output_key(DEPLOYMENT, RUN, CLOSE, "alpha/chan", FORECAST_OUTPUT)
     other.put(StageKind.CAPTURING, taken, b"{}")
-    with pytest.raises(Halt, match="has no other key to go to"):
-        run(handler(other, table), CLOSE)
+    assert "has no other key to go to" in run(handler(other, table), CLOSE).halt.reason
 
 
 def test_the_alpha_worker_loads_neither_marketlake_nor_pandas() -> None:

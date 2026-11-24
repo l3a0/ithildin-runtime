@@ -6,7 +6,8 @@ depend on, its schedule aside, are written in one file, `<strategy>.toml`, in th
 folder beside this package's modules, so the release carries it and it is
 the same in backtest, shadow, paper and live. The file holds a top-level
 `instruments` list and one table per section, such as `[alpha]` or `[cost]`,
-whose form each module's issue owns. It holds no secret and no cap.
+whose form each module's issue owns. It holds no secret and no hard cap. A limit
+in its `[risk]` section only tightens the hard caps, which sit in no tracked file.
 
 The hash is the SHA-256 of the file's bytes, so a change anywhere in the
 file, a comment included, names a new version, and a file left alone keeps

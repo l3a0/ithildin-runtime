@@ -12,7 +12,7 @@ This page is section 5 of [the architecture](00-README.md), in the order of the 
 - [Types and interfaces](#types-and-interfaces)
   - [The data the workers pass](#the-data-the-workers-pass)
   - [The interfaces](#the-interfaces)
-  - [Eight choices for a reviewer to check](#eight-choices-for-a-reviewer-to-check)
+  - [Nine choices for a reviewer to check](#nine-choices-for-a-reviewer-to-check)
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
   - [Which module may import which](#which-module-may-import-which)
   - [How tests hold the rule](#how-tests-hold-the-rule)
@@ -75,7 +75,7 @@ flowchart TB
 
     snap[("snapshot")]
     acct[("account<br/>book and broker account")]
-    book[("reconciled book")]
+    book[("reconciled book,<br/>the hard caps as read<br/>and the session's valuation")]
     fc[("forecast and the<br/>signals behind it")]
     cons[("constraints")]
     sched[("cost schedule")]
@@ -747,7 +747,7 @@ classDiagram
     }
     class RiskModel {
         <<Protocol>>
-        +constraints(Book, Snapshot) Constraints
+        +constraints(Book, Snapshot, HardCaps, Valuation) Constraints
     }
     class CostModel {
         <<Protocol>>
@@ -852,18 +852,19 @@ classDiagram
     Monitoring ..> core
 ```
 
-### Eight choices for a reviewer to check
+### Nine choices for a reviewer to check
 
-The two diagrams above make eight choices for a reviewer to check. Several are proposals for the issue that owns the piece, and each says so where it is one.
+The two diagrams above make nine choices for a reviewer to check. Several are proposals for the issue that owns the piece, and each says so where it is one.
 
 1. [A forecast is about a basket, not an instrument](#a-forecast-is-about-a-basket-not-an-instrument).
 2. [A bar carries where it came from](#a-bar-carries-where-it-came-from).
 3. [`Snapshot.require_fresh()` is how a module refuses a gap](#snapshotrequire_fresh-is-how-a-module-refuses-a-gap).
 4. [Only `OrderPath` holds a `Broker`](#only-orderpath-holds-a-broker).
 5. [The risk gate holds no state of its own](#the-risk-gate-holds-no-state-of-its-own).
-6. [The book comes from the journal](#the-book-comes-from-the-journal).
-7. [The cost model writes a schedule rather than answering calls](#the-cost-model-writes-a-schedule-rather-than-answering-calls).
-8. [Every type that crosses between workers has a file form](#every-type-that-crosses-between-workers-has-a-file-form).
+6. [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits).
+7. [The book comes from the journal](#the-book-comes-from-the-journal).
+8. [The cost model writes a schedule rather than answering calls](#the-cost-model-writes-a-schedule-rather-than-answering-calls).
+9. [Every type that crosses between workers has a file form](#every-type-that-crosses-between-workers-has-a-file-form).
 
 #### A forecast is about a basket, not an instrument
 
@@ -882,7 +883,7 @@ The Bollinger strategy forecasts a spread, which is two legs in a fixed ratio fo
 
 The model returns a `ForecastSet`, its forecasts and the signals behind them, because both come from one calculation. A `Signal` is one value the model fitted, with the first and last session whose prices it read. The six this strategy writes are the hedge ratio, the spread, the spread's mean and standard deviation, the z-score and the unit. The types refuse a basket with no leg, a forecast out of its bounds, and a set with no forecast, no signal or two signals of one name.
 
-Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. A halt the model raises becomes the stage's result, whose header names data's result and the snapshot, so the halt says what it read.
+Each strategy's alpha stage stores the forecasts in `forecast.json` and the signals in `signals.json`. Any halt becomes the stage's result, whose header names each result and file it had read, so the halt says what it read.
 
 #### A bar carries where it came from
 
@@ -1140,13 +1141,13 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 ##### Where the limits come from
 
-Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The gate takes the tighter itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
+Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
-`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and the gate halts otherwise, naming the source and the field. Six checks go further.
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Six checks go further.
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
-3. The stress move's vintage is a SHA-256, and its age a whole number of days from 1 to 365, since a larger one would switch the next check off. The gate halts a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
+3. The stress move's vintage is a SHA-256, and its age a whole number of days from 1 to 365, since a larger one would switch the next check off. The gate and the risk stage halt a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
 4. V is above zero.
 5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
@@ -1161,6 +1162,41 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 | The cutoff | The earlier cutoff, which is the larger number of minutes |
 
 The price is that a limit is set in two places.
+
+#### The risk model writes each decision's limits
+
+Portfolio construction sizes a target within the limits, and the gate refuses an order that would go past them. So the limits have to be stored where portfolio construction can read them before it sizes. The risk stage does that. It is one stage for the whole deployment, named `risk`, because it reads the account's book.
+
+##### What the risk stage reads and stores
+
+It reads four files, each holding one entry.
+
+**Table:** The four files the risk stage reads
+
+| File | Stored by | Holds |
+| --- | --- | --- |
+| `snapshot.json` | Data | The decision's `Snapshot` |
+| `book.json` | Execution's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | The decision's `Book` |
+| `caps.json` | The same | The `HardCaps` as recover parsed them, with the owner's blob named by its key and SHA-256 in the file's header |
+| `valuation.json` | The same | The session's `Valuation`, which gives V |
+
+It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move, and a target is sized within a net cap no tracked file holds.
+
+The stage never reads the owner's caps blob, which the owner can rewrite between two attempts at one decision. It reads the caps recover stored, so a second attempt writes the same bytes. The gate still reads the blob just before each check. The price is that a cap the owner lowers after recover has run binds at the gate and not in the sizing, so a target sized within the older cap can be refused there.
+
+##### Where a strategy's own limits come from
+
+A strategy's own limits are the `[risk]` section of its tracked file. It holds each field of `Constraints` but the strategy's name, with the two share limits as tables keyed by instrument. `risk/model.py` holds the form. A limit there is what the strategy was tested under, and a hard cap is what the owner allows, so a limit in a tracked file only tightens. A test asserts that no tracked strategy file holds `share`, `stress_move` or `holds`, or names an account.
+
+##### What halts the risk stage
+
+A halt in data's result or in recover's is passed on. Every other halt is the stage's own result, whose header names each result and file it had read. It halts on each of these.
+
+1. A `[risk]` section that is absent, leaves a field out, holds one the form lacks, names other instruments than the strategy's in a table, or holds a value `core` refuses. The check runs at each decision, so a bad section stops this stage and never the worker's start.
+2. A result that lists one of the four files other than once, and a file that holds other than one entry.
+3. Caps or a valuation that `core.tighten` refuses, a V of any session but the one before the decision's, and a stress move past its age.
+4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position.
+5. Two strategies in one deployment, because what scope each one's limits take is not decided.
 
 #### The book comes from the journal
 
@@ -1321,9 +1357,9 @@ An arrow means "may import". The diagram draws four rules.
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - `require_utc`, the check that a time is UTC;
-   - the names of data's stage, of its snapshot, of alpha's two output files, of the daily interval and of a price kind no source states, so a stage that reads them imports no `data` and no `alpha`;
-   - `read_snapshot`, the steps a model's stage takes to read data's result, pass on its halt and read the one snapshot it lists;
-   - `parse_caps` and `tighten`, which read the hard caps blob and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
+   - the names of data's stage and its snapshot, of alpha's two output files, of the risk stage and its constraints, of execution's recover stage and the three files risk reads, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
+   - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result and the files it lists, write its own files under one header, and turn a halt into its result;
+   - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
