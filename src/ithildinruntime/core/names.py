@@ -7,17 +7,28 @@ imports it. So the rules live here, once.
 
 Data's stage and its snapshot are named here because the stages that read
 them import no `data`. A worker that imported it for two names would load
-marketlake's reader and pandas with it.
+marketlake's reader and pandas with it. The alpha stage's two output files are
+named here too, because portfolio construction reads the forecast and no
+worker module imports another.
 """
 
 from __future__ import annotations
 
 import re
 
-__all__ = ["DATA_STAGE", "SNAPSHOT_OUTPUT", "is_name", "is_sha256"]
+__all__ = [
+    "DATA_STAGE",
+    "FORECAST_OUTPUT",
+    "SIGNALS_OUTPUT",
+    "SNAPSHOT_OUTPUT",
+    "is_name",
+    "is_sha256",
+]
 
 DATA_STAGE = "data"
 SNAPSHOT_OUTPUT = "snapshot"
+FORECAST_OUTPUT = "forecast"
+SIGNALS_OUTPUT = "signals"
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")

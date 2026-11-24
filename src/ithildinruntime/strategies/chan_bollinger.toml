@@ -35,3 +35,14 @@ fixed = 0
 per_share = 0
 per_dollar = 0
 source = "placeholder: the replication this file reproduces charges no transaction cost"
+
+# Each window counts sessions, and each threshold counts standard deviations
+# of the spread from its own mean. `alpha/bollinger.py` holds the form.
+[alpha]
+model = "bollinger_spread"
+dependent = "USO"
+independent = "GLD"
+hedge_sessions = 20
+band_sessions = 20
+entry = 1
+exit = 0

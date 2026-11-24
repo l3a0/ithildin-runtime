@@ -8,7 +8,7 @@ early close below.
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -91,6 +91,51 @@ SMALL = (
 def test_a_table_that_cannot_be_read_halts(text: str) -> None:
     with pytest.raises(Halt):
         _table(text)
+
+
+@pytest.mark.parametrize(
+    ("at", "day"),
+    [
+        # At an open, a microsecond before it, through the session and after the early close.
+        (datetime(2026, 11, 27, 14, 30, tzinfo=UTC), date(2026, 11, 27)),
+        (datetime(2026, 11, 27, 14, 29, 59, 999999, tzinfo=UTC), date(2026, 11, 25)),
+        (datetime(2026, 11, 27, 17, 40, tzinfo=UTC), date(2026, 11, 27)),
+        (datetime(2026, 11, 27, 23, 59, tzinfo=UTC), date(2026, 11, 27)),
+        # A holiday, a weekend and the range's last day belong to the session before them.
+        (datetime(2026, 11, 26, 20, 40, tzinfo=UTC), date(2026, 11, 25)),
+        (datetime(2026, 11, 29, 12, 0, tzinfo=UTC), date(2026, 11, 27)),
+        (datetime(2026, 12, 1, 23, 59, tzinfo=UTC), date(2026, 11, 30)),
+    ],
+)
+def test_a_decision_belongs_to_the_latest_session_that_opened_by_it(
+    at: datetime, day: date
+) -> None:
+    assert _table(SMALL).opened_by(at).day == day
+
+
+@pytest.mark.parametrize(
+    ("at", "reason"),
+    [
+        (datetime(2026, 11, 25, 14, 29, tzinfo=UTC), "holds no session that opened by"),
+        (datetime(2026, 11, 24, 23, 0, tzinfo=UTC), "outside the session table's range"),
+        (datetime(2026, 12, 2, 0, 0, tzinfo=UTC), "outside the session table's range"),
+    ],
+)
+def test_a_time_no_session_opened_by_halts(at: datetime, reason: str) -> None:
+    with pytest.raises(Halt, match=reason):
+        _table(SMALL).opened_by(at)
+
+
+@pytest.mark.parametrize(
+    "at",
+    [
+        datetime(2026, 11, 27, 17, 40),
+        datetime(2026, 11, 27, 12, 40, tzinfo=timezone(timedelta(hours=-5))),
+    ],
+)
+def test_the_session_of_a_time_that_is_not_utc_is_refused(at: datetime) -> None:
+    with pytest.raises(ValueError, match="is not a UTC time"):
+        _table(SMALL).opened_by(at)
 
 
 def test_a_one_day_plan_holds_that_days_decisions() -> None:

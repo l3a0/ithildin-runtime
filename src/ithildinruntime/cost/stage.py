@@ -8,13 +8,14 @@ and the strategy's file, and it reads no clock and no mode.
 
 Its handler does three things, in order.
 
-1. **It reads data's result.** A result that holds a halt is passed on, as
+1. **It reads data's result and the snapshot it lists**, through
+   `core.read_snapshot`. A result that holds a halt is passed on, as
    docs/design.md's `### Rule 7: a halt is passed on` says: the stage's own
    result is a halt naming data's result as its cause, and no schedule is
    stored.
-2. **It reads the snapshot data's result lists, and asks the model for the
-   schedule.** A configuration the model refuses raises `Halt`, which the
-   loop stores as the stage's result.
+2. **It asks the model for the schedule.** A configuration the model refuses
+   becomes the stage's own halt, whose header names data's result and the
+   snapshot, and whose `cause` is empty because nothing upstream halted.
 3. **It stores the schedule, then returns the result**, which the loop stores
    last.
 
@@ -29,22 +30,19 @@ from datetime import datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
-    SNAPSHOT_OUTPUT,
     BlobHeader,
     BlobRef,
     CostModel,
     CostSchedule,
     DecisionResult,
     Halt,
+    HaltRecord,
     OutputFile,
-    Snapshot,
     StageKind,
     Storage,
-    encode,
     encode_output,
     output_key,
-    result_key,
-    sha256_of,
+    read_snapshot,
 )
 
 __all__ = ["COMPONENT", "SCHEDULE", "CostStage"]
@@ -89,31 +87,22 @@ class CostStage:
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
         at = item.decision_at
-        data_key = result_key(self._deployment, self._run, at, self._data_stage)
-        data = self._storage.read_result(data_key, at)
-        if data is None:
-            raise Halt(f"{data_key} is not stored, and stage {self._stage} reads it")
-        # The codec reads only canonical bytes, so this is the stored blob's SHA-256.
-        found = BlobRef(data_key, sha256_of(encode(data)))
-        if data.halt is not None:
-            halt = Halt(f"{data_key} holds a halt: {data.halt.reason}")
-            return DecisionResult(
-                header=self._header(at, found),
-                outputs=(),
-                halt=self._storage.halt_record(halt, cause=found),
-            )
-        # Data lists the capture that counts under its own key, and any later
-        # capture that differed under an attempt key.
-        counts = output_key(self._deployment, self._run, at, self._data_stage, SNAPSHOT_OUTPUT)
-        listed = [ref for ref in data.outputs if ref.key == counts]
-        if len(listed) != 1:
-            raise Halt(f"{data_key} lists {counts} {len(listed)} times, not once")
-        file = self._storage.read_output(data_key, data, listed[0], at, Snapshot)
-        if len(file.entries) != 1:
-            raise Halt(f"{counts} holds {len(file.entries)} snapshots, not one")
+        read = read_snapshot(
+            self._storage,
+            deployment=self._deployment,
+            run=self._run,
+            decision_at=at,
+            stage=self._stage,
+            data_stage=self._data_stage,
+        )
+        if isinstance(read, HaltRecord):
+            return DecisionResult(header=self._header(at, read.cause), outputs=(), halt=read)
         report()
-        schedule = self._model.schedule(file.entries[0])
-        header = self._header(at, found, listed[0])
+        header = self._header(at, read.result, read.file)
+        try:
+            schedule = self._model.schedule(read.snapshot)
+        except Halt as halt:
+            return DecisionResult(header=header, outputs=(), halt=self._storage.halt_record(halt))
         stored = self._storage.put(
             self._kind,
             output_key(self._deployment, self._run, at, self._stage, SCHEDULE),

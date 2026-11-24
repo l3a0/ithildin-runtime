@@ -687,12 +687,22 @@ def test_a_section_the_model_refuses_halts_in_the_stage_and_stores_no_schedule(t
     bare = parse_strategy("chan", uso(TERM).replace(b'["USO"]', b'["GLD", "USO"]'))
     table = Table(stages=(DATA_ROW, *cost_rows([bare])), strategies=(bare,))
     storage = store(tmp_path)
-    write_data(storage)
+    data = write_data(storage)
     held = blobs(tmp_path)
     # Building the handler refuses nothing, so the halt is the stage's own result.
     stage = handler(storage, table=table)
-    with pytest.raises(Halt, match="strategy chan's configuration chan.toml has no .* for GLD"):
-        run(stage)
+    result = run(stage)
+    assert result.outputs == ()
+    assert result.halt is not None
+    assert result.halt.reason == (
+        "strategy chan's configuration chan.toml has no [cost] terms for GLD"
+    )
+    # Nothing upstream halted, so the halt names no cause, and monitoring alarms on it.
+    assert result.halt.cause is None
+    # It names what the stage read, as every result does.
+    snapshot_sha = sha256_of((tmp_path / SNAPSHOT_KEY).read_bytes())
+    assert dict(result.header.inputs) == {data.key: data.sha256, SNAPSHOT_KEY: snapshot_sha}
+    assert dict(result.header.config_hashes) == {"chan": bare.config_hash}
     assert blobs(tmp_path) == held
 
 
@@ -831,6 +841,7 @@ def test_the_loop_stores_each_strategys_schedule_and_one_bad_files_halt(tmp_path
     assert other.halt is not None and other.outputs == ()
     assert "strategy other's configuration other.toml has no [cost] section" in other.halt.reason
     assert other.halt.reason.endswith("so it states no cost for SPY")
+    assert other.halt.cause is None and set(other.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
     assert dict(other.header.config_hashes) == {"other": bad.config_hash}
     read = storage.read_output(keys["chan"], chan, chan.outputs[0], AT, CostSchedule)
     assert read.entries == (schedule(),)

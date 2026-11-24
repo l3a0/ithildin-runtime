@@ -1,4 +1,4 @@
-"""The trading calendar, read as data, and the one calendar function.
+"""The trading calendar, read as data, and the functions that read it.
 
 docs/architecture/08-crosscutting-concepts.md's `#### Which clock a schedule
 follows, and how it becomes UTC` gives the rules. `core` imports no calendar
@@ -11,12 +11,14 @@ Each row carries the exchange's offset from UTC on that day, so a time on the
 exchange's clock becomes UTC without the host's time zone database. New York
 changes its clocks at 02:00 on a Sunday, never on a session day.
 
-Three things halt rather than guess, because a missing input stops trading
+Four things halt rather than guess, because a missing input stops trading
 (hard limit 3):
 
 1. A table whose bytes do not match the SHA-256 below.
 2. A date outside the range the table names.
 3. A date inside the range that the table holds no session for.
+4. A time before the open of the table's first session, when asked which
+   session it belongs to.
 """
 
 from __future__ import annotations
@@ -102,6 +104,27 @@ class SessionTable:
         self.session(first)
         self.session(last)
         return tuple(self.sessions[d] for d in sorted(self.sessions) if first <= d <= last)
+
+    def opened_by(self, at: datetime) -> Session:
+        """The latest session whose open is at or before `at`, which is a UTC time.
+
+        It is the session a decision belongs to. A time whose date is outside
+        the table's range halts, and so does one before the table's first open.
+        """
+        if at.utcoffset() != timedelta(0):
+            raise ValueError(f"{at!r} is not a UTC time")
+        day = at.date()
+        if not self.first <= day <= self.last:
+            raise Halt(
+                f"{at.isoformat()} is outside the session table's range, "
+                f"{self.first.isoformat()} to {self.last.isoformat()}"
+            )
+        while day >= self.first:
+            found = self.sessions.get(day)
+            if found is not None and found.open <= at:
+                return found
+            day -= timedelta(days=1)
+        raise Halt(f"the session table holds no session that opened by {at.isoformat()}")
 
     def regular_close(self) -> time:
         """The latest close on the exchange's clock the table holds, 16:00 in New York."""

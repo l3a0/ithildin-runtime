@@ -17,9 +17,10 @@ from .codec import (
     to_decimal,
 )
 from .halt import Halt
+from .inputs import SnapshotInput, read_snapshot
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
-from .names import DATA_STAGE, SNAPSHOT_OUTPUT
+from .names import DATA_STAGE, FORECAST_OUTPUT, SIGNALS_OUTPUT, SNAPSHOT_OUTPUT
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
 from .ports import __all__ as _ports
@@ -43,7 +44,9 @@ from .strategy import STRATEGIES, StrategyConfig, load_strategies, parse_strateg
 
 __all__ = [
     "DATA_STAGE",
+    "FORECAST_OUTPUT",
     "PLAN_FORMAT",
+    "SIGNALS_OUTPUT",
     "SNAPSHOT_OUTPUT",
     "BeforeClose",
     "BuiltPlan",
@@ -55,6 +58,7 @@ __all__ = [
     "Session",
     "STRATEGIES",
     "SessionTable",
+    "SnapshotInput",
     "StrategyConfig",
     "build_plan",
     "decode",
@@ -66,6 +70,7 @@ __all__ = [
     "parse_sessions",
     "parse_strategy",
     "places",
+    "read_snapshot",
     "to_decimal",
     "to_utc",
     *_keys,
