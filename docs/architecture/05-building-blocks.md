@@ -904,7 +904,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated`, as a field that holds no word also reads, unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
+A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. A reader takes a field that holds no word as `unstated` too. The data module copies them into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -1052,7 +1052,7 @@ flowchart LR
     journal -->|"OrderPath replays it<br/>just before each check"| book
     journal -->|"for a close, OrderPath reads its entry,<br/>never from the order or a caller"| inputs
     caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
-    v -->|"OrderPath reads the Valuation it holds"| inputs
+    v -->|"OrderPath reads the file's Valuation"| inputs
     stop -->|"OrderPath reads the stop's state before each check"| inputs
     gate -->|"an input is absent, stale or invalid"| halt
     gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
@@ -1091,7 +1091,7 @@ A refusal names the first of these that applies, so the same order always names 
 
 `OrderPath` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit. The order being checked is not yet in that book, and one whose id already is halts, because checking it would resend it.
 
-Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. It reads no bar that ends or was knowable after the decision. It also holds the snapshot to `Snapshot.require_fresh()`, so once any instrument is priced, one that is not fresh halts.
+Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. `core.mark` halts on any daily bar of the instrument that ends or was knowable after the decision. It also calls `Snapshot.require_fresh()`, so once any instrument is priced, one that is not fresh halts.
 
 ##### What each limit compares
 
@@ -1319,7 +1319,7 @@ An arrow means "may import". The diagram draws four rules.
      - the plan;
      - the queue port;
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
-   - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
+   - the calendar function, the lookups of the session a decision belongs to and of the one before it, the check that a time is UTC, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - the names of data's stage, of its snapshot, of alpha's two output files, of the daily interval and of a price kind no source states, so a stage that reads them imports no `data` and no `alpha`;
    - `read_snapshot`, the steps a model's stage takes to read data's result, pass on its halt and read the one snapshot it lists;
    - `parse_caps` and `tighten`, which read the hard caps blob and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;

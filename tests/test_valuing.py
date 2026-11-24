@@ -151,6 +151,15 @@ MARK_HALTS: dict[str, tuple[Snapshot, str]] = {
         ),
         "GLD's bar for 2026-11-02 was knowable at",
     ),
+    "an-older-bar-that-ends-after-the-decision": (
+        _with(
+            (
+                replace(MARKS.bars[GLD]["1d"][0], end=MARKS.decision_at + TICK),
+                MARKS.bars[GLD]["1d"][1],
+            )
+        ),
+        "GLD's bar for 2026-11-02 ends at",
+    ),
     "a-bar-that-ends-at-no-time": (_bars(end=None), "when GLD's bar ends is None, not a UTC"),
     "a-decision-with-no-zone": (
         replace(MARKS, decision_at=MARKS.decision_at.replace(tzinfo=None)),

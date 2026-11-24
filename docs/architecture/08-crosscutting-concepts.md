@@ -462,7 +462,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 
 A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
 
-A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field of `limits`, or a value out of its range. It shows little of a long value, and nothing of the account it found. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
+A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field of `limits`, or a value out of its range. The halt shows little of a long value, and nothing of the account the blob names. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
 
 #### How a journal entry is hashed and checked
 

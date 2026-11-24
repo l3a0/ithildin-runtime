@@ -27,12 +27,15 @@ from ithildinruntime.adapters import FolderBucket
 from ithildinruntime.core import (
     BarStatus,
     BlobMissing,
+    Book,
     BucketObject,
     Halt,
     InstrumentId,
     StoreUnavailable,
     from_received,
     load_sessions,
+    mark,
+    value_book,
 )
 from ithildinruntime.data import DataSettings, LakeSource, Mirror, source, spikes
 from ithildinruntime.data.reference import (
@@ -647,6 +650,19 @@ def test_5_a_session_missing_inside_the_lookback_reads_missing_and_is_never_fill
     assert any(f"no bar for {gone.isoformat()}" in r for r in reading.halts)
     with pytest.raises(Halt, match="GLD missing"):
         snap.require_fresh({GLD: ["1d"], USO: ["1d"]})
+
+
+def test_every_bar_data_reads_is_one_the_gate_will_value(lake: Path, tmp_path: Path) -> None:
+    """Data's read and `core.mark` each refuse a bar not yet ended or known, so they must agree."""
+    for at in (close(LAST), close(LAST) - timedelta(minutes=20), close(LAST) + timedelta(days=1)):
+        snap = make(lake, tmp_path).read(at).snapshot
+        newest = snap.bars[GLD]["1d"][-1]
+        assert mark(snap, GLD, before(newest.session, 1)) == newest.close
+        assert value_book(_holding(), snap, newest.session).value == newest.close
+
+
+def _holding() -> Book:
+    return Book({"s": {GLD: Decimal(1)}}, {}, Decimal(0), Decimal(0), 0, (), None, None)
 
 
 # 6. A stale series.

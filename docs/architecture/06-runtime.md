@@ -392,7 +392,7 @@ sequenceDiagram
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>X: runs the daily loss stop's test,<br/>with no order needed
-    opt the day's loss is past the stop
+    break the day's loss is past the stop
         Note over X,J: execution records the firing<br/>and halts the decision
     end
     X->>X: the order manager plans the orders
@@ -878,7 +878,7 @@ The figure below is a C4 dynamic diagram.
 flowchart TD
     fire["Step 1: execution finds the day's loss past the stop,<br/>records the firing and halts the decision"]
     read["Step 2: OrderPath reads the stop's state before every<br/>new order and hands it to the gate"]
-    refuse["Step 3: the gate refuses every new order"]
+    refuse["Step 3: the gate refuses every new order,<br/>apart from the close after a broker's trade"]
     clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
     fire --> read
     read --> refuse
@@ -890,7 +890,7 @@ flowchart TD
 
 A fired stop has one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). That order passes a fired stop only under a valid close entry. The gate cannot read one until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) builds it, so until then it refuses every order handed a close entry, and no close can go out.
 
-A failed read must not open that exception, so an unreadable stop holds the close too. Any answer other than "no such blob" reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart.
+A failed read must not open that exception, so an unreadable stop holds the close too. Anything but an answer that no firing stands reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart.
 
 **Table:** What the gate does with each state of the stop
 

@@ -824,17 +824,34 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(book=replace(book(), open_orders_by_strategy={CHAN: (), OTHER: None})),
         "other's open orders are None, not a list of orders",
     ),
-    "an-open-order-with-nothing-left": (
-        lambda w: w.at(book=book(opens=[order(0, USO, OTHER, name="old-1")])),
-        "other's open order old-1 has nothing left",
+    "two-open-orders-of-one-id-in-one-strategy": (
+        lambda w: w.at(book=book(opens=[order(1, USO, name="a"), order(2, USO, name="a")])),
+        "chan has an open order whose id is 'a', which names none or another",
     ),
-    "an-open-order-in-no-instrument": (
-        lambda w: w.at(book=book(opens=[order(1, None, OTHER, name="old-1")])),
-        "other has an open order in None, no instrument",
-    ),
-    "a-position-in-no-instrument": (
-        lambda w: w.at(book=book({OTHER: {None: 1, GLD: 1}})),
-        "other holds None, which names no instrument",
+    **{
+        f"an-open-order-of-{name}-with-nothing-left": (
+            lambda w, n=name: w.at(book=book(opens=[order(0, USO, n, name="old-1")])),
+            f"{name}'s open order old-1 has nothing left",
+        )
+        for name in (CHAN, OTHER)
+    },
+    **{
+        f"an-open-order-in-{name!r}": (
+            lambda w, n=name: w.at(book=book(opens=[order(1, n, OTHER, name="old-1")])),
+            f"other has an open order in {name!r}, no instrument",
+        )
+        for name in ("", None, 5)
+    },
+    **{
+        f"a-position-in-{name!r}": (
+            lambda w, n=name: w.at(book=book({OTHER: {n: 1, GLD: 1}})),
+            f"other holds {name!r}, which names no instrument",
+        )
+        for name in ("", None, 5)
+    },
+    "in-doubt-and-held-with-no-open-order": (
+        lambda w: w.at(book=book({CHAN: {GLD: 5}}, in_doubt=(GLD,))),
+        "GLD is in doubt and the book holds no open order in it",
     ),
     "in-doubt-with-no-open-order": (
         lambda w: w.at(book=book(opens=[order(1, USO, name="old-1")], in_doubt=(USO, GLD))),
