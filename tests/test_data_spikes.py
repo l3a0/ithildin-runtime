@@ -118,14 +118,28 @@ def test_a_price_at_or_below_zero_is_flagged(field: str, price: str, flagged: bo
     assert any(f.field == field and f.against == 0 for f in flags) is flagged
 
 
-def test_the_move_rule_judges_no_return_on_a_zero_close() -> None:
-    """So a zero close is flagged by its own zero check alone.
+RISING = ("100", "101", "102.01", "103.0301")
 
-    Equal closes before it leave no spread, so any judged return on it would be flagged.
+
+@pytest.mark.parametrize("after", [(), ("104.060401",)])
+@pytest.mark.parametrize("price", ["0", "-0.0001"])
+def test_the_move_rule_judges_no_return_on_a_close_that_is_not_positive(
+    price: str, after: tuple[str, ...]
+) -> None:
+    """So such a close is flagged by its own zero check alone.
+
+    The returns before it are all 0.01, so any return judged into or out of it
+    would differ from them, and a zero spread flags any return that differs.
     """
-    flags = spike_flags(series("1", "1", "1", "1", "0"), Decimal(100))
+    flags = spike_flags(series(*RISING, price, *after), Decimal(100))
     assert [f for f in flags if f.rule == MOVE] == []
     assert {f.field for f in flags if f.rule == CONTRADICT and f.against == 0} >= {"close"}
+
+
+def test_the_move_rule_judges_a_return_on_the_first_close_above_zero() -> None:
+    """The control for the test above: one step above zero, the move is judged and flagged."""
+    flags = spike_flags(series(*RISING, "0.0001"), Decimal(100))
+    assert [(f.rule, f.field) for f in flags] == [(MOVE, "close")]
 
 
 # Rule 2: a close-to-close move past the written multiple.
