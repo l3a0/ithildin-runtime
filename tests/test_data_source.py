@@ -239,26 +239,33 @@ def test_1_a_contradicting_bar_halts_through_the_last_decision_whose_lookback_ho
 
 @pytest.mark.parametrize(
     ("price", "rules"),
-    [(15.937, [spikes.BELOW_LOW, spikes.MOVE]), (150.0, [spikes.BELOW_LOW])],
+    [
+        (15.937, [spikes.BELOW_LOW, spikes.MOVE]),
+        (137.41, [spikes.BELOW_LOW, spikes.MOVE]),
+        (137.42, [spikes.BELOW_LOW]),
+        (158.9, [spikes.BELOW_LOW]),
+        (158.91, []),
+    ],
 )
 def test_1_a_lone_wrong_close_below_its_low_alerts_and_halts_nothing(
     lake: Path, tmp_path: Path, price: float, rules: list[str]
 ) -> None:
     """A close below its low with the rest of the bar as it was is flagged, however far it moved.
 
-    A close at a tenth also trips the move rule. A close of 150.0 moves too
-    little for it at a multiple of 10, so the below-the-low rule alone flags it.
+    A close at a tenth also trips the move rule. At a multiple of 10 the closes
+    from 137.42 to 158.90 move too little for it, which is the band design.md's
+    2026-11-24 entry 2 quotes, and the below-the-low rule alone flags them.
     """
     lakes.with_row(lake, "GLD", LAST, close=price)
     reading = make(lake, tmp_path, spike_multiple=Decimal(10)).read(close(LAST))
     # 158.91 is GLD's low on 2012-04-09 in Chan's vintage.
-    flags = reading.snapshot.flags[GLD]
+    flags = reading.snapshot.flags.get(GLD, ())
     assert [(f.rule, f.field, f.price) for f in flags] == [
         (rule, "close", Decimal(str(price))) for rule in rules
     ]
-    assert flags[0].against == Decimal("158.91")
     bar = reading.snapshot.bars[GLD]["1d"][-1]
-    assert bar.close < bar.low == Decimal("158.91")
+    assert (bar.low, bar.close) == (Decimal("158.91"), Decimal(str(price)))
+    assert [f.against for f in flags if f.rule == spikes.BELOW_LOW] == [bar.low] * bool(rules)
     assert reading.halts == ()
 
 
@@ -361,6 +368,26 @@ def test_1_judge_halts_on_a_stored_flag_of_a_rule_or_field_this_release_does_not
     assert f"its {field} of 1 against 2, by the rule {rule!r}" in reason
 
 
+def test_1_judge_passes_an_older_bar_below_its_low_as_the_read_did(
+    lake: Path, tmp_path: Path
+) -> None:
+    day = before(LAST, 3)
+    lakes.with_row(lake, "GLD", day, close=150.0)
+    src = make(lake, tmp_path, spike_multiple=Decimal(10))
+    reading = src.read(close(LAST))
+    assert [(f.session, f.rule) for f in reading.snapshot.flags[GLD]] == [(day, spikes.BELOW_LOW)]
+    assert reading.halts == source.judge(reading.snapshot, src.instruments) == ()
+
+
+def test_1_judge_states_one_reason_for_a_bar_that_raises_both_rules() -> None:
+    from tests.test_data_spikes import bar
+
+    odd = bar(0, "100", high="99", low="101", open="99")
+    flags = spikes.spike_flags([odd], Decimal(100))
+    assert {f.rule for f in flags} == {spikes.CONTRADICT, spikes.BELOW_LOW}
+    assert len(source.judge(_stored([odd], flags={GLD: flags}), (GLD,))) == 1
+
+
 def test_1_judge_halts_on_no_stored_below_the_low_flag_its_bars_raise() -> None:
     """It alerts and halts nothing. One the bars do not raise halts as a changed record."""
     from tests.test_data_spikes import bar
@@ -368,6 +395,7 @@ def test_1_judge_halts_on_no_stored_below_the_low_flag_its_bars_raise() -> None:
     odd = bar(0, "95", high="101", low="100", open="100")
     (flag,) = spikes.below_low(odd)
     assert source.judge(_stored([odd], flags={GLD: (flag,)}), (GLD,)) == ()
+    assert source.judge(_stored([odd]), (GLD,)) == ()
     (reason,) = source.judge(_stored([bar(0, "100")], flags={GLD: (flag,)}), (GLD,))
     assert f"its close of 95 against 100, by the rule {spikes.BELOW_LOW!r}" in reason
 

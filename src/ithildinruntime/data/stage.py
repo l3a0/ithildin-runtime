@@ -39,10 +39,10 @@ things, in order.
    of unstated kind, or a bar whose prices contradict each other, and on a
    redelivery each case `data.source.judge` lists, ends the decision with a
    halt as data's result that names the stored snapshot, as
-   hard limit 3 asks. A close past the written multiple halts nothing. Its
-   flag stays in the stored snapshot beside the price, monitoring alerts the
-   owner, which #11 builds, and the decision trades on the price as it
-   arrived.
+   hard limit 3 asks. A close past the written multiple, or below its bar's
+   low, halts nothing. Its flag stays in the stored snapshot beside the
+   price, monitoring alerts the owner, which #11 builds, and the decision
+   trades on the price as it arrived.
 5. **It returns the result**, which the loop stores last. The result lists
    the snapshot that counts first, and the attempt that differed after it.
 """

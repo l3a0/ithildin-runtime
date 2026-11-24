@@ -455,7 +455,8 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
        rules do not find in the bars. Within one release the bars raise
        every flag stored beside them, so such a flag means the record is not
        what this release wrote. Its reason states the record as stored
-       rather than guess what it meant.
+       rather than guess what it meant. A flag the bars raise and the
+       record lacks adds no halt of its own.
 
     A stored status keeps no session, so its reason names the stored snapshot
     rather than the session, and it is trusted as recorded.

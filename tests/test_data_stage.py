@@ -120,15 +120,22 @@ def test_a_contradicting_bar_stores_the_snapshot_with_its_flag_then_halts(
     assert "contradict each other" in result.halt.reason
 
 
-def test_a_move_flag_stores_the_snapshot_with_its_flag_and_halts_nothing(
-    lake: Path, tmp_path: Path
+@pytest.mark.parametrize(
+    ("row", "rule"),
+    [
+        ({"open": 15.937, "high": 15.937, "low": 15.937, "close": 15.937}, spikes.MOVE),
+        ({"close": 150.0}, spikes.BELOW_LOW),
+    ],
+)
+def test_a_flag_that_alerts_is_stored_with_the_snapshot_and_halts_nothing(
+    lake: Path, tmp_path: Path, row: dict[str, float], rule: str
 ) -> None:
-    lakes.with_row(lake, "GLD", LAST, open=15.937, high=15.937, low=15.937, close=15.937)
+    lakes.with_row(lake, "GLD", LAST, **row)
     made, _, _ = stage(lake, tmp_path, spike_multiple=Decimal(10))
     result = made(Item(close(LAST), "data"), Reports())
     (ref,) = result.outputs
     stored = decode_output((tmp_path / "store" / ref.key).read_bytes(), Snapshot)
-    assert [f.rule for f in stored.entries[0].flags[InstrumentId("GLD")]] == [spikes.MOVE]
+    assert [f.rule for f in stored.entries[0].flags[InstrumentId("GLD")]] == [rule]
     assert result.halt is None
 
 

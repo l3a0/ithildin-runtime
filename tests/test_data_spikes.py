@@ -117,7 +117,7 @@ def test_a_bar_whose_prices_agree_is_not_flagged() -> None:
 @pytest.mark.parametrize("field", ["open", "high", "low", "close"])
 @pytest.mark.parametrize(("price", "flagged"), [("-0.0001", True), ("0", True), ("0.0001", False)])
 def test_a_price_at_or_below_zero_is_flagged(field: str, price: str, flagged: bool) -> None:
-    """Each field has its own zero check, since no other rule flags a zero close."""
+    """Each field has its own zero check, since no other rule halts on a zero close."""
     prices = {"open": "1.0000", "high": "1.0000", "low": "0.0001", "close": "1.0000"} | {
         field: price
     }
@@ -135,7 +135,7 @@ RISING = ("100", "101", "102.01", "103.0301")
 def test_the_move_rule_judges_no_return_on_a_close_that_is_not_positive(
     price: str, after: tuple[str, ...]
 ) -> None:
-    """So such a close is flagged by its own zero check alone.
+    """So the move rule does not flag such a close, and its own zero check does.
 
     The returns before it are all 0.01, so any return judged into or out of it
     would differ from them, and a zero spread flags any return that differs.
@@ -193,7 +193,29 @@ def test_a_move_after_returns_that_are_all_equal_is_flagged() -> None:
     assert spike_flags(series("100", "100", "100", "100"), Decimal(1)) == ()
 
 
-# Rule 3: a close below its bar's low.
+# Rule 3: a close below its bar's low, by the owner's two rulings of 2026-11-24 on #5.
+
+
+def test_every_bar_of_the_lookback_is_held_to_its_own_low_with_or_without_a_volume() -> None:
+    odd = [bar(n, "95", high="101", low="100", open="100") for n in (0, 1, 2)]
+    odd[1] = dataclasses.replace(odd[1], volume=Decimal(1000))
+    flags = [f for f in spike_flags(odd, Decimal(100)) if f.rule == BELOW_LOW]
+    assert [f.session for f in flags] == [START + timedelta(days=n) for n in (0, 1, 2)]
+    assert ["no volume threshold is written" in f.note for f in flags] == [False, True, False]
+
+
+def test_a_zero_close_below_its_low_raises_both_rules() -> None:
+    odd = bar(0, "0", high="101", low="100", open="100")
+    assert [f.rule for f in spike_flags([odd], Decimal(100))] == [BELOW_LOW, CONTRADICT]
+
+
+def test_each_rule_name_stays_as_recorded() -> None:
+    """A stored flag holds its rule's name, so a new name would orphan the ones already stored."""
+    assert (CONTRADICT, MOVE, BELOW_LOW) == (
+        "prices contradict each other",
+        "close-to-close move past the written multiple",
+        "close below the bar's low",
+    )
 
 
 @pytest.mark.parametrize(("close", "flagged"), [("99.9999", True), ("100.0000", False)])
