@@ -1,0 +1,275 @@
+"""What a book is worth and how far it could move, counted one way for every reader.
+
+The gate, portfolio construction and execution each need a price for an
+instrument, the range a position could reach and whether an order only
+reduces. No worker imports another, so the functions live here, once.
+docs/design.md's `### Rule 9: how the gate counts open orders` says why an
+open order is counted both filled and not.
+
+Every sum and product is exact, as `core/exact.py` says. A book or an order
+that holds a value that is not finite halts naming it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import date
+from decimal import Decimal
+from enum import StrEnum
+from typing import NamedTuple
+
+from .codec import places
+from .exact import exact_total, finite, rounded, worth
+from .halt import Halt
+from .names import DAILY, UNSTATED
+from .records import (
+    Bar,
+    Book,
+    InstrumentId,
+    OrderIntent,
+    Snapshot,
+    Valuation,
+)
+from .sessions import load_sessions, require_utc
+
+__all__ = [
+    "Effect",
+    "Exposure",
+    "classify",
+    "exposure",
+    "held",
+    "mark",
+    "position",
+    "unstated_fields",
+    "value_book",
+]
+
+_VALUE_PLACES = places(Valuation, "value")
+
+
+class Effect(StrEnum):
+    """What an order does to the positions it touches."""
+
+    ADDS = "adds"
+    REDUCES = "reduces"
+
+
+class Exposure(NamedTuple):
+    """The shares held if only the open sales fill, and if only the open buys do."""
+
+    low: Decimal
+    high: Decimal
+
+    @property
+    def size(self) -> Decimal:
+        """The end further from zero, as a size."""
+        return max(self.low.copy_abs(), self.high.copy_abs())
+
+
+def mark(snapshot: Snapshot, instrument: InstrumentId, after: date) -> Decimal:
+    """The one price an instrument is valued at: its newest daily bar's close.
+
+    It halts unless that bar's session is later than `after` and no later than
+    the decision's own, and on a snapshot that holds a quote for the
+    instrument, until #100 says which of a quote's prices is read.
+    """
+    if instrument in snapshot.quotes:
+        raise Halt(f"{instrument} has a quote, and no rule says which of its prices is the mark")
+    bars = _daily(snapshot, instrument)
+    newest = max(bar.session for bar in bars)
+    if newest <= after:
+        raise Halt(
+            f"{instrument} has no mark: its newest bar is for {newest.isoformat()}, "
+            f"not later than {after.isoformat()}"
+        )
+    return _close(instrument, bars, newest)
+
+
+def position(book: Book, instrument: InstrumentId, strategy: str | None = None) -> Decimal:
+    """The shares held of one instrument, by the account or by one strategy."""
+    return exact_total(
+        f"the position in {instrument}",
+        (
+            finite(f"{name}'s position in {instrument}", positions[instrument])
+            for name, positions in book.positions_by_strategy.items()
+            if strategy in (None, name) and instrument in positions
+        ),
+    )
+
+
+def exposure(
+    book: Book,
+    instrument: InstrumentId,
+    intent: OrderIntent | None = None,
+    strategy: str | None = None,
+) -> Exposure:
+    """The range of shares one instrument could reach, for the account or one strategy.
+
+    The intent counts as one more order. An open order that carries its client
+    order id is the intent itself, already sent, so the book's unfilled
+    remainder stands for it and the intent is not counted again. An open order
+    that carries the id and differs in anything but size halts. An intent that
+    was sent and is no longer open has no remainder to stand for it, so a caller
+    never hands one in.
+    """
+    orders = [order for order in _open(book, strategy) if order.instrument == instrument]
+    if intent is not None and _sent(book, intent) is None:
+        if intent.instrument == instrument and strategy in (None, intent.strategy):
+            orders.append(intent)
+    sizes = [finite(f"the order {order.client_order_id}", order.qty) for order in orders]
+    shares = position(book, instrument, strategy)
+    return Exposure(
+        low=exact_total(f"{instrument}'s sales", (shares, *(q for q in sizes if q < 0))),
+        high=exact_total(f"{instrument}'s buys", (shares, *(q for q in sizes if q > 0))),
+    )
+
+
+def classify(book: Book, intent: OrderIntent) -> Effect:
+    """Whether an order only reduces, and otherwise it adds.
+
+    It reduces only where it reduces both its strategy's position and the
+    account's under every case of which open orders fill. An order with any
+    part past zero in some case adds.
+    """
+    finite(f"the order {intent.client_order_id}", intent.qty)
+    sale, buy = intent.qty < 0, intent.qty > 0
+    for strategy in (intent.strategy, None):
+        reached = exposure(book, intent.instrument, intent, strategy)
+        if not (sale and reached.low >= 0 or buy and reached.high <= 0):
+            return Effect.ADDS
+    return Effect.REDUCES
+
+
+def held(book: Book) -> tuple[InstrumentId, ...]:
+    """Each instrument any strategy holds or has an open order in."""
+    found = {
+        instrument
+        for positions in book.positions_by_strategy.values()
+        for instrument, qty in positions.items()
+        if qty != 0
+    }
+    found.update(order.instrument for order in _open(book, None))
+    return tuple(sorted(found))
+
+
+def value_book(book: Book, snapshot: Snapshot, session: date) -> Valuation:
+    """V, the book at `session`'s official closes.
+
+    Each position is marked at its bar of that session, and a newer one never
+    serves, because a decision at the close would then value V at that close
+    and read a loss of zero.
+    """
+    positions = {i: shares for i in held(book) if (shares := position(book, i)) != 0}
+    marks = {i: _close(i, _daily(snapshot, i), session) for i in positions}
+    cash = finite("the book's cash", book.cash)
+    return Valuation(
+        session=session,
+        value=rounded(
+            "the value of the book",
+            worth("the value of the book", cash, positions, marks),
+            _VALUE_PLACES,
+        ),
+        cash=cash,
+        positions=positions,
+        marks=marks,
+        replayed_through=book.replayed_through,
+    )
+
+
+def unstated_fields(bar: Bar) -> tuple[str, ...]:
+    """Which of a bar's four price-kind fields its source states nothing for.
+
+    A field that holds no word states nothing either, so a bar built or stored
+    without one never reads as stated.
+    """
+    fields = {
+        "price kind": bar.price_kind,
+        "venues": bar.venues,
+        "delay": bar.delay,
+        "volume counting": bar.volume_counted,
+    }
+    return tuple(
+        name
+        for name, said in fields.items()
+        if not isinstance(said, str) or said.strip() in ("", UNSTATED)
+    )
+
+
+def _sent(book: Book, intent: OrderIntent) -> OrderIntent | None:
+    """The open order that carries the intent's id, which halts unless it is the same order.
+
+    It reads the whole book, since one filed under another strategy or
+    instrument is the case to catch. What is left open is never more than the
+    intent, and never nothing.
+    """
+    for order in _open(book, None):
+        if order.client_order_id != intent.client_order_id:
+            continue
+        left = finite(f"the order {order.client_order_id}", order.qty)
+        whole = finite(f"the order {intent.client_order_id}", intent.qty)
+        same = ("strategy", "instrument", "type", "time_in_force")
+        if any(getattr(order, f) != getattr(intent, f) for f in same) or not (
+            0 < left <= whole or whole <= left < 0
+        ):
+            raise Halt(
+                f"the book holds another order under the id {intent.client_order_id} than the "
+                "one handed in"
+            )
+        return order
+    return None
+
+
+def _open(book: Book, strategy: str | None) -> Iterator[OrderIntent]:
+    for name, orders in book.open_orders_by_strategy.items():
+        for order in orders:
+            if order.strategy != name:
+                raise Halt(
+                    f"the book files {order.client_order_id}, an order of "
+                    f"{order.strategy!r}, under {name!r}"
+                )
+            if strategy in (None, name):
+                yield order
+
+
+def _daily(snapshot: Snapshot, instrument: InstrumentId) -> tuple[Bar, ...]:
+    """The instrument's daily bars, each ended and knowable by the decision.
+
+    `require_fresh` is the one test of a snapshot every module runs. Data reads
+    no bar that ends or was knowable later than the decision, and a book valued
+    at one would hide a loss, so this refuses what data would never return.
+    """
+    snapshot.require_fresh({instrument: [DAILY]})
+    bars = snapshot.bars[instrument][DAILY]
+    at = require_utc("the snapshot's decision_at", snapshot.decision_at)
+    for bar in bars:
+        if type(bar.session) is not date:
+            raise Halt(f"{instrument} has a bar for {bar.session!r}, not a date")
+        for what, when in (("ends", bar.end), ("was knowable", bar.knowable_at)):
+            if require_utc(f"when {instrument}'s bar {what}", when) > at:
+                raise Halt(
+                    f"{instrument}'s bar for {bar.session.isoformat()} {what} at "
+                    f"{when.isoformat()}, after the decision at {at.isoformat()}"
+                )
+    table = load_sessions()
+    today = table.opened_by(at).day
+    newest = max(bar.session for bar in bars)
+    if newest > today:
+        raise Halt(
+            f"{instrument} has a bar for {newest.isoformat()}, after the decision's session "
+            f"{today.isoformat()}"
+        )
+    table.session(newest)
+    return bars
+
+
+def _close(instrument: InstrumentId, bars: tuple[Bar, ...], session: date) -> Decimal:
+    found = [bar for bar in bars if bar.session == session]
+    if len(found) != 1:
+        raise Halt(f"{instrument} has {len(found)} daily bars for {session.isoformat()}, not one")
+    (bar,) = found
+    if silent := unstated_fields(bar):
+        raise Halt(f"{instrument}'s bar for {session.isoformat()} has unstated {', '.join(silent)}")
+    price = finite(f"{instrument}'s close for {session.isoformat()}", bar.close)
+    if price <= 0:
+        raise Halt(f"{instrument}'s close for {session.isoformat()} is {price}, not above zero")
+    return price

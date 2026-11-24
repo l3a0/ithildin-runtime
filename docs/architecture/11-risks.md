@@ -11,7 +11,12 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 ## Prices in Building blocks
 
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
+- [Where the limits come from](05-building-blocks.md#where-the-limits-come-from)
 - [Where the figures come from](05-building-blocks.md#where-the-figures-come-from)
+
+## Prices in Runtime
+
+- [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured)
 
 ## Prices in Deployment
 
@@ -46,6 +51,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [One runtime](../design.md#one-runtime)
 - [Rule 2: two kinds of stage, declared in one place](../design.md#rule-2-two-kinds-of-stage-declared-in-one-place)
 - [Rule 7: how a run stops](../design.md#rule-7-how-a-run-stops)
+- [Rule 9: what may go out while a limit is past](../design.md#rule-9-what-may-go-out-while-a-limit-is-past)
 - [Rule 9: what a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held)
 - [Rule 9: who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease)
 - [Rule 9: who takes over a lease](../design.md#rule-9-who-takes-over-a-lease)

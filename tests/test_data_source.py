@@ -27,12 +27,15 @@ from ithildinruntime.adapters import FolderBucket
 from ithildinruntime.core import (
     BarStatus,
     BlobMissing,
+    Book,
     BucketObject,
     Halt,
     InstrumentId,
     StoreUnavailable,
     from_received,
     load_sessions,
+    mark,
+    value_book,
 )
 from ithildinruntime.data import DataSettings, LakeSource, Mirror, source, spikes
 from ithildinruntime.data.reference import (
@@ -649,6 +652,19 @@ def test_5_a_session_missing_inside_the_lookback_reads_missing_and_is_never_fill
         snap.require_fresh({GLD: ["1d"], USO: ["1d"]})
 
 
+def test_every_bar_data_reads_is_one_the_gate_will_value(lake: Path, tmp_path: Path) -> None:
+    """`core.mark` values each bar data reads, one that ends at the decision included."""
+    for at in (close(LAST), close(LAST) - timedelta(minutes=20), close(LAST) + timedelta(days=1)):
+        snap = make(lake, tmp_path).read(at).snapshot
+        newest = snap.bars[GLD]["1d"][-1]
+        assert mark(snap, GLD, before(newest.session, 1)) == newest.close
+        assert value_book(_holding(), snap, newest.session).value == newest.close
+
+
+def _holding() -> Book:
+    return Book({"s": {GLD: Decimal(1)}}, {}, Decimal(0), Decimal(0), 0, (), None, None)
+
+
 # 6. A stale series.
 
 
@@ -661,6 +677,25 @@ def test_6_a_series_lagging_past_the_written_lag_reads_stale(
     reading = make(lake, tmp_path, stale_lag=2).read(close(LAST))
     assert reading.snapshot.status[USO] == BarStatus(state)
     assert any("USO stale" in r for r in reading.halts) is (state == "stale")
+
+
+@pytest.mark.parametrize(("dropped", "state"), [(0, "fresh"), (1, "stale")])
+def test_6_under_the_written_lag_of_0_one_session_behind_is_stale(
+    lake: Path, tmp_path: Path, dropped: int, state: str
+) -> None:
+    for n in range(dropped):
+        unlist(lake, lakes.partition_key("USO", before(LAST, n)))
+    reading = make(lake, tmp_path, stale_lag=0).read(close(LAST))
+    assert reading.snapshot.status[USO] == BarStatus(state)
+    assert any("USO stale" in r for r in reading.halts) is (state == "stale")
+
+
+@pytest.mark.parametrize("lag", [True, False, -1, 0.0, 1.5, "0", Decimal(0)])
+def test_6_a_lag_that_is_no_whole_number_of_sessions_is_refused(lag: object) -> None:
+    with pytest.raises(ValueError, match="the stale lag is a whole number of sessions"):
+        settings(stale_lag=lag)
+    assert settings(stale_lag=0).stale_lag == 0
+    assert settings(stale_lag=None).stale_lag is None
 
 
 def test_6_an_absent_lag_halts(lake: Path, tmp_path: Path) -> None:

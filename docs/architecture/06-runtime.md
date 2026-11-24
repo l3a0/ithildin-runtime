@@ -191,7 +191,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
-| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release, override and hard caps keys or clears a lease, on every account only the owner's role writes an owner's record, and CloudTrail records each write and delete |
+| 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every run record is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 
@@ -392,7 +392,9 @@ sequenceDiagram
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>X: runs the daily loss stop's test,<br/>with no order needed
-    X->>F: creates stop.json from the stop test's result
+    break the day's loss is past the stop
+        Note over X,J: execution records the firing<br/>and halts the decision. The report, the ping<br/>and the read after the close still run
+    end
     X->>X: the order manager plans the orders
     X->>J: journals the whole target portfolio and its<br/>planned orders, cancels and replacements
     X->>B: asks the broker for its clock
@@ -546,7 +548,7 @@ The steps run in this order.
 
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
-3. **Run the daily loss stop's test.** This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that it runs with no order needed, so a decision that plans no order still runs it, and that the stop's test creates `stop.json` from its result, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
+3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
      1. The target.
@@ -720,9 +722,11 @@ sequenceDiagram
 A stale bar takes the same path. Stale means the newest bar is older than the
 decision time allows, which is how a feed that stopped looks when it keeps
 answering. Data reports the gap and never fills it with the last close.
-The charter gives the risk engineer the halt on stale data, so
-[#7](https://github.com/l3a0/ithildin-runtime/issues/7) decides how old is too
-old. Data applies that rule.
+The charter gives the risk engineer the halt on stale data, and the lag a
+sealed daily bar may have is 0 sessions. A decision at close−20 reads the bar of
+the session before, and one at the close reads that session's own, so any lag
+is a session that should be there and is not. Data applies that rule, and
+[#100](https://github.com/l3a0/ithildin-runtime/issues/100) says how old a quote may be.
 
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
@@ -809,13 +813,22 @@ sequenceDiagram
 
     X->>J: journals the intent, buy 900 USO
     X->>X: runs the risk gate check
-    X->>J: journals the refusal with the limit and the value
+    X->>J: journals the refusal with the limit, the value and its bound
     X->>F: stores a halt as execution's send result,<br/>reason "over the maximum position"
     F-->>M: sends an event: execution's result is a halt
     M->>J: journals the halt
     M->>L: raises the alarm
     Note over B: The broker never sees the order
 ```
+
+The gate has a second way to stop an order. An input that is absent, stale or
+invalid raises a halt rather than a refusal, and every halt comes before every
+refusal. So a refusal never hides such an input, apart from a stop whose state
+could not be read, as
+[What halts and what refuses](05-building-blocks.md#what-halts-and-what-refuses)
+says. Execution then journals the
+order `Abandoned` with the reason and halts the decision, as
+[#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
 
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
@@ -831,59 +844,65 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 #### How the day's loss is measured
 
-The day's loss is the fall in the account's value at current prices, measured from its valuation at the prior session's official closes. The day's first decision stores that valuation.
+The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, at its `/stocks/v1/dividends` endpoint, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
-Two gaps in that measure halt rather than read as no loss.
+The mark is the newest daily bar's close, through `core.mark`, which portfolio construction sizes with too. Six gaps halt rather than read as no loss.
 
-1. A decision halts when the valuation is missing, which this doc proposes for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
-2. An uncomputable loss with positions held halts, and [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how.
+1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
+2. The valuation was replayed past the book.
+3. A held instrument, or one with an open order, has no bar later than V's session, or has one of a session later than the decision's or one that ends or was knowable after the decision. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
+4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
+5. Something other than the platform's own fills or a broker record [on the closed list](../design.md#strategies-schedules-and-decisions) moved the book's cash or a position after the valuation, such as a deposit or a person's override.
+6. A position was corrected after V's session closed, whether or not V was built since, such as by a split's restatement. Marked at that session's close, the restated position would hide a loss.
+
+The price of the last two is no trading for the rest of that session.
 
 #### When the stop is tested
 
-This doc proposes, for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), that the send stage runs the stop's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop.
+The send stage runs the stop's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop. Every verdict carries the same reading, so a loss found while an order is checked counts too, whichever limit the verdict names.
 
 The stop has a stated limit: no decision tests the price move from close−20 to the close.
 
 #### What happens when the stop fires
 
-A fired stop latches, which means it stays fired whatever the price does next. This doc also proposes that for [#7](https://github.com/l3a0/ithildin-runtime/issues/7), in four steps.
+A fired stop latches, which means it stays fired whatever the price does next. It takes four steps, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
 
-1. The first time the send stage's test finds the day's loss past the stop, execution creates a blob at `accounts/<account>/stop.json` with a create-only write, as the kill switch is created, and journals it.
-2. `OrderPath` reads that blob before every new order, as it reads the switch, and hands its state to the gate.
-3. The gate refuses every new order while the blob exists, across sessions, so a price that recovers never resumes trading on its own.
+1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. The record is a journal entry and a blob at `accounts/<account>/stop.json`, created with a create-only write as the kill switch is, and a firing that reached either one stands. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
+2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate.
+3. The gate refuses every new order while a firing stands, across sessions and apart from that exception, so a price that recovers never resumes trading on its own.
 4. `ithildin stop clear --account <a>` deletes the blob and journals the clear. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TD
-    fire["Step 1: execution finds the day's loss past the stop,<br/>creates stop.json and journals it"]
-    read["Step 2: OrderPath reads stop.json before every new order<br/>and hands its state to the gate"]
-    refuse["Step 3: the gate refuses every new order"]
+    fire["Step 1: execution finds the day's loss past the stop,<br/>records the firing and halts the decision"]
+    read["Step 2: OrderPath reads the stop's state before every<br/>new order and hands it to the gate"]
+    refuse["Step 3: the gate refuses every new order,<br/>apart from the close after a broker's trade"]
     clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
     fire --> read
     read --> refuse
-    refuse -->|"the price recovers, or a new session opens:<br/>the blob stays, so the gate keeps refusing"| read
+    refuse -->|"the price recovers, or a new session opens:<br/>the firing stands, so the gate keeps refusing"| read
     refuse -->|"only a person ends it"| clear
 ```
 
 #### Which orders a stop refuses
 
-A fired stop has one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). That order passes a fired stop only under a valid close entry.
+A fired stop has one exception. The close after a broker's trade closes a whole position once the broker has made a trade of its own, under [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control). That order passes a fired stop only under a valid close entry. The gate cannot read one until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) builds it, so until then it refuses every order handed a close entry, and no close can go out.
 
-A failed read must not open that exception, so an unreadable stop holds the close too. Any answer other than "no such blob" reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart. [#7](https://github.com/l3a0/ithildin-runtime/issues/7) holds how.
+A failed read must not open that exception, so an unreadable stop holds the close too. Anything but an answer that no firing stands reads as fired for a decision's order, and the state `OrderPath` hands the gate keeps fired and unreadable apart.
 
-**Table:** What the gate does with each answer from reading `stop.json`
+**Table:** What the gate does with each state of the stop
 
-| Answer from the read | The stop's state | A decision's new order | An order under a valid close entry |
+| What `OrderPath` found | The stop's state | A decision's new order | An order under a valid close entry |
 | --- | --- | --- | --- |
-| "No such blob" | Not fired | Passes this check | Passes this check |
-| The blob | Fired | Refused | Passes this check |
-| Any other answer | Unreadable | Refused | Not sent |
+| No firing stands | `ABSENT` | Passes this check | Passes this check |
+| A firing stands | `FIRED` | Refused | Passes this check |
+| Whether one stands could not be read | `UNREADABLE` | Refused | Not sent |
 
 #### Why slice 1 only stops
 
-[#7](https://github.com/l3a0/ithildin-runtime/issues/7) lists the limit as "an automatic unwind and stop". An unwind is itself a trade, so slice 1 stops only.
+[#7](https://github.com/l3a0/ithildin-runtime/issues/7) lists the limit as "an automatic unwind and stop". An unwind is itself a trade, so slice 1 stops only, and [#124](https://github.com/l3a0/ithildin-runtime/issues/124) holds the unwind.
 
 ### The book and the broker disagree
 
@@ -1064,6 +1083,7 @@ stateDiagram-v2
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
     Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>or a restart
+    Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
@@ -1182,7 +1202,8 @@ stateDiagram-v2
     Sending --> Halted: on any cause the note beside Sending lists
     note right of Sending
         Sending halts when
-        the risk gate refuses,
+        the risk gate refuses or halts on an input,
+        the day's loss is past the stop,
         the kill switch is set,
         the run or account halts,
         the lease is lost,
@@ -1230,7 +1251,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#7](https://github.com/l3a0/ithildin-runtime/issues/7).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### When the run stops
 

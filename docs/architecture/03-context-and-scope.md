@@ -217,7 +217,7 @@ bucket, is a published input, and shadow measures the lag.
 | --- | --- |
 | A segment does not match the object's stored SHA-256 and metadata, in the data worker's own check | The decision halts |
 | marketlake's reader finds a segment absent, or failing its SHA-256 | [l3a0/marketlake#1004](https://github.com/l3a0/marketlake/issues/1004) states what the reader does, so the data worker can halt on it |
-| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale under the staleness rule [#7](https://github.com/l3a0/ithildin-runtime/issues/7) sets. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) holds how the decision treats that quote |
+| A decision's newest cycle has not landed by the decision time | The decision treats that quote as missing or stale. A missing or stale quote halts the decision, as [What is checked before deciding](#what-is-checked-before-deciding) says. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) holds how old a quote may be and how the decision treats that one |
 
 #### What is checked before deciding
 

@@ -32,6 +32,9 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.CostTerm,
     core.Signal,
     core.ForecastSet,
+    core.HardCaps,
+    core.PastLimit,
+    core.LossReading,
 ]
 
 
@@ -94,6 +97,23 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             )
             fields["forecasts"] = (forecast, forecast)
             fields["signals"] = (signal, dataclasses.replace(signal, name="z_score"))
+        if hint is core.Valuation:
+            # A valuation's value is its cash and its positions at their marks.
+            fields["value"] = fields["cash"] = Decimal("-0.0004")
+            fields["positions"] = {i: Decimal(0) for i in fields["marks"]}
+        if hint is core.PastLimit:
+            # A past limit is one of three, at or over its bound.
+            fields["limit"] = core.Limit.MAX_NET
+        if hint is core.LossReading:
+            # A loss past its bound is at or over it.
+            fields["past"] = True
+        if hint is core.Verdict:
+            # A verdict agrees with itself: one refused on net, or with nothing set, approved.
+            loss = core.LossReading(Decimal(1), Decimal(2), False, date(2026, 11, 2))
+            fields |= {"loss": loss, "missing_term": None, "limit": None, "worst_loss": Decimal(1)}
+            if not empty:
+                past = core.PastLimit(core.Limit.MAX_NET, Decimal(60), Decimal(50))
+                fields |= {"approved": False, "limit": core.Limit.MAX_NET, "past": (past,)}
         if hint is core.Snapshot and not empty:
             # A snapshot files each bar under its own instrument and interval.
             bar = sample(core.Bar, depth=depth + 1)

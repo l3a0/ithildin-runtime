@@ -117,16 +117,16 @@ def test_encode_refuses_what_has_no_canonical_form(value: object) -> None:
 
 def test_encode_refuses_a_float_inside_a_decimal_field() -> None:
     value = core.JournalAck(seq=1, entry_hash="a")
-    with pytest.raises(CodecError):
-        encode(core.Verdict(approved=True, limit=None, value=0.5, missing_term=None))  # type: ignore[arg-type]
+    with pytest.raises(CodecError, match="Verdict.value is a float"):
+        encode(dataclasses.replace(sample(core.Verdict), value=0.5))
     assert encode(value) == b'{"entry_hash":"a","seq":1}'
 
 
 def test_encode_refuses_a_value_of_the_wrong_type_for_its_field() -> None:
     with pytest.raises(CodecError):
         encode(core.JournalAck(seq="1", entry_hash="a"))  # type: ignore[arg-type]
-    with pytest.raises(CodecError):
-        encode(core.Verdict(approved=1, limit=None, value=None, missing_term=None))  # type: ignore[arg-type]
+    with pytest.raises(CodecError, match="Verdict.adding is not a bool"):
+        encode(dataclasses.replace(sample(core.Verdict), adding=1))
     with pytest.raises(CodecError):
         encode(core.Heartbeat(format=1, writer="w", at=None))  # type: ignore[arg-type]
 
@@ -161,11 +161,13 @@ def test_decode_refuses_bytes_that_are_not_canonical(data: bytes) -> None:
 )
 def test_decode_refuses_a_decimal_not_in_plain_notation(price: str) -> None:
     data = (
-        '{"cash":"1","marks":{"GLD":' + price + '},"replayed_through":1,'
+        '{"cash":"1","marks":{"GLD":' + price + '},"positions":{},"replayed_through":1,'
         '"session":"2026-11-02","value":"1"}'
     ).encode()
-    with pytest.raises(CodecError):
+    with pytest.raises(CodecError, match="Valuation.marks.*(plain notation|wrote a string)"):
         decode(data, core.Valuation)
+    sound = data.replace(b'{"GLD":' + price.encode(), b'{"GLD":"1"')
+    assert decode(sound, core.Valuation).marks == {InstrumentId("GLD"): 1}
 
 
 @pytest.mark.parametrize(
@@ -369,11 +371,6 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
         (b'{"entry_hash":"a","seq":"1"}', core.JournalAck, "a string where an int is"),
         (b"[]", core.JournalAck, "a list where a record is"),
         (
-            b'{"approved":"yes","limit":null,"missing_term":null,"value":null}',
-            core.Verdict,
-            "a string where a bool is",
-        ),
-        (
             b'{"decision_at":"2026-11-02T20:40:00.000000Z","segments":{},"bars":{},'
             b'"flags":{},"ledgers":{},"provisional":true,"quotes":{},"status":{}}',
             core.Snapshot,
@@ -390,16 +387,6 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
             b'"provisional":true,"quotes":{},"segments":[],"status":{}}',
             core.Snapshot,
             "a list where a mapping is",
-        ),
-        (
-            b'{"cash":"1","marks":{},"replayed_through":1,"session":"20261102","value":"1"}',
-            core.Valuation,
-            "a session date in another form",
-        ),
-        (
-            b'{"cash":"1","marks":{},"replayed_through":1,"session":"2026-02-30","value":"1"}',
-            core.Valuation,
-            "a session date no calendar holds",
         ),
         (
             b'{"at":"2026-19-02T20:40:00.000000Z","format":1,"writer":"w"}',
@@ -430,6 +417,31 @@ def test_decode_refuses_dirty_bytes(data: bytes, kind: type, defect: str) -> Non
     with pytest.raises(CodecError) as raised:
         decode(data, kind)
     assert type(raised.value) is CodecError
+
+
+@pytest.mark.parametrize(
+    ("kind", "old", "new", "reason"),
+    [
+        (core.Verdict, b'"approved":false', b'"approved":"no"', "approved is not a bool"),
+        (core.Verdict, b'"max_net","loss"', b'null,"loss"', "a refusal names no limit"),
+        (core.Valuation, b'"2026-11-27"', b'"20261127"', "'20261127', not a session date"),
+        (core.Valuation, b'"2026-11-27"', b'"2026-02-30"', "'2026-02-30', no real date"),
+        (
+            core.Valuation,
+            b'"value":"-0.0004"',
+            b'"value":"0.0004"',
+            "is not its cash and positions",
+        ),
+    ],
+)
+def test_decode_names_the_defect_in_a_record_whose_fields_are_all_there(
+    kind: type, old: bytes, new: bytes, reason: str
+) -> None:
+    """The bytes hold every field, so the defect alone is what decode refuses."""
+    data = encode(sample(kind))
+    assert old in data
+    with pytest.raises(CodecError, match=reason):
+        decode(data.replace(old, new), kind)
 
 
 def test_decoding_a_snapshot_with_a_bar_under_another_key_is_a_codec_error() -> None:

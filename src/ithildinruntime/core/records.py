@@ -25,6 +25,7 @@ from types import MappingProxyType
 from typing import Annotated, NewType
 
 from .codec import Places, encode
+from .exact import rounded, worth
 from .halt import Halt
 from .names import is_name, is_sha256
 
@@ -52,15 +53,20 @@ __all__ = [
     "FoundOrder",
     "GateInputs",
     "HaltRecord",
+    "HardCaps",
     "Heartbeat",
     "Instrument",
     "InstrumentId",
     "JournalAck",
     "JournalEntry",
     "Lease",
+    "Limit",
+    "LossReading",
     "Mode",
     "Money",
     "OrderIntent",
+    "OrderType",
+    "PastLimit",
     "Plan",
     "PlanDecision",
     "Price",
@@ -73,8 +79,10 @@ __all__ = [
     "Snapshot",
     "SpikeFlag",
     "Statistic",
+    "StopState",
     "StoredBlob",
     "TargetPortfolio",
+    "TimeInForce",
     "Valuation",
     "Verdict",
 ]
@@ -88,9 +96,10 @@ InstrumentId = NewType("InstrumentId", str)
 # - An amount of money carries four, so a sub-cent fee survives.
 # - A rate per share or per dollar and a statistic carry eight, for a hedge
 #   ratio or a fee rate finer than a cent.
+_MONEY_PLACES = 4
 Price = Annotated[Decimal, Places(4)]
 Quantity = Annotated[Decimal, Places(9)]
-Money = Annotated[Decimal, Places(4)]
+Money = Annotated[Decimal, Places(_MONEY_PLACES)]
 Rate = Annotated[Decimal, Places(8)]
 Statistic = Annotated[Decimal, Places(8)]
 
@@ -114,7 +123,13 @@ class _Record:
 
 
 class BarStatus(StrEnum):
-    """What Data says of an instrument's bar. #7 sets the age that makes one stale."""
+    """What Data says of an instrument's bar.
+
+    A bar is stale when it is any session behind the newest one ended by the
+    decision, a written lag of 0 sessions. A decision at close−20 reads the bar
+    of the session before and one at the close reads that session's own, so any
+    lag is a session that should be there and is not.
+    """
 
     FRESH = "fresh"
     MISSING = "missing"
@@ -261,8 +276,8 @@ class Snapshot(_Record):
         snapshot halts, rather than reading as nothing to trade. Every other
         instrument the snapshot holds must be fresh and hold a bar too.
 
-        It judges no age. Data fills `status` under #7's rule, and this only
-        reads it. An empty snapshot, or a caller that names nothing it needs,
+        It judges no age. Data fills `status` under the written lag, and this
+        only reads it. An empty snapshot, or a caller that names nothing it needs,
         halts, because an empty input counts as a missing one (hard limit 3).
         """
         if not isinstance(needed, Mapping) or any(
@@ -371,13 +386,47 @@ class ForecastSet(_Record):
 
 @dataclass(frozen=True)
 class Constraints(_Record):
-    max_order_qty: Quantity
-    max_position: Quantity
+    """One strategy's limits for one decision, as the risk model writes them.
+
+    `max_order_qty` and `max_position` hold one share count per instrument,
+    because the legs of a spread differ in shares. `core.tighten` checks every
+    field before anything reads one.
+    """
+
+    strategy: str
+    max_order_qty: Mapping[InstrumentId, Quantity]
+    max_position: Mapping[InstrumentId, Quantity]
     max_gross: Money
     max_open_orders: int
     max_net: Money
     loss_stop: Money
     moc_cutoff: int
+
+
+@dataclass(frozen=True)
+class HardCaps(_Record):
+    """The limits only the owner writes, by hand, as `core.parse_caps` reads them.
+
+    The net cap is computed from `share`, V and `stress_move` rather than
+    written. `stress_low` and `stress_high` are the sane range of the stress
+    move, both ends allowed, `stress_vintage` the SHA-256 of the vintage it was
+    measured over, `stress_through` that vintage's last session and
+    `stress_max_age_days` the days after it that a decision may still use it.
+    """
+
+    max_order_qty: Mapping[InstrumentId, Quantity]
+    max_position: Mapping[InstrumentId, Quantity]
+    max_gross: Money
+    max_open_orders: int
+    loss_stop: Money
+    moc_cutoff: int
+    share: Statistic
+    stress_move: Statistic
+    stress_low: Statistic
+    stress_high: Statistic
+    stress_vintage: str
+    stress_through: date
+    stress_max_age_days: int
 
 
 @dataclass(frozen=True)
@@ -387,23 +436,59 @@ class TargetPortfolio(_Record):
     shares: Mapping[InstrumentId, Quantity]
 
 
+class OrderType(StrEnum):
+    MARKET = "market"
+    MARKET_ON_CLOSE = "market_on_close"
+
+
+class TimeInForce(StrEnum):
+    """How long an order stands: the day, or the closing auction alone."""
+
+    DAY = "day"
+    CLS = "cls"
+
+
 @dataclass(frozen=True)
 class OrderIntent(_Record):
+    """One order the platform means to send. `qty` is signed, negative for a sale.
+
+    The pairs of `type` and `time_in_force` are a market order for the day and
+    a market-on-close order at `cls`, and the gate halts on any other.
+    """
+
     client_order_id: str
     strategy: str
     instrument: InstrumentId
     qty: Quantity
-    type: str
-    time_in_force: str
+    type: OrderType
+    time_in_force: TimeInForce
 
 
 @dataclass(frozen=True)
 class Book(_Record):
+    """The positions, open orders and cash the journal's replay gives, and what qualifies them.
+
+    - `open_orders_by_strategy` holds each order whose outcome is unknown, at
+      its unfilled remainder.
+    - `in_doubt` names each instrument with a `sending` entry that no later
+      entry settles. That order is open too, and every range and the count of
+      open orders include it there.
+    - `corrected_through` is the number of the newest entry that moved cash or a
+      position by anything but the platform's own fill or a listed broker
+      record, or `None`.
+    - `repositioned_at` is the journal's stamp, `built_at`, of the newest such
+      entry that moved a position, or `None`. A broker's correction or bust of
+      a fill is such an entry.
+    """
+
     positions_by_strategy: Mapping[str, Mapping[InstrumentId, Quantity]]
     open_orders_by_strategy: Mapping[str, tuple[OrderIntent, ...]]
     cash: Money
     platform_realised_pnl: Money
     replayed_through: int
+    in_doubt: tuple[InstrumentId, ...]
+    corrected_through: int | None
+    repositioned_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -468,12 +553,134 @@ class JournalAck(_Record):
     entry_hash: str
 
 
+class Limit(StrEnum):
+    """What a refusal names: one of the seven limits, or one of four states that refuse.
+
+    The seven come in the order the gate reads them.
+    """
+
+    MAX_ORDER_QTY = "max_order_qty"
+    MAX_POSITION = "max_position"
+    MAX_GROSS = "max_gross"
+    MAX_OPEN_ORDERS = "max_open_orders"
+    MAX_NET = "max_net"
+    LOSS_STOP = "loss_stop"
+    MOC_CUTOFF = "moc_cutoff"
+    STOP = "stop"
+    CLOSE_ENTRY = "close_entry"
+    IN_DOUBT = "in_doubt"
+    POSITION = "position"
+
+
+# The four states carry no figure, because nothing was measured against a bound.
+_STATES = frozenset({Limit.STOP, Limit.CLOSE_ENTRY, Limit.IN_DOUBT, Limit.POSITION})
+# The three limits an order that only reduces may go out past, in the order the gate reads them.
+_PASSABLE = (Limit.MAX_POSITION, Limit.MAX_GROSS, Limit.MAX_NET)
+
+
+@dataclass(frozen=True)
+class PastLimit(_Record):
+    """One of `max_position`, `max_gross` and `max_net` that is past with an order counted.
+
+    `value` is the size of the figure at the end of its range further from
+    zero. The gate compares the exact figure, and this one is rounded for the
+    record, so it can equal `bound`.
+    """
+
+    limit: Limit
+    value: Quantity
+    bound: Quantity
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.limit not in _PASSABLE:
+            raise ValueError(f"{self.limit!r} is not max_position, max_gross or max_net")
+        if not self.value.is_finite() or not self.bound.is_finite() or self.value < self.bound:
+            raise ValueError(f"{self.limit} at {self.value} is not past {self.bound}")
+
+
+@dataclass(frozen=True)
+class LossReading(_Record):
+    """The day's loss against its stop, and the session V was valued at.
+
+    The gate compares the exact figures, and `loss` and `bound` are rounded for
+    the record, so a loss past its bound can read as equal to it.
+    """
+
+    loss: Money
+    bound: Money
+    past: bool
+    session: date
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.loss.is_finite() or not self.bound.is_finite():
+            raise ValueError(f"a loss of {self.loss} against a stop of {self.bound} is not finite")
+        if not (self.loss >= self.bound if self.past else self.loss <= self.bound):
+            raise ValueError(
+                f"a loss of {self.loss} against a stop of {self.bound} does not read "
+                f"past as {self.past}"
+            )
+
+
 @dataclass(frozen=True)
 class Verdict(_Record):
+    """What the gate answered for one order, and what it read to answer.
+
+    - `limit` names what refused the order, with the figure and its `bound`
+      where one of the seven limits did.
+    - `missing_term` is `position` for an order that names no strategy, whose
+      position nothing can be measured against.
+    - `adding` is false only for an order `core.classify` says reduces.
+    - `worst_loss` is the strategy's loss under the stress move with the order
+      counted, or `None` where the order names no strategy.
+    - `loss` is the day's loss the check read.
+    - `past` names each of the three limits an order that only reduces may go
+      out past, where the figure with this order counted is over its bound.
+
+    A verdict that contradicts itself raises, which `decode` gives as a
+    `CodecError`.
+    """
+
     approved: bool
-    limit: str | None
+    limit: Limit | None
     value: Quantity | None
+    bound: Quantity | None
     missing_term: str | None
+    adding: bool
+    worst_loss: Money | None
+    loss: LossReading
+    past: tuple[PastLimit, ...]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.limit is not None and not isinstance(self.limit, Limit):
+            raise ValueError(f"limit {self.limit!r} is not a limit")
+        if self.approved and self.limit is not None:
+            raise ValueError(f"an approval names {self.limit}")
+        if not self.approved and self.limit is None:
+            raise ValueError("a refusal names no limit")
+        measured = self.limit is not None and self.limit not in _STATES
+        if (self.value is not None, self.bound is not None) != (measured, measured):
+            raise ValueError(
+                f"a verdict on {self.limit} carries a value of {self.value} and a bound of "
+                f"{self.bound}"
+            )
+        if self.missing_term != ("position" if self.limit == Limit.POSITION else None):
+            raise ValueError(f"a verdict on {self.limit} lacks {self.missing_term!r}")
+        named = [entry.limit for entry in self.past]
+        if named != [limit for limit in _PASSABLE if limit in named]:
+            raise ValueError(f"past names {', '.join(named)}, out of order or twice")
+        if self.limit in _PASSABLE and self.limit not in named:
+            raise ValueError(f"a refusal on {self.limit} leaves it out of past")
+        if self.approved and self.adding and named:
+            raise ValueError(f"an approval that adds is past {', '.join(named)}")
+        if self.limit == Limit.LOSS_STOP and not self.loss.past:
+            raise ValueError("a refusal on loss_stop reads a loss inside the stop")
+        if self.approved and (self.worst_loss is None or not self.worst_loss.is_finite()):
+            raise ValueError(f"an approval carries a worst loss of {self.worst_loss}")
+        if self.approved and self.adding and self.worst_loss <= 0:
+            raise ValueError(f"an approval that adds carries a worst loss of {self.worst_loss}")
 
 
 class CostKind(StrEnum):
@@ -569,20 +776,57 @@ class BrokerAccount(_Record):
 
 @dataclass(frozen=True)
 class Valuation(_Record):
+    """V, the account's value at one session's official closes, and its parts.
+
+    `value` is `cash` plus each position at its mark, rounded to the places
+    `Money` declares, and a valuation that says otherwise raises.
+    """
+
     session: date
     value: Money
     cash: Money
+    positions: Mapping[InstrumentId, Quantity]
     marks: Mapping[InstrumentId, Price]
     replayed_through: int
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if unmarked := sorted(set(self.positions) - set(self.marks)):
+            raise ValueError(f"a valuation holds {unmarked[0]} with no mark")
+        try:
+            whole = worth("the valuation's value", self.cash, self.positions, self.marks)
+            # A change of `Money`'s places would refuse the valuations already
+            # stored, and a release rolled back would refuse the new ones. So a
+            # release that reads both ships before one that writes the new.
+            parts = rounded("the valuation's value", whole, _MONEY_PLACES)
+        except Halt as error:
+            raise ValueError(error.reason) from error
+        if self.value != parts:
+            raise ValueError(
+                f"a valuation of {self.value} is not its cash and positions, which come to {parts}"
+            )
+
+
+class StopState(StrEnum):
+    """What the order path found of the loss stop: no firing, one that stands, or no answer."""
+
+    ABSENT = "absent"
+    FIRED = "fired"
+    UNREADABLE = "unreadable"
 
 
 @dataclass(frozen=True)
 class GateInputs(_Record):
-    share: Statistic
-    stress_move: Statistic
-    vintage_hash: str
-    value: Money
-    stop_state: str
+    """What the order path reads for one check, beside the book, the snapshot and the limits.
+
+    `caps` are the hard caps as they read just before the check, `valuation`
+    the session's V or `None` where none was found, and `close_entry` the
+    journal's entry of a close after a broker's trade.
+    """
+
+    caps: HardCaps
+    valuation: Valuation | None
+    stop: StopState
     close_entry: JournalEntry | None
 
 

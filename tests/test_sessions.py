@@ -38,6 +38,30 @@ def test_a_date_with_no_session_halts() -> None:
     assert raised.value.reason == "the session table holds no session on 2026-11-26"
 
 
+@pytest.mark.parametrize(
+    "at",
+    [
+        None,
+        "2026-11-03T20:40:00Z",
+        date(2026, 11, 3),
+        datetime(2026, 11, 3, 20, 40),
+        datetime(2026, 11, 3, 15, 40, tzinfo=timezone(timedelta(hours=-5))),
+    ],
+)
+def test_a_time_that_is_not_utc_halts_by_name(at: object) -> None:
+    with pytest.raises(Halt, match="the decision is .*, not a UTC time"):
+        core.require_utc("the decision", at)
+    good = datetime(2026, 11, 3, 20, 40, tzinfo=UTC)
+    assert core.require_utc("the decision", good) == good
+
+
+def test_minutes_that_reach_back_past_any_date_halt() -> None:
+    assert to_utc(date(2026, 11, 25), BeforeClose(10**6))
+    for minutes in (10**10, 10**15, 10**30):
+        with pytest.raises(Halt, match="minutes before the close is no time at all"):
+            to_utc(date(2026, 11, 25), BeforeClose(minutes))
+
+
 @pytest.mark.parametrize("day", [date(2005, 12, 30), date(2028, 1, 3)])
 def test_a_date_outside_the_tables_range_halts(day: date) -> None:
     with pytest.raises(Halt) as raised:
@@ -124,6 +148,24 @@ def test_a_decision_belongs_to_the_latest_session_that_opened_by_it(
 def test_a_time_no_session_opened_by_halts(at: datetime, reason: str) -> None:
     with pytest.raises(Halt, match=reason):
         _table(SMALL).opened_by(at)
+
+
+def test_the_session_before_one_skips_a_holiday_and_a_weekend() -> None:
+    assert _table(SMALL).before(date(2026, 11, 27)).day == date(2026, 11, 25)
+    assert _table(SMALL).before(date(2026, 11, 30)).day == date(2026, 11, 27)
+
+
+@pytest.mark.parametrize(
+    ("day", "reason"),
+    [
+        (date(2026, 11, 25), "holds no session before 2026-11-25"),
+        (date(2026, 11, 26), "holds no session on 2026-11-26"),
+        (date(2026, 11, 24), "outside the session table's range"),
+    ],
+)
+def test_a_day_with_no_session_before_it_halts(day: date, reason: str) -> None:
+    with pytest.raises(Halt, match=reason):
+        _table(SMALL).before(day)
 
 
 @pytest.mark.parametrize(

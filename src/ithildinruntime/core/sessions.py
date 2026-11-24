@@ -11,7 +11,7 @@ Each row carries the exchange's offset from UTC on that day, so a time on the
 exchange's clock becomes UTC without the host's time zone database. New York
 changes its clocks at 02:00 on a Sunday, never on a session day.
 
-Four things halt rather than guess, because a missing input stops trading
+Six things halt rather than guess, because a missing input stops trading
 (hard limit 3):
 
 1. A table whose bytes do not match the SHA-256 below.
@@ -19,6 +19,8 @@ Four things halt rather than guess, because a missing input stops trading
 3. A date inside the range that the table holds no session for.
 4. A time before the open of the table's first session, when asked which
    session it belongs to.
+5. The table's first session, when asked which session came before it.
+6. A count of minutes before the close that reaches back past any date.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ __all__ = [
     "SessionTable",
     "load_sessions",
     "parse_sessions",
+    "require_utc",
     "to_utc",
 ]
 
@@ -104,6 +107,14 @@ class SessionTable:
         self.session(first)
         self.session(last)
         return tuple(self.sessions[d] for d in sorted(self.sessions) if first <= d <= last)
+
+    def before(self, day: date) -> Session:
+        """The session before `day`, which must itself be a session."""
+        self.session(day)
+        earlier = [d for d in self.sessions if d < day]
+        if not earlier:
+            raise Halt(f"the session table holds no session before {day.isoformat()}")
+        return self.sessions[max(earlier)]
 
     def opened_by(self, at: datetime) -> Session:
         """The latest session whose open is at or before `at`, which is a UTC time.
@@ -178,6 +189,13 @@ def load_sessions() -> SessionTable:
     return parse_sessions(TABLE.read_bytes(), TABLE_SHA256)
 
 
+def require_utc(what: str, at: object) -> datetime:
+    """`at`, which halts naming `what` unless it is a UTC time."""
+    if not isinstance(at, datetime) or at.utcoffset() != timedelta(0):
+        raise Halt(f"{what} is {at!r}, not a UTC time")
+    return at
+
+
 def to_utc(day: date, when: ScheduleTime, table: SessionTable | None = None) -> datetime:
     """Turn a schedule's time on one session into a UTC instant.
 
@@ -190,7 +208,10 @@ def to_utc(day: date, when: ScheduleTime, table: SessionTable | None = None) -> 
         minutes = when.minutes
         if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0:
             raise ValueError(f"{when!r} counts minutes before the close in a whole number")
-        return session.close - timedelta(minutes=when.minutes)
+        try:
+            return session.close - timedelta(minutes=when.minutes)
+        except OverflowError as error:
+            raise Halt(f"{when.minutes} minutes before the close is no time at all") from error
     if isinstance(when, ExchangeTime):
         local = datetime.combine(day, when.local)
         return (local - session.utc_offset).replace(tzinfo=UTC)
