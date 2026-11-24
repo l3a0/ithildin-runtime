@@ -13,7 +13,7 @@ build, and `Journal` lives in the `journal` package.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -43,6 +43,7 @@ __all__ = [
     "Clock",
     "CostModel",
     "DataSource",
+    "Progress",
     "Queue",
     "RiskGate",
     "RiskModel",
@@ -56,6 +57,29 @@ class DataSource(Protocol):
         ...
 
 
+class Progress(Protocol):
+    """What the receive loop hands a handler: how it reports, and how a wait in it ends on a stop.
+
+    It only reads the stop. A handler that could ask one would end the loop's
+    receives while the loop went on beating as if it worked.
+    """
+
+    def __call__(self) -> None:
+        """Tell the loop the handler is not hung. This never raises for a stop."""
+        ...
+
+    def wait_for_stop(self, timeout: float) -> bool:
+        """Wait up to `timeout` seconds, and return whether the loop was asked to stop.
+
+        Only a clock's wait calls it, and on a true answer it raises `Stopped`.
+        A handler never returns a result or raises `Halt` because of a stop,
+        since the loop stores either as the decision's result.
+        It reports nothing while it waits, so a longer wait calls it in steps
+        shorter than the heartbeat limit and reports between them.
+        """
+        ...
+
+
 class Clock(Protocol):
     def now(self) -> datetime: ...
 
@@ -65,12 +89,15 @@ class Clock(Protocol):
 
     def sync_age(self) -> timedelta: ...
 
-    def wait_until(self, at: datetime, report: Callable[[], None]) -> None:
+    def wait_until(self, at: datetime, report: Progress) -> None:
         """Return once the clock reads `at`, calling `report` while it waits.
 
         A history clock returns at once. A wall clock waits, calling `report`
         on its timer's interval, so the receive loop reads a handler that is
-        waiting for its decision time as one that is not hung.
+        waiting for its decision time as one that is not hung. A stop asked
+        while it waits raises `Stopped` at once, so a handler calls this only
+        before it has written anything. A wait that finds the clock already at
+        `at` returns whether or not a stop was asked.
         """
         ...
 

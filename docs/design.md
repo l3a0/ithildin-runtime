@@ -1584,7 +1584,7 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    stage reads only blobs keyed by its own decision, so its handlers may run
    decisions side by side.
 5. **A handler's failure stays in its item.** A handler that raises an error
-   it does not handle writes a halt as its stage's result for that
+   it does not handle, other than one ending on a stop as item 7 says, writes a halt as its stage's result for that
    decision and alarms, and the loop deletes its message, so the other
    handlers go on. A handler that ends for any reason, an error included,
    first journals its order's doubt if it was sending, then releases its
@@ -1607,9 +1607,12 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
    therefore carries a timeout shorter than that limit.
 7. **Stopping drains the pool.** When the host stops the container, the loop
    stops receiving and lets each handler finish within the unit's stop
-   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way. A message whose handler did not finish returns to the queue,
-   and an execution send stage left unfinished is taken over as [Who takes over a dead send
-   stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
+   timeout, beating while every busy handler reports, or whatever they do while the process holds a halt or a capture S3 has not stored. A loop that ends on a failure drains the same way.
+   1. A stop ends a handler's wait on the clock at once, so a handler waits that way only before it has written anything, as data's does for its decision time. It stores no result, not even a halt, because a stop is no fault in the decision, and any message it holds returns to the queue. A check, on another instance or when this one next starts, starts the decision again where it finds no result stored for it. The price is a decision due within the stop timeout, which this instance could have finished.
+   2. A handler that has written anything, a send stage's claim included, gets the stop timeout. A progress report never ends a handler on a stop, because that could fall between a broker's answer and its journal entry. `tests/test_stop_rule.py` lists the modules that wait on the clock, so a stage that adds a wait meets this rule in review. How a send stage waits after its claim is [#10](https://github.com/l3a0/ithildin-runtime/issues/10)'s.
+   3. A message whose handler did not finish returns to the queue,
+      and an execution send stage left unfinished is taken over as [Who takes over a dead send
+      stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
 8. **The pool's size is configuration.** The deployment's config sets it
    for each component, four, the size that [#81](https://github.com/l3a0/ithildin-runtime/issues/81)'s acceptance tests run, and one for the
    supervisor. In execution, one handler of each instance is kept for the
@@ -4123,6 +4126,7 @@ once rather than re-argued.
 | A named pipe on the VM fed by writers' messages, a socket, or a queue server of the runtime's own, as each environment's queue | A writer's message reaches only the readers it knows on its own host, and a person running `ithildin` off the VM writes to S3 alone, so a pipe or a socket fed by writers misses that write. A queue server of the runtime's own is one more process that can fail. The owner ruled on 2026-11-10 for SQS in shadow, paper and live, fed by EventBridge rules generated from the table in `runtime`, and a named pipe fed by the memory-backed folder in a backtest and in CI, with one contract suite for both |
 | Blobs that may be replaced | A replaced blob loses what it held, so a capture that cannot be recaptured could be overwritten, and a rerun could no longer be compared with the original by its hash. The owner ruled on 2026-11-10 that every write is created once with S3's refuse-if-it-exists condition and its SHA-256, a lease's conditional rewrite aside |
 | One rule for a refused write in every kind of component | A capturing stage, data's snapshot or execution's recover stage, can read a source again and get different bytes, which is no bug, while a deterministic stage that writes different bytes for the same inputs has one. The owner ruled on 2026-11-10 that a deterministic stage halts on a different hash, and a capturing stage treats the stored blob as the one that counts, and stores a later read at its own attempt number, as [Rule 2](#rule-2-two-kinds-of-stage-declared-in-one-place) says |
+| A progress report that raises on a stop, a stop handed to every handler as a third argument, or one stop event handed to the clock and the loop apart | A handler reports after every blob write, journal append and broker call, so a raise there could end a send stage between the broker's answer and its journal entry. A third argument changes every handler for what `report` already reaches. An entry point that hands the clock no event hangs on a stop again. The `Progress` a handler already hands the clock carries the stop instead |
 | A receive loop of each component's own | Each would be one more loop to test in every mode. The one loop in `runtime` runs over the queue port in every mode, so a backtest's named pipe goes through the same loop as SQS. The owner ruled on 2026-11-10 for it |
 | Trusting an event as the change itself | An event can arrive twice, late, out of order or not at all. The owner ruled on 2026-11-10 that each event is a hint, the keys a component reads come from the plan, and anything that touches money re-reads the blob right before it acts |
 | Testing the modules in one process only | It would not exercise the messages, the restarts or the store's rules, which are how the components run on the VM. The owner ruled on 2026-11-10 for CI in three levels, the third running the runtime's containers on the runner |

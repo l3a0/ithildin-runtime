@@ -12,8 +12,10 @@ the mode, because both answer `wait_until(at, report)`.
    Handlers run side by side on a pool, so each thread keeps its own reading.
 2. **The wall clock** waits on its timer, calling `report` at least every
    `interval` seconds while it waits, because the receive loop stops the
-   heartbeat when a busy handler reports too rarely. A test fakes the timer
-   and the sleep.
+   heartbeat when a busy handler reports too rarely. Each step waits on
+   `report.wait_for_stop`, so a stop ends the wait at once with `Stopped`
+   rather than at the decision time, which can be hours away. A test fakes
+   the timer and the `report`.
 
 The machine's offset from reference time and the age of its last sync are
 readings of the clock, under rule 2 of design.md's `### Time comes from one
@@ -26,10 +28,9 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from ithildinruntime.core import Timer
+from ithildinruntime.core import Progress, Stopped, Timer
 
 __all__ = ["HistoryClock", "WallClock"]
 
@@ -60,7 +61,7 @@ class HistoryClock:
     def sync_age(self) -> timedelta:
         raise NotImplementedError(_NO_TIME_CLIENT)
 
-    def wait_until(self, at: datetime, report: Callable[[], None]) -> None:
+    def wait_until(self, at: datetime, report: Progress) -> None:
         _utc(at)
         self._local.at = at
 
@@ -68,17 +69,10 @@ class HistoryClock:
 class WallClock:
     """The clock shadow, paper and live run on, read through a timer a test can fake."""
 
-    def __init__(
-        self,
-        timer: Timer,
-        *,
-        sleep: Callable[[float], None] = time.sleep,
-        interval: float = 5.0,
-    ) -> None:
+    def __init__(self, timer: Timer, *, interval: float = 5.0) -> None:
         if interval <= 0:
             raise ValueError("a wall clock reports on a positive interval")
         self._timer = timer
-        self._sleep = sleep
         self._interval = interval
 
     def now(self) -> datetime:
@@ -93,14 +87,15 @@ class WallClock:
     def sync_age(self) -> timedelta:
         raise NotImplementedError(_NO_TIME_CLIENT)
 
-    def wait_until(self, at: datetime, report: Callable[[], None]) -> None:
+    def wait_until(self, at: datetime, report: Progress) -> None:
         _utc(at)
         while True:
             left = (at - self._timer.now()).total_seconds()
             if left <= 0:
                 return
             report()
-            self._sleep(min(left, self._interval))
+            if report.wait_for_stop(min(left, self._interval)):
+                raise Stopped(f"asked to stop while waiting until {at.isoformat()}")
 
 
 def _utc(at: datetime) -> None:

@@ -588,6 +588,11 @@ type must have, and any class with those methods satisfies it without
 inheriting from it. That is what lets a run swap the simulated broker for the
 paper one without either knowing about the other.
 
+`Progress` is the `report` the receive loop hands each handler. The handler
+calls it to say it is not hung, and a clock's wait hears a stop through it, as
+[How a component learns of a change](../design.md#how-a-component-learns-of-a-change)
+says.
+
 The figure below is a C4 code diagram.
 
 ```mermaid
@@ -604,7 +609,12 @@ classDiagram
         +monotonic() float
         +offset() timedelta
         +sync_age() timedelta
-        +wait_until(datetime, report)
+        +wait_until(datetime, Progress)
+    }
+    class Progress {
+        <<Protocol>>
+        +\_\_call\_\_()
+        +wait_for_stop(timeout) bool
     }
     class Bucket {
         <<Protocol>>
@@ -752,6 +762,7 @@ classDiagram
     OrderPath o-- RiskGate
     OrderPath o-- Broker
     DataSource ..> Snapshot
+    Clock ..> Progress
     Bucket ..> BucketObject
     AlphaModel ..> ForecastSet
     RiskModel ..> Constraints
@@ -1178,7 +1189,7 @@ An arrow means "may import". The diagram draws four rules.
    These live in `core`:
 
    - the types that cross modules, such as `Forecast`, `Constraints` and `TargetPortfolio`;
-   - the `Halt` exception;
+   - the `Halt` exception, and `Stopped`, which ends a handler's wait on the clock when its loop is asked to stop;
    - every `Protocol`, including `RiskGate`;
    - the storage contract every worker uses:
      - the `BlobStore` port, writing a blob S3 refuses to replace, and the refusals every store gives;
