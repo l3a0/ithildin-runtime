@@ -84,8 +84,8 @@ InstrumentId = NewType("InstrumentId", str)
 # - A price carries four, the finest tick US equities quote below a dollar.
 # - A quantity carries nine, because Alpaca takes fractional shares to nine.
 # - An amount of money carries four, so a sub-cent fee survives.
-# - A per-share rate and a statistic carry eight, for a hedge ratio or a fee
-#   rate finer than a cent.
+# - A rate per share or per dollar and a statistic carry eight, for a hedge
+#   ratio or a fee rate finer than a cent.
 Price = Annotated[Decimal, Places(4)]
 Quantity = Annotated[Decimal, Places(9)]
 Money = Annotated[Decimal, Places(4)]
@@ -464,20 +464,21 @@ class CostSchedule(_Record):
 
         `qty` is negative for a sale, and `price` is the one the caller sizes
         the trade at. `kind` picks the charge or the gap alone, and `None` adds
-        both. Zero shares cost zero, at any price.
+        both. Zero shares cost zero, at any price and with any terms, so a leg
+        that does not trade needs none.
 
-        An instrument with no term of a kind asked for halts, because an
-        absent term never reads as a cost of zero (hard limit 3). So does a
-        quantity that is not finite, and a price that is not above zero, since
-        a price of zero would charge nothing per dollar.
+        A trade in an instrument with no term of a kind asked for halts,
+        because an absent term never reads as a cost of zero (hard limit 3).
+        So does a quantity that is not finite, and a price that is not above
+        zero, since a price of zero would charge nothing per dollar.
         """
-        terms = [t for t in self.terms.get(instrument, ()) if kind is None or t.kind == kind]
-        if not terms:
-            raise Halt(f"{instrument} has no {kind or 'cost'} term in the schedule")
         if not qty.is_finite():
             raise Halt(f"{instrument} has a trade of {qty} shares, which has no cost")
         if qty == 0:
             return Decimal(0)
+        terms = [t for t in self.terms.get(instrument, ()) if kind is None or t.kind == kind]
+        if not terms:
+            raise Halt(f"{instrument} has no {kind or 'cost'} term in the schedule")
         if not price.is_finite() or price <= 0:
             raise Halt(f"{instrument} has a trade priced at {price}, which has no cost")
         shares = abs(qty)

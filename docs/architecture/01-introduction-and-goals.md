@@ -149,8 +149,8 @@ them.
 4. The replication charges no transaction cost, so this strategy's
    configuration, `chan_bollinger.toml`, writes every cost term as zero, and
    test 1 runs the cost model on that file. A strategy's file is the same in
-   every environment, so paper trading charges a flat or linear cost only
-   through a file of its own, with terms above zero.
+   every environment, so paper estimates a cost of zero too until the strategy
+   it runs has terms above zero.
 
 Every quantitative-trading result is exploratory, meaning found by looking at
 the data, and this one is too. Test 1 uses it as a known answer for checking

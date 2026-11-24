@@ -18,8 +18,8 @@ Its handler does three things, in order.
 3. **It stores the schedule, then returns the result**, which the loop stores
    last.
 
-The entry point hands in the names of data's stage and of its snapshot,
-because `cost` imports only `core`.
+The entry point hands in the stage's name and kind, as the stage table
+declares them, and the names of data's stage and of its snapshot.
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ class CostStage:
         storage: Storage,
         *,
         stage: str,
+        kind: StageKind,
         data_stage: str,
         snapshot: str,
         deployment: str,
@@ -79,6 +80,7 @@ class CostStage:
         self._model = model
         self._storage = storage
         self._stage = stage
+        self._kind = StageKind(kind)
         self._data_stage = data_stage
         self._snapshot = snapshot
         self._deployment = deployment
@@ -114,7 +116,7 @@ class CostStage:
         schedule = self._model.schedule(file.entries[0])
         header = self._header(at, found, listed[0])
         stored = self._storage.put(
-            StageKind.DETERMINISTIC,
+            self._kind,
             output_key(self._deployment, self._run, at, self._stage, SCHEDULE),
             encode_output(CostSchedule, OutputFile(header, (schedule,), False)),
         )
@@ -127,7 +129,7 @@ class CostStage:
             deployment=self._deployment,
             run=self._run,
             stage=self._stage,
-            kind=str(StageKind.DETERMINISTIC),
+            kind=str(self._kind),
             decision_at=at,
             inputs={ref.key: ref.sha256 for ref in read},
             release=self._release,

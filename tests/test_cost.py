@@ -7,6 +7,7 @@ beside each figure they give.
 from __future__ import annotations
 
 import subprocess
+import sys
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -237,6 +238,8 @@ def test_a_sale_only_term_charges_a_buy_nothing() -> None:
 def test_zero_shares_cost_zero_at_any_price(kind, price) -> None:
     assert schedule().estimate(USO, d("0"), d(price), kind) == 0
     assert schedule().estimate(GLD, d("-0.0"), d(price), kind) == 0
+    # A leg that does not trade costs zero even where no term was written for it.
+    assert CostSchedule(terms={}).estimate(USO, d("0"), d(price), kind) == 0
 
 
 @pytest.mark.parametrize(
@@ -249,7 +252,7 @@ def test_zero_shares_cost_zero_at_any_price(kind, price) -> None:
         ("charge alone", CostKind.GAP),
     ],
 )
-@pytest.mark.parametrize("qty", ["10", "-10", "0"])
+@pytest.mark.parametrize("qty", ["10", "-10", "0.000000001"])
 def test_an_instrument_with_no_term_asked_for_halts_rather_than_costing_nothing(
     terms, kind, qty
 ) -> None:
@@ -259,7 +262,12 @@ def test_an_instrument_with_no_term_asked_for_halts_rather_than_costing_nothing(
         CostSchedule(terms=terms).estimate(USO, d(qty), d("75.50"), kind)
 
 
-@pytest.mark.parametrize("price", ["0", "-0.01", "NaN", "Infinity"])
+def test_the_smallest_price_above_zero_is_charged() -> None:
+    # 1.00 + 0.0035 × 10 + 0.01 × 10 + 0.0002 × 10 × 0.0001.
+    assert schedule().estimate(USO, d("10"), d("0.0001")) == d("1.1350002")
+
+
+@pytest.mark.parametrize("price", ["0", "-0.0001", "NaN", "Infinity"])
 def test_a_price_not_above_zero_halts(price) -> None:
     with pytest.raises(Halt, match=f"USO has a trade priced at {price}"):
         schedule().estimate(USO, d("10"), d(price))
@@ -341,10 +349,17 @@ def test_the_form_the_refusals_below_break_is_accepted() -> None:
     assert set(schedule(uso(TERM)).terms) == {USO}
 
 
+def test_a_figure_at_the_places_its_field_declares_is_stored_as_written() -> None:
+    finest = {**TERM, "fixed": "0.0001", "per_share": "0.00000001", "per_dollar": "0.00000001"}
+    term = schedule(uso(finest)).terms[USO][0]
+    assert str(term.fixed) == "0.0001"
+    assert term.per_share == term.per_dollar == d("0.00000001")
+
+
 BAD_TERMS = {
     **{
-        f"a-negative-{f}": ({**TERM, f: "-0.01"}, f"term 1 has {f} = -0.01, which is negative")
-        for f in ("fixed", "per_share", "per_dollar")
+        f"a-negative-{f}": ({**TERM, f: step}, f"term 1 has {f} = {Decimal(step)}, which is neg")
+        for f, step in (("fixed", "-0.0001"), ("per_share", "-1e-8"), ("per_dollar", "-1e-8"))
     },
     **{
         f"no-{f}": ({k: v for k, v in TERM.items() if k != f}, f"term 1 states no {f}")
@@ -360,6 +375,19 @@ BAD_TERMS = {
         {**TERM, "source": '"placeholder: "'},
         "has the source 'placeholder: '",
     ),
+    **{
+        f"a-placeholder-written-{n}": ({**TERM, "source": f'"{text}"'}, f"has the source '{text}'")
+        for n, text in enumerate(
+            (
+                "placeholder",
+                "placeholder:",
+                "Placeholder:",
+                "placeholder : x",
+                "PLACEHOLDER: x",
+                " placeholder",
+            )
+        )
+    },
     "a-source-that-is-no-text": ({**TERM, "source": "7"}, "has the source 7"),
     "a-figure-that-is-text": ({**TERM, "fixed": '"0"'}, "has fixed = '0', which is not a number"),
     "a-figure-that-is-a-bool": (
@@ -389,14 +417,16 @@ def test_a_term_the_form_refuses_halts_naming_the_strategy_and_the_instrument(ca
     assert reason in caught.value.reason
 
 
+NO_SECTION = "has no [cost] section, or an empty one, so it states no cost for {}"
 BAD_SECTIONS = {
-    "no-section": (b'instruments = ["USO"]\n', "no [cost] section"),
-    "an-empty-section": (b'instruments = ["USO"]\n[cost]\n', "no [cost] section"),
-    "a-blank-instrument": (b'instruments = ["USO"]\n[cost.USO]\n', "no [cost] section"),
+    "no-section": (b'instruments = ["USO"]\n', NO_SECTION.format("USO")),
+    "no-section-for-two": (b'instruments = ["USO", "GLD"]\n', NO_SECTION.format("USO, GLD")),
+    "an-empty-section": (b'instruments = ["USO"]\n[cost]\n', NO_SECTION.format("USO")),
+    "a-blank-instrument": (b'instruments = ["USO"]\n[cost.USO]\n', NO_SECTION.format("USO")),
     "an-empty-list": (b'instruments = ["USO"]\n[cost]\nUSO = []\n', "for USO, which holds no list"),
     "a-table-in-place-of-a-list": (
         b'instruments = ["USO"]\n[cost.USO]\nkind = "charge"\n',
-        "for USO, which holds no list",
+        "for USO, which holds no list of terms. Each term starts with [[cost.USO]]",
     ),
     "a-term-that-is-no-table": (
         b'instruments = ["USO"]\n[cost]\nUSO = ["charge"]\n',
@@ -410,16 +440,24 @@ BAD_SECTIONS = {
         uso(TERM, extra="[[cost.GLD]]\nfixed = 0\n"),
         "for GLD, which the strategy does not trade",
     ),
-    "no-charge": (uso(), "for USO, which states no charge term"),
+    "no-charge": (uso(), "for USO, which states no charge term for both sides"),
     "no-gap": (
         uso(TERM).replace(b'"gap"', b'"charge"'),
-        "for USO, which states no gap term",
+        "for USO, which states no gap term for both sides",
+    ),
+    "a-charge-on-sales-alone": (
+        uso({**TERM, "side": '"sell"'}),
+        "for USO, which states no charge term for both sides",
+    ),
+    "both-kinds-on-sales-alone": (
+        uso({**TERM, "side": '"sell"'}).replace(b'"both"', b'"sell"'),
+        "for USO, which states no charge and no gap term for both sides",
     ),
 }
 
 
 @pytest.mark.parametrize("case", BAD_SECTIONS)
-def test_a_missing_figure_halts_naming_the_strategy(case) -> None:
+def test_a_missing_figure_halts_naming_the_strategy_and_the_instrument(case) -> None:
     data, reason = BAD_SECTIONS[case]
     with pytest.raises(Halt) as caught:
         schedule(data, name="reversal")
@@ -591,6 +629,15 @@ def test_a_second_run_stores_the_same_bytes_and_the_same_result(tmp_path) -> Non
     assert blobs(tmp_path) == held
 
 
+def test_a_second_run_that_writes_other_bytes_halts_as_not_deterministic(tmp_path) -> None:
+    storage = store(tmp_path)
+    write_data(storage)
+    key = output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule")
+    storage.put(StageKind.DETERMINISTIC, key, b"{}")
+    with pytest.raises(Halt, match="so the step is not deterministic"):
+        run(handler(storage))
+
+
 def test_the_stage_reports_after_its_read_and_after_its_write(tmp_path) -> None:
     storage = store(tmp_path)
     write_data(storage)
@@ -683,6 +730,15 @@ def test_the_entry_point_gives_each_strategy_a_deterministic_row_that_reads_data
     assert heard.key == f"runs/{DEPLOYMENT}/*/data/result.json"
 
 
+def test_the_cost_worker_loads_neither_marketlake_nor_pandas() -> None:
+    code = (
+        "import sys, ithildinruntime.runtime.cost_worker; "
+        "print(sorted({'lake', 'pandas', 'pyarrow', 'numpy'} & set(sys.modules)))"
+    )
+    ran = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert ran.stdout.strip() == "[]"
+
+
 def test_the_loop_stores_each_strategys_schedule_and_one_bad_files_halt(tmp_path) -> None:
     bad = parse_strategy("other", b'instruments = ["SPY"]\n')
     table = Table(stages=(DATA_ROW, *cost_rows([CHAN, bad])), strategies=(CHAN, bad))
@@ -733,6 +789,7 @@ def test_the_loop_stores_each_strategys_schedule_and_one_bad_files_halt(tmp_path
     assert chan.halt is None and len(chan.outputs) == 1
     assert other.halt is not None and other.outputs == ()
     assert "strategy other's configuration other.toml has no [cost] section" in other.halt.reason
+    assert other.halt.reason.endswith("so it states no cost for SPY")
     assert dict(other.header.config_hashes) == {"other": bad.config_hash}
     read = storage.read_output(keys["chan"], chan, chan.outputs[0], AT, CostSchedule)
     assert read.entries == (schedule(),)

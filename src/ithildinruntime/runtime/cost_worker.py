@@ -3,16 +3,22 @@
 Each strategy has a cost stage of its own, which reads data's result, so the
 one worker runs a stage per strategy the table declares. It builds no adapter
 of its own, because the cost stage reads nothing but stored blobs, so the same
-code runs in every mode.
+code runs in every mode. It imports no `data`, whose reader would load
+marketlake and pandas into this process.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from ithildinruntime.core import StageKind, Storage, StrategyConfig
+from ithildinruntime.core import (
+    DATA_STAGE,
+    SNAPSHOT_OUTPUT,
+    StageKind,
+    Storage,
+    StrategyConfig,
+)
 from ithildinruntime.cost import COMPONENT, CostStage, LinearCostModel
-from ithildinruntime.data import SNAPSHOT, STAGE
 
 from .loop import Stage, Table
 
@@ -25,7 +31,7 @@ def cost_rows(strategies: Iterable[StrategyConfig]) -> tuple[Stage, ...]:
         Stage(
             f"{COMPONENT}/{strategy.name}",
             StageKind.DETERMINISTIC,
-            inputs=(STAGE,),
+            inputs=(DATA_STAGE,),
             strategy=strategy.name,
         )
         for strategy in strategies
@@ -45,8 +51,9 @@ def cost_handlers(
             LinearCostModel(table.strategy(stage.strategy)),
             storage,
             stage=stage.name,
-            data_stage=STAGE,
-            snapshot=SNAPSHOT,
+            kind=stage.kind,
+            data_stage=DATA_STAGE,
+            snapshot=SNAPSHOT_OUTPUT,
             deployment=deployment,
             run=run,
             release=release,

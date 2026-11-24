@@ -55,6 +55,8 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
+    DATA_STAGE,
+    SNAPSHOT_OUTPUT,
     BlobHeader,
     BlobRef,
     Clock,
@@ -76,8 +78,8 @@ from .source import LakeSource, judge
 
 __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 
-STAGE = "data"
-SNAPSHOT = "snapshot"
+STAGE = DATA_STAGE
+SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
 _FORMAT = 1
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)

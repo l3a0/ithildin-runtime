@@ -15,23 +15,29 @@ the gap from the quote's midpoint. `side` is `both` or `sell`. `fixed` is
 charged per trade, `per_share` per share and `per_dollar` per dollar traded.
 `source` is a dated published text, or `placeholder:` and a reason.
 
-Every figure is written, a zero included, so nothing absent reads as free
-(hard limit 3). The model halts, naming the strategy and the instrument, on
-each of these.
+Every figure is written, a zero included, so a cost nobody wrote never reads
+as free (hard limit 3). The model halts, naming the strategy and the
+instrument, on each of these.
 
-1. A strategy with no cost section, or an empty one.
-2. An instrument the strategy trades with no terms, or with no term of one
-   kind.
-3. A section entry for an instrument the strategy does not trade.
+1. A strategy with no cost section, or an empty one, which names every
+   instrument the strategy trades.
+2. An instrument the strategy trades with no terms, or with no `both` term of
+   one kind. A buy with only a sale's fee written would otherwise cost zero.
+3. A section entry for an instrument the strategy does not trade, which is
+   usually a name mistyped or left behind.
 4. A term that leaves out a field or holds one this form does not have.
-5. A figure that is negative, is not a number, or carries more places than
-   its field declares, which would otherwise be rounded or stored unrounded.
+5. A figure that is negative, is no number, or is written with more places
+   than its field declares, trailing zeros included.
 6. A `kind` or a `side` this form does not have.
-7. A `source` that is empty, or a placeholder with no reason.
+7. A `source` that is empty, or that starts with the word placeholder in any
+   case and is not `placeholder:` and a reason.
 
-The check runs at each decision, inside the stage, so a bad section halts the
-cost stage with its reason stored. `tests/test_cost.py` reads every tracked
-strategy file first, so a bad one fails CI before any run.
+The check runs at each decision, inside the stage, so a section it refuses
+halts the cost stage with its reason stored. `core`'s strategy reader refuses
+some forms first, such as a blank `[[cost.USO]]` or a figure that is not
+finite, and those fail the load of every strategy named with it.
+`tests/test_cost.py` reads every tracked strategy file both ways, so a bad one
+fails CI before any run.
 """
 
 from __future__ import annotations
@@ -69,7 +75,11 @@ class LinearCostModel:
     def schedule(self, snapshot: Snapshot) -> CostSchedule:
         """The strategy's terms. It reads no price: `estimate` takes the caller's."""
         strategy = self._strategy
-        section = strategy.section(SECTION)
+        try:
+            section = strategy.section(SECTION)
+        except Halt as halt:
+            absent = ", ".join(strategy.instruments)
+            raise Halt(f"{halt.reason}, so it states no cost for {absent}") from None
         if extra := sorted(set(section) - set(strategy.instruments)):
             raise self._refuse(", ".join(extra), "which the strategy does not trade")
         return CostSchedule(terms={i: self._terms(i, section.get(i)) for i in strategy.instruments})
@@ -87,13 +97,21 @@ class LinearCostModel:
                 f"[{SECTION}] terms for {instrument}"
             )
         if not isinstance(listed, tuple) or not listed:
-            raise self._refuse(instrument, "which holds no list of terms")
+            raise self._refuse(
+                instrument,
+                f"which holds no list of terms. Each term starts with [[{SECTION}.{instrument}]]",
+            )
         terms = tuple(
             _term(entry, lambda what, n=n: self._refuse(instrument, f"whose term {n} {what}"))
             for n, entry in enumerate(listed, start=1)
         )
-        if absent := [k for k in CostKind if k not in {t.kind for t in terms}]:
-            raise self._refuse(instrument, f"which states no {' and no '.join(absent)} term")
+        stated = {t.kind for t in terms if t.side == CostSide.BOTH}
+        if absent := [k for k in CostKind if k not in stated]:
+            raise self._refuse(
+                instrument,
+                f"which states no {' and no '.join(absent)} term for both sides. "
+                "Write one whose figures are zero where there is no such cost",
+            )
         return terms
 
 
@@ -105,7 +123,7 @@ def _term(entry: object, refuse: Callable[[str], Halt]) -> CostTerm:
     if unknown := sorted(set(entry) - _FIELDS):
         raise refuse(f"holds {', '.join(unknown)}, which no term has")
     source = entry["source"]
-    if not isinstance(source, str) or not source.strip().removeprefix(_PLACEHOLDER).strip():
+    if not isinstance(source, str) or not _named(source.strip()):
         raise refuse(f"has the source {source!r}, which names no text and no reason")
     return CostTerm(
         kind=_choice(CostKind, "kind", entry, refuse),
@@ -115,6 +133,13 @@ def _term(entry: object, refuse: Callable[[str], Halt]) -> CostTerm:
         per_dollar=_figure("per_dollar", entry, refuse),
         source=source,
     )
+
+
+def _named(source: str) -> bool:
+    """Whether a source names a published text, or is `placeholder:` and a reason."""
+    if not source.casefold().startswith("placeholder"):
+        return bool(source)
+    return source.startswith(_PLACEHOLDER) and bool(source.removeprefix(_PLACEHOLDER).strip())
 
 
 def _choice[E: (CostKind, CostSide)](
