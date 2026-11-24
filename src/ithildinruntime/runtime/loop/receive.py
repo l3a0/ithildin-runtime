@@ -206,6 +206,9 @@ class _Running:
     # Whether the item ended with no result known to be stored or held, on a
     # stop or on an error in `_work` itself, so its messages go back.
     unfinished: bool = False
+    # What the item ended with other than a stored result, for the alarm of an
+    # item that could not be finished.
+    ended: str | None = None
     extending: bool = False
 
 
@@ -516,9 +519,10 @@ class ReceiveLoop:
                 "kills it first, which loses them. A capture S3 keeps answering with an "
                 "error is never dropped, so it holds the process until a person acts"
             )
-        except Exception:
-            # Sent again on the next try, since this alarm alone tells a
-            # holding process from a healthy one.
+        except BaseException:
+            # Whatever the channel raised, what is held is still tried. Sent
+            # again on the next try, since this alarm alone tells a holding
+            # process from a healthy one.
             return False
         return True
 
@@ -538,6 +542,9 @@ class ReceiveLoop:
                 # and no retry changes its answer, so the halt is not held.
                 # Its reason goes out in the alarm.
                 self._drop_halt(key, halt, f"could not be stored: {type(error).__name__}: {error}")
+                continue
+            except BaseException:
+                # No answer from S3 either, so it stays held, and the next is tried.
                 continue
             if stored != halt:
                 theirs = stored.halt.reason if stored.halt is not None else "an output"
@@ -913,10 +920,10 @@ class ReceiveLoop:
                 f"could not finish stage {running.item.stage} at decision "
                 f"{decision_part(running.item.decision_at)}: {_said(error)}"
             )
-            if error.__context__ is not None:
-                # What the item ended with, such as the halt that could not be
-                # built, whose reason no result holds.
-                what += f". The item had ended with {_said(error.__context__)}"
+            if running.ended is not None:
+                # Such as the reason of a halt that could not be built, which
+                # no result holds.
+                what += f". The item had ended with {running.ended}"
             self._give_up(what, error)
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
@@ -949,26 +956,29 @@ class ReceiveLoop:
             self._check_result(item, returned)
             result = returned
         except Halt as halt:
+            running.ended = _said(halt)
             result = self._halt_result(stage, item, halt)
         except Stopped as stopped:
             if self._stop_asked.is_set():
                 running.unfinished = True
                 return
-            error = f"Stopped, and no stop was asked: {stopped}"
-            self._store_unhandled(stage, item, error, returned)
+            running.ended = f"Stopped, and no stop was asked: {stopped}"
+            self._store_unhandled(stage, running, returned)
             return
         except BaseException as error:
             # `SystemExit` and `KeyboardInterrupt` too. The pool keeps either in
             # its future, so one raised here would end nothing.
-            self._store_unhandled(stage, item, _said(error), returned)
+            running.ended = _said(error)
+            self._store_unhandled(stage, running, returned)
             return
-        self._store(item, result)
+        self._store(running, result)
 
-    def _store_unhandled(self, stage: Stage, item: Item, error: str, returned: object) -> None:
+    def _store_unhandled(self, stage: Stage, running: _Running, returned: object) -> None:
         """Alarm on an error the handler did not handle, and store it as the item's halt."""
+        item = running.item
         reason = (
             f"{self._worker} failed in stage {item.stage} at decision "
-            f"{decision_part(item.decision_at)} with an error it did not handle: {error}"
+            f"{decision_part(item.decision_at)} with an error it did not handle: {running.ended}"
         )
         # The alarm goes first, so the reason is sent even when its halt
         # cannot be built or is never stored.
@@ -979,7 +989,7 @@ class ReceiveLoop:
             # raises may keep the halt from being stored.
             pass
         result = self._halt_result(stage, item, Halt(reason), self._own_outputs(item, returned))
-        self._store(item, result)
+        self._store(running, result)
 
     def _own_outputs(self, item: Item, returned: object) -> tuple:
         """The outputs a rejected result names under the item's own prefix, which a halt keeps."""
@@ -989,9 +999,10 @@ class ReceiveLoop:
             return ()
         if not isinstance(returned.outputs, (tuple, list)):
             return ()
-        refs = (ref for ref in returned.outputs if isinstance(ref, BlobRef))
+        refs = [ref for ref in returned.outputs if isinstance(ref, BlobRef)]
+        named = [r for r in refs if isinstance(r.key, str) and isinstance(r.sha256, str)]
         prefix = self._key(item).removesuffix("result.json")
-        return tuple(ref for ref in refs if ref.key.startswith(prefix))
+        return tuple(ref for ref in named if ref.key.startswith(prefix))
 
     def _check_strategies(self, item: Item) -> None:
         """Halt a stage at a decision whose strategies are not exactly the table's.
@@ -1033,7 +1044,8 @@ class ReceiveLoop:
                 f"{_hashes(expected)}"
             )
 
-    def _store(self, item: Item, result: DecisionResult) -> None:
+    def _store(self, running: _Running, result: DecisionResult) -> None:
+        item = running.item
         stage = self._table.stage(item.stage)
         try:
             # A key that already holds another result keeps it, such as the
@@ -1045,6 +1057,7 @@ class ReceiveLoop:
             if result.halt is not None:
                 self._keep_halt(item, result)
                 raise _Fatal(f"the halt for {self._key(item)} was not stored") from error
+            running.ended = f"a result that could not be stored: {_said(error)}"
             halt = Halt(
                 f"{self._worker} could not store the result of stage {item.stage} at decision "
                 f"{decision_part(item.decision_at)}: {_said(error)}"

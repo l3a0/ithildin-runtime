@@ -399,7 +399,7 @@ class Storage:
                     self._held.remove(held)
                 stored.append(failed.stored)
                 continue
-            except Exception:
+            except BaseException:
                 # A capture S3 still will not take stays held and named by
                 # every halt, whatever the error, so one cannot block the rest.
                 continue

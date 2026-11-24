@@ -870,12 +870,16 @@ class Refusing:
         self.creates = set(creates)
         self.down = True
         self.refused = 0
+        # What a refusal raises, or `None` for a store that does not answer.
+        self.error: BaseException | None = None
 
     def _refuse(self, key: str, names: set[str]) -> None:
         from ithildinruntime.core import StoreUnavailable
 
         if self.down and any(key.endswith(n) for n in names):
             self.refused += 1
+            if self.error is not None:
+                raise self.error
             raise StoreUnavailable(key, "503 SlowDown: the endpoint is blocked")
 
     def create(self, key, data, sha256):
