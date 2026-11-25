@@ -58,6 +58,7 @@ from ithildinruntime.core import (
     GateInputs,
     Halt,
     HardCaps,
+    InstrumentId,
     JournalAck,
     Limit,
     LossReading,
@@ -70,16 +71,19 @@ from ithildinruntime.core import (
     Outcome,
     PositionsRead,
     RiskGate,
+    Snapshot,
     StopState,
     Storage,
     StoreError,
     caps_key,
     encode,
     error_name,
+    held,
     journal_entry_key,
     load_sessions,
     parse_caps,
     read_order_id,
+    readable_until,
     sha256_of,
     tighten,
     to_utc,
@@ -707,8 +711,10 @@ class OrderPath:
             view = self._view(last.at)
             state, error = shared.controls.stop(shared.patience.tries(self._report, last.at))
             handed = GateInputs(caps=caps, valuation=inputs.valuation, stop=state, close_entry=None)
-            now = shared.clock.now()
-            verdict = shared.gate.check(order, view.book, inputs.snapshot, limits, handed, now)
+            now, book = shared.clock.now(), view.book
+            verdict = shared.gate.check(order, book, inputs.snapshot, limits, handed, now)
+            # The gate read each quote's age once, and the call comes after two appends.
+            last = min([last, *_aged(inputs.snapshot, {*held(book), order.instrument})])
         except Halt as halt:
             raise self._ended(name, halt.reason) from None
         except Exception as error:
@@ -1110,12 +1116,22 @@ def _last(planned: _Planned, minutes: int) -> _Last:
     """A market-on-close order's cutoff, and any other order's session close.
 
     The gate takes an order up to the close of its decision's session, and a
-    broker may hold one sent after it for the next session's open.
+    broker may hold one sent after it for the next session's open. A quote the
+    gate marked at ends it sooner, as `_aged` says.
     """
     session = load_sessions().opened_by(planned.entry.decision_at)
     if planned.order.type == OrderType.MARKET_ON_CLOSE:
         return _Last(to_utc(session.day, BeforeClose(minutes)), "its market-on-close cutoff")
     return _Last(session.close, "its session's close")
+
+
+def _aged(snapshot: Snapshot, marked: set[InstrumentId]) -> list[_Last]:
+    """When each quote the gate marked an instrument at is past its written maximum age."""
+    return [
+        _Last(readable_until(quote), f"when the quote of {name} reaches its maximum age")
+        for name, quote in snapshot.quotes.items()
+        if name in marked
+    ]
 
 
 def _utc(at: object) -> datetime | None:

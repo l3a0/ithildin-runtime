@@ -20,7 +20,7 @@ here raise nothing but `Halt`.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from .codec import INT_LIMIT
@@ -30,7 +30,14 @@ from .names import is_unstated
 from .records import InstrumentId, Quote, Snapshot
 from .sessions import Session, load_sessions, require_utc
 
-__all__ = ["CLOCK_BOUND", "maximum_faults", "midpoint", "quote_faults", "require_quote"]
+__all__ = [
+    "CLOCK_BOUND",
+    "maximum_faults",
+    "midpoint",
+    "quote_faults",
+    "readable_until",
+    "require_quote",
+]
 
 CLOCK_BOUND = timedelta(seconds=1)
 
@@ -83,6 +90,15 @@ def midpoint(quote: Quote) -> Decimal:
         f"{who} midpoint", (finite(f"{who} bid", quote.bid), finite(f"{who} ask", quote.ask))
     )
     return exact_product(f"{who} midpoint", total, _HALF)
+
+
+def readable_until(quote: Quote) -> datetime:
+    """The last moment a quote with no fault can be read, at its written maximum age."""
+    older = min(quote.bid_at, quote.ask_at)  # type: ignore[type-var]
+    try:
+        return older - CLOCK_BOUND + timedelta(seconds=quote.max_age)  # type: ignore[operator,arg-type]
+    except OverflowError:
+        return datetime.max.replace(tzinfo=UTC)
 
 
 class _Judge:

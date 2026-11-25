@@ -2282,6 +2282,7 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
     account.settle(world.report)
     assert world.state() is OrderState.ABANDONED
     assert account.unstored() == () and world.submits == 0
+    assert [e.built_at for e in world.reader().read()][-1] == NOW
     if then in ("store", "channel"):
         assert any("which was not sent" in alarm for alarm in world.alarms.sent)
 
@@ -2299,8 +2300,11 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException, heals: boo
             world.clock.now = plain  # type: ignore[method-assign]
         raise error
 
+    later = NOW + timedelta(seconds=3)
+
     def after(number: int, op: str, key: str) -> None:
         if number == BEFORE_SUBMIT:
+            world.clock.at = later
             world.clock.now = broken  # type: ignore[method-assign]
 
     world.store.after = after
@@ -2311,7 +2315,8 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException, heals: boo
     assert world.state() is left and world.submits == 0
     assert account.unstored() == ()
     # An `abandoned` written with no clock takes the time its `sending` was built.
-    assert {e.built_at for e in world.reader().read()} <= {AT, NOW}
+    took = later if heals and left is OrderState.ABANDONED else NOW
+    assert [e.built_at for e in world.reader().read()][-1] == took
 
 
 @pytest.mark.parametrize("create", range(4))

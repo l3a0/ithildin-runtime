@@ -612,7 +612,7 @@ A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an or
 | 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
 | 6 | The loss stop | None has fired, and its state can be read |
 | 7 | The hard caps | Their limits are the ones the gate was handed |
-| 8 | The order's last moment, its market-on-close cutoff or its session's close | It has not passed |
+| 8 | The order's last moment: its market-on-close cutoff or its session's close, or the moment a quote the gate marked reaches its written maximum age where that is sooner | It has not passed |
 
 Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 

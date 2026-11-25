@@ -379,7 +379,10 @@ quote as fresh. Schwab's clock and the capture host's have no published bound.
 The age is measured at each read. Data, risk and portfolio construction read no
 clock and pass the decision time, so they answer alike in a backtest and live. The
 risk gate passes its own `now`, so a quote that was good at the decision and has
-aged past its maximum when its order is checked halts that order.
+aged past its maximum when its order is checked halts that order. The gate's answer
+comes before two journal entries and the checks right before the broker call, so the
+order path also ends an order's last moment where a quote the gate marked reaches its
+maximum.
 
 An order has the maximum less the quote's age at the decision and less the clock
 bound. At a made-up maximum of 90 seconds, a quote 59 seconds old at the decision

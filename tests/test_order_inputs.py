@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 
 from ithildinruntime.core import (
+    CLOCK_BOUND,
     CONSTRAINTS_OUTPUT,
     DATA_STAGE,
     RECOVER_STAGE,
@@ -73,7 +74,7 @@ from tests.support.order_world import (
     last,
     order,
 )
-from tests.support.quotes import read_at
+from tests.support.quotes import MAX_AGE, read_at
 
 ID = order(1, 2).client_order_id
 DAY = timedelta(days=1)
@@ -254,7 +255,8 @@ def test_5_a_quote_is_judged_at_the_time_of_the_check_and_not_of_the_decision(la
     world = World(snapshot=gates.quoted(sides, at=AT))
 
     def after(number: int, op: str, key: str) -> None:
-        if key == entry_key(ACCOUNT, 4):
+        # The last read ahead of the gate, and the first of the loss stop.
+        if key == loss_stop_key(ACCOUNT) and "verdict" not in world.kinds():
             world.clock.at += timedelta(seconds=late)
 
     world.store.after = after
@@ -263,6 +265,74 @@ def test_5_a_quote_is_judged_at_the_time_of_the_check_and_not_of_the_decision(la
         assert world.kinds() == ["intent", "abandoned"]
     else:
         assert world.send() is OrderState.ACKNOWLEDGED and world.rebuilt() == 1
+
+
+EXPIRES = AT - timedelta(seconds=59) + timedelta(seconds=MAX_AGE) - CLOCK_BOUND
+TICK = timedelta(microseconds=1)
+QUOTED = {gates.GLD: (1, 1), gates.USO: (1, 1)}
+
+
+@pytest.mark.parametrize("past", [-TICK, 0 * TICK, TICK])
+@pytest.mark.parametrize("during", ["verdict", "sending", "checks"])
+@pytest.mark.parametrize("name", ["ordered", "held"])
+def test_5_a_quote_that_ages_after_the_gate_stops_the_order(
+    name: str, during: str, past: timedelta
+) -> None:
+    """Each wait after the gate's answer counts, for the ordered instrument and for a held one."""
+    old = {"ordered": gates.GLD, "held": gates.USO}[name]
+    made = gates.quoted(QUOTED, at=AT)
+    other = gates.USO if old == gates.GLD else gates.GLD
+    fresh = replace(made.quotes[other], max_age=MAX_AGE * 10)
+    world = World(
+        orders=(order(1, 2), order(2, 2, gates.USO)),
+        snapshot=replace(made, quotes={**made.quotes, other: fresh}),
+    )
+    account = world.account()
+    if name == "held":
+        assert world.send(2, account) is OrderState.ACKNOWLEDGED
+    entry_of = {"verdict": "verdict", "sending": "sending", "checks": "sending"}[during]
+    moved: list[int] = []
+
+    def after(number: int, op: str, key: str) -> None:
+        if moved or world.kinds()[-1:] != [entry_of]:
+            return
+        if key == caps_key(ACCOUNT) or during != "checks":
+            moved.append(number)
+            world.clock.at = EXPIRES + past
+
+    world.store.after = after
+    if past > 0 * TICK:
+        said = halted if name == "ordered" else _stopped_again
+        said(
+            world,
+            f"when the quote of {old} reaches its maximum age",
+            lambda: world.send(1, account),
+        )
+        assert world.state() is OrderState.ABANDONED
+    else:
+        assert world.send(1, account) is OrderState.ACKNOWLEDGED
+    assert moved
+
+
+def _stopped_again(world: World, match: str, call: Callable[[], object]) -> None:
+    """A halt with no broker call of its own, after an order that went out."""
+    with pytest.raises(Halt, match=match):
+        call()
+    assert world.submits == 1
+
+
+def test_5_a_quote_of_an_instrument_the_gate_did_not_mark_ends_no_order() -> None:
+    made = gates.quoted(QUOTED, at=AT)
+    old = replace(made.quotes[gates.USO], max_age=None, bid_at=None)
+    world = World(snapshot=replace(made, quotes={**made.quotes, gates.USO: old}))
+    assert world.send() is OrderState.ACKNOWLEDGED and world.rebuilt() == 1
+
+
+def test_5_a_maximum_age_past_any_date_ends_no_order() -> None:
+    made = gates.quoted(QUOTED, at=AT)
+    quotes = {i: replace(q, max_age=2**53 - 1) for i, q in made.quotes.items()}
+    world = World(snapshot=replace(made, quotes=quotes))
+    assert world.send() is OrderState.ACKNOWLEDGED
 
 
 @pytest.mark.parametrize("name", FILES)

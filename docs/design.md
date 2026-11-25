@@ -1143,7 +1143,7 @@ is stored, execution checks eight things. Each is read again there, after a firs
    last take or renewal of it returned, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds the lease.
 6. The loss stop has not fired, and its state can be read.
 7. The hard caps' limits are the ones the gate was handed, so a change to one during a send, looser or tighter, stops that order.
-8. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. It is read last, and at that moment itself the order goes.
+8. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. A quote the gate marked an instrument at ends it sooner, at the moment the quote reaches its written maximum age. It is read last, and at that moment itself the order goes.
 
 Any one failing journals the
 order `Abandoned`, sends nothing, and halts the decision, except the
@@ -2103,7 +2103,9 @@ Five rules keep a day of decisions safe.
    cutoff and never a later one. The cutoff applies to market-on-close orders
    only, so a market order, such as the shadow run on
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at close−20,
-   meets no cutoff. Its last moment is its session's close. It applies to new orders only, and never stops a cancel.
+   meets no cutoff. Its last moment is its session's close, or the moment a
+   quote the gate marked reaches its maximum age where that is sooner. The
+   cutoff applies to new orders only, and never stops a cancel.
    1. **Before every send, twice.** Execution reads the clock before it
       starts the order loop, before each order, and again after the order's
       `sending` entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
