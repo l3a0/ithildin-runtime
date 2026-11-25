@@ -230,7 +230,7 @@ A repair can overwrite a partition, whose old copy marketlake's bucket versionin
 
 marketlake's lake is private and backed up off the machine, which is what the premise asks of captured bars, and it keeps them out of this public repository. The checksums this repository commits are the partition checksums a snapshot records, for any run a test or a report pins.
 
-Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import.
+Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import. Yahoo's two files of GLD and USO are in no repository. marketlake's import accepts each of them only at the SHA-256 that [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) pins, and the files, kept off the lake, stay the record.
 
 #### Run records
 
