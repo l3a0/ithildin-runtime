@@ -35,6 +35,7 @@ from botocore.exceptions import (
     FlexibleChecksumError,
     ParamValidationError,
 )
+from urllib3.exceptions import HTTPError
 
 from ithildinruntime.core import (
     BlobMissing,
@@ -126,9 +127,7 @@ class S3Bucket:
         except ClientError as error:
             # The S3 store's own mapping, so a missing key reads the same here.
             raise _refusal(key, error, None, BlobMissing) from None
-        except MemoryError:
-            raise
-        except Exception as error:
+        except (BotoCoreError, HTTPError) as error:
             # botocore leaves some of urllib3's errors as they are, such as a TLS failure in a
             # body or an error answer cut short, and none of them is an answer of S3's.
             raise StoreUnavailable(key, f"no answer: {type(error).__name__}: {error}") from None

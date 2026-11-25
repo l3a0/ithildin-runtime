@@ -1581,7 +1581,9 @@ def test_4_a_quote_stamped_at_or_before_the_close_v_was_valued_at_halts(name: st
             read()
     after = closed + TICK
     later = world.at(snapshot=legs(bid_at=after, ask_at=after, max_age=86_400))
-    assert later.loss().loss is not None and later.check() is not None
+    worth = later.book.cash + 10 * 100
+    assert later.given(valuation=valuation(worth + 3)).loss().loss == 3
+    later.check()
 
 
 def test_4_from_flat_one_aged_leg_halts_its_own_order_and_not_its_partners() -> None:

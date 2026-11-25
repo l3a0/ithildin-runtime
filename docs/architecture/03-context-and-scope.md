@@ -294,7 +294,7 @@ loses none of another's rows.
 
 | Answer | What happens | Ended by |
 | --- | --- | --- |
-| A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it and what each try met, with both hashes where there are two. The first try's reason is logged whichever way the second goes | The next decision |
+| A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer or is refused | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it and what each try met, with both hashes where there are two. The first try's reason is logged whichever way the second goes | The next decision, or the grant |
 | A listed key the bucket does not hold, or one no bucket call takes | A halt naming the key | The next decision, or marketlake, whose prefix it is |
 | A segment with no version or no stored SHA-256 | A halt naming it | The next decision, or marketlake's upload |
 | A listing with no answer, twice | A halt naming the prefix and the answer | The next decision, or the grant |
@@ -314,7 +314,7 @@ says which halts hold an account until a person clears them, and
 that hold.
 
 A reason says what the bucket held, and not why it held no more. marketlake's own
-capture host says why. A missing grant is the one cause a reason shows, as S3's 403.
+capture host says why.
 
 #### What is checked before deciding
 

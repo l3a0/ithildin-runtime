@@ -383,6 +383,7 @@ def test_an_error_answer_that_breaks_partway_is_unavailable(status: int, fault: 
     import threading
 
     listener = socket.create_server(("127.0.0.1", 0))
+    answered = threading.Event()
 
     def serve() -> None:
         while True:
@@ -393,7 +394,7 @@ def test_an_error_answer_that_breaks_partway_is_unavailable(status: int, fault: 
             held.recv(65536)
             held.sendall(f"HTTP/1.1 {status} Said So\r\nContent-Length: 900\r\n\r\n<Err".encode())
             if fault == "stall":
-                threading.Event().wait(1.5)
+                answered.wait(60)
             if fault == "reset":
                 held.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, b"\1\0\0\0\0\0\0\0")
             held.close()
@@ -411,16 +412,13 @@ def test_an_error_answer_that_breaks_partway_is_unavailable(status: int, fault: 
             S3Bucket(client, "b", "lake").read("k")
         assert type(refused.value) is StoreUnavailable
     finally:
+        answered.set()
         listener.close()
 
 
-def test_a_process_out_of_memory_is_no_answer_of_the_buckets() -> None:
-    class Full:
-        def get_object(self, **kwargs):
-            raise MemoryError
-
-    with pytest.raises(MemoryError):
-        S3Bucket(Full(), "b", "lake").read("k")
+def test_a_mistake_in_the_code_is_no_answer_of_the_buckets() -> None:
+    with pytest.raises(AttributeError):
+        S3Bucket(object(), "b", "lake").read("k")
 
 
 def test_a_call_the_client_refuses_to_send_is_a_type_error() -> None:
