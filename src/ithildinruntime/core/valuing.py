@@ -13,7 +13,7 @@ that holds a value that is not finite halts naming it.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
@@ -21,7 +21,8 @@ from typing import NamedTuple
 from .codec import places
 from .exact import exact_total, finite, rounded, worth
 from .halt import Halt
-from .names import DAILY, UNSTATED
+from .names import DAILY, is_unstated
+from .quotes import midpoint, require_quote
 from .records import (
     Bar,
     Book,
@@ -68,17 +69,35 @@ class Exposure(NamedTuple):
         return max(self.low.copy_abs(), self.high.copy_abs())
 
 
-def mark(snapshot: Snapshot, instrument: InstrumentId, after: date) -> Decimal:
-    """The one price an instrument is valued at: its newest daily bar's close.
+def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetime) -> Decimal:
+    """The one price an instrument is valued at: its quote's midpoint, or its newest bar's close.
 
-    It halts unless that bar's session is later than `after` and no later than
-    the decision's own, and on a snapshot that holds a quote for the
-    instrument, until #100 says which of a quote's prices is read.
+    It is the midpoint where the snapshot holds a quote for the instrument,
+    which `core.require_quote` judges as of `now`, and the close where it holds
+    none. A stage that reads no clock passes the decision time as `now`, and the
+    gate passes its own. It halts unless the price is of a session later than
+    `after` and no later than the decision's own, and on a quote beside a bar of
+    the decision's session, because nothing says which of the two is the mark.
+    The bars are checked either way, and a bar's kind and its close only where
+    the close is the mark.
     """
-    if instrument in snapshot.quotes:
-        raise Halt(f"{instrument} has a quote, and no rule says which of its prices is the mark")
     bars = _daily(snapshot, instrument)
     newest = max(bar.session for bar in bars)
+    if instrument in snapshot.quotes:
+        quote = require_quote(snapshot, instrument, now)
+        # The quote is of the decision's session, or the judge refused it.
+        today = load_sessions().opened_by(snapshot.decision_at).day
+        if newest == today:
+            raise Halt(
+                f"{instrument} has a quote and a bar for {today.isoformat()}, and nothing says "
+                "which is the mark"
+            )
+        if today <= after:
+            raise Halt(
+                f"{instrument} has no mark: its quote is for {today.isoformat()}, not later than "
+                f"{after.isoformat()}"
+            )
+        return midpoint(quote)
     if newest <= after:
         raise Halt(
             f"{instrument} has no mark: its newest bar is for {newest.isoformat()}, "
@@ -213,11 +232,7 @@ def unstated_fields(bar: Bar) -> tuple[str, ...]:
         "delay": bar.delay,
         "volume counting": bar.volume_counted,
     }
-    return tuple(
-        name
-        for name, said in fields.items()
-        if not isinstance(said, str) or said.strip() in ("", UNSTATED)
-    )
+    return tuple(name for name, said in fields.items() if is_unstated(said))
 
 
 def _sent(book: Book, intent: OrderIntent) -> OrderIntent | None:

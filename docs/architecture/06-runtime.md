@@ -733,7 +733,8 @@ The charter gives the risk engineer the halt on stale data, and the lag a
 sealed daily bar may have is 0 sessions. A decision at close−20 reads the bar of
 the session before, and one at the close reads that session's own, so any lag
 is a session that should be there and is not. Data applies that rule, and
-[#100](https://github.com/l3a0/ithildin-runtime/issues/100) says how old a quote may be.
+[How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) says how
+old a quote may be.
 
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
@@ -778,9 +779,9 @@ sequenceDiagram
         X->>F: stores a halt as that decision's send result,<br/>if none is stored
         X->>F: releases the account's lease
     and
-        D->>ML: are the segments up to the decision time<br/>in marketlake?
-        ML-->>D: answers that they are not there yet
-        D->>F: stores a halt as data's result, reason "data not ready"
+        D->>ML: lists the day's segments and reads the newest
+        ML-->>D: answers with no row captured by the decision
+        D->>F: stores the snapshot, then a halt as data's result,<br/>naming each prefix and what it listed
     end
     F-->>X: sends an event: data's result is a halt
     X->>F: stores halts as execution's recover and send results,<br/>naming data's, without sending
@@ -795,9 +796,9 @@ The restart runs the same first phase as any trading day.
 1. On starting, execution settles the order the dead worker left half-sent, by
    asking the broker about it rather than sending it again, and halts that old
    decision, as [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
-2. Data finds the segments up to the decision time not yet in marketlake and
-   halts, so execution's recover stage, which waits for data's result, halts
-   too.
+2. Data finds no row captured by the decision time in the segments marketlake
+   has uploaded, stores its snapshot and halts, so execution's recover stage,
+   which waits for data's result, halts too.
 
 The order in which the processes come up no longer matters. Execution may
 start before data, as it does here, but it sends only what a target
@@ -855,12 +856,12 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, at its `/stocks/v1/dividends` endpoint, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
-The mark is the newest daily bar's close, through `core.mark`, which portfolio construction sizes with too. Six gaps halt rather than read as no loss.
+The mark is the midpoint of the instrument's quote, or its newest daily bar's close where the snapshot holds no quote of it, through `core.mark`, which portfolio construction sizes with too. A split on the decision's own day leaves V and the bars before it and the quote after it, and only the flag on a midpoint that moved sees that, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds. Six gaps halt rather than read as no loss.
 
 1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.
-3. A held instrument, or one with an open order, has no bar later than V's session, or has one of a session later than the decision's or one that ends or was knowable after the decision. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
-4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
+3. A held instrument, or one with an open order, has no quote and no bar later than V's session, or has a bar of a session later than the decision's or one that ends or was knowable after the decision.
+4. An instrument's price is missing, stale, of unstated kind or not above zero, or its quote has any fault [How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) lists, or it has a quote beside a bar of the decision's session. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
 5. Something other than the platform's own fills or a broker record [on the closed list](../design.md#strategies-schedules-and-decisions) moved the book's cash or a position after the valuation, such as a deposit or a person's override.
 6. A position was corrected after V's session closed, whether or not V was built since, such as by a split's restatement. Marked at that session's close, the restated position would hide a loss.
 

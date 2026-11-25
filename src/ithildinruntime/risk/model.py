@@ -88,7 +88,7 @@ class LimitRisk:
         tightened = tighten(self._written(), caps, valuation)
         require_current(caps, valuation, snapshot.decision_at)
         for instrument in held(book):
-            mark(snapshot, instrument, valuation.session)
+            mark(snapshot, instrument, valuation.session, snapshot.decision_at)
         return tightened
 
     def _written(self) -> Constraints:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 
@@ -21,6 +22,7 @@ from ithildinruntime.core import (
     Limit,
     OrderIntent,
     OrderType,
+    Snapshot,
     StopState,
     TimeInForce,
     Valuation,
@@ -29,6 +31,7 @@ from ithildinruntime.core import (
 )
 from tests.support.gate_oracle import Answer, answer
 from tests.support.gates import (
+    CENT,
     CHAN,
     CLOSE,
     DECISION,
@@ -43,9 +46,11 @@ from tests.support.gates import (
     constraints,
     inputs,
     order,
+    price,
     snapshot,
     valuation,
 )
+from tests.support.quotes import quote, read_at
 
 NAMES = (GLD, USO, SPY)
 SEEDS = 4_000
@@ -89,6 +94,35 @@ def _doubt(draw: random.Random, opens: list) -> tuple[InstrumentId, ...]:
     return working if draw.random() < 0.5 else (draw.choice(working),)
 
 
+def _quoted(
+    draw: random.Random, marks: dict[InstrumentId, Decimal]
+) -> tuple[dict[InstrumentId, Decimal], Snapshot]:
+    """Each instrument's quote around its price, beside older bars at other prices.
+
+    Some have a midpoint at five places, and some instruments have no quote at
+    all and a bar of the session in its place.
+    """
+    made = snapshot(marks)
+    quotes, bars = {}, dict(made.bars)
+    priced = dict(marks)
+    for k, at in marks.items():
+        if draw.random() < 0.2:
+            continue
+        priced[k] = at + draw.choice((Decimal(0), Decimal("0.00005")))
+        half = Decimal(draw.randint(0, 300)).scaleb(-4) + Decimal(priced[k] % CENT)
+        quotes[k] = quote(
+            k,
+            priced[k] - half,
+            priced[k] + half,
+            DECISION,
+            max_age=10**5,
+            max_spread_share=Decimal("0.9"),
+        )
+        bars[k] = {"1d": made.bars[k]["1d"][:1]}
+    read = read_at(DECISION) if quotes else {}
+    return priced, replace(made, quotes=quotes, bars=bars, **read)
+
+
 def _world(seed: int) -> World:
     draw = random.Random(seed)
     instruments = NAMES[: draw.randint(1, 3)]
@@ -105,6 +139,10 @@ def _world(seed: int) -> World:
         if (q := _shares(draw, 6)) != 0
     ]
     marks = {k: Decimal(draw.randint(1, 40)) / draw.choice((1, 4, 10)) for k in instruments}
+    sides = random.Random(f"quotes of {seed}")
+    marked = snapshot(marks)
+    if sides.random() < 0.5:
+        marks, marked = _quoted(sides, marks)
     i = draw.choice(instruments)
     held = positions[CHAN][i]
     qty = {
@@ -150,7 +188,7 @@ def _world(seed: int) -> World:
             # A book at V's own entry would hold V's positions, so this one is later.
             replayed_through=8,
         ),
-        snapshot=snapshot(marks),
+        snapshot=marked,
         constraints=constraints(
             # The strategy's limits need not name every instrument the account holds.
             **limits(0.3, tuple(k for k in instruments if k == i or draw.random() < 0.7)),
@@ -228,7 +266,7 @@ def _expected(world: World) -> Answer:
 def _net_end(world: World, with_order: bool) -> Decimal:
     """The size of net at the end the order moves, with it counted or not."""
     opens = [o for orders in world.book.open_orders_by_strategy.values() for o in orders]
-    marks = {i: by["1d"][1].close for i, by in world.snapshot.bars.items()}
+    marks = {i: price(world.snapshot, i) for i in world.snapshot.bars}
     orders = [*opens, world.intent] if with_order else opens
     return abs(_net(world.book.positions_by_strategy, orders, marks, _side(world)))
 
@@ -274,6 +312,16 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
             before, after = (_net_end(world, with_order) for with_order in (False, True))
             seen["reducing to net's bound"] += after == bound < before
         seen["adding"] += verdict.adding
+        quotes = world.snapshot.quotes
+        seen["marked at a quote"] += bool(quotes)
+        seen["a quote beside a close"] += 0 < len(quotes) < len(world.snapshot.bars)
+        seen["a midpoint at five places"] += any(
+            price(world.snapshot, i) * 10**4 % 1 != 0 for i in quotes
+        )
+        for i, q in quotes.items():
+            close = world.snapshot.bars[i]["1d"][-1].close
+            middle = price(world.snapshot, i)
+            seen["four prices apart"] += len({q.bid, q.ask, q.last, close, middle}) == 5
         seen["approved"] += verdict.approved
         if verdict.limit is not None:
             seen[f"refused on {verdict.limit}"] += 1
@@ -292,6 +340,10 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         "two in doubt",
         "adding",
         "approved",
+        "marked at a quote",
+        "a quote beside a close",
+        "a midpoint at five places",
+        "four prices apart",
         *(f"refused on {limit}" for limit in Limit if limit is not Limit.CLOSE_ENTRY),
     ):
         assert seen[kind] > 10, (kind, seen)

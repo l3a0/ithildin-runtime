@@ -13,16 +13,24 @@ its instruments are the file's own `instruments`, which it does not repeat.
     GLD = 2006-04-26
     USO = 2006-04-26
 
-`lookback` is how many sessions of bars each decision reads, and `stale_lag`
-how many sessions an instrument's newest bar may be behind. `spike_multiple`
-is how many standard deviations a close may move before it is flagged, and
-`first_sessions` says where the lake's series of each instrument starts. A
-date later than that start halts each decision whose lookback it cuts, as
-`LakeSource._refuse_late` says.
+    [data.quotes]
+    max_age_seconds = 600
+    max_spread_share = 0.5
+
+The quote maxima here are made up. `lookback` is how many sessions of bars each
+decision reads, and `stale_lag` how many sessions an instrument's newest bar may
+be behind. `spike_multiple` is how many standard deviations a close may move
+before it is flagged, and `first_sessions` says where the lake's series of each
+instrument starts. A date later than that start halts each decision whose
+lookback it cuts, as `LakeSource._refuse_late` says.
+`max_age_seconds` is how old a quote may be when
+it is read, and `max_spread_share` how far apart its bid and ask may be, as a
+share of their midpoint. Both hold for every instrument the file lists.
 
 Every key is written, because an absent value never reads as a default (hard
-limit 3). A file is refused, naming the strategy, the file and the key, on
-each of these.
+limit 3). The one table a file may leave out is `[data.quotes]`. A file without
+it writes no maximum, and then each decision inside its session halts. A file is
+refused, naming the strategy, the file and the key, on each of these.
 
 1. No `[data]` section, or an empty one.
 2. A key this form lacks, or one it has and the section does not. `core`'s
@@ -32,12 +40,16 @@ each of these.
 4. A `spike_multiple` that is no number above 0.
 5. A `first_sessions` that is no table, or one that does not hold a plain date
    for exactly the instruments the file lists.
+6. A `quotes` that is no table, one key of it without the other, a key it does
+   not have, or a value `core.maximum_faults` refuses.
 
 `lookback`, `stale_lag` and `spike_multiple` are one value each for a
-deployment, and so is the first session of an instrument that two strategies
-trade. Strategies that write different values are refused, naming the key and
+deployment. So are the first session and the two quote maxima of an instrument
+that two strategies trade, and one that writes maxima beside one that writes
+none differ. Strategies that write different values are refused, naming the key and
 each strategy with its value. `spike_multiple` is compared as written, so 10
-and 10.0 differ, because a stored flag's note prints it.
+and 10.0 differ, because a stored flag's note prints it, and a spread is
+compared the same way.
 
 Every refusal is a `Halt`, which data's stage raises at each decision. A value
 `DataSettings` refuses itself with a `ValueError` halts too, naming every file.
@@ -52,14 +64,18 @@ from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
-from ithildinruntime.core import Halt, InstrumentId, StrategyConfig
+from ithildinruntime.core import Halt, InstrumentId, StrategyConfig, maximum_faults
 
+from .segments import QuoteLimits
 from .source import DataSettings
 
 __all__ = ["SECTION", "data_settings"]
 
 SECTION = "data"
 _KEYS = ("lookback", "stale_lag", "spike_multiple", "first_sessions")
+# A file that writes no such table writes no maximum, which halts at each decision.
+_QUOTES = "quotes"
+_MAX_AGE, _MAX_SPREAD = "max_age_seconds", "max_spread_share"
 
 
 class _Section(NamedTuple):
@@ -69,6 +85,7 @@ class _Section(NamedTuple):
     stale_lag: int
     spike_multiple: Decimal
     first_sessions: Mapping[InstrumentId, date]
+    quotes: QuoteLimits | None
 
 
 def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
@@ -86,6 +103,16 @@ def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
                 if instrument in section.first_sessions
             ],
         )
+    limits: dict[InstrumentId, QuoteLimits] = {}
+    for instrument in firsts:
+        written = [
+            (strategy, section.quotes)
+            for strategy, section in read
+            if instrument in strategy.instruments
+        ]
+        _shared(f"quotes for {instrument}", [(s, q or "no maximum") for s, q in written])
+        if (found := written[0][1]) is not None:
+            limits[instrument] = found
     lookback = _shared("lookback", [(s, section.lookback) for s, section in read])
     stale_lag = _shared("stale_lag", [(s, section.stale_lag) for s, section in read])
     multiple = _shared("spike_multiple", [(s, section.spike_multiple) for s, section in read])
@@ -96,6 +123,7 @@ def data_settings(strategies: Iterable[StrategyConfig]) -> DataSettings:
             first_sessions=firsts,
             stale_lag=stale_lag,
             spike_multiple=multiple,
+            quotes=limits,
         )
     except ValueError as error:
         # A check `DataSettings` makes and neither `core`'s reader nor this one does.
@@ -125,13 +153,14 @@ def _section(strategy: StrategyConfig) -> _Section:
 
     if missing := [key for key in _KEYS if key not in section]:
         raise refuse(f"states no {', '.join(missing)}")
-    if unknown := sorted(set(section) - set(_KEYS)):
+    if unknown := sorted(set(section) - {*_KEYS, _QUOTES}):
         raise refuse(f"holds {', '.join(unknown)}, which this form does not have")
     return _Section(
         lookback=_count("lookback", 1, section, refuse),
         stale_lag=_count("stale_lag", 0, section, refuse),
         spike_multiple=_multiple(section["spike_multiple"], refuse),
         first_sessions=_first_sessions(strategy, section["first_sessions"], refuse),
+        quotes=_quote_limits(section[_QUOTES], refuse) if _QUOTES in section else None,
     )
 
 
@@ -167,3 +196,15 @@ def _first_sessions(
         if type(day) is not date:
             raise refuse(f"has first_sessions.{instrument} = {day!r}, which is not a plain date")
     return value
+
+
+def _quote_limits(value: object, refuse: Callable[[str], Halt]) -> QuoteLimits:
+    if not isinstance(value, Mapping):
+        raise refuse(f"has {_QUOTES} = {value!r}, which is not a table")
+    if missing := [key for key in (_MAX_AGE, _MAX_SPREAD) if key not in value]:
+        raise refuse(f"states no {_QUOTES}.{missing[0]} beside the other")
+    if unknown := sorted(set(value) - {_MAX_AGE, _MAX_SPREAD}):
+        raise refuse(f"holds {_QUOTES}.{', '.join(unknown)}, which this form does not have")
+    if faults := maximum_faults(value[_MAX_AGE], value[_MAX_SPREAD]):
+        raise refuse(f"has under {_QUOTES} {' and '.join(faults)}")
+    return QuoteLimits(value[_MAX_AGE], value[_MAX_SPREAD])  # type: ignore[arg-type]

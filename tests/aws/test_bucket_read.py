@@ -6,7 +6,9 @@ shown reading S3's own version id and whole-object SHA-256 for an object
 stored the way marketlake's upload stores one. The role already writes and
 reads under `runs/ci/`, and the bucket keeps versions, so the run needs no new
 grant. The bucket is create-only, so a new version of one key cannot be made
-here, and tests/test_bucket_suite.py shows that case on moto.
+here, and tests/test_bucket_suite.py shows that case on moto. It lists under
+the same prefix, and it reads no old version, because the test role holds no
+`s3:GetObjectVersion`.
 
 Each key carries the run's own id, `ITHILDIN_TEST_RUN`, and sits under
 `lake/`, which no route in infra/test/routes.json matches.
@@ -45,22 +47,25 @@ def s3():
 
 
 def test_the_s3_bucket_reads_s3s_version_and_sha256(s3, run) -> None:
-    key = f"runs/ci/{run}/lake/bars/ticker=GLD/freq=1d/date=2012-04-09.parquet"
+    root, key = f"runs/ci/{run}/lake", "bars/ticker=GLD/freq=1d/date=2012-04-09.parquet"
     data = b"a partition, stored as marketlake's upload stores one"
     digest = hashlib.sha256(data)
     reply = s3.put_object(
         Bucket=BUCKET,
-        Key=key,
+        Key=f"{root}/{key}",
         Body=data,
         ChecksumSHA256=base64.b64encode(digest.digest()).decode("ascii"),
         IfNoneMatch="*",
     )
-    got = S3Bucket(s3, BUCKET).read(key)
+    bucket = S3Bucket(s3, BUCKET, root)
+    got = bucket.read(key)
     assert got.data == data
     assert got.sha256 == digest.hexdigest()
     assert got.version == reply["VersionId"]
+    assert list(bucket.list("bars/ticker=GLD/")) == [key]
+    assert list(bucket.list("bars/ticker=GLDM/")) == []
 
 
 def test_a_missing_key_reads_as_blob_missing(s3, run) -> None:
     with pytest.raises(BlobMissing):
-        S3Bucket(s3, BUCKET).read(f"runs/ci/{run}/lake/manifest.jsonl")
+        S3Bucket(s3, BUCKET, f"runs/ci/{run}/lake").read("manifest.jsonl")

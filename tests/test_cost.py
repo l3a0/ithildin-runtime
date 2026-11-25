@@ -54,6 +54,7 @@ from ithildinruntime.runtime.data_worker import DATA_ROW
 from ithildinruntime.runtime.loop import Item, ReceiveLoop, Stage, Table, routes
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
+from tests.support.quotes import NONE_READ
 from tests.test_data_source import Timer
 from tests.test_storage_contract import Alarms
 
@@ -185,6 +186,7 @@ def snapshot(*instruments: str) -> Snapshot:
         flags={},
         segments=(),
         ledgers={},
+        **NONE_READ,
     )
 
 

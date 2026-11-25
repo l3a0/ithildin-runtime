@@ -21,6 +21,7 @@ from ithildinruntime.core import (
     load_sessions,
     parse_strategy,
 )
+from tests.support.quotes import NONE_READ
 
 GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
 TABLE = load_sessions()
@@ -95,6 +96,7 @@ def snapshot(
         "flags": {},
         "segments": (),
         "ledgers": {},
+        **NONE_READ,
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

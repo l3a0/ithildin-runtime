@@ -138,7 +138,7 @@ def size(
     limits = tighten(constraints, caps, valuation)
     if unlimited := sorted(set(legs) - set(limits.max_position)):
         raise Halt(f"no limit names {unlimited[0]}, a leg of {name}'s basket")
-    marks = {i: mark(snapshot, i, valuation.session) for i in legs}
+    marks = {i: mark(snapshot, i, valuation.session, snapshot.decision_at) for i in legs}
     # The step is a power of ten, so its exponent is the places a share count carries.
     step = -caps.share_step.adjusted()
 

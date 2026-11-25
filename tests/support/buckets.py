@@ -15,6 +15,9 @@ from typing import Any
 
 from ithildinruntime.adapters import FolderBucket, S3Bucket
 
+# The prefix every S3 case roots its bucket at, as marketlake's target does.
+ROOT = "some/lake"
+
 
 @dataclass
 class BucketSpec:
@@ -27,7 +30,26 @@ class BucketSpec:
     def open(self) -> FolderBucket | S3Bucket:
         if self.kind == "folder":
             return FolderBucket(self.root)  # type: ignore[arg-type]
-        return S3Bucket(self.client, self.name)  # type: ignore[arg-type]
+        return S3Bucket(self.client, self.name, ROOT)  # type: ignore[arg-type]
+
+    def open_beside(self) -> FolderBucket | S3Bucket:
+        """The bucket beside this one, as `<prefix>-live` is beside `<prefix>`."""
+        if self.kind == "folder":
+            return FolderBucket(self._beside())
+        return S3Bucket(self.client, self.name, f"{ROOT}-live")  # type: ignore[arg-type]
+
+    def put_beside(self, key: str, data: bytes) -> None:
+        if self.kind == "folder":
+            BucketSpec("folder", root=self._beside()).put(key, data)
+        else:
+            self.client.put_object(Bucket=self.name, Key=f"{ROOT}-live/{key}", Body=data)
+
+    def missing_version(self) -> str:
+        """A version of the form the bucket gives, which it holds no object at."""
+        return "0" * 64 if self.kind == "folder" else "00000000-0000-4000-8000-000000000000"
+
+    def _beside(self) -> Path:
+        return self.root.with_name(f"{self.root.name}-live")  # type: ignore[union-attr]
 
     def key(self, key: str) -> str:
         return self.prefix + key
@@ -43,4 +65,4 @@ class BucketSpec:
         if checksum:
             digest = hashlib.sha256(data).digest()
             extra["ChecksumSHA256"] = base64.b64encode(digest).decode("ascii")
-        self.client.put_object(Bucket=self.name, Key=key, Body=data, **extra)
+        self.client.put_object(Bucket=self.name, Key=f"{ROOT}/{key}", Body=data, **extra)

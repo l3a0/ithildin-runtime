@@ -1,8 +1,8 @@
-"""The point-in-time read of daily bars from marketlake's sealed partitions.
+"""The point-in-time read of daily bars from marketlake's sealed partitions, and of quotes.
 
-`LakeSource` implements `core.DataSource` over the mirror, the security
-master, the price-kind contract and `core.sessions`. Every mode runs it, and
-the modes differ only in the bucket the mirror reads and the clock the stage
+`LakeSource` implements `core.DataSource` over the mirror, the live bucket, the
+security master, the two kind contracts and `core.sessions`. Every mode runs it,
+and the modes differ only in the buckets it reads and the clock the stage
 waits on. A snapshot holds only bars whose end and knowable time are at or
 before the decision.
 
@@ -36,9 +36,10 @@ How one decision is read, in order.
 
 A bar's values stay as received. Each price goes through
 `core.from_received`, and a price with more places than `Price` declares is
-kept and named in `excess_places`. A captured bar's knowable time is its fetch
-stamp, and a stamp with no stated zone halts. An imported bar's knowable time
-is its end, as `core.Bar` says.
+kept and named in `excess_places`. A captured bar's knowable time is its
+`fetch_end_ts`, when the response landed, and one with none, or a stamp with no
+stated zone, halts. An imported bar's knowable time is its end, as `core.Bar`
+says.
 
 Each instrument's status follows from the sessions that hold a knowable bar.
 
@@ -57,6 +58,15 @@ stored, for one of three reasons that `_bar_halts` finds in the bars alone.
    series can be on two scales, and every reader of the bars would take the
    step between them for a move of the market. docs/design.md's `#### A
    lookback that crosses a change of series` says why, and what it costs.
+
+A decision inside its session, at or after the open and before the close, reads
+a quote of every instrument too, once its bars are read, from the capture
+segments `segments` opens. Such a snapshot is provisional, whatever the segments
+held. A decision at or after the close reads none. An instrument with no written
+maximum age and spread halts before either bucket is called, because a quote
+read under none is stale. A fault in the read of the quotes never takes the
+snapshot's place. `_quote_halts` gives each one, and each reason a quote cannot
+be read, once the snapshot is stored.
 """
 
 from __future__ import annotations
@@ -65,9 +75,9 @@ import bisect
 import itertools
 import logging
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -82,10 +92,12 @@ from ithildinruntime.core import (
     DAILY,
     Bar,
     BarStatus,
+    Bucket,
     Clock,
     CodecError,
     Halt,
     InstrumentId,
+    Session,
     Snapshot,
     SpikeFlag,
     Timer,
@@ -93,6 +105,7 @@ from ithildinruntime.core import (
     from_received,
     load_sessions,
     places,
+    require_quote,
     series_of,
     unstated_fields,
 )
@@ -102,11 +115,22 @@ from .mirror import MANIFEST, Checked, LakeRoot, Mirror
 from .reference import (
     CAPTURE_SOURCE,
     PriceKinds,
+    QuoteKinds,
     SecurityMaster,
     load_master,
     load_price_kinds,
+    load_quote_kinds,
 )
-from .spikes import CONTRADICT, MOVE, below_low, contradictions, spike_flags
+from .segments import QuoteLimits, QuoteRead, read_quotes
+from .spikes import (
+    CONTRADICT,
+    MOVE,
+    below_low,
+    contradictions,
+    quote_contradictions,
+    quote_flags,
+    spike_flags,
+)
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
@@ -142,6 +166,8 @@ class DataSettings:
       `spikes.largest_multiple` measured the largest the Chan vintages reach,
       which tests/test_data_spikes.py pins and docs/design.md's `#### What the
       spike multiple is measured against` states, labelled exploratory.
+    - `quotes` maps an instrument to the maximum age and spread its quote may
+      be read under. One it leaves out halts each decision inside its session.
 
     docs/design.md's `## Configuration` states the values the first strategy
     writes.
@@ -152,6 +178,7 @@ class DataSettings:
     first_sessions: Mapping[InstrumentId, date]
     stale_lag: int | None
     spike_multiple: Decimal
+    quotes: Mapping[InstrumentId, QuoteLimits]
 
     def __post_init__(self) -> None:
         if not self.instruments:
@@ -166,12 +193,21 @@ class DataSettings:
 
 @dataclass(frozen=True)
 class Reading:
-    """One decision's snapshot, and why it halts once stored, if it is the capture that counts."""
+    """One decision's snapshot, and why it halts once stored, if it is the capture that counts.
+
+    The rest is the load of the read and how far capture lagged it.
+    `quote_seconds` and `newest_cycle_age` are `None` where the decision read no
+    quote, and the second one where no row was read.
+    """
 
     snapshot: Snapshot
     halts: tuple[str, ...]
     manifest_bytes: int
     download_seconds: float
+    segments_listed: int
+    segments_opened: int
+    quote_seconds: float | None
+    newest_cycle_age: timedelta | None
 
 
 @dataclass
@@ -183,20 +219,26 @@ class _Answers:
 
 
 class LakeSource:
-    """`core.DataSource` over marketlake's sealed daily bars, read through a mirror."""
+    """`core.DataSource` over marketlake's sealed daily bars, read through a mirror, and its quotes.
+
+    `live` is the bucket the capture segments of a day not yet sealed are in.
+    """
 
     def __init__(
         self,
         mirror: Mirror,
         settings: DataSettings,
         *,
+        live: Bucket,
         clock: Clock,
         timer: Timer,
         sessions: SessionTable | None = None,
         master: SecurityMaster | None = None,
         kinds: PriceKinds | None = None,
+        quote_kinds: QuoteKinds | None = None,
     ) -> None:
         self._mirror = mirror
+        self._live = live
         self._settings = settings
         self._clock = clock
         self._timer = timer
@@ -204,6 +246,7 @@ class LakeSource:
         self._days = sorted(self._sessions.sessions)
         self._master = master or load_master()
         self._kinds = kinds or load_price_kinds()
+        self._quote_kinds = quote_kinds or load_quote_kinds()
         self._answers = _Answers()
 
     @property
@@ -216,9 +259,9 @@ class LakeSource:
 
         `core.DataSource` returns a snapshot alone, so a caller of this method
         never sees `Reading.halts`. A missing, stale or unstated input, a bar
-        whose prices contradict each other, or two bars of one instrument that
-        are of two series, therefore raises here rather than come back as a
-        snapshot that reads as usable.
+        whose prices contradict each other, two bars of one instrument that
+        are of two series, or a quote that cannot be read, therefore raises here
+        rather than come back as a snapshot that reads as usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
         """
         reading = self.read(decision_at)
@@ -226,12 +269,18 @@ class LakeSource:
             raise Halt("; ".join(reading.halts))
         return reading.snapshot
 
-    def read(self, decision_at: datetime) -> Reading:
-        """Read one decision's snapshot, raising `Halt` where no snapshot can be stored."""
+    def read(self, decision_at: datetime, report: Callable[[], None] = lambda: None) -> Reading:
+        """Read one decision's snapshot, raising `Halt` where no snapshot can be stored.
+
+        `report` is called after each call the read of the quotes makes.
+        """
         settings = self._settings
         if settings.stale_lag is None:
             raise Halt("no stale lag is written, and an absent lag is a missing input")
         latest = self._latest_ended(decision_at)
+        session = _session_read(self._sessions, decision_at)
+        if session is not None:
+            _require_limits(settings)
         plans = {i: self._plan(i, latest) for i in settings.instruments}
         start = self._timer.monotonic()
         root = self._mirror.open()
@@ -263,19 +312,70 @@ class LakeSource:
                     halts.extend(_bar_halts(instrument, held))
             ledgers = {MANIFEST: root.manifest.sha256}
             ledgers.update({k: c.sha256 for k, c in root.files.items() if not _is_bars(k)})
+            quoted, quote_seconds = None, None
+            if session is not None:
+                quoted, quote_seconds = self._quotes(root, session, decision_at, report)
+                for instrument, quote in quoted.quotes.items():
+                    held = bars.get(instrument, {}).get(DAILY, ())
+                    found = quote_flags(quote, session.day, held, settings.spike_multiple)
+                    if found:
+                        flags[instrument] = flags.get(instrument, ()) + found
             snapshot = Snapshot(
                 decision_at=decision_at,
                 bars=bars,
-                quotes={},
+                quotes=quoted.quotes if quoted else {},
                 status=status,
-                provisional=False,
+                provisional=quoted is not None,
                 flags=flags,
-                segments=(),
+                segments=quoted.segments if quoted else (),
                 ledgers=dict(sorted(ledgers.items())),
+                rows=quoted.rows if quoted else {},
+                faults=quoted.faults if quoted else (),
+                quotes_read_at=quoted.read_at if quoted else None,
             )
-            return Reading(snapshot, tuple(halts), root.manifest_bytes, seconds)
+            halts.extend(_quote_halts(snapshot, settings.instruments, self._sessions))
+            return Reading(
+                snapshot,
+                tuple(halts),
+                root.manifest_bytes,
+                seconds,
+                segments_listed=quoted.listed if quoted else 0,
+                segments_opened=len(snapshot.segments),
+                quote_seconds=quote_seconds,
+                newest_cycle_age=quoted.newest_age if quoted else None,
+            )
         finally:
             root.remove()
+
+    def _quotes(
+        self,
+        root: LakeRoot,
+        session: Session,
+        decision_at: datetime,
+        report: Callable[[], None],
+    ) -> tuple[QuoteRead, float]:
+        start = self._timer.monotonic()
+        quoted = read_quotes(
+            self._live,
+            root.path,
+            session,
+            decision_at,
+            {i: self._settings.quotes[i] for i in self._settings.instruments},
+            master=self._master,
+            kinds=self._quote_kinds,
+            clock=self._clock,
+            report=report,
+        )
+        seconds = self._timer.monotonic() - start
+        age = quoted.newest_age
+        log.info(
+            "data opened %d of %d segments listed, in %.3f seconds, and its newest row was %s",
+            len(quoted.segments),
+            quoted.listed,
+            seconds,
+            "not found" if age is None else f"{age.total_seconds():.3f} seconds old",
+        )
+        return quoted, seconds
 
     # The calendar
 
@@ -418,9 +518,9 @@ class LakeSource:
         fetched, fetched_at = _stamp(row.get("fetch_ts"), where, "fetch_ts")
         fetched_end, fetched_end_at = _stamp(row.get("fetch_end_ts"), where, "fetch_end_ts")
         if origin == _CAPTURED:
-            if fetched_at is None:
-                raise Halt(f"{where} was captured with no fetch stamp, so it has no knowable time")
-            knowable_at = fetched_at
+            if fetched_end_at is None:
+                raise Halt(f"{where} was captured with no fetch_end_ts, so it has no knowable time")
+            knowable_at = fetched_end_at
             kind_source = CAPTURE_SOURCE
         elif origin == _IMPORTED:
             knowable_at = end
@@ -517,11 +617,13 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
        whose prices contradict each other, one of unstated kind, and one of
        another series than the bar before it in its own instrument;
     4. each stored flag that is not the move rule's and that this release's
-       rules do not find in the bars. Within one release the bars raise
-       every flag stored beside them, so such a flag means the record is not
-       what this release wrote. Its reason states the record as stored
+       rules do not find in the bars and the quotes. Within one release they
+       raise every flag stored beside them, so such a flag means the record is
+       not what this release wrote. Its reason states the record as stored
        rather than guess what it meant. A flag the bars raise and the
-       record lacks adds no halt of its own.
+       record lacks adds no halt of its own;
+    5. each reason `_quote_halts` gives, which is what the first delivery judges
+       its quotes by.
 
     A stored status keeps no session, so its reason names the stored snapshot
     rather than the session, and it is trusted as recorded.
@@ -540,6 +642,11 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
         bars = by_interval.get(DAILY, ())
         reasons.extend(_bar_halts(instrument, bars))
         found.update(_key(instrument, f) for bar in bars for f in _recomputed(bar))
+    sessions = load_sessions()
+    session = _session_read(sessions, snapshot.decision_at)
+    if session is not None:
+        for instrument, quote in snapshot.quotes.items():
+            found.update(_key(instrument, f) for f in quote_contradictions(quote, session.day))
     for instrument, flags in snapshot.flags.items():
         for flag in flags:
             if flag.rule != MOVE and _key(instrument, flag) not in found:
@@ -548,7 +655,45 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
                     f"recorded: its {flag.field} of {flag.price} against {flag.against}, "
                     f"by the rule {flag.rule!r}"
                 )
+    reasons.extend(_quote_halts(snapshot, instruments, sessions))
     return tuple(reasons)
+
+
+def _session_read(sessions: SessionTable, decision_at: datetime) -> Session | None:
+    """The session a decision reads quotes of: the one it is inside, or none at or past its close.
+
+    One at the open reads quotes and always halts, since nothing is captured by then.
+    """
+    session = sessions.opened_by(decision_at)
+    return session if decision_at < session.close else None
+
+
+def _require_limits(settings: DataSettings) -> None:
+    """Halt on an instrument with no written maximum, before either bucket is called."""
+    if bare := [i for i in settings.instruments if i not in settings.quotes]:
+        raise Halt(
+            f"{', '.join(bare)} has no max_age_seconds and max_spread_share written under "
+            "[data.quotes], and a quote read under no maximum is stale"
+        )
+
+
+def _quote_halts(
+    snapshot: Snapshot, instruments: Sequence[InstrumentId], sessions: SessionTable
+) -> list[str]:
+    """Why a snapshot's quotes halt its decision, on the first delivery and on a redelivery.
+
+    Each fault of the read comes first, then each instrument whose quote is
+    absent or cannot be read at the decision time.
+    """
+    reasons = list(snapshot.faults)
+    if _session_read(sessions, snapshot.decision_at) is None:
+        return reasons
+    for instrument in instruments:
+        try:
+            require_quote(snapshot, instrument, snapshot.decision_at)
+        except Halt as halt:
+            reasons.append(halt.reason)
+    return reasons
 
 
 def _recomputed(bar: Bar) -> list[SpikeFlag]:

@@ -245,16 +245,29 @@ class BlobStore(Protocol):
 
 
 class Bucket(Protocol):
-    """A bucket the platform may only read, such as marketlake's.
+    """A bucket the platform may only read, such as marketlake's, rooted at one prefix.
 
     It holds no call that writes, because the data worker's grant on
-    marketlake's bucket allows none. A key that holds no object raises
-    `core.BlobMissing`, and any other refusal or no answer raises
-    `core.StoreUnavailable`, the same from every adapter.
+    marketlake's bucket allows none. A key is relative to the prefix. A key
+    that holds no object, or not the version asked for, raises
+    `core.BlobMissing`. A download whose bytes fail the checksum stored with
+    them raises `core.ChecksumMismatch`. Any other refusal or no answer raises
+    `core.StoreUnavailable`. Each is the same from every adapter.
     """
 
-    def read(self, key: str) -> BucketObject:
-        """The object's bytes, with the bucket's version and stored SHA-256."""
+    def list(self, prefix: str) -> Sequence[str]:
+        """Every key that starts with `prefix`, sorted by its UTF-8 bytes.
+
+        A prefix that holds nothing is an empty list, and a listing raises
+        `core.StoreUnavailable` alone, with the bucket's answer in it.
+        """
+        ...
+
+    def read(self, key: str, version: str | None = None) -> BucketObject:
+        """The object's bytes, with the bucket's version and stored SHA-256.
+
+        It reads the newest version, or the one named.
+        """
         ...
 
 

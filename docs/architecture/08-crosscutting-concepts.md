@@ -47,6 +47,9 @@ erDiagram
         string segments "key, S3 version and SHA-256 of each"
         string bars "each with its vintage_id"
         string quotes "every Quote field"
+        string rows "every other row read, as text"
+        string faults "each reason the read failed"
+        string quotes_read_at "the worker's clock, or null"
         string ledgers "each ledger's SHA-256"
     }
     ACCOUNT_FILE {
@@ -235,7 +238,7 @@ Run records serve two purposes. They are how the workers pass work to each other
 
 Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
 
-- A snapshot lists the marketlake bars one decision read, by partition, or by segment for a read before sealing, each with its checksum, holds every `Quote` field and each bar's `vintage_id`, and marks a read before sealing provisional.
+- A snapshot lists the marketlake bars one decision read, by partition, each with its checksum in the bar's `vintage_id`. A read before sealing is marked provisional, and the snapshot then names each segment opened with its checksum and holds every `Quote` field, every other row read and each reason the read failed.
 - A signal record holds a value the alpha model fitted, such as the hedge ratio or the z-score, with the first and last session whose prices it read. A strategy's signals for one decision are the entries of one file, `signals.json`, beside `forecast.json`. The file's header names the snapshot by its key and SHA-256, and the snapshot's bars name their vintage, so each value says which window of which vintage it was fitted on.
 - Each blob's header names the blobs it came from, and a halt says why a decision stopped.
 

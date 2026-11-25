@@ -3,9 +3,10 @@
 Every figure is made up. A test names what it changes and the rest is loose
 enough to pass, so a refusal or a halt has the one cause the test gives it.
 
-The decision is at close−20 on 2026-11-03 and the snapshot already holds a bar
-for that session, which ends at the decision. Before #100 no real close−20
-snapshot holds one, so this stands in for the price #100 brings.
+The decision is at close−20 on 2026-11-03 and `snapshot` already holds a bar for
+that session, which ends at the decision. No real close−20 snapshot holds one, so
+it stands in for a price a test gives by hand. `quoted` is the real form, with a
+quote of each instrument and bars of the session before alone.
 """
 
 from __future__ import annotations
@@ -32,9 +33,9 @@ from ithildinruntime.core import (
     Valuation,
     Verdict,
     load_sessions,
-    mark,
 )
 from ithildinruntime.risk import Gate
+from tests.support.quotes import NONE_READ, quote, read_at
 from tests.support.spreads import bar
 
 GLD, USO, SPY = InstrumentId("GLD"), InstrumentId("USO"), InstrumentId("SPY")
@@ -168,8 +169,33 @@ def snapshot(
         "flags": {},
         "segments": (),
         "ledgers": {},
+        **NONE_READ,
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
+
+
+def quoted(
+    sides: Mapping[InstrumentId, tuple[object, object]], at: datetime = DECISION, **changes: object
+) -> Snapshot:
+    """A quote of each instrument at `at`, whose newest bars are the ones V was valued at.
+
+    Each bar's close is about half the bid, and no mark. `changes` are every quote's own.
+    """
+    made = snapshot({i: bid for i, (bid, _) in sides.items()}, at=at)
+    return replace(
+        made,
+        bars={i: {"1d": by["1d"][:1]} for i, by in made.bars.items()},
+        quotes={i: quote(i, bid, ask, at, **changes) for i, (bid, ask) in sides.items()},
+        **read_at(at),
+    )
+
+
+def price(snap: Snapshot, instrument: InstrumentId) -> Decimal:
+    """What a held share is worth, worked out with no call of `core.mark`."""
+    quote = snap.quotes.get(instrument)
+    if quote is not None:
+        return (quote.bid + quote.ask) / 2
+    return max(snap.bars[instrument]["1d"], key=lambda b: b.session).close
 
 
 def valuation(value: object = 10**9, **changes: object) -> Valuation:
@@ -223,7 +249,7 @@ class World:
         worth = self.book.cash
         for positions in self.book.positions_by_strategy.values():
             for instrument, qty in positions.items():
-                worth += qty * mark(self.snapshot, instrument, PRIOR)
+                worth += qty * price(self.snapshot, instrument)
         return self.given(valuation=valuation((worth + d(loss)).quantize(CENT)))
 
     def check(self) -> Verdict:

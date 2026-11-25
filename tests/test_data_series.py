@@ -45,7 +45,7 @@ from tests.support import made_lake as made
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
 from tests.support.spreads import strategy
-from tests.test_data_source import GLD, USO, Clock, Timer, close
+from tests.test_data_source import GLD, LIMITS, USO, Clock, Timer, close
 from tests.test_storage_contract import Alarms
 
 DAYS = made.days(date(2012, 1, 3), date(2012, 5, 31))
@@ -91,7 +91,8 @@ def source(
 ) -> LakeSource:
     return LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror"),
-        DataSettings((GLD, USO), lookback, {}, 0, Decimal(100)),
+        DataSettings((GLD, USO), lookback, {}, 0, Decimal(100), LIMITS),
+        live=FolderBucket(lake.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
         kinds=kinds,
@@ -305,10 +306,16 @@ def test_3_only_the_decisions_whose_lookback_crosses_halt(
 def test_3_a_decision_before_the_close_crosses_one_session_later(
     two_lake: Path, tmp_path: Path
 ) -> None:
-    """Its lookback ends at the session before, as a close−20 decision's does."""
+    """Its lookback ends at the session before, as a close−20 decision's does.
+
+    It halts for its quotes too, since no segment is here to read.
+    """
     src = source(two_lake, tmp_path)
     early = timedelta(minutes=20)
-    halts = {n: src.read(close(DAYS[AT + n]) - early).halts for n in (0, 1, LOOKBACK - 1, LOOKBACK)}
+    halts = {
+        n: tuple(h for h in src.read(close(DAYS[AT + n]) - early).halts if "series" in h)
+        for n in (0, 1, LOOKBACK - 1, LOOKBACK)
+    }
     assert halts[0] == halts[LOOKBACK] == ()
     assert halts[1] == halts[LOOKBACK - 1] == crossing()
 
@@ -318,7 +325,8 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
 ) -> None:
     """GLD and USO's two changes to come, as docs/design.md quotes the dates."""
     (tracked,) = load_strategies(STRATEGIES, ["chan_bollinger"])
-    settings = data_settings([tracked])
+    # The file writes no maximum age or spread of a quote yet, so these are made up.
+    settings = replace(data_settings([tracked]), quotes=LIMITS)
     seams = (date(2026, 9, 4), date(2026, 11, 2))
     imported = made.days(date(2026, 5, 1), date(2026, 10, 30))
     captured = made.days(seams[1], date(2027, 1, 29))
@@ -340,6 +348,7 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
     src = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror"),
         settings,
+        live=FolderBucket(lake.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
         kinds=made.KINDS,

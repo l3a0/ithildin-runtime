@@ -17,7 +17,8 @@ import boto3
 import pytest
 from botocore.config import Config
 
-from ithildinruntime.core import BlobMissing, StoreUnavailable
+from ithildinruntime.adapters import S3Bucket
+from ithildinruntime.core import BlobMissing, ChecksumMismatch, StoreUnavailable
 from tests.support.buckets import BucketSpec
 from tests.support.stores import EMULATOR_KEYS, REGION
 
@@ -64,6 +65,46 @@ def check_a_new_version_reads_as_another_version(spec: BucketSpec) -> None:
     assert second.version != first.version
 
 
+def check_a_read_at_a_version_gives_that_version_or_none(spec: BucketSpec) -> None:
+    key = spec.key("journal/seg-1.arrows")
+    spec.put(key, b"one")
+    first = spec.open().read(key)
+    assert spec.open().read(key, first.version).data == b"one"
+    spec.put(key, b"two")
+    newest = spec.open().read(key)
+    assert spec.open().read(key, newest.version).data == b"two"
+    if spec.kind == "s3":
+        old = spec.open().read(key, first.version)
+        assert (old.data, old.version) == (b"one", first.version)
+    else:
+        # A folder holds one version of a file, the one its bytes hash to.
+        with pytest.raises(BlobMissing):
+            spec.open().read(key, first.version)
+    for missing, version in ((key, spec.missing_version()), (spec.key("absent"), first.version)):
+        with pytest.raises(BlobMissing):
+            spec.open().read(missing, version)
+
+
+def check_a_listing_is_sorted_by_bytes_and_holds_a_prefix_alone(spec: BucketSpec) -> None:
+    keys = ["a-b", "a/b", "a/bc/d", "ab", "a/é", "a/\U0001f600", "a/\ue000", "b"]
+    for key in keys:
+        spec.put(spec.key(key), key.encode())
+    bucket = spec.open()
+    everything = [spec.key(k) for k in sorted(keys, key=str.encode)]
+    assert everything.index(spec.key("a-b")) < everything.index(spec.key("a/b"))
+    assert list(bucket.list(spec.key("a"))) == everything[:-1]
+    under = [k for k in everything if k.startswith(spec.key("a/"))]
+    assert list(bucket.list(spec.key("a/"))) == under
+    assert list(bucket.list(spec.key("a/b"))) == [spec.key("a/b"), spec.key("a/bc/d")]
+    assert list(bucket.list(spec.key("b"))) == [spec.key("b")]
+
+
+def check_a_prefix_that_holds_nothing_is_an_empty_list(spec: BucketSpec) -> None:
+    spec.put(spec.key("a/b"), b"1")
+    for prefix in ("absent/", "a/c", "a/b/", "c"):
+        assert list(spec.open().list(spec.key(prefix))) == []
+
+
 def check_a_missing_key_reads_as_blob_missing(spec: BucketSpec) -> None:
     with pytest.raises(BlobMissing):
         spec.open().read(spec.key("manifest.jsonl"))
@@ -88,10 +129,57 @@ def test_a_missing_key_reads_as_blob_missing(bucket: BucketSpec) -> None:
     check_a_missing_key_reads_as_blob_missing(bucket)
 
 
+def test_a_read_at_a_version_gives_that_version_or_none(bucket: BucketSpec) -> None:
+    check_a_read_at_a_version_gives_that_version_or_none(bucket)
+
+
+def test_a_listing_is_sorted_by_bytes_and_holds_a_prefix_alone(bucket: BucketSpec) -> None:
+    check_a_listing_is_sorted_by_bytes_and_holds_a_prefix_alone(bucket)
+
+
+def test_a_prefix_that_holds_nothing_is_an_empty_list(bucket: BucketSpec) -> None:
+    check_a_prefix_that_holds_nothing_is_an_empty_list(bucket)
+    assert list(bucket.open().list("")) == ["a/b"]
+
+
+def test_a_bucket_that_holds_nothing_lists_nothing(bucket: BucketSpec) -> None:
+    assert list(bucket.open().list("")) == []
+    assert list(bucket.open().list("journal/")) == []
+
+
+def test_a_listing_follows_every_page(bucket: BucketSpec) -> None:
+    keys = [f"journal/{n:04d}" for n in range(1001)]
+    for key in keys:
+        bucket.put(key, b"")
+    assert list(bucket.open().list("journal/")) == keys
+
+
+def test_a_bucket_reads_and_lists_only_its_own_prefix(bucket: BucketSpec) -> None:
+    """marketlake's live segments sit under `<prefix>-live/`, beside its lake under `<prefix>/`."""
+    bucket.put("a/one", b"1")
+    bucket.put_beside("a/two", b"2")
+    assert list(bucket.open().list("")) == ["a/one"]
+    assert list(bucket.open_beside().list("a/")) == ["a/two"]
+    assert bucket.open_beside().read("a/two").data == b"2"
+    with pytest.raises(BlobMissing):
+        bucket.open().read("a/two")
+
+
+@pytest.mark.parametrize("prefix", ["", "/", "lake/", "/lake", "/lake/"])
+def test_an_s3_bucket_is_rooted_at_a_prefix_with_no_slash_at_either_end(prefix: str) -> None:
+    with pytest.raises(ValueError, match="is not a prefix"):
+        S3Bucket(object(), "b", prefix)
+    with pytest.raises(TypeError):
+        S3Bucket(object(), "b")  # type: ignore[call-arg]
+
+
 @pytest.mark.parametrize("key", ["../outside", "/root", "a/../../b", "a\\b", ""])
 def test_a_key_that_could_climb_out_of_the_bucket_is_refused(bucket: BucketSpec, key: str) -> None:
     with pytest.raises(ValueError):
         bucket.open().read(key)
+    if key:
+        with pytest.raises(ValueError):
+            bucket.open().list(key)
 
 
 def _stubbed(reply: dict):
@@ -103,7 +191,9 @@ def _stubbed(reply: dict):
     )
     body = {"Body": StreamingBody(io.BytesIO(b"a partition"), len(b"a partition")), **reply}
     stub = Stubber(client)
-    stub.add_response("get_object", body, {"Bucket": "b", "Key": "k", "ChecksumMode": "ENABLED"})
+    stub.add_response(
+        "get_object", body, {"Bucket": "b", "Key": "lake/k", "ChecksumMode": "ENABLED"}
+    )
     stub.activate()
     return client
 
@@ -118,7 +208,7 @@ B64 = base64.b64encode(SHA.digest()).decode()
         (
             {
                 "VersionId": "v1",
-                "ChecksumSHA256": __import__("base64").b64encode(SHA.digest()).decode(),
+                "ChecksumSHA256": B64,
                 "ChecksumType": "FULL_OBJECT",
             },
             "v1",
@@ -132,9 +222,7 @@ B64 = base64.b64encode(SHA.digest()).decode()
 def test_the_s3_bucket_reads_s3s_version_and_whole_object_sha256(
     reply: dict, version: str | None, sha256: str | None
 ) -> None:
-    from ithildinruntime.adapters import S3Bucket
-
-    got = S3Bucket(_stubbed(reply), "b").read("k")
+    got = S3Bucket(_stubbed(reply), "b", "lake").read("k")
     assert (got.data, got.version, got.sha256) == (b"a partition", version, sha256)
 
 
@@ -157,6 +245,112 @@ def test_an_unversioned_bucket_reads_with_no_version(emulator: str) -> None:
 
 def test_a_missing_bucket_reads_as_unavailable_not_as_a_missing_key(emulator: str) -> None:
     spec = BucketSpec("s3", client=_client(emulator), name="no-such-bucket")
-    with pytest.raises(StoreUnavailable) as refused:
-        spec.open().read("manifest.jsonl")
-    assert not isinstance(refused.value, BlobMissing)
+    for call in (
+        lambda: spec.open().read("manifest.jsonl"),
+        lambda: spec.open().read("manifest.jsonl", "v1"),
+        lambda: spec.open().list("journal/"),
+    ):
+        with pytest.raises(StoreUnavailable, match="404 NoSuchBucket") as refused:
+            call()
+        assert not isinstance(refused.value, BlobMissing)
+
+
+def test_a_folder_that_cannot_be_read_is_unavailable_and_never_empty(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ithildinruntime.adapters import FolderBucket
+
+    bucket = FolderBucket(tmp_path)
+    (tmp_path / "journal").mkdir()
+
+    def refuse(path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("os.scandir", refuse)
+    with pytest.raises(StoreUnavailable, match="journal/: PermissionError"):
+        bucket.list("journal/")
+
+
+def _refusing(operation: str, code: str, status: int) -> S3Bucket:
+    from botocore.stub import Stubber
+
+    client = boto3.client(
+        "s3", region_name=REGION, endpoint_url="http://stubbed.invalid", **EMULATOR_KEYS
+    )
+    stub = Stubber(client)
+    stub.add_client_error(operation, code, "said so", status)
+    stub.activate()
+    return S3Bucket(client, "b", "lake")
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "kind"),
+    [
+        ("NoSuchVersion", 404, BlobMissing),
+        ("NoSuchKey", 404, BlobMissing),
+        ("NoSuchBucket", 404, StoreUnavailable),
+        ("AccessDenied", 403, StoreUnavailable),
+        ("InvalidArgument", 400, StoreUnavailable),
+        ("SlowDown", 503, StoreUnavailable),
+    ],
+)
+def test_a_read_s3_refuses_carries_its_answer(code: str, status: int, kind: type) -> None:
+    with pytest.raises(kind, match=f"{status} {code}: said so") as refused:
+        _refusing("get_object", code, status).read("k", "v1")
+    assert type(refused.value) is kind
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [("AccessDenied", 403), ("NoSuchBucket", 404), ("NoSuchKey", 404), ("SlowDown", 503)],
+)
+def test_a_listing_s3_refuses_is_unavailable_with_its_answer(code: str, status: int) -> None:
+    """A missing grant reads as its 403, and never as a prefix that holds nothing."""
+    with pytest.raises(StoreUnavailable, match=f"journal/: {status} {code}: said so"):
+        _refusing("list_objects_v2", code, status).list("journal/")
+
+
+def test_a_bucket_that_does_not_answer_is_unavailable() -> None:
+    from botocore.exceptions import EndpointConnectionError
+
+    class Silent:
+        def get_object(self, **kwargs):
+            raise EndpointConnectionError(endpoint_url="http://stubbed.invalid")
+
+        def get_paginator(self, operation):
+            return self
+
+        def paginate(self, **kwargs):
+            raise EndpointConnectionError(endpoint_url="http://stubbed.invalid")
+
+    for call in (lambda b: b.read("k"), lambda b: b.list("journal/")):
+        with pytest.raises(StoreUnavailable, match="no answer"):
+            call(S3Bucket(Silent(), "b", "lake"))
+
+
+def test_bytes_that_fail_the_stored_checksum_are_a_mismatch() -> None:
+    """botocore checks them as the body is read, against the SHA-256 S3 stored."""
+    from botocore.httpchecksum import Sha256Checksum, StreamingChecksumBody
+
+    body = StreamingChecksumBody(io.BytesIO(b"damaged"), len(b"damaged"), Sha256Checksum(), B64)
+
+    class Answers:
+        def get_object(self, **kwargs):
+            return {"Body": body, "VersionId": "v1", "ChecksumSHA256": B64}
+
+    with pytest.raises(ChecksumMismatch, match="k: .*did not match"):
+        S3Bucket(Answers(), "b", "lake").read("k")
+
+
+def test_a_read_at_a_version_asks_s3_for_it() -> None:
+    asked = []
+
+    class Answers:
+        def get_object(self, **kwargs):
+            asked.append(kwargs)
+            return {"Body": io.BytesIO(b"x"), "VersionId": "v1", "ChecksumSHA256": B64}
+
+    S3Bucket(Answers(), "b", "lake").read("k", "v1")
+    S3Bucket(Answers(), "b", "lake").read("k")
+    both = {"Bucket": "b", "Key": "lake/k", "ChecksumMode": "ENABLED"}
+    assert asked == [both | {"VersionId": "v1"}, both]

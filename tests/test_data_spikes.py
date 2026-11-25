@@ -1,4 +1,4 @@
-"""The spike flag's three rules, and the measurement the spike multiple is stated beside.
+"""The spike flag's rules on a bar and on a quote, and what the multiple is stated beside.
 
 Acceptance test 14 on #5. Each flag sits beside a price that stays as it
 arrived. The measurement over the Chan vintages is exploratory: it was found
@@ -9,7 +9,7 @@ reach, so a multiple below it flags a bar of that series in test 1.
 from __future__ import annotations
 
 import dataclasses
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import get_type_hints
@@ -18,8 +18,17 @@ import pytest
 
 from ithildinruntime.core import STRATEGIES, Bar, InstrumentId, load_strategies
 from ithildinruntime.data import data_settings, largest_multiple, spike_flags
-from ithildinruntime.data.spikes import BELOW_LOW, CONTRADICT, MOVE, below_low, contradictions
+from ithildinruntime.data.spikes import (
+    BELOW_LOW,
+    CONTRADICT,
+    MOVE,
+    below_low,
+    contradictions,
+    quote_contradictions,
+    quote_flags,
+)
 from tests.core_samples import sample
+from tests.support.quotes import quote as a_quote
 
 START = date(2012, 1, 3)
 
@@ -278,3 +287,149 @@ def test_the_largest_multiple_the_chan_vintages_reach_is_pinned(
         assert [b for b in bars if contradictions(b) or below_low(b)] == []
         found[instrument] = round(largest_multiple(bars, lookback), 6)
     assert found == {"GLD": Decimal("6.807921"), "USO": Decimal("5.302537")}
+
+
+# A quote.
+
+TODAY = date(2012, 4, 10)
+AT = datetime(2012, 4, 10, 19, 40, tzinfo=UTC)
+NO_VOLUME = "a quote carries no volume the rule weighs, so the flag weighs none"
+# Two returns of 1% and -1%, whose sample standard deviation is 1.414...%.
+WALK = series("100", "101", "99.99")
+
+
+def quoted(bid: str | None, ask: str | None):
+    made = a_quote("GLD", 1, 1, AT)
+    sides = {"bid": bid, "ask": ask}
+    return dataclasses.replace(
+        made, **{n: None if v is None else Decimal(v) for n, v in sides.items()}
+    )
+
+
+@pytest.mark.parametrize(
+    ("bid", "ask", "found"),
+    [
+        ("100", "100", []),
+        ("100", "100.0001", []),
+        ("100.0001", "100", [("ask", "100", "100.0001")]),
+        ("0", "1", [("bid", "0", "0")]),
+        ("-1", "1", [("bid", "-1", "0")]),
+        ("0.0001", "0.0001", []),
+        ("0", "0", [("bid", "0", "0"), ("ask", "0", "0")]),
+        ("1", "0", [("ask", "0", "0"), ("ask", "0", "1")]),
+        (None, "1", []),
+        (None, "0", [("ask", "0", "0")]),
+        ("1", None, []),
+        (None, None, []),
+    ],
+)
+def test_a_quote_whose_prices_contradict_each_other_is_flagged(
+    bid: str | None, ask: str | None, found: list[tuple[str, str, str]]
+) -> None:
+    flags = quote_contradictions(quoted(bid, ask), TODAY)
+    assert [(f.field, f.price, f.against) for f in flags] == [
+        (name, Decimal(price), Decimal(against)) for name, price, against in found
+    ]
+    assert all((f.session, f.rule, f.note) == (TODAY, CONTRADICT, NO_VOLUME) for f in flags)
+    assert quote_flags(quoted(bid, ask), TODAY, [], Decimal(10)) == tuple(flags)
+
+
+def move(bars: list[Bar], price: str, multiple: str = "2"):
+    flags = quote_flags(quoted(price, price), TODAY, bars, Decimal(multiple))
+    assert all(f.rule == MOVE for f in flags)
+    return flags
+
+
+def test_a_midpoint_past_the_written_multiple_is_flagged_beside_the_newest_close() -> None:
+    (flag,) = move(WALK, "110")
+    assert (flag.session, flag.field, flag.price, flag.against) == (
+        TODAY,
+        "midpoint",
+        Decimal(110),
+        Decimal("99.99"),
+    )
+    assert flag.note == (
+        "a move of the midpoint by 7.08 standard deviations, past the written 2. " + NO_VOLUME
+    )
+
+
+@pytest.mark.parametrize(
+    ("closes", "price", "flags"),
+    [
+        # The returns are 10% and -10%, a deviation of 14.14%, and one of 20% is 1.41421... of it.
+        (("100", "110", "99"), "118.8", 1),
+        (("100", "110", "99"), "118.7", 1),
+        # The returns are 20% and 0%, a deviation of 14.14%, and a multiple is read at the boundary.
+        (("100", "120", "120"), "120", 0),
+    ],
+)
+def test_a_midpoints_move_is_its_return_on_the_newest_close(
+    closes: tuple[str, ...], price: str, flags: int
+) -> None:
+    assert len(move(series(*closes), price, "1.4")) == flags
+
+
+@pytest.mark.parametrize(
+    ("price", "flagged"), [("109.9999", False), ("110", False), ("110.0001", True)]
+)
+@pytest.mark.parametrize("down", [False, True])
+def test_a_midpoint_at_the_written_multiple_is_not_flagged_and_one_step_past_is(
+    price: str, flagged: bool, down: bool
+) -> None:
+    """Returns of 0, 0.1 and 0.2 have a deviation of 0.1, so a tenth is one deviation exactly."""
+    bars = series("100", "100", "110", "132")
+    last = Decimal(132)
+    moved = last * Decimal(price) / 100
+    if down:
+        moved = 2 * last - moved
+    assert (len(move(bars, str(moved), "1")) == 1) is flagged
+
+
+@pytest.mark.parametrize("n", [0, 1, 2])
+def test_fewer_than_two_returns_judge_no_midpoint(n: int) -> None:
+    assert move(series(*["100", "101"][:n]), "1000") == ()
+
+
+@pytest.mark.parametrize(
+    ("closes", "price", "flagged"),
+    [
+        (("100", "100", "100"), "100", False),
+        (("100", "100", "100"), "100.0001", True),
+        (("100", "100", "100"), "99.9999", True),
+        (("100", "110", "121"), "133.1", False),
+        (("100", "110", "121"), "133.1001", True),
+    ],
+)
+def test_a_lookback_whose_returns_are_all_equal_flags_any_other_move(
+    closes: tuple[str, ...], price: str, flagged: bool
+) -> None:
+    flags = move(series(*closes), price, "1000")
+    assert bool(flags) is flagged
+    for flag in flags:
+        assert flag.note == (
+            "a move of the midpoint where every return of the lookback is the same. " + NO_VOLUME
+        )
+
+
+@pytest.mark.parametrize(("bid", "ask"), [("0", "0"), ("-5", "1"), (None, "1000"), ("1000", None)])
+def test_a_midpoint_that_is_no_price_raises_no_move_flag(bid: str | None, ask: str | None) -> None:
+    flags = quote_flags(quoted(bid, ask), TODAY, WALK, Decimal(2))
+    assert all(f.rule == CONTRADICT for f in flags)
+
+
+def test_a_newest_close_at_or_below_zero_raises_no_move_flag() -> None:
+    bars = series("100", "101", "102", "0")
+    assert move(bars, "1000") == ()
+
+
+def test_a_midpoint_past_the_codecs_digits_raises_no_flag_and_no_error() -> None:
+    """Thirty-eight digits and a half make thirty-nine, which no record holds."""
+    long = "1." + "0" * 36 + "1"
+    flags = quote_flags(quoted(long, "1"), TODAY, WALK, Decimal(2))
+    assert [f.rule for f in flags] == [CONTRADICT]
+    assert quote_flags(quoted("1", long), TODAY, WALK, Decimal(2)) == ()
+
+
+def test_a_midpoint_flag_keeps_a_fifth_place() -> None:
+    (flag,) = quote_flags(quoted("110", "110.0001"), TODAY, WALK, Decimal(2))
+    assert flag.price == Decimal("110.00005")

@@ -354,9 +354,9 @@ failure on one VM leaves the other running.
 At each decision the data
 worker downloads what that decision's lookback names and the mirror lacks.
 For the skeleton's one daily decision that is once a day at close−20: the
-previous session's sealed partition and the day's segments up to the
-decision time. A strategy deciding once a minute fetches each new segment
-as its decision comes.
+previous session's sealed partition, and the newest five of the day's segments
+of each instrument. A strategy deciding once a minute lists the day again and
+downloads its newest five as each decision comes.
 
 #### How a partition reaches the mirror
 
@@ -371,8 +371,9 @@ download. `data/mirror.py`'s docstring gives each step.
 
 #### How a segment read before sealing is checked
 
-A capture segment read before sealing is checked against its manifest entry as the object carries it, the stored SHA-256 and metadata under `lake-live/`, not the bucket's `manifest.jsonl`, which only the nightly upload writes. The read credential
-covers the segments' prefix too.
+A capture segment read before sealing is checked by marketlake's reader, which is handed the SHA-256 S3 stored with the object and compares it with the bytes downloaded. marketlake's contract says that digest is the one its manifest records, because S3 refuses the upload otherwise. The bucket's `manifest.jsonl` is not read for it, because only the nightly upload writes that file, and the object's user metadata is not part of the contract. The segments are lake-relative keys under `<prefix>-live/`, beside the lake's own under `<prefix>/`, and the read credential covers both. One bucket name and one prefix are configured, and `runtime.data_worker.data_buckets` makes the two buckets from them.
+
+The check cannot see an overwrite of a segment's key, because the digest comes from the object it vouches for. S3 refuses no overwrite until [l3a0/marketlake#985](https://github.com/l3a0/marketlake/issues/985) closes, which is a condition of [the Live step](../team-charter.md#5-release).
 
 #### Which other marketlake files the mirror holds
 
@@ -385,8 +386,9 @@ The grant and the mirror cover every file marketlake's `is_reader_file` names, i
 | The data worker finds | What happens |
 | --- | --- |
 | A partition not yet in the bucket | It is "data not ready", which halts |
+| No segment of an instrument, no row captured by the decision, or no capture every instrument has | The snapshot is stored and the decision halts, naming each prefix and what it listed |
 | A partition that fails the check against the manifest's checksum | The decision halts |
-| A capture segment read before sealing that does not match its manifest entry | The decision halts |
+| A capture segment whose bytes do not hash to the SHA-256 the bucket stored, on a second download too | The snapshot is stored with what else was read, and the decision halts |
 | An absent or unreadable file that `is_reader_file` names | The decision stops |
 | A quarantined partition in the lookback | A test expects it to halt |
 
@@ -404,11 +406,11 @@ names it, limited to the partitions, the segments, the manifest and the files `i
 The statement grants three actions.
 
 1. `s3:GetObject`.
-2. `s3:GetObjectVersion`, since the snapshot names each segment by its S3 version.
-3. `s3:ListBucket`, limited by prefix to those keys, without which S3 answers a missing partition with "access denied" rather than "no such blob".
+2. `s3:GetObjectVersion`, since the snapshot names each segment by its S3 version, and a second download of a segment asks for that version.
+3. `s3:ListBucket`, limited by prefix to those keys, which include `<prefix>-live/`. The read of an unsealed day lists, so without it every decision inside a session halts on the 403. Without it S3 also answers a missing partition with "access denied" rather than "no such blob".
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks
-that, and the data worker reads "no such blob" as "data not ready".
+each of the three, and the data worker reads "no such blob" as "data not ready".
 marketlake's bucket is encrypted with SSE-S3, so no KMS key is shared.
 
 ### Rule 9: a replacement VM's supervisor reads the run's plan

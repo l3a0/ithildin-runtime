@@ -187,7 +187,7 @@ def _read(
     if intent is not None:
         _check_intent(intent, book, limits)
     instruments = {*held(book), *([intent.instrument] if intent is not None else [])}
-    marks = {i: mark(snapshot, i, valuation.session) for i in sorted(instruments)}
+    marks = {i: mark(snapshot, i, valuation.session, now) for i in sorted(instruments)}
     loss = _day_loss(book, valuation, marks)
     return _Read(
         limits=limits,

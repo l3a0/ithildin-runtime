@@ -73,7 +73,9 @@ def every_session(built_lake: Path, tmp_path_factory: pytest.TempPathFactory) ->
             stale_lag=0,
             # Far past any move in either series, so no bar is flagged.
             spike_multiple=Decimal(100),
+            quotes={},
         ),
+        live=FolderBucket(built_lake.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
     )
