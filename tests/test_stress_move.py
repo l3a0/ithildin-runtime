@@ -567,11 +567,12 @@ def test_3_a_record_stdout_cannot_hold_is_refused_on_one_line(
     assert err.getvalue().count("\n") == 1
 
 
-@pytest.mark.parametrize("zone", ["Etc/GMT+12", "Pacific/Kiritimati"])
+@pytest.mark.parametrize("zone", ["AAA12", "BBB-14"])
 def test_3_a_run_by_hand_dates_the_record_by_the_machines_clock_in_utc(
     lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request, zone: str
 ) -> None:
-    """The entry point's own clock. At any instant one of the two zones is on another date."""
+    """The entry point's own clock. At any instant one of the two zones, 12 hours behind
+    UTC and 14 ahead, is on another date."""
     monkeypatch.setenv("TZ", zone)
     time.tzset()
     request.addfinalizer(time.tzset)

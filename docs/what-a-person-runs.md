@@ -411,7 +411,7 @@ uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy 
 2. Fill in each flag's empty `what`, which says what the flagged price was. The reader refuses a record with one empty.
 3. Where the record's `series` hold captured bars, read marketlake's action ledger for a split in their span. A split there reads as a move, so one missed can make m larger, or smaller where it offsets a real move. A captured series has the `basis` `raw`, and the move rule misses some splits in one.
 4. Read each move under `left_out`, which m does not count. Where a source holds both its sides, compare it with m.
-5. A split found at step 3, or a move at or above m at step 4, stops the commit and goes to the owner.
+5. A split found at step 3, or a move at step 4 that is at or above m or that no source measures, stops the commit and goes to the owner.
 6. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
 
 #### Raise the stress move
@@ -420,11 +420,11 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 
 1. Compare the dollars of each held leg with the net cap the new m gives. Where one is over it, the gate can refuse an exit of the pair once m is raised, and where each is, both, until the target, a cap, V or the prices move. [#158](https://github.com/l3a0/ithildin-runtime/issues/158) holds what the owner may do about a position then.
 2. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
-3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back.
+3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back. This step alone moves the caps to a newer record that is no larger, which has to happen before the older one's age passes.
 
 #### Withdraw a record
 
-A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
+A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. Where there is no other, a release that carries a new measurement runs first, and the withdrawal comes in a later one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
 
 ### Set up the test environment
 

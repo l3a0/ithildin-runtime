@@ -502,7 +502,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap, with the stress move [held to its record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record). Portfolio construction builds the target portfolio within them, at the snapshot's prices, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap, with the stress move [held to the stress records](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record). Portfolio construction builds the target portfolio within them, at the snapshot's prices, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
 
 The figure below is a C4 dynamic diagram.
 

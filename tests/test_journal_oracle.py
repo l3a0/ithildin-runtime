@@ -115,10 +115,12 @@ def _the_gate_reads(view: View) -> None:
 def _checked_again(book: Book, checked: Checked) -> None:
     """Both gates give a verdict again from its entry and the book its `book` names.
 
-    The entry holds no stress record, so the verdict's own m stands for the caps'.
+    The entry holds no stress record, so each gate is handed one made to fit the caps, and
+    the verdict's own m stands for the caps'.
     """
     entry = checked.entry
     assert book.replayed_through == entry.book
+    assert entry.verdict.stress_move == checked.stress_move
     snapshot, constraints, valuation = (
         decode(checked.blobs[ref.sha256], kind)
         for ref, kind in (
@@ -146,7 +148,7 @@ def _checked_again(book: Book, checked: Checked) -> None:
         records,
     )
     said = entry.verdict
-    assert given.stress_move == Fraction(said.stress_move)
+    assert given.stress_move == Fraction(checked.stress_move)
     assert (given.approved, given.limit, given.adding) == (
         said.approved,
         said.limit and said.limit.value,
@@ -190,8 +192,8 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
             assert book == books[number]
             _checked_again(book, checked)
             seen["a verdict given again"] += 1
-            raised = checked.entry.verdict.stress_move > CAPS.stress_move
-            seen["a verdict under a larger record"] += raised
+            larger = checked.stress_move > CAPS.stress_move
+            seen["a verdict under a larger record"] += larger
     for what in (
         *ENDS,
         *MOVES,

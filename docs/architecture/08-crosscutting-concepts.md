@@ -496,7 +496,7 @@ A record is named by its strategy and its vintage, which is the SHA-256 of the b
 
 The reader refuses each of these as a halt naming the file, and the record and the key where the fault is in one. No halt names the folder the file sits in.
 
-1. A file that is absent or is not TOML.
+1. A file that is absent or cannot be read, such as one that is not TOML.
 2. A key it does not know, or one left out.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
@@ -545,7 +545,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `read` | `stage`, `decision_at`, `ref`, `at` | Execution | The stored file that holds a broker read, named before any value in it is used, and when the read was made |
 | `decision` | `deployment`, `run`, `decision_at`, `targets`, `orders`, `off`, `inputs`, `read`, `synced` | Execution | Every strategy's whole target, the planned orders in order, each strategy that was off, each input by name, and the entries it was planned on and synced through |
 | `intent` | `decision`, `order` | Execution's order path | One planned order, under its `decision` entry's number |
-| `verdict` | `client_order_id`, `verdict`, `now`, `stop`, `close_entry`, `book`, `caps`, `caps_sha256`, `snapshot`, `constraints`, `valuation` | Execution's order path | The gate's answer and all it was handed but the stress records, so the check can be run again with the verdict's `stress_move` |
+| `verdict` | `client_order_id`, `verdict`, `now`, `stop`, `close_entry`, `book`, `caps`, `caps_sha256`, `snapshot`, `constraints`, `valuation` | Execution's order path | The gate's answer, with the stress move it used, and all it was handed but the stress records |
 | `abandoned` | `client_order_id`, `reason` | Execution's order path | Nothing was sent, and why |
 | `sending` | `client_order_id` | Execution's order path | The order may leave now |
 | `ack` | `client_order_id`, `broker_order_id`, `raw`, `cut`, `received_at` | Execution's order path | The broker has the order, with the bytes it sent |

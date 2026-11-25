@@ -132,7 +132,8 @@ class IntentEntry:
 class VerdictEntry:
     """The gate's answer, and all it was handed but the stress records.
 
-    The check can be run again with the verdict's `stress_move` in place of the caps'.
+    The verdict's `stress_move` is the one the check used, which a record can hold
+    above the caps'.
 
     - `now` is the clock reading, `stop` the loss stop's state and
       `close_entry` the number of the entry of a close after a broker's trade,

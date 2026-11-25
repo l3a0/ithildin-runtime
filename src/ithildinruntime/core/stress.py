@@ -274,7 +274,7 @@ def stress_vintage(bars: Mapping[InstrumentId, Sequence[Bar]]) -> str:
 
 
 def load_records(path: Path) -> tuple[StressRecord, ...]:
-    """The records in `path`, or a halt naming the file, and the record and key at fault."""
+    """The records in `path`, or a halt naming the file, and the record and key where one is wrong."""
     try:
         data = path.read_bytes()
     except FileNotFoundError:
@@ -473,7 +473,7 @@ _RECORD = {*_PLAIN, "series", "left_out", "flagged"}
 
 
 def hold_to_record(constraints: Constraints, caps: HardCaps, records: StressRecords) -> HardCaps:
-    """The caps held to the record they name, or a halt naming the field that is not.
+    """The caps held to the stress records, or a halt naming the field that is not.
 
     The stress move is the largest of the caps' own and of every record of the
     strategy that is not withdrawn and that one of these legs set, so a record
