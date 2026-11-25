@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import time
 import tracemalloc
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -30,7 +32,10 @@ from ithildinruntime.journal import (
     NumberTaken,
     Record,
     SendingEntry,
+    body_of,
+    kind_of,
 )
+from ithildinruntime.journal.book import after
 from ithildinruntime.journal.orders import DOUBTFUL, ENDED, MOVES, OPEN, Move
 from tests.support.journals import (
     ACCOUNT,
@@ -81,6 +86,8 @@ def refuses(journal: Journal, record: Record, match: str) -> None:
             reader.view()
         assert at_replay.value.reason == at_record.value.reason
     assert f"entry {number}" in at_record.value.reason
+    # `record`'s own reader of a bad entry, and the fold, name the account once.
+    assert at_record.value.reason.startswith(f"journal {ACCOUNT}: entry {number}")
 
 
 def accepts(journal: Journal, record: Record):
@@ -467,6 +474,8 @@ DIFFERING = {
     "broker_order_id": {"broker_order_id": "b2"},
     "instrument": {"instrument": USO},
     "at": {"at": AT + timedelta(microseconds=1)},
+    # A bust sent again under its own id, for no shares.
+    "no shares": {"qty": 0},
 }
 
 
@@ -480,7 +489,8 @@ def test_4_a_repeat_that_differs_is_a_dispute_and_the_book_halts(state: str, fie
     journal, name = at(state)
     before, repeat = journal.view(), differing(field)
     copy = Journal(Memory(journal._store.blobs), ACCOUNT, WRITER)
-    refuses(copy, filled(repeat), "entry .*'s fill b1-f1 holds .*, and the one applied holds")
+    no_fill = "is for zero shares|entry .*'s fill b1-f1 holds .*, and the one applied holds"
+    refuses(copy, filled(repeat), no_fill)
     view = accepts(journal, disputed(repeat))
     number = view.through.seq
     assert view.disputes == (Dispute(number, repeat),)
@@ -776,6 +786,17 @@ def test_7_two_writers_never_hold_one_acknowledgement_under_one_clock() -> None:
     assert len(held) == 1
 
 
+def test_7_two_journals_with_one_writer_do_both_hold_it_so_each_has_its_own() -> None:
+    """What the writer is for: without one of its own, a second `Journal` is told it wrote."""
+    journal, name = at("Approved")
+    other = Journal(journal._store, ACCOUNT, WRITER)
+    views = journal.view(), other.view()
+    held = [
+        j.record(v, SendingEntry(name), AT)[0] for j, v in zip((journal, other), views, strict=True)
+    ]
+    assert held[0] == held[1]
+
+
 def test_11_two_calls_that_build_the_same_bytes_hold_one_acknowledgement() -> None:
     """Two threads of one process share a writer, and under a history clock a time too."""
     journal, name = at("Approved")
@@ -798,6 +819,90 @@ def test_11_two_calls_that_build_the_same_bytes_hold_one_acknowledgement() -> No
     assert journal.view().orders[name].state is OrderState.SENDING
     with pytest.raises(NumberTaken):
         journal.record(view, SendingEntry(name), AT)
+
+
+class Slow(set):
+    """A set whose check leaves time for another thread to make the same one."""
+
+    def __contains__(self, item: object) -> bool:
+        found = super().__contains__(item)
+        time.sleep(0.05)
+        return found
+
+
+def test_11_no_two_calls_pass_the_one_check_that_hands_a_number_out() -> None:
+    journal, name = at("Approved")
+    view = journal.view()
+    journal._acknowledged = Slow()
+    held = _together(8, lambda n: journal.record(view, SendingEntry(name), AT))
+    assert len(held) == 1
+
+
+def _together(threads: int, call: Callable[[int], object]) -> list[object]:
+    """What each call that raised no `NumberTaken` gave, all started at once."""
+    start, given, failures = threading.Barrier(threads), [], []
+
+    def run(n: int) -> None:
+        start.wait()
+        try:
+            given.append(call(n))
+        except NumberTaken:
+            pass
+        except BaseException as error:  # noqa: BLE001
+            failures.append(error)
+
+    made = [threading.Thread(target=run, args=(n,), daemon=True) for n in range(threads)]
+    for thread in made:
+        thread.start()
+    for thread in made:
+        thread.join(60)
+        assert not thread.is_alive()
+    assert not failures, failures
+    return given
+
+
+class SlowDict(dict):
+    def __contains__(self, item: object) -> bool:
+        found = super().__contains__(item)
+        time.sleep(0.05)
+        return found
+
+
+def test_7_an_entry_folded_on_two_threads_is_kept_once() -> None:
+    journal, _ = at("Acknowledged")
+    view = journal.view()
+    entry = journal._build(body_of(filled(fill("f1")), WRITER), AT, view.through)
+    steps = [after(view, entry) for _ in range(4)]
+    view._shared.fills.found = SlowDict()
+    views = _together(4, lambda n: steps[n].keep(entry.hash()))
+    assert len(views) == 4
+    for made in views:
+        assert list(made.fills) == ["f1"] and len(made.fills) == 1
+
+
+def test_11_a_fill_whose_answer_was_lost_is_kept_once() -> None:
+    made, _ = at("Acknowledged")
+    store = Failing(made._store.blobs)
+    journal = Journal(store, ACCOUNT, WRITER)
+    view = journal.view()
+    store.fail = "landed"
+    with pytest.raises(StoreUnavailable):
+        journal.record(view, filled(fill("f1")), AT)
+    assert list(journal.view().fills) == ["f1"]
+    _, after_ = journal.record(view, filled(fill("f1")), AT)
+    assert list(after_.fills) == ["f1"]
+    assert shown(after_) == shown(journal.view()) == shown(Journal(store, ACCOUNT).view())
+
+
+def test_after_refuses_a_second_value_for_what_a_view_shows() -> None:
+    """Every kept value is added once, so a second one would be dropped without a word."""
+    journal, _ = at("PartlyFilled")
+    view = journal.view()
+    step = after(view, journal._build(body_of(read(), WRITER), AT, view.through))
+    with pytest.raises(Halt, match="gives 'b1-f1' a second value, after entry 8's"):
+        step.add(view._shared.fills, "b1-f1", fill("b1-f1", qty=1))
+    # One entry's own value, folded by another thread, is not a second.
+    step.add(view._shared.reads, view.through.seq + 1, read())
 
 
 class Failing(Memory):
@@ -951,6 +1056,46 @@ def test_18_a_view_shows_each_decision_read_and_time() -> None:
         view.reads[7] = None  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
         view.account = "x"  # type: ignore[misc]
+    for changed in (view.live, view.orders, view.fills, view.decisions, view.decided):
+        with pytest.raises(TypeError):
+            changed["x"] = None  # type: ignore[index]
+
+
+def test_18_live_orders_keep_the_order_their_intents_were_journaled_in() -> None:
+    one, two, three = (planned(n, 4) for n in (1, 2, 3))
+    journal = started(one, two, three)
+    for order in (two, one, three):
+        add(journal, IntentEntry(3, order))
+    names = [order.client_order_id for order in (two, one, three)]
+    for name in (names[2], names[0], names[1]):
+        add(journal, verdict(name))
+        add(journal, SendingEntry(name))
+        assert list(journal.view().live) == names
+    assert [o.intent.client_order_id for o in journal.in_doubt()] == names
+
+
+def test_18_a_view_held_before_an_entry_shows_nothing_of_it_in_any_map() -> None:
+    journal, name = at("Sending")
+    held, was = journal.view(), shown(journal.view())
+    _, newer = journal.record(held, ack(name), AT)
+    _, newer = journal.record(newer, read(AT + DAY), AT)
+    _, newer = journal.record(newer, decision(at=AT + DAY, read=8), AT)
+    _, newer = journal.record(newer, filled(fill("f1", "b1", 4)), AT)
+    assert (len(newer.reads), len(newer.decisions), len(newer.decided)) == (2, 2, 2)
+    assert shown(held) == was
+    for shown_, key in (
+        (held.reads, 8),
+        (held.decisions, 9),
+        (held.decided, AT + DAY),
+        (held.fills, "f1"),
+    ):
+        assert key not in shown_ and len(shown_) == len(list(shown_))
+        with pytest.raises(KeyError):
+            shown_[key]
+    # The broker's id is known from entry 7 on, and the held view is through 6.
+    entry = journal._build(body_of(filled(fill("f1", "b1", 4)), WRITER), AT, held.through)
+    with pytest.raises(Halt, match="b1, which no order was acknowledged under"):
+        after(held, entry)
 
 
 def test_18_the_newest_sent_at_is_the_latest_of_any_order() -> None:
@@ -1016,9 +1161,10 @@ def test_7_a_view_held_while_a_hundred_more_entries_are_recorded_is_unchanged() 
     journal = Journal(Memory(), ACCOUNT, WRITER)
     held = _lives(journal, 5)
     was = [shown(view) for view in held]
-    thread = threading.Thread(target=_lives, args=(journal, 14, AT + DAY))
+    thread = threading.Thread(target=_lives, args=(journal, 14, AT + DAY), daemon=True)
     thread.start()
-    thread.join()
+    thread.join(60)
+    assert not thread.is_alive()
     assert journal.view().through.seq - held[-1].through.seq > 100
     assert [shown(view) for view in held] == was
     last = held[-1]
@@ -1043,13 +1189,16 @@ def test_7_two_readers_see_prefixes_while_a_third_thread_records(tmp_path: Path)
         except BaseException as error:  # noqa: BLE001
             failures.append(error)
 
-    threads = [threading.Thread(target=look, args=(n,)) for n in (0, 1)]
+    threads = [threading.Thread(target=look, args=(n,), daemon=True) for n in (0, 1)]
     for thread in threads:
         thread.start()
-    _lives(journal, 12)
-    done.set()
+    try:
+        _lives(journal, 12)
+    finally:
+        done.set()
     for thread in threads:
-        thread.join()
+        thread.join(60)
+        assert not thread.is_alive()
     assert not failures, failures
     prefixes = {}
     for views in seen:
@@ -1061,6 +1210,70 @@ def test_7_two_readers_see_prefixes_while_a_third_thread_records(tmp_path: Path)
                 prefixes[number] = shown(journal.view(through=number))
             assert shown(view) == prefixes[number]
     assert journal.view().through.seq == 97
+
+
+class Torn(Memory):
+    """A store whose listings miss one entry, as a folder read beside a writer can."""
+
+    misses = 0
+    missed = journal_entry_key(ACCOUNT, 4)
+
+    def list(self, prefix: str, after: str | None) -> list[str]:
+        keys = super().list(prefix, after)
+        if self.misses and self.missed in keys:
+            self.misses -= 1
+            keys.remove(self.missed)
+        return keys
+
+
+def test_7_a_listing_that_missed_an_entry_is_taken_again_and_a_gap_that_stays_halts() -> None:
+    made, _ = at("Acknowledged")
+    good = shown(made.view())
+    store = Torn(made._store.blobs)
+    store.misses = 1
+    assert shown(Journal(store, ACCOUNT).view()) == good
+    assert (store.lists, store.gets) == (2, 7)
+    store.misses = 2
+    journal = Journal(store, ACCOUNT)
+    with pytest.raises(Halt, match="entry 4 is missing, and the next key is entry 5"):
+        journal.view()
+    assert shown(journal.view()) == good
+    store.misses = 10**6
+    for _ in range(2):
+        with pytest.raises(Halt, match="entry 4 is missing"):
+            Journal(store, ACCOUNT).view()
+
+
+def test_7_a_view_of_a_long_folder_beside_a_writer_never_reads_a_gap(tmp_path: Path) -> None:
+    """A short folder is listed in one piece, so the race shows only in a long one."""
+    seeded = Journal(Memory(), ACCOUNT, WRITER)
+    _lives(seeded, 250)
+    folder = tmp_path / "journal" / ACCOUNT
+    folder.mkdir(parents=True)
+    for key, data in seeded._store.blobs.items():
+        (tmp_path / key).write_bytes(data)
+    journal = Journal(FolderStore(tmp_path), ACCOUNT, WRITER)
+    started_at = journal.view().through.seq
+    assert started_at == 2_001
+    reader, done = Journal(FolderStore(tmp_path), ACCOUNT), threading.Event()
+    failures: list[BaseException] = []
+
+    def look() -> None:
+        try:
+            while not done.is_set():
+                reader.view()
+        except BaseException as error:  # noqa: BLE001
+            failures.append(error)
+
+    thread = threading.Thread(target=look, daemon=True)
+    thread.start()
+    try:
+        _lives(journal, 25, AT + DAY)
+    finally:
+        done.set()
+    thread.join(60)
+    assert not thread.is_alive() and not failures, failures
+    assert reader.view().through == journal.view().through
 
 
 def test_7_an_append_does_not_wait_on_a_storage_read() -> None:
@@ -1080,14 +1293,14 @@ def test_7_an_append_does_not_wait_on_a_storage_read() -> None:
     journal = Journal(store := Slow(made._store.blobs), ACCOUNT, WRITER)
     view = journal.view()
     found: list = []
-    stuck = threading.Thread(target=lambda: found.append(journal.view()))
+    stuck = threading.Thread(target=lambda: found.append(journal.view()), daemon=True)
     store.slow = True
     stuck.start()
     assert reading.wait(30)
     _, after = journal.record(view, SendingEntry(name), AT)
     assert not found
     go.set()
-    stuck.join()
+    stuck.join(60)
     assert found[0].through == after.through
 
 
@@ -1095,7 +1308,7 @@ def test_7_a_record_costs_the_same_at_entry_17000_as_at_entry_1000() -> None:
     """By the memory it allocates, since a wall clock on a busy runner says little."""
     journal = Journal(Memory(), ACCOUNT, WRITER)
     _, view = journal.record(journal.view(), opening(), AT)
-    peaks: dict[int, int] = {}
+    peaks: dict[int, tuple[str, int]] = {}
 
     def put(record: Record, when: datetime) -> None:
         nonlocal view
@@ -1107,7 +1320,7 @@ def test_7_a_record_costs_the_same_at_entry_17000_as_at_entry_1000() -> None:
             tracemalloc.start()
         _, view = journal.record(view, record, when)
         if measured:
-            peaks[view.through.seq] = tracemalloc.get_traced_memory()[1]
+            peaks[view.through.seq] = (kind_of(record), tracemalloc.get_traced_memory()[1])
             tracemalloc.stop()
 
     number = 0
@@ -1120,8 +1333,12 @@ def test_7_a_record_costs_the_same_at_entry_17000_as_at_entry_1000() -> None:
         decided = view.through.seq
         for record in route("Filled", order, decided=decided, broker=f"b{number}"):
             put(record, when)
-    early = [peak for seq, peak in sorted(peaks.items()) if seq < 2_000]
-    late = [peak for seq, peak in sorted(peaks.items()) if seq > 2_000]
+    early, late = (
+        [peak for seq, peak in peaks.items() if (seq < 2_000) is first] for first in (True, False)
+    )
     assert len(early) == len(late) == 9
     print(f"entry 1,000 on: {early}, entry 16,991 on: {late}")
-    assert max(late) <= 2 * max(early)
+    # By kind, so a verdict, the largest, hides no growth in a smaller one.
+    for kind in {kind for kind, _ in early}:
+        was, now = (max(p for k, p in found if k == kind) for found in (early, late))
+        assert now <= 2 * was, (kind, was, now)

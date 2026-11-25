@@ -1,4 +1,7 @@
-"""The journal's writer and reader, which every order and fill is recorded on before it is sent.
+"""The journal, which every order is recorded on before it is sent, and every fill.
+
+It holds the writer and reader, what each entry holds, an order's states and
+the book the entries replay to.
 
 The package imports only `core`, and only execution, monitoring, the
 supervisor and the `ithildin` tool may import it.

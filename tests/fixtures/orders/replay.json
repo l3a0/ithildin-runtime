@@ -1,6 +1,6 @@
 {
-  "through": 44,
-  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 USO at 70.123456 on the order o-9, filled 2026-10-01T19:40:25+00:00, and entry 45 holds 8 USO at 70.124 on the order o-9, filled 2026-10-01T19:40:25+00:00",
+  "through": 48,
+  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 USO at 70.123456 on the order o-9, filled 2026-10-01T19:40:34+00:00, and entry 49 holds 8 USO at 70.124 on the order o-9, filled 2026-10-01T19:40:34+00:00",
   "cash": "97440.887352",
   "positions": {
     "chan_bollinger": {"GLD": "10", "USO": "6.5"}
@@ -50,6 +50,12 @@
       "broker": "o-11",
       "entries": "40:intent 41:verdict 42:sending 43:ack"
     },
+    "ith-chan_bollinger-20261001T194000Z-12": {
+      "state": "Refused",
+      "filled": "0",
+      "broker": null,
+      "entries": "44:intent 45:verdict"
+    },
     "ith-other-one.2-20261001T194000Z-03": {
       "state": "Refused",
       "filled": "0",
@@ -79,6 +85,12 @@
       "filled": "0",
       "broker": null,
       "entries": "36:intent 37:verdict 38:sending 39:in_doubt"
+    },
+    "ith-other-one.2-20261001T194000Z-13": {
+      "state": "Refused",
+      "filled": "0",
+      "broker": null,
+      "entries": "46:intent 47:verdict"
     }
   },
   "fills": ["sim-f-1", "sim-f-2", "f::2", "f9"],

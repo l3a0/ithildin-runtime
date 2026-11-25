@@ -9,6 +9,7 @@ import shutil
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
@@ -23,8 +24,11 @@ from ithildinruntime.core import (
     JournalEntry,
     Limit,
     LossReading,
+    OrderType,
+    PastLimit,
     StopState,
     TargetPortfolio,
+    TimeInForce,
     Verdict,
     encode,
     sha256_of,
@@ -220,8 +224,8 @@ def _faults() -> Iterator[tuple[str, dict]]:
             for part in path:
                 at = at[part]
             where = f"{name} {'.'.join(map(str, path))}"
-            in_mapping = len(path) > 1 and path[-2] == "inputs" or path[0] == "targets"
-            if not in_mapping or path[-1] in ("key", "sha256", "strategy"):
+            # A mapping's own key may be absent.
+            if len(path) < 2 or path[-2] not in ("inputs", "shares"):
                 yield f"{where} absent", _set(body, path, _ABSENT)
             if isinstance(at, dict) and "data" not in at and path[-1] not in ("inputs", "shares"):
                 yield f"{where} extra", _set(body, [*path, "more"], "x")
@@ -282,6 +286,21 @@ def test_1_a_decimal_that_is_not_finite_and_a_time_that_is_not_utc_are_stored_by
         with pytest.raises(Halt, match="entry 1 cannot be written"):
             journal.record(journal.view(), bad, at)
         assert store.blobs == {}
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        dataclasses.replace(opening(), account="paper-\ud800"),
+        dataclasses.replace(rejected(NAME), reason="no \udfff"),
+        filled(fill("f", at_text="\udcff")),
+    ],
+)
+def test_1_text_that_is_no_unicode_is_stored_by_no_writer(record: Record) -> None:
+    journal = Journal(store := Memory(), ACCOUNT, WRITER)
+    with pytest.raises(Halt, match="entry 1 cannot be written: .* non-UTF-8"):
+        journal.record(journal.view(), record, AT)
+    assert store.blobs == {}
 
 
 def test_1_a_value_that_is_no_record_is_refused() -> None:
@@ -374,18 +393,41 @@ BIG = b"x" * RAW_LIMIT
                 (make(fill("f", "b" * 129)), "is not a broker's id"),
                 (make(fill("f", "")), "'' is not a broker's id"),
                 (make(fill("f", price="0.0001")), None),
-                (make(fill("f", price="0")), "has a price of 0, not above zero"),
-                (make(fill("f", price="-0.0001")), "has a price of -0.0001, not above zero"),
                 (make(fill("f", qty="0.000000001")), None),
                 (make(fill("f", qty="-0.000000001")), None),
-                (make(fill("f", qty="0")), "is for zero shares"),
-                (make(fill("f", qty="-0.000")), "is for zero shares"),
             )
         ),
+        (filled(fill("f", price="0")), "has a price of 0, not above zero"),
+        (filled(fill("f", price="-0.0001")), "has a price of -0.0001, not above zero"),
+        (filled(fill("f", qty="0")), "is for zero shares"),
+        (filled(fill("f", qty="-0.000")), "is for zero shares"),
+        # A dispute moves nothing, so it keeps what came.
+        (disputed(fill("f", price="0")), None),
+        (disputed(fill("f", qty="0")), None),
         (filled(fill("f", correction_id="c")), "the fill f is the correction 'c'"),
         (filled(fill("f", correction_id="")), "the fill f is the correction ''"),
         # What a correction means is #151's, so a disputed one is kept as it came.
         (disputed(fill("f", correction_id="c")), None),
+        *(
+            (dataclasses.replace(record, **{field: bad}), f"{shown}.* name no blob")
+            for record, field in (
+                (read(), "ref"),
+                *((verdict(NAME, book=3), f) for f in ("snapshot", "constraints", "valuation")),
+            )
+            for bad, shown in (
+                (BlobRef("", "a" * 64), "the key '' and"),
+                (BlobRef("k", ""), "the key 'k' and SHA-256 ''"),
+                (BlobRef("k", "a" * 63), "the key 'k' and"),
+                (BlobRef("k", "a" * 65), "the key 'k' and"),
+                (BlobRef("k", "A" * 64), "the key 'k' and"),
+            )
+        ),
+        (
+            dataclasses.replace(decision(), inputs={"snapshot": BlobRef("k", "x")}),
+            "the key 'k' and SHA-256 'x' name no blob",
+        ),
+        (dataclasses.replace(verdict(NAME, book=3), caps=b""), "the caps are empty"),
+        (dataclasses.replace(verdict(NAME, book=3), caps_sha256="b" * 63), "their SHA-256 is none"),
         (decision(planned(1, "0.000000001")), None),
         (decision(planned(1, "-0.000000001")), None),
         (decision(ONE, planned(2, 0)), "is for zero shares"),
@@ -431,12 +473,15 @@ FIXED = "fixture-1"
 
 
 def _committed() -> list[tuple[Record, datetime]]:
-    """What the committed journal was written from, every value made up, one second apart.
+    """What the committed journal was written from, every value made up.
 
-    Each of the eleven orders ends in a state of its own.
+    Entry n is built n seconds after the decision. Each of the first eleven
+    orders ends in a state of its own, and the last two are refused, so that
+    each optional part of a verdict is filled once.
     """
     at = datetime(2026, 10, 1, 19, 40, tzinfo=UTC)
     spy = InstrumentId("SPY")
+    on_close = {"type": OrderType.MARKET_ON_CLOSE, "time_in_force": TimeInForce.CLS}
     orders = (
         planned(1, 10, at=at),
         planned(2, -4, USO, at=at),
@@ -448,10 +493,18 @@ def _committed() -> list[tuple[Record, datetime]]:
         planned(8, 6, spy, at=at),
         planned(9, "8.000000001", USO, at=at),
         planned(10, -2, spy, OTHER, at=at),
-        planned(11, 9, GLD, at=at),
+        dataclasses.replace(planned(11, 9, GLD, at=at), **on_close),
+        dataclasses.replace(planned(12, 3, GLD, at=at), **on_close),
+        planned(13, -1, spy, OTHER, at=at),
     )
     names = [order.client_order_id for order in orders]
-    target = TargetPortfolio(at, CHAN, {GLD: Decimal(19), USO: Decimal("4.000000001")})
+    targets = (
+        TargetPortfolio(at, CHAN, {GLD: Decimal(19), USO: Decimal("4.000000001")}),
+        TargetPortfolio(at, OTHER, {GLD: Decimal("-0.5"), spy: Decimal(0)}),
+    )
+
+    def t(seconds: int) -> datetime:
+        return at + timedelta(seconds=seconds)
 
     def blob(name: str) -> BlobRef:
         return BlobRef(f"runs/fixture/2026-10-01/{name}.json", sha256_of(name.encode()))
@@ -460,98 +513,179 @@ def _committed() -> list[tuple[Record, datetime]]:
         deployment="fixture",
         run="2026-10-01",
         decision_at=at,
-        targets=(target,),
+        targets=targets,
         orders=orders,
         off=("idle",),
-        inputs={name: blob(name) for name in ("snapshot", "valuation", f"forecast/{CHAN}")},
+        inputs={
+            name: blob(name.replace("/", "-"))
+            for name in (
+                *("snapshot", "constraints", "valuation", "targets"),
+                *(f"{kind}/{name}" for kind in ("forecast", "schedule") for name in (CHAN, OTHER)),
+            )
+        },
         read=2,
         synced=2,
     )
-    loss = LossReading(Decimal("12.5000"), Decimal("50.0000"), False, date(2026, 9, 30))
+    approved = Verdict(
+        approved=True,
+        limit=None,
+        value=None,
+        bound=None,
+        missing_term=None,
+        adding=True,
+        worst_loss=Decimal("41.0000"),
+        loss=LossReading(Decimal("12.5000"), Decimal("50.0000"), False, date(2026, 9, 30)),
+        past=(),
+    )
+    too_large = dataclasses.replace(
+        approved,
+        approved=False,
+        limit=Limit.MAX_ORDER_QTY,
+        value=Decimal("2.500000000"),
+        bound=Decimal("2.000000000"),
+    )
+    stopped = dataclasses.replace(
+        approved,
+        approved=False,
+        limit=Limit.STOP,
+        adding=False,
+        loss=LossReading(Decimal("50.0001"), Decimal("50.0000"), True, date(2026, 9, 30)),
+        past=(
+            PastLimit(Limit.MAX_POSITION, Decimal("12.000000000"), Decimal("10.000000000")),
+            PastLimit(Limit.MAX_NET, Decimal("900.5"), Decimal("900.5")),
+        ),
+    )
+    no_position = dataclasses.replace(
+        approved, approved=False, limit=Limit.POSITION, missing_term="position", worst_loss=None
+    )
 
-    def says(place: int, limit: Limit | None = None) -> VerdictEntry:
-        value = None if limit is None else Decimal("2.500000000")
-        bound = None if limit is None else Decimal("2.000000000")
-        return VerdictEntry(
+    def says(n: int, place: int, verdict: Verdict = approved, **changes: object) -> VerdictEntry:
+        made = VerdictEntry(
             client_order_id=names[place - 1],
-            verdict=Verdict(
-                approved=limit is None,
-                limit=limit,
-                value=value,
-                bound=bound,
-                missing_term=None,
-                adding=True,
-                worst_loss=Decimal("41.0000"),
-                loss=loss,
-                past=(),
-            ),
-            now=at + timedelta(seconds=1),
+            verdict=verdict,
+            now=t(n),
             stop=StopState.ABSENT,
             close_entry=None,
-            book=0,
+            book=n - 1,
             caps=b'{"max_gross":"1000"}',
             caps_sha256=sha256_of(b"caps"),
             snapshot=blob("snapshot"),
             constraints=blob("constraints"),
             valuation=blob("valuation"),
         )
+        return dataclasses.replace(made, **changes)  # type: ignore[arg-type]
 
-    def sent(place: int) -> list[Record]:
-        return [IntentEntry(3, orders[place - 1]), says(place), SendingEntry(names[place - 1])]
+    def sent(n: int, place: int) -> list[Record]:
+        """The intent, verdict and sending of an order, the intent at entry `n`."""
+        return [
+            IntentEntry(3, orders[place - 1]),
+            says(n + 1, place),
+            SendingEntry(names[place - 1]),
+        ]
 
-    got = {"received_at": at + timedelta(seconds=30), "at": at + timedelta(seconds=25)}
-    b1 = fill("sim-f-1", "sim-o-1", 6, "210.5000", basis=FillBasis.SIGNAL_CLOSE, **got)
-    b2 = fill("f::2", "o-2", "-1.5", "71.25", USO, client_order_id=names[1], **got)
-    b3 = fill(
+    def filled_at(n: int, fill_id: str, broker: str, qty: object, price: str, instrument, **more):
+        """A fill made the second before entry `n` and received as it was built."""
+        told = {
+            "at": t(n - 1),
+            "received_at": t(n),
+            "at_text": f"2026-10-01T15:40:{n - 1:02d}-04:00",
+        }
+        return fill(fill_id, broker, qty, price, instrument, **{**told, **more})
+
+    b1 = filled_at(8, "sim-f-1", "sim-o-1", 6, "210.5000", GLD, basis=FillBasis.SIGNAL_CLOSE)
+    b2 = filled_at(9, "sim-f-2", "sim-o-1", 4, "210.5000", GLD, basis=FillBasis.OFFICIAL_CLOSE)
+    b3 = filled_at(15, "f::2", "o-2", "-1.5", "71.25", USO, client_order_id=names[1])
+    b4 = filled_at(
+        35,
         "f9",
         "o-9",
         "8",
         "70.123456",
         USO,
+        basis=FillBasis.QUOTE,
         excess_places=("price",),
-        at_text="20261001 15:40",
-        **got,
+        at_text="20261001 15:40:34",
+    )
+    again = dataclasses.replace(
+        b4, price=Decimal("70.124"), excess_places=(), correction_id="c-1", received_at=t(49)
     )
     records: list[Record] = [
         OpeningEntry(FIXED, Decimal("100000.00")),
-        ReadEntry("execution/send", at, blob("broker-read-1"), at + timedelta(seconds=1)),
+        ReadEntry("execution/send", at, blob("broker-read-1"), t(1)),
         plan,
-        *sent(1),
-        AckEntry(names[0], "sim-o-1", b'{"id":"sim-o-1"}', False, at),
+        *sent(4, 1),
+        AckEntry(names[0], "sim-o-1", b'{"id":"sim-o-1"}', False, t(7)),
         FillEntry(b1, 2),
-        FillEntry(dataclasses.replace(b1, fill_id="sim-f-2", qty=Decimal(4)), 2),
-        *sent(2),
-        InDoubtEntry(names[1], "the broker did not answer", None, False, at),
-        AckEntry(names[1], "o-2", b"\xff\xfe", True, at),
         FillEntry(b2, 2),
-        ExpiredEntry(names[1], Decimal("-1.5"), b"{}", False, at),
+        *sent(10, 2),
+        InDoubtEntry(names[1], "the broker did not answer", None, False, t(13)),
+        AckEntry(names[1], "o-2", b"\xff\xfe", True, t(14)),
+        FillEntry(b3, 2),
+        ExpiredEntry(names[1], Decimal("-1.5"), b"{}", False, t(16)),
         IntentEntry(3, orders[2]),
-        says(3, Limit.MAX_ORDER_QTY),
+        says(18, 3, too_large),
         IntentEntry(3, orders[3]),
         AbandonedEntry(names[3], "the kill switch is on"),
-        *sent(5),
-        RejectedEntry(names[4], "no shares to borrow", b"", False, at),
-        *sent(6),
+        *sent(21, 5),
+        RejectedEntry(names[4], "no shares to borrow", b"", False, t(24)),
+        *sent(25, 6),
         IntentEntry(3, orders[6]),
-        says(7),
+        says(29, 7),
         IntentEntry(3, orders[7]),
-        *sent(9),
-        AckEntry(names[8], "o-9", b"{}", False, at),
-        FillEntry(b3, 2),
-        *sent(10),
-        InDoubtEntry(names[9], "an answer this release does not read", b"?", False, at),
-        *sent(11),
-        AckEntry(names[10], "o-11", b"{}", False, at),
-        ReadEntry("execution/recover", at + timedelta(days=1), blob("account"), at),
-        DisputedFillEntry(dataclasses.replace(b3, price=Decimal("70.124")), 44),
+        *sent(31, 9),
+        AckEntry(names[8], "o-9", b"{}", False, t(34)),
+        FillEntry(b4, 2),
+        *sent(36, 10),
+        InDoubtEntry(names[9], "an answer this release does not read", b"?", False, t(39)),
+        *sent(40, 11),
+        AckEntry(names[10], "o-11", b"{}", False, t(43)),
+        IntentEntry(3, orders[11]),
+        says(45, 12, stopped, stop=StopState.FIRED),
+        IntentEntry(3, orders[12]),
+        says(47, 13, no_position, stop=StopState.UNREADABLE, close_entry=1),
+        ReadEntry("execution/send", at, blob("broker-read-2"), t(47)),
+        DisputedFillEntry(again, 48),
     ]
-    return [
-        (
-            dataclasses.replace(r, book=n - 1) if isinstance(r, VerdictEntry) else r,
-            at + timedelta(seconds=n),
-        )
-        for n, r in enumerate(records, start=1)
-    ]
+    return [(record, t(n)) for n, record in enumerate(records, start=1)]
+
+
+# What an entry's body may hold of each enumeration, which #142's item 3 says
+# never changes once a journal outside a test is opened: one renamed would make
+# every old entry that holds it undecodable. A new member is added here.
+FROZEN = {
+    FillBasis: "signal_close official_close quote",
+    Limit: (
+        "max_order_qty max_position max_gross max_open_orders max_net loss_stop moc_cutoff stop "
+        "close_entry in_doubt position"
+    ),
+    OrderType: "market market_on_close",
+    StopState: "absent fired unreadable",
+    TimeInForce: "day cls",
+}
+
+
+@pytest.mark.parametrize("kind", FROZEN, ids=lambda kind: kind.__name__)
+def test_3_no_member_of_an_enumeration_an_entry_holds_is_renamed(kind: type) -> None:
+    assert {member.value for member in kind} >= set(FROZEN[kind].split())
+    assert {member.value for member in kind} == set(FROZEN[kind].split()), "add the new one above"
+
+
+def test_3_every_enumeration_an_entry_can_hold_is_frozen_above() -> None:
+    found: set[type] = set()
+
+    def look(hint: Any) -> None:
+        hint = _strip(hint)
+        for arg in get_args(hint):
+            look(arg)
+        if isinstance(hint, type) and issubclass(hint, Enum):
+            found.add(hint)
+        elif dataclasses.is_dataclass(hint):
+            for inner in get_type_hints(hint, include_extras=True).values():
+                look(inner)
+
+    for kind in KINDS.values():
+        look(kind)
+    assert found == set(FROZEN)
 
 
 def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:

@@ -770,6 +770,17 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         ),
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
+    "an-older-reposition-before-the-close-and-a-newer-after-it": (
+        lambda w: w.at(
+            book=book(
+                corrections=(
+                    corrected(3, TABLE.session(PRIOR).close, True),
+                    corrected(6, TABLE.session(PRIOR).close + TICK, True),
+                )
+            )
+        ),
+        "a position was corrected at 2026-11-02T21:00:00.000001",
+    ),
     "a-reposition-after-vs-session": (
         lambda w: w.at(
             book=book(corrections=(corrected(7, TABLE.session(PRIOR).close + TICK, True),))
@@ -785,6 +796,20 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     ),
     "a-reposition-with-no-zone": (
         lambda w: w.at(book=book(corrections=(corrected(1, datetime(2026, 1, 1), True),))),
+        "when entry 1 corrected the book is .*, not a UTC time",
+    ),
+    "a-correction-of-cash-with-no-zone": (
+        lambda w: w.at(book=book(corrections=(corrected(1, datetime(2026, 1, 1)),))),
+        "when entry 1 corrected the book is .*, not a UTC time",
+    ),
+    "a-correction-of-cash-in-another-zone": (
+        lambda w: w.at(
+            book=book(
+                corrections=(
+                    corrected(1, datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=1)))),
+                )
+            )
+        ),
         "when entry 1 corrected the book is .*, not a UTC time",
     ),
     "cash-not-finite": (lambda w: w.at(book=book(cash="NaN")), "the book's cash is"),

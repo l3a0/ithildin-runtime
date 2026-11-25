@@ -1,4 +1,4 @@
-"""The journal's writer and reader: one numbered, hash-chained log per broker account.
+"""The journal: one numbered, hash-chained log per broker account, read and added to.
 
 docs/design.md's `### Rule 8: the journal is the one numbered log` gives
 the rules, and docs/architecture/08-crosscutting-concepts.md's `#### How a
@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections import deque
 from collections.abc import Iterator, Mapping
 from datetime import datetime
 
@@ -106,8 +107,7 @@ class Journal:
     entry before, so a store that lost entries after this `Journal` checked
     them is not caught here. The next full read halts on such a gap, and a lost
     newest entry is caught only by the bucket's refusal of deletes, its Object
-    Lock, its alarm on a delete and the head comparison design.md proposes for
-    #154.
+    Lock, its alarm on a delete and the head comparison that is #154's.
 
     One `Journal` may be shared between threads. Of two that record on the same
     view, one is acknowledged and the other gets `NumberTaken`, even where both
@@ -115,11 +115,11 @@ class Journal:
     """
 
     def __init__(self, store: BlobStore, account: str, writer: str | None = None) -> None:
-        """`writer` is unique to each process start, and a reader needs none.
+        """`writer` is unique to each `Journal` that records, and a reader needs none.
 
-        It is 32 lower case hex characters that name no host, path, user or
-        account. Two processes that share one build the same bytes under one
-        clock, and both hold the entry's acknowledgement.
+        It is 32 lower case hex characters, drawn afresh at each process start,
+        that name no host, path, user or account. Two that share one build the
+        same bytes under one clock, and both hold the entry's acknowledgement.
         """
         self._store = store
         self._account = account
@@ -298,7 +298,8 @@ class Journal:
         stored bytes of entry `after`, so the chain is checked from there on.
         It halts on bytes that are not canonical, a key whose number differs
         from the `seq` inside it, a format it does not know, a link that does
-        not chain, a gap in the numbers and a key that is not an entry's.
+        not chain, a gap in the numbers that a second listing shows too and a
+        key that is not an entry's.
         Checkpoints, which #154 writes under the same prefix, are skipped.
         """
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:
@@ -309,8 +310,9 @@ class Journal:
     def _read_on(self, on: JournalAck) -> Iterator[tuple[JournalEntry, str]]:
         """Every entry after `on` with its hash. `on`'s is trusted as the first one's link."""
         seq, expected = on.seq, on.entry_hash
-        start = journal_entry_key(self._account, seq) if seq else None
-        for key in self._store.list(self._prefix, start):
+        keys, looked_again = self._keys_after(seq), -1
+        while keys:
+            key = keys.popleft()
             if not key.startswith(self._prefix):
                 raise Halt(f"journal {self._account}: the listing returned {key}")
             name = key[len(self._prefix) :]
@@ -320,6 +322,11 @@ class Journal:
                 raise Halt(f"journal {self._account}: {key} is not an entry's key")
             number = int(name[:12])
             if number != seq + 1:
+                # A folder listed while a writer adds to it can show an entry
+                # and miss the one before it, so a gap is looked at twice.
+                if looked_again != seq:
+                    keys, looked_again = self._keys_after(seq), seq
+                    continue
                 raise Halt(
                     f"journal {self._account}: entry {seq + 1} is missing, "
                     f"and the next key is entry {number}"
@@ -335,6 +342,10 @@ class Journal:
             expected = entry.hash()
             self._advance(JournalAck(seq=seq, entry_hash=expected))
             yield entry, expected
+
+    def _keys_after(self, seq: int) -> deque[str]:
+        start = journal_entry_key(self._account, seq) if seq else None
+        return deque(self._store.list(self._prefix, start))
 
     def _check_link(self, entry: JournalEntry) -> None:
         if isinstance(entry.seq, bool) or not isinstance(entry.seq, int) or entry.seq < FIRST_SEQ:

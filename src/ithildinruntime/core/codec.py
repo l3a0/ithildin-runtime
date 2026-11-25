@@ -167,8 +167,15 @@ def _bounded(value: Decimal, where: str) -> Decimal:
 def encode(value: object) -> bytes:
     """Write a record, or a plain JSON value, as canonical JSON bytes."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return rfc8785.dumps(_fields_to_plain(value, type(value).__name__))
-    return rfc8785.dumps(_to_plain(value, object, "value"))
+        plain: object = _fields_to_plain(value, type(value).__name__)
+    else:
+        plain = _to_plain(value, object, "value")
+    try:
+        return rfc8785.dumps(plain)  # type: ignore[arg-type]
+    except rfc8785.CanonicalizationError as error:
+        # Text that is no Unicode, such as the half of a surrogate pair a
+        # JSON escape can hold.
+        raise CodecError(f"{type(value).__name__} holds {error}") from None
 
 
 def decode[T](data: bytes, kind: type[T]) -> T:

@@ -68,6 +68,7 @@ __all__ = [
 # `cut` true.
 RAW_LIMIT = 65_536
 _WRITER = re.compile(r"[0-9a-f]{32}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 _BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
 # How much of a refused id a halt shows, since its reason is stored and sent.
 _SHOWN = 80
@@ -314,18 +315,29 @@ def _past_bounds(record: Record) -> Iterator[str]:
     match record:
         case AckEntry():
             yield from _broker_ids(record.broker_order_id)
-        case FillEntry(fill) | DisputedFillEntry(fill):
+        case FillEntry(fill):
             yield from _broker_ids(fill.fill_id, fill.broker_order_id)
             if fill.price <= 0:
                 yield f"the fill {fill.fill_id} has a price of {fill.price}, not above zero"
             if fill.qty == 0:
                 yield f"the fill {fill.fill_id} is for zero shares"
-            if isinstance(record, FillEntry) and fill.correction_id is not None:
-                yield f"the fill {fill.fill_id} is the correction {fill.correction_id!r}"
+            if fill.correction_id is not None:
+                yield f"the fill {fill.fill_id} is the correction {_cut(fill.correction_id)}"
+        case DisputedFillEntry(fill):
+            # A dispute moves nothing, so it keeps what came, such as a fill
+            # sent again for zero shares. Its ids are shown in a halt.
+            yield from _broker_ids(fill.fill_id, fill.broker_order_id)
+        case ReadEntry():
+            yield from _blobs(record.ref)
         case DecisionEntry():
             yield from _shares(*record.orders)
+            yield from _blobs(*record.inputs.values())
         case IntentEntry():
             yield from _shares(record.order)
+        case VerdictEntry():
+            yield from _blobs(record.snapshot, record.constraints, record.valuation)
+            if not record.caps or not _SHA256.fullmatch(record.caps_sha256):
+                yield "the caps are empty, or their SHA-256 is none"
         case _:
             pass
 
@@ -333,7 +345,17 @@ def _past_bounds(record: Record) -> Iterator[str]:
 def _broker_ids(*values: str) -> Iterator[str]:
     for value in values:
         if not _BROKER_ID.fullmatch(value):
-            yield f"{value[:_SHOWN]!r} is not a broker's id"
+            yield f"{_cut(value)} is not a broker's id"
+
+
+def _cut(value: str) -> str:
+    return repr(value[:_SHOWN])
+
+
+def _blobs(*refs: BlobRef) -> Iterator[str]:
+    for ref in refs:
+        if not ref.key or not _SHA256.fullmatch(ref.sha256):
+            yield f"the key {_cut(ref.key)} and SHA-256 {_cut(ref.sha256)} name no blob"
 
 
 def _shares(*orders: OrderIntent) -> Iterator[str]:

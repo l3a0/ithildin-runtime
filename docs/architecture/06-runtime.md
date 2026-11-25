@@ -1055,7 +1055,7 @@ Monitoring's report says the switch is set.
 
 ##### What happens when the journal cannot be read or take a write
 
-A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
+A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. A journal that reads and does not replay holds a cancel the same way, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse). [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
 
 ##### What happens when execution is down at the pull
 
@@ -1096,7 +1096,7 @@ stateDiagram-v2
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
-    Sending --> InDoubt: no answer, a crash, or a refusal saying<br/>the broker already holds the id
+    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
     InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
@@ -1112,7 +1112,7 @@ stateDiagram-v2
     end note
     Acknowledged --> Expired: a day or market-on-close order<br/>stays unfilled at the close
     PartlyFilled --> Expired: the rest stay unfilled at the close
-    Sending --> Rejected: the broker refuses the submit, other than<br/>a refusal saying it already holds the id
+    Sending --> Rejected: the broker refuses the submit in an answer<br/>read whole, other than a refusal saying<br/>it already holds the id
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: execution journals the cancel, for the kill switch,<br/>a failed pair leg, a later plan or a sort
     PartlyFilled --> CancelSent: execution journals a cancel of the rest,<br/>for the same reasons

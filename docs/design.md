@@ -923,7 +923,7 @@ switch and any halt among the new entries, decides its step again against
 what it has just read, so an order is never sent on a stale book or after a
 pull, and starts again from the new end. Two writers can therefore never
 take one number, and no entry is ever written twice. Each entry is
-stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#154](https://github.com/l3a0/ithildin-runtime/issues/154).
 
 1. **Checkpoints.** After a full check, the reader writes a checkpoint, a create-only blob at `journal/<account>/checkpoints/<seq>.json` holding the sequence number and that entry's hash. A later startup checks from the newest checkpoint whose entry still hashes to the value it names.
 2. **A head anchor.** The account check at each session's start and end compares the journal's newest entry with the replica's entry at the same sequence number, through a read-only grant on the replica's bucket. Equal hashes mean identical histories, and a difference alarms and halts, so a rewrite of the whole chain, which recomputed hashes would hide, still shows.
@@ -1394,8 +1394,8 @@ recommends a distinct client order id per strategy when several run on one
 account. An id of `chan_bollinger`'s has 38 characters, and one over 128
 halts, which is the longest
 [Alpaca's create order page](https://docs.alpaca.markets/reference/postorder)
-allows, read 2026-11-25. [#153](https://github.com/l3a0/ithildin-runtime/issues/153) confirms the limit on
-Alpaca's paper account. The id is unique to its decision and the same on every rerun, as [How a rerun never doubles
+allows, read 2026-11-25. [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s adapter never sends one past it, and the
+price list below says what the live account still has to confirm. The id is unique to its decision and the same on every rerun, as [How a rerun never doubles
 anything](#rule-9-how-a-rerun-never-doubles-anything) needs. A close after a broker's trade carries its close entry's id in place of the decision, unique to each leg, in a form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) fixes. A contract-suite order carries its run's id in place of the strategy and decision, in a form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) fixes, and its journal entries let reconciliation count it outside every strategy's book. Slice 1 has no person's order, because `ithildin override` never sends. An order placed at the broker's console traces to nothing and halts. The order path and the broker adapter refuse to
 send an order whose id is not a well-formed stamp with a journaled approval
 and `sending` entry, so no order leaves unstamped. The journal's intent
@@ -1508,7 +1508,7 @@ The price is five things.
 3. The stamp's length limit, whether Alpaca refuses a repeated client order
    id, which its order reference does not say, and specific lot
    identification need confirming on Alpaca's live account before the live
-   gate, on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   gate, on [#153](https://github.com/l3a0/ithildin-runtime/issues/153).
    Nothing in the design rests on the refusal of a repeated id. It is a second line of
    defence to test, because the platform never resends an order and settles
    doubt by lookup.

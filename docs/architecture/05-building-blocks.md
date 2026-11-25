@@ -1243,12 +1243,12 @@ flowchart LR
 2. The snapshot.
 3. The strategy's `Constraints`.
 4. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
-5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
+5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and each entry that corrected it.
 6. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the loss stop's state and, for a close, its close entry.
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds that.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
 
 ##### What halts and what refuses
 
@@ -1281,7 +1281,7 @@ Each instrument has a range: what the account would hold if only its open sales 
 | `max_order_qty`, per instrument | One order's shares, such as one sized on a wrong price | The order's size | No |
 | `max_position`, per instrument | Shares held in one instrument | The order's instrument, at the end of its range further from zero | No |
 | `max_gross` | The account's dollars, long plus short | Each instrument's further end at its mark, summed | Yes |
-| `max_open_orders` | Orders whose outcome is unknown | Every open order, and the one being checked | No |
+| `max_open_orders` | Orders approved that have not ended | Every open order, and the one being checked | No |
 | `max_net` | A leg left alone under the stress move | Every low end summed at its mark, and every high end, signed across instruments, whichever sum is further from zero | Yes |
 | `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
 | `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The instant that many minutes before the close, against `now` | No |
@@ -1416,7 +1416,7 @@ A halt at replay ends the account, because no entry can be deleted. So `Journal.
 3. It appends. A refused append leaves nothing in memory. Where another writer's entry holds that number, it raises `NumberTaken`, and the caller views the journal again and decides again.
 4. It returns the acknowledgement and the view after the entry, which is never read back.
 
-One number is acknowledged once. Two calls that build the same bytes, as two threads of one process under a history clock can, do not both hold it, so they cannot both send. A call whose answer was lost is safe to repeat, because it builds the same bytes. `record` halts for a `Journal` built with no writer, as a reader is, and on a view another `Journal` gave.
+One `Journal` acknowledges one number once. Two calls on it that build the same bytes, as two threads under a history clock can, do not both hold it, so they cannot both send. Two `Journal`s stay apart by their writers, so each one that records has a writer of its own, in one process and across processes. A call whose answer was lost is safe to repeat, because it builds the same bytes. `record` halts for a `Journal` built with no writer, as a reader is, and on a view another `Journal` gave.
 
 The figure below is a C4 dynamic diagram of one call.
 

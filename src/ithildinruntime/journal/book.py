@@ -256,6 +256,11 @@ class Step:
         self._changes |= changes
 
     def add[K, V](self, kept: _Kept[K, V], key: K, value: V) -> None:
+        # Every value here is added once, so a second one this view already
+        # shows would be dropped without a word.
+        held = kept.found.get(key)
+        if held is not None and held[0] <= self.view.through.seq:
+            raise Halt(f"entry {self.seq} gives {key!r} a second value, after entry {held[0]}'s")
         self._news.append((kept, key, value))
 
     def order(self, kind: str, order: OrderRecord, state: OrderState, **changes: object) -> None:
@@ -289,7 +294,14 @@ class Step:
 
 
 def after(view: View, entry: JournalEntry) -> Step:
-    """One entry on from `view`, or a halt naming the entry where a check on it fails."""
+    """One entry on from `view`, or a halt naming the account and entry where a check fails."""
+    try:
+        return _worked_out(view, entry)
+    except Halt as halt:
+        raise Halt(f"journal {view.account}: {halt.reason}") from None
+
+
+def _worked_out(view: View, entry: JournalEntry) -> Step:
     record = record_of(entry)
     seq, kind = entry.seq, kind_of(record)
     if seq != view.through.seq + 1:

@@ -125,7 +125,7 @@ erDiagram
         int format
         datetime built_at
         string prev_hash
-        string body "holds kind and its fields"
+        string body "holds kind, writer and the kind's fields"
         string kind "read from body"
         string client_order_id "read from body"
         datetime stored_at "S3's metadata"
@@ -142,10 +142,14 @@ erDiagram
         string correction_id
         string broker_order_id
         string client_order_id
+        string instrument
         decimal qty
         decimal price
+        string at_text
         datetime at
         datetime received_at
+        string excess_places
+        string basis
     }
     PLAN {
         int format
@@ -488,7 +492,7 @@ A blob cannot hold its own hash, so `JournalEntry.hash()` computes it as the SHA
 2. That each key's number equals the `seq` inside it.
 3. That it knows the entry's `format`.
 
-Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and on any key under the journal's prefix that is not an entry's. It skips `journal/<account>/checkpoints/`, where the checkpoints this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sit.
+Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and on any key under the journal's prefix that is not an entry's. It skips `journal/<account>/checkpoints/`, where the checkpoints this doc proposes for [#154](https://github.com/l3a0/ithildin-runtime/issues/154) sit.
 
 Every journal format ever written stays readable by every later release, because the book can always be replayed from the first entry, even when a rebuild starts from a book snapshot, and each format has a committed fixture entry and a test that replays it.
 
@@ -522,13 +526,13 @@ The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `sw
 
 ##### What holds a kind still
 
-1. **A kind's fields never change**, and neither do those of a `core` type inside it, an enumeration's members or a check its constructor makes, because any of them can make every old entry unreadable. A changed shape is a new kind under a new name, and every kind ever written stays readable. Until the first journal outside a test is opened, a change rewrites that kind's committed entry instead. `tests/fixtures/orders` holds a committed journal of every kind.
+1. **A kind's fields never change**, and neither do those of a `core` type inside it, an enumeration's members or a check its constructor makes, because any of them can make every old entry unreadable. The bounds below, the checks on an entry and the stamp's own rules run on every old entry too, so each may be loosened and never tightened. A changed shape is a new kind under a new name, and every kind ever written stays readable. Until the first journal outside a test is opened, a change rewrites that kind's committed entry instead. `tests/fixtures/orders` holds a committed journal of every kind.
 2. **A body of an unknown kind, or whose fields are not its kind's, halts** with the entry's number and the kind. Skipping one would build a book on part of the record.
-3. **Three bounds hold what came from a broker.** `raw` has at most 65,536 bytes, and a longer answer keeps its first part with `cut` true. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A fill's price is above zero and its shares are not zero, and neither are a planned order's.
+3. **Bounds hold what an entry keeps.** `raw` has at most 65,536 bytes. A longer answer keeps its first part with `cut` true, and one to a submit is `in_doubt`. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A `fill`'s price is above zero and its shares are not zero, and neither are a planned order's. A `disputed_fill` moves nothing, so it keeps the price and the shares that came, such as a fill sent again for zero shares. A blob is named by a key and a SHA-256 of 64 lower case hex digits, and a `verdict`'s caps are not empty, because an entry that names nothing can never be run again or repaired.
 
 ##### What the writer is for
 
-The `writer` is 32 lower case hex characters, drawn afresh at each process start in every mode, which name no host, path, user or account. So two processes never build the same bytes. Without it, two under the history clock did, and both held one `sending` entry's acknowledgement and called the broker. Test 1 alone passes a fixed one, because it compares bytes. The test that compares two instances byte for byte leaves the `writer` out and computes the hashes again around it, as [How a component learns of a change](../design.md#how-a-component-learns-of-a-change) says.
+The `writer` is 32 lower case hex characters, drawn afresh at each process start in every mode, for each `Journal` that records. It names no host, path, user or account. So two processes, and two `Journal`s of one process, never build the same bytes. Without it, two under the history clock did, and both held one `sending` entry's acknowledgement and called the broker. Test 1 alone passes a fixed one, because it compares bytes. The test that compares two instances byte for byte leaves the `writer` out and computes the hashes again around it, as [How a component learns of a change](../design.md#how-a-component-learns-of-a-change) says.
 
 ##### How a retry is recognised
 
@@ -538,9 +542,13 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 
 | Kind of entry | The field it checks |
 | --- | --- |
-| `intent` and `sending` | The client order id |
+| `opening` | The entry's number, since an account's entry 1 is its only one |
+| `read` | The stored file's key and SHA-256 |
+| `decision` | The decision time |
+| `intent`, `verdict`, `abandoned`, `sending`, `ack`, `rejected`, `in_doubt` and `expired` | The client order id, with the state the view shows the order in |
 | `cancel` | The broker's order id and what tells this cancel from an earlier one on the same order, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names that key. A `cancel` entry with no journaled answer is a cancel whose answer is lost, so a restarted writer looks it up before any new cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 | `fill` | The broker's fill id, with a repeat of the same content skipped and a differing one journaled as `disputed_fill`, after which the book halts |
+| `disputed_fill` | The broker's fill id with its order, instrument, shares, price and time |
 | `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id |

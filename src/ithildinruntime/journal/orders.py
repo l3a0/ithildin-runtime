@@ -1,8 +1,9 @@
 """An order's moves from state to state, in one table.
 
-docs/architecture/06-runtime.md's `### An order's states` draws it. A move the
-table does not hold halts, and no branch treats an unnamed case as the
-default, as rule 3 of docs/design.md's `### The code holds its own rules` asks.
+docs/architecture/06-runtime.md's `## The life of an order` draws it. A move
+the table does not hold halts, and no branch treats an unnamed case as the
+default, as docs/design.md's `### The code holds its own rules, and every check
+runs in production` asks.
 """
 
 from __future__ import annotations
