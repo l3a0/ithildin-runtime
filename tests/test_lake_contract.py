@@ -7,7 +7,9 @@ marketlake's README publishes `lake.unsealed` in its `Read an unsealed day`, and
 there it names `lake.loader`'s `LoadError`, `is_reader_file`, `latest_entries` and
 `lake.journal.SCHEMA_VERSION`. Every other name, `load_bars` among them, is relied
 on by its docstring at the pinned commit. A test of a published name holds what
-the README states and no more, so a change it allows passes.
+the README states, with a planted case or more of each, so a change it allows
+passes. One goes further and holds that a damaged quarantine ledger is refused.
+marketlake's own suite covers the reader's checks beyond these cases.
 
 1. `lake.loader.load_bars`, its `LoadError` family and the columns it returns.
 2. `lake.paths.is_reader_file`, and `lake.paths.parse_bars_rel`, which inverts
@@ -35,10 +37,9 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from lake import capture, journal
+from lake import journal
 from lake.battery import build_entry
 from lake.calendar import MARKET_TZ, ExchangeCalendar
-from lake.gap import SEGMENT_STAMP_FORMAT
 from lake.loader import BarsAbsent, LoadError, load_bars
 from lake.manifest import append_quarantine, latest_entries
 from lake.paths import LakePaths, is_reader_file, parse_bars_rel
@@ -332,11 +333,6 @@ def test_unsealed_paths_under_one_prefix_sort_by_cycle_start(tmp_path: Path) -> 
     assert rels == sorted(rels)
 
 
-def test_unsealed_capture_writes_the_stamp_these_segments_carry() -> None:
-    """Capture holds a copy of the format beside the published name."""
-    assert capture._SEGMENT_STAMP_FORMAT == SEGMENT_STAMP_FORMAT
-
-
 def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
     landed = MINUTES[2] + SECOND
     table = pa.Table.from_pylist(
@@ -353,16 +349,26 @@ def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
     ]
     with pytest.raises(UnsealedArgument):
         captured_by(table, landed.replace(tzinfo=None))
-    with pytest.raises(UnsealedRefused):
-        captured_by(table.drop_columns(["fetch_end_ts"]), landed)
+    for column in ("fetch_end_ts", "row_kind"):
+        with pytest.raises(UnsealedRefused):
+            captured_by(table.drop_columns([column]), landed)
 
 
-@pytest.mark.parametrize("column", ["row_kind", "fetch_end_ts"])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"row_kind": None},
+        {"fetch_end_ts": None},
+        {"fetch_end_ts": "nonsense"},
+        {"fetch_end_ts": MINUTES[0].replace(tzinfo=None).isoformat()},
+    ],
+    ids=["no kind", "no stamp", "a stamp that is no time", "a stamp with no offset"],
+)
 def test_unsealed_a_row_that_cannot_be_cut_is_refused_and_never_dropped(
-    tmp_path: Path, column: str
+    tmp_path: Path, changes: dict[str, str | None]
 ) -> None:
     good = lakes.quote_row("GLD", MINUTES[0])
-    bad = lakes.quote_row("GLD", MINUTES[0], **{column: None})
+    bad = lakes.quote_row("GLD", MINUTES[0], **changes)
     schema = journal.schema_for(journal.QUOTES_SURFACE)
     with pytest.raises(UnsealedRefused):
         captured_by(pa.Table.from_pylist([good, bad], schema=schema), LATE)
@@ -374,16 +380,27 @@ def test_unsealed_a_row_that_cannot_be_cut_is_refused_and_never_dropped(
 
 @pytest.mark.parametrize(
     "changes",
-    [{"ticker": "USO"}, {"snap_ts": (MINUTES[0] - timedelta(days=1)).isoformat()}],
-    ids=["another ticker's row", "another day's row"],
+    [
+        {"ticker": "USO"},
+        {"ticker": None},
+        {"snap_ts": (MINUTES[0] - timedelta(days=1)).isoformat()},
+        {"snap_ts": None},
+        {"snap_ts": MINUTES[0].replace(tzinfo=None).isoformat()},
+        {"schema_version": 0},
+        {"schema_version": journal.SCHEMA_VERSION + 1},
+    ],
+    ids=lambda changes: "{} {}".format(*next(iter(changes.items()))),
 )
-def test_unsealed_another_tickers_or_days_row_is_refused_by_segment(
-    tmp_path: Path, changes: dict[str, str]
+def test_unsealed_a_row_the_door_judges_wrong_is_refused_whenever_it_landed(
+    tmp_path: Path, changes: dict[str, str | int | None]
 ) -> None:
+    """The planted row landed after `at`, and the read still refuses, by its segment."""
     good = lakes.quote_row("GLD", MINUTES[0])
-    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good, {**good, **changes})
+    first, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good)
+    late = {**lakes.quote_row("GLD", MINUTES[2]), **changes}
+    rel, other = lakes.quotes_segment(tmp_path, "GLD", MINUTES[2], late)
     with pytest.raises(UnsealedRefused) as raised:
-        _read(tmp_path, {rel: digest})
+        _read(tmp_path, {first: digest, rel: other}, MINUTES[0] + SECOND)
     assert raised.value.segment == rel
 
 

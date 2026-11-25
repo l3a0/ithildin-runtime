@@ -1,4 +1,4 @@
-"""Fail when marketlake's `main` says the pinned commit is due a raise.
+"""Fail when marketlake's `main`, or pyarrow here, differs from the pinned commit.
 
 The runtime reads a day before marketlake seals it through marketlake's own
 reader, at the commit uv.lock pins. marketlake's contract, the section `Read
@@ -19,7 +19,7 @@ It also compares this repository's pyarrow with the one the pinned commit's own
 `uv.lock` holds, which the contract says to pin. A raise that moved one of the
 two without the other shows there, whatever `main` holds.
 
-It exits 0 when nothing moved, 1 when something did, naming what and which
+It exits 0 when nothing differs, 1 when something does, naming what and which
 rule applies, and 2 when either side could not be read, so an unread side
 never passes. It fetches both commits from marketlake's public repository with
 git's credential helpers and prompts off, and it parses what it fetched and
@@ -77,8 +77,8 @@ NO_RAISE = (
     "schema-version ledger holds their version."
 )
 MATCH_PIN = (
-    "Rule: set pyarrow here to the pinned commit's version now. The two pins move in one "
-    "pull request."
+    "Rule: set pyarrow here to the version at the commit this repository pins now, or at the "
+    "raised one where a raise is due. The two pins move in one pull request."
 )
 
 
@@ -111,7 +111,7 @@ def package(text: str, name: str, where: str) -> dict:
     """The one entry a uv lock holds for a package. A lock can hold several, by marker."""
     try:
         found = [held for held in tomllib.loads(text)["package"] if held["name"] == name]
-    except (ValueError, KeyError, TypeError, RecursionError) as error:
+    except (ValueError, KeyError, TypeError) as error:
         raise Unreadable(f"{where} is no uv lock: {type(error).__name__}") from error
     if len(found) != 1:
         raise Unreadable(f"{where} holds {len(found)} entries for {name}")
@@ -140,8 +140,9 @@ def read_pin(text: str) -> Pin:
 def schema_version(source: bytes, where: str) -> int:
     """The one integer a module assigns to `SCHEMA_VERSION`, at its top level.
 
-    A second place that sets the name, at any depth, is refused, because this
-    reads the module and never runs it.
+    A second assignment to the name, at any depth, is refused, because this
+    reads the module and never runs it. A binding by an import, a `def` or
+    `globals()` is not read.
     """
     try:
         with warnings.catch_warnings():
@@ -154,7 +155,7 @@ def schema_version(source: bytes, where: str) -> int:
             and node.id == "SCHEMA_VERSION"
             and not isinstance(node.ctx, ast.Load)
         ]
-    except (SyntaxError, ValueError, RecursionError, MemoryError) as error:
+    except (SyntaxError, ValueError) as error:
         raise Unreadable(f"{where} does not parse: {type(error).__name__}") from error
     for stmt in tree.body:
         if isinstance(stmt, ast.Assign):
@@ -271,8 +272,8 @@ def check(lock: Path, main_ref: str) -> list[str]:
         said = differences(pin, pinned, remote.side(commit))
     against = f"marketlake's main at {commit[:12]} against the pin at {pin.commit[:12]}"
     if said:
-        return [f"The marketlake pin does not match: {against}.", *said, f"Read {CONTRACT}."]
-    print(f"Nothing moved: {against}.")
+        return [f"Something differs: {against}.", *said, f"Read {CONTRACT}."]
+    print(f"Nothing differs: {against}.")
     return []
 
 
