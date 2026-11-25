@@ -10,11 +10,14 @@ added to it later would fail nothing else.
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
@@ -432,12 +435,47 @@ def test_a_remote_that_never_answers_is_no_pass(
     assert "git init failed: TimeoutExpired" in out
 
 
+def test_a_fetch_starts_no_maintenance(
+    lock: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run on GitHub lost its answer to git's detached maintenance, which kept writing."""
+    calls = tmp_path / "calls"
+    stand_in = tmp_path / "bin"
+    stand_in.mkdir()
+    real = shutil.which("git")
+    (stand_in / "git").write_text(f'#!/bin/sh\necho "$@" >> {calls}\nexec {real} "$@"\n')
+    (stand_in / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ['PATH']}")
+    assert _run(lock, capsys)[0] == 0
+    fetches = [line for line in calls.read_text().splitlines() if line.startswith("fetch ")]
+    assert len(fetches) == 2
+    assert all("--no-auto-maintenance" in line for line in fetches)
+
+
+def test_a_directory_that_cannot_be_removed_keeps_the_answer(
+    lock: Path,
+    marketlake: Marketlake,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.ENOTEMPTY, "Directory not empty")
+
+    marketlake.commit({JOIN: "JOINS = 2\n"})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(os, "rmdir", refuse)
+    code, out = _run(lock, capsys)
+    assert code == 1
+    assert JOIN_SAID in out
+
+
 def test_a_lock_that_is_not_there_is_no_pass(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, out = _run(tmp_path / "absent.lock", capsys)
     assert code == 2
-    assert "says nothing of the pin: FileNotFoundError" in out
+    assert "says nothing of the pin: FileNotFoundError No such file or directory\n" in out
 
 
 @pytest.mark.parametrize("form", ["option", "ssh", "ext"])

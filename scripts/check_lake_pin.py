@@ -236,8 +236,13 @@ class Remote:
         return done.stdout
 
     def fetch(self, ref: str) -> str:
-        """The commit `ref` names at the remote, fetched."""
-        self._git("fetch", "--quiet", "--depth=1", "--no-tags", "--", self.remote, ref)
+        """The commit `ref` names at the remote, fetched.
+
+        With no maintenance after it, which newer git runs detached, so it would
+        still be writing while the directory is removed.
+        """
+        options = ("--quiet", "--depth=1", "--no-tags", "--no-auto-maintenance")
+        self._git("fetch", *options, "--", self.remote, ref)
         return self._git("rev-parse", "FETCH_HEAD^{commit}").decode().strip()
 
     def file(self, commit: str, path: str) -> bytes | None:
@@ -263,7 +268,8 @@ class Remote:
 
 def check(lock: Path, main_ref: str) -> list[str]:
     pin = read_pin(lock.read_text(encoding="utf-8"))
-    with tempfile.TemporaryDirectory() as directory:
+    # A directory that cannot be removed takes nothing from an answer already read.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
         remote = Remote(Path(directory), pin.remote)
         pinned = remote.side(remote.fetch(pin.commit))
         if pinned.join is None:
@@ -288,7 +294,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{UNREAD}: {error}")
         return 2
     except Exception as error:  # Any other failure is a side unread, so never a pass or a raise.
-        print(f"{UNREAD}: {type(error).__name__}")
+        # The operating system's own words name no path and hold none of marketlake's text.
+        said = getattr(error, "strerror", None) or ""
+        print(f"{UNREAD}: {type(error).__name__} {said}".rstrip())
         return 2
     for line in said:
         print(f"- {line}")
