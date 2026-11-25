@@ -310,7 +310,7 @@ class Journal:
     def _read_on(self, on: JournalAck) -> Iterator[tuple[JournalEntry, str]]:
         """Every entry after `on` with its hash. `on`'s is trusted as the first one's link."""
         seq, expected = on.seq, on.entry_hash
-        keys, looked_again = self._keys_after(seq), -1
+        keys, looked_again, newest = self._keys_after(seq), -1, seq
         while keys:
             key = keys.popleft()
             if not key.startswith(self._prefix):
@@ -325,7 +325,7 @@ class Journal:
                 # A folder listed while a writer adds to it can show an entry
                 # and miss the one before it, so a gap is looked at twice.
                 if looked_again != seq:
-                    keys, looked_again = self._keys_after(seq), seq
+                    keys, looked_again, newest = self._keys_after(seq), seq, max(newest, number)
                     continue
                 raise Halt(
                     f"journal {self._account}: entry {seq + 1} is missing, "
@@ -342,6 +342,11 @@ class Journal:
             expected = entry.hash()
             self._advance(JournalAck(seq=seq, entry_hash=expected))
             yield entry, expected
+        if seq < newest:
+            raise Halt(
+                f"journal {self._account}: entry {seq + 1} is missing, and entry {newest} was "
+                "listed"
+            )
 
     def _keys_after(self, seq: int) -> deque[str]:
         start = journal_entry_key(self._account, seq) if seq else None

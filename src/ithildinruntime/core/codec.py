@@ -172,10 +172,10 @@ def encode(value: object) -> bytes:
         plain = _to_plain(value, object, "value")
     try:
         return rfc8785.dumps(plain)  # type: ignore[arg-type]
-    except rfc8785.CanonicalizationError as error:
-        # Text that is no Unicode, such as the half of a surrogate pair a
-        # JSON escape can hold.
-        raise CodecError(f"{type(value).__name__} holds {error}") from None
+    except (rfc8785.CanonicalizationError, UnicodeEncodeError):
+        # Such as the half of a surrogate pair a JSON escape can hold. The
+        # library raises the second where it is in a mapping's key.
+        raise CodecError(f"{type(value).__name__} holds text that is no Unicode") from None
 
 
 def decode[T](data: bytes, kind: type[T]) -> T:

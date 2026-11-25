@@ -492,7 +492,7 @@ A blob cannot hold its own hash, so `JournalEntry.hash()` computes it as the SHA
 2. That each key's number equals the `seq` inside it.
 3. That it knows the entry's `format`.
 
-Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and on any key under the journal's prefix that is not an entry's. It skips `journal/<account>/checkpoints/`, where the checkpoints this doc proposes for [#154](https://github.com/l3a0/ithildin-runtime/issues/154) sit.
+Beside those three, the reader halts on a `prev_hash` that is not the hash of the entry before it and on a gap in the numbers that a second listing shows too, as [Rule 8](../design.md#rule-8-the-journal-is-the-one-numbered-log) says, and on any key under the journal's prefix that is not an entry's. It skips `journal/<account>/checkpoints/`, where the checkpoints this doc proposes for [#154](https://github.com/l3a0/ithildin-runtime/issues/154) sit.
 
 Every journal format ever written stays readable by every later release, because the book can always be replayed from the first entry, even when a rebuild starts from a book snapshot, and each format has a committed fixture entry and a test that replays it.
 

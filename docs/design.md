@@ -1692,7 +1692,7 @@ expects the same journal and the same blobs byte for byte, so concurrency
 that changes an output fails CI. A second test runs test 2's replay with
 one instance of each component and again with two, as slice 1 runs, and compares the
 journal and the blobs byte for byte in the same way, so a race between
-instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names. The second also leaves out each journal entry's `writer`, which is unique to a process start, and the hashes are recomputed around both fields. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
+instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names. The second also leaves out each journal entry's `writer`, which is drawn afresh at each process start, and the hashes are recomputed around both fields. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
 
 No worker on a VM receives until a supervisor instance on that
 VM has read the run's plan and found its VM on the plan's release, so a VM outside the run never

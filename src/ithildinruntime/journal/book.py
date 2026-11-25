@@ -57,6 +57,7 @@ from .entries import (
     VerdictEntry,
     kind_of,
     record_of,
+    shown,
 )
 from .orders import DOUBTFUL, ENDED, OPEN, Move, moved
 
@@ -458,12 +459,12 @@ def _fill(step: Step, record: FillEntry) -> None:
     state = moved(seq, name, move, order.state)
     if fill.client_order_id not in (None, name):
         raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} names {fill.client_order_id!r}, and its broker's "
-            f"order is {name}'s"
+            f"entry {seq}'s fill {fill.fill_id} names the order {shown(fill.client_order_id)}, and "
+            f"its broker's order is {name}'s"
         )
     if fill.instrument != intent.instrument:
         raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} is in {fill.instrument}, and {name} is in "
+            f"entry {seq}'s fill {fill.fill_id} is in {shown(fill.instrument)}, and {name} is in "
             f"{intent.instrument}"
         )
     if (fill.qty > 0) != (intent.qty > 0):
@@ -530,6 +531,6 @@ def _same(one: Fill, other: Fill) -> bool:
 
 def _said(fill: Fill) -> str:
     return (
-        f"{fill.qty} {fill.instrument} at {fill.price} on the order {fill.broker_order_id}, "
-        f"filled {fill.at.isoformat()}"
+        f"{fill.qty} of {shown(fill.instrument)} at {fill.price} on the order "
+        f"{fill.broker_order_id}, filled {fill.at.isoformat()}"
     )

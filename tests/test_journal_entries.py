@@ -62,6 +62,7 @@ from tests.support.journals import (
     CHAN,
     GLD,
     OTHER,
+    REF,
     USO,
     WRITER,
     Memory,
@@ -294,13 +295,28 @@ def test_1_a_decimal_that_is_not_finite_and_a_time_that_is_not_utc_are_stored_by
         dataclasses.replace(opening(), account="paper-\ud800"),
         dataclasses.replace(rejected(NAME), reason="no \udfff"),
         filled(fill("f", at_text="\udcff")),
+        dataclasses.replace(decision(), inputs={"forecast/\ud800": REF}),
+        dataclasses.replace(
+            decision(), targets=(TargetPortfolio(AT, CHAN, {"\ud800": Decimal(1)}),)
+        ),
     ],
 )
 def test_1_text_that_is_no_unicode_is_stored_by_no_writer(record: Record) -> None:
     journal = Journal(store := Memory(), ACCOUNT, WRITER)
-    with pytest.raises(Halt, match="entry 1 cannot be written: .* non-UTF-8"):
+    with pytest.raises(Halt, match="entry 1 cannot be written: .* holds text that is no Unicode"):
         journal.record(journal.view(), record, AT)
     assert store.blobs == {}
+
+
+def test_1_a_planted_entry_whose_text_is_no_unicode_halts() -> None:
+    for old, new in ((b'"paper-1"', b'"\\ud800"'), (b'"account"', b'"\\ud800"')):
+        journal = Journal(store := Memory(), ACCOUNT)
+        add(journal, opening())
+        (key,) = store.blobs
+        assert old in store.blobs[key]
+        store.blobs[key] = store.blobs[key].replace(old, new)
+        with pytest.raises(Halt, match="entry 1 is not a canonical journal entry"):
+            Journal(store, ACCOUNT).view()
 
 
 def test_1_a_value_that_is_no_record_is_refused() -> None:

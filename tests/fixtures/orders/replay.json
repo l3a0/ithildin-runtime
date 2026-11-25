@@ -1,6 +1,6 @@
 {
   "through": 48,
-  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 USO at 70.123456 on the order o-9, filled 2026-10-01T19:40:34+00:00, and entry 49 holds 8 USO at 70.124 on the order o-9, filled 2026-10-01T19:40:34+00:00",
+  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 of 'USO' at 70.123456 on the order o-9, filled 2026-10-01T19:40:34+00:00, and entry 49 holds 8 of 'USO' at 70.124 on the order o-9, filled 2026-10-01T19:40:34+00:00",
   "cash": "97440.887352",
   "positions": {
     "chan_bollinger": {"GLD": "10", "USO": "6.5"}

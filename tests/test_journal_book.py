@@ -415,9 +415,13 @@ NAME = ONE.client_order_id
         (fill("new", "b1", "2.000000001"), 2, "takes .* to 4.000000001 filled of 4"),
         (fill("new", "b1", 3), 2, "takes .* to 5 filled of 4"),
         (fill("new", "b1", -1), 2, "of -1 is not on .*'s side"),
-        (fill("new", "b1", 1, instrument=USO), 2, "is in USO, and .* is in GLD"),
-        (fill("new", "b1", 1, client_order_id="ith-x"), 2, "names 'ith-x', and its broker's order"),
-        (fill("new", "b1", 1, client_order_id=""), 2, "names '', and its broker's order"),
+        (fill("new", "b1", 1, instrument=USO), 2, "is in 'USO', and .* is in GLD"),
+        (
+            fill("new", "b1", 1, client_order_id="ith-x"),
+            2,
+            "names the order 'ith-x', and its broker's order",
+        ),
+        (fill("new", "b1", 1, client_order_id=""), 2, "names the order '', and its broker's order"),
         (fill("new", "b2", 1), 2, "of the broker's order b2, which no order was"),
         (fill("new", "b1", 1), 3, "names entry 3, which is no read before it"),
         (fill("new", "b1", 1), 9, "names entry 9, which is no read before it"),
@@ -501,9 +505,10 @@ def test_4_a_repeat_that_differs_is_a_dispute_and_the_book_halts(state: str, fie
             _ = reader.book
         for said in (
             "the fill b1-f1 is in dispute",
-            f"entry {first} holds 2 GLD at 10.25 on the order b1, filled 2026-10-01T19:40:00+00:00",
-            f"entry {number} holds {repeat.qty} {repeat.instrument} at {repeat.price} on the order "
-            f"{repeat.broker_order_id}, filled {repeat.at.isoformat()}",
+            f"entry {first} holds 2 of 'GLD' at 10.25 on the order b1, filled "
+            "2026-10-01T19:40:00+00:00",
+            f"entry {number} holds {repeat.qty} of '{repeat.instrument}' at {repeat.price} on the "
+            f"order {repeat.broker_order_id}, filled {repeat.at.isoformat()}",
         ):
             assert said in halted.value.reason
     with pytest.raises(Halt, match="is in dispute"):
@@ -554,7 +559,9 @@ def test_4_a_third_content_is_a_second_dispute_and_the_book_names_both() -> None
     accepts(journal, disputed(differing("price")))
     view = accepts(journal, disputed(differing("qty")))
     assert [dispute.seq for dispute in view.disputes] == [9, 10]
-    with pytest.raises(Halt, match="entry 9 holds 2 GLD at 10.26 .*entry 10 holds 1 GLD at 10.25"):
+    with pytest.raises(
+        Halt, match="entry 9 holds 2 of 'GLD' at 10.26 .*entry 10 holds 1 of 'GLD' at 10.25"
+    ):
         _ = view.book
 
 
@@ -822,12 +829,16 @@ def test_11_two_calls_that_build_the_same_bytes_hold_one_acknowledgement() -> No
 
 
 class Slow(set):
-    """A set whose check leaves time for another thread to make the same one."""
+    """A set whose check and whose add each leave time for another thread's check."""
 
     def __contains__(self, item: object) -> bool:
         found = super().__contains__(item)
         time.sleep(0.05)
         return found
+
+    def add(self, item: object) -> None:
+        time.sleep(0.05)
+        super().add(item)
 
 
 def test_11_no_two_calls_pass_the_one_check_that_hands_a_number_out() -> None:
@@ -1213,67 +1224,57 @@ def test_7_two_readers_see_prefixes_while_a_third_thread_records(tmp_path: Path)
 
 
 class Torn(Memory):
-    """A store whose listings miss one entry, as a folder read beside a writer can."""
+    """A store whose listings miss entries, as a folder read beside a writer can.
 
-    misses = 0
-    missed = journal_entry_key(ACCOUNT, 4)
+    `missed` holds the numbers each listing in turn leaves out, and a listing
+    past its end leaves out none.
+    """
+
+    missed: list[tuple[int, ...]] = []
 
     def list(self, prefix: str, after: str | None) -> list[str]:
-        keys = super().list(prefix, after)
-        if self.misses and self.missed in keys:
-            self.misses -= 1
-            keys.remove(self.missed)
-        return keys
+        gone = [journal_entry_key(ACCOUNT, n) for n in (self.missed.pop(0) if self.missed else ())]
+        return [key for key in super().list(prefix, after) if key not in gone]
 
 
 def test_7_a_listing_that_missed_an_entry_is_taken_again_and_a_gap_that_stays_halts() -> None:
     made, _ = at("Acknowledged")
     good = shown(made.view())
     store = Torn(made._store.blobs)
-    store.misses = 1
+    store.missed = [(4,)]
     assert shown(Journal(store, ACCOUNT).view()) == good
     assert (store.lists, store.gets) == (2, 7)
-    store.misses = 2
+    # Each gap is looked at twice, and a second one further on is too.
+    store.missed = [(3,), (5,)]
+    assert shown(Journal(store, ACCOUNT).view()) == good
+    store.missed = [(4,), (4,)]
     journal = Journal(store, ACCOUNT)
     with pytest.raises(Halt, match="entry 4 is missing, and the next key is entry 5"):
         journal.view()
     assert shown(journal.view()) == good
-    store.misses = 10**6
+    # A second listing that ends short of what the first one showed.
+    store.missed = [(4,), (4, 5, 6, 7)]
+    with pytest.raises(Halt, match="entry 4 is missing, and entry 5 was listed"):
+        Journal(store, ACCOUNT).view()
     for _ in range(2):
+        store.missed = [(4,)] * 2
         with pytest.raises(Halt, match="entry 4 is missing"):
             Journal(store, ACCOUNT).view()
 
 
-def test_7_a_view_of_a_long_folder_beside_a_writer_never_reads_a_gap(tmp_path: Path) -> None:
-    """A short folder is listed in one piece, so the race shows only in a long one."""
-    seeded = Journal(Memory(), ACCOUNT, WRITER)
-    _lives(seeded, 250)
-    folder = tmp_path / "journal" / ACCOUNT
-    folder.mkdir(parents=True)
-    for key, data in seeded._store.blobs.items():
-        (tmp_path / key).write_bytes(data)
-    journal = Journal(FolderStore(tmp_path), ACCOUNT, WRITER)
-    started_at = journal.view().through.seq
-    assert started_at == 2_001
-    reader, done = Journal(FolderStore(tmp_path), ACCOUNT), threading.Event()
-    failures: list[BaseException] = []
-
-    def look() -> None:
-        try:
-            while not done.is_set():
-                reader.view()
-        except BaseException as error:  # noqa: BLE001
-            failures.append(error)
-
-    thread = threading.Thread(target=look, daemon=True)
-    thread.start()
-    try:
-        _lives(journal, 25, AT + DAY)
-    finally:
-        done.set()
-    thread.join(60)
-    assert not thread.is_alive() and not failures, failures
-    assert reader.view().through == journal.view().through
+def test_a_disputes_text_from_outside_is_cut_where_a_halt_shows_it() -> None:
+    journal, _ = at("PartlyFilled")
+    long = "USO\n" + "x" * 10_000
+    view = accepts(journal, disputed(fill("b1-f1", "b1", 2, instrument=long)))
+    with pytest.raises(Halt) as halted:
+        _ = view.book
+    assert len(halted.value.reason) < 500 and "\n" not in halted.value.reason
+    assert view.disputes[0].fill.instrument == long
+    for changes in ({"instrument": long}, {"client_order_id": long}):
+        journal, _ = at("PartlyFilled")
+        with pytest.raises(Halt) as halted:
+            journal.record(journal.view(), filled(fill("f2", "b1", 1, **changes)), AT)
+        assert len(halted.value.reason) < 500 and "\n" not in halted.value.reason
 
 
 def test_7_an_append_does_not_wait_on_a_storage_read() -> None:
