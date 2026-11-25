@@ -154,7 +154,8 @@ class Gate:
         """The day's loss, which the send stage reads on every decision with no order.
 
         It reads no stress move, so it holds the caps to no record. Caps rewritten
-        after the risk stage ran would otherwise stop the loss stop from firing.
+        after the risk stage ran, which the hold alone refuses, would otherwise stop
+        the loss stop from firing.
         """
         return _read(book, snapshot, constraints, inputs, now, None, ()).reading
 
