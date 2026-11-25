@@ -1393,9 +1393,9 @@ It first makes the checks `core.tighten` makes of the constraints and of the cap
 
 It gives back the caps with m the largest of their own and of every record that counts. A record counts when it is of the strategy, is not withdrawn, and names as the leg that made its move one the constraints limit. Its other legs do not matter, because that leg made the move. So a record can only tighten, and `Verdict` carries the m the check used.
 
-The gate's `loss` does not hold the caps. The day's loss reads no m, and a record arrives by a merge or a rollback rather than by the owner's hand. Held there, a decision past the loss stop would read no loss and write no stop, and trading would start again once the record was repaired. `check` halts every order meanwhile.
+The gate's `loss` does not hold the caps. The day's loss reads no m, and a record arrives by a merge or a rollback rather than by the owner's hand. So where the caps or the release change after the risk stage has run, a decision past the loss stop still reads its loss, while `check` halts every order.
 
-The price is six things.
+The price is seven things.
 
 1. **A raised record binds at once, and a release rolled back or a withdrawal releases it at once.** The net cap then grows with nothing halted. So the owner writes the caps' own `stress_move` up to a raise before its release runs, as [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) says, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) alerts while the held m is above the caps' own.
 2. **A release rolled back past the record the caps name halts every order**, as one rolled back past a new cap does.
@@ -1403,6 +1403,7 @@ The price is six things.
 4. **The caps hold one vintage for an account.** Two strategies of other legs never share a vintage, so each strategy the named record is not of halts. With the smaller m's record named, the gate alone would approve that strategy's order against a book that holds the larger's leg. What stops that is the risk stage's halt on two strategies. So the change that lifts it says which record the caps name, with that case in its test.
 5. **A larger record can refuse both exits of a pair already held.** A pair cut to the older cap can have each leg past the new one, and closing either first can then widen net. [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) has the owner look first.
 6. **A leg the strategy holds and the constraints do not limit counts at the m of the legs they do**, whatever its own record holds. Portfolio construction halts on a held leg its forecast does not name, so no order forms.
+7. **While the risk stage halts on the records, no decision tests the day's loss**, because the send stage tests it only on a decision that reaches it.
 
 #### The risk model writes each decision's limits
 
@@ -1467,7 +1468,7 @@ The gate reads two facts from `corrections`: the newest correction's number agai
 
 A view never changes. It copies the positions, the cash and every order that has not ended, which do not grow with the journal. Orders that ended, decisions, reads and fills are kept once, and a view shows none whose entry is past its own.
 
-`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view holds the book the gate was asked on. The entry holds the rest of what the gate was handed but the stress records it was built with, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) rebuilds its answer.
+`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view holds the book and the order the gate was asked on. The entry holds the rest of what the gate was handed, but no entry holds the stress records it was built with, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) rebuilds its answer.
 
 ##### Nothing is stored that a replay would refuse
 

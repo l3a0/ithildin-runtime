@@ -424,7 +424,7 @@ class Seeded:
         """The gate's answer on the newest view, which a small order limit refuses where asked.
 
         Some checks hold a larger stress record than the caps name, which shows in the
-        worst loss alone, since every other limit but the small one is loose.
+        verdict's m and its worst loss, since every other limit but the small one is loose.
         """
         none = dict.fromkeys(NAMES, Decimal(0))
         small = {"max_order_qty": none, "max_position": none} if refuse else {}

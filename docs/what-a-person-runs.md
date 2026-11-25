@@ -420,7 +420,7 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 
 1. Compare the dollars of each held leg with the net cap the new m gives. Where one is over it, the gate can refuse an exit of the pair once m is raised, and where each is, both, until the target, a cap, V or the prices move. [#158](https://github.com/l3a0/ithildin-runtime/issues/158) holds what the owner may do about a position then.
 2. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
-3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back. This step alone moves the caps to a newer record that is no larger, which has to happen before the older one's age passes.
+3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back. Move to the new record before the older one's age passes, whether it is larger or not. For one that is no larger, this step alone is enough.
 
 #### Withdraw a record
 
