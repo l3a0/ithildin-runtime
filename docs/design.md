@@ -2417,10 +2417,10 @@ The price is paid when marketlake later imports days before the written start.
 From that start on, each decision whose lookback the date still cuts halts, which
 is 59 sessions of decisions at a lookback of 60. A backtest's decisions before
 the start halt too. Moving the date, which moves the hash, ends this only where
-the lake also lists every session in between, all of [one
-series](#a-lookback-that-crosses-a-change-of-series). Otherwise the decisions halt
-as missing, or on the change of series, until the lookback passes the gap or the
-change.
+the lake also lists every session in between. Otherwise the decisions halt as
+missing until the lookback passes the gap. Where the imported days are of another
+[series](#a-lookback-that-crosses-a-change-of-series) than the bars after them,
+the decisions whose lookback holds both halt on that either way.
 
 #### A lookback that crosses a change of series
 
@@ -2449,16 +2449,17 @@ The price is six things.
 
 1. Every decision whose lookback crosses a change halts, which is 59 sessions of
    decisions at a lookback of 60, and a change whose scales agree is no exception.
-   With that import, GLD and USO change at 2026-09-04, where an import from Schwab
-   takes over, and at 2026-11-02, where capture begins. So a paper run on them, which decides at
-   close−20, halts on this from 2026-09-08 to 2027-01-28. On 2027-01-29 a lookback
-   first holds captured bars alone, and the alpha model then halts on their `raw`
-   basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
+   With that import, GLD and USO change at 2012-04-10, at 2026-09-04, where an
+   import from Schwab takes over, and at 2026-11-02, where capture begins. So a
+   decision on them at close−20 halts on this from 2026-09-08 to 2027-01-28. On
+   2027-01-29 a lookback first holds captured bars alone, which this halt passes.
+   Two others then stop the decision, data's on their unstated price kind and the
+   alpha model's on their `raw` basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
    window is read, and may lift this halt for a change it can show keeps the scale.
 2. A position held when a later change arrives is held through those decisions.
-   No exit goes out, and the day's loss is not tested, because the send stage
-   tests it only on a decision that reaches it. Worst loss covers only the stress
-   move's window, so, as [for any position a halt leaves
+   No strategy exit goes out, and the day's loss is not tested, because the send
+   stage tests it only on a decision that reaches it. Worst loss covers only the
+   stress move's window, so, as [for any position a halt leaves
    open](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it), only
    the owner's act bounds it.
 3. Bars one source recorded on two dates with no split between them halt a
@@ -2467,13 +2468,16 @@ The price is six things.
 4. A backtest that holds a position across a change values it on the new scale
    once the decisions resume, so V jumps between two decisions. The halts make
    such a run visible and do not make it right, and it is not quoted.
-5. A change of scale that is not a change of series inside one snapshot's bars
-   halts nothing. A split among captured bars reads as a move, which is [rule 6's
-   gap](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
-   In a session of two decisions, the second's mark can come from a later snapshot
-   than V does, and the two are not compared.
+5. This halt does not see a split among captured bars, which are one series. The
+   rule that [a split reads as neither a gain nor a
+   loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
+   holds that case, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46)
+   holds the split record it waits on. Nor does this halt compare bars of two
+   snapshots, such as a mark with a V worked out from an earlier one, which
+   [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds.
 6. A lookback of one bar never halts on this, and a quote is not compared with
-   the bar before it. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) and [#114](https://github.com/l3a0/ithildin-runtime/issues/114) read the first quotes.
+   the bar before it. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) and
+   [#114](https://github.com/l3a0/ithildin-runtime/issues/114) read the first quotes.
 
 #### What the spike multiple is measured against
 

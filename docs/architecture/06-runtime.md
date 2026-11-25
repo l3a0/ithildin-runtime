@@ -1199,6 +1199,7 @@ stateDiagram-v2
         Preparing halts when it finds
         data missing, stale or not ready,
         a price that contradicts itself,
+        a price of unstated kind,
         a lookback that crosses a change of series,
         an unknown stamped fill,
         an unstamped order,

@@ -84,8 +84,7 @@ The other 21 reach the earlier sessions whose z-scores settle
 So the download and capture together have to hold 60 sessions. A lookback that
 holds both [crosses a change of
 series](../design.md#a-lookback-that-crosses-a-change-of-series) and halts, unless
-[#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt, so
-until then no decision is made until capture alone holds the lookback.
+[#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported
@@ -236,7 +235,7 @@ The data worker runs its own minimum checks before anything decides. Seven check
 4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
 6. Two consecutive bars of one instrument that are of two series, meaning two recordings by different sources, as of different dates, or one of the price as traded and one adjusted, halt the decision, as [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) says.
-7. A bar whose price kind its source does not state halts the decision.
+7. A bar whose kind `data/price_kinds.csv` leaves unstated in any of its four fields halts the decision.
 
 #### Which read a decision uses
 
