@@ -347,7 +347,8 @@ def test_2_the_run_each_halt_stands_beside_stores_a_result() -> None:
     world.store.after = lambda n, op, key: reported.append(waits.reports) if op == "create" else 0
     result = world.stage()(Item(world.at, RECOVER_STAGE), waits)
     world.store.after = lambda n, op, key: None
-    # The loop is told the handler is not hung between every two writes.
+    # The loop is told the handler is not hung between every two writes: the simulator's
+    # call, account.json, the read and fill entries, caps.json, book.json, valuation.json.
     assert len(reported) == 7
     assert all(b > a for a, b in zip(reported, reported[1:], strict=False)), reported
     assert result.halt is None
@@ -680,6 +681,15 @@ KEYLIKE = "PKA1B2C3D4E5F6G7H8"
                 )
             },
             "the fill f-9 carries a correction's id",
+        ),
+        (
+            # A whole flag that is no bool, which the codec refuses with the rest.
+            {
+                "fills": lambda since: FillsRead(
+                    (odd_fill(fill_id="f-9", order="sim-o-2"),), page(), 1
+                )
+            },
+            "account.json was not stored: what was read is no AccountRead",
         ),
     ],
 )
@@ -1315,6 +1325,54 @@ def test_3_a_second_read_in_which_the_account_moved_is_stored_and_halts() -> Non
     assert said.endswith("These differ: cash, the pages' bytes")
 
 
+def test_3_a_second_read_that_lost_a_fill_under_the_same_bound_halts() -> None:
+    """Only a bound that moved past it may leave out a fill the first read held."""
+    world = ready()
+    kept = world.broker()
+    first = {"fills": lambda since: kept.fills(since)}
+
+    def hook(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/"):
+            raise Kill
+
+    world.store.before = hook
+    with pytest.raises(Kill):
+        world.attempt(world.stage(brokers=doctored(world, **first)))
+    world.store.before = lambda n, op, key: None
+    world.restart()
+    since = world.entry(ACCOUNT_OUTPUT).since
+    none = {"fills": lambda asked: FillsRead((), page(), True)}
+    result = world.attempt(world.stage(brokers=doctored(world, **none)))
+    assert world.entry(ACCOUNT_OUTPUT).since == since
+    assert result.halt is not None and "differ in fills, so the account" in result.halt.reason
+
+
+def test_3_a_second_read_that_lists_the_open_orders_in_another_order_goes_on() -> None:
+    world = RecoverWorld(flat_prices())
+    world.day(DAYS[1], [(-20, USO)])
+    world.day(DAYS[2], [(5, GLD), (2, USO)], early=20)
+    world.prepare(close_of(DAYS[3]))
+    listed = world.broker().open_orders()
+    two = replace(listed, orders=(*listed.orders, *listed.orders)[:2])
+    flipped = replace(two, orders=tuple(reversed(two.orders)))
+    for orders in (two, flipped):
+        assert recover_moved(world, orders) == []
+
+
+def recover_moved(world: RecoverWorld, orders: OrdersRead) -> list[str]:
+    from ithildinruntime.execution.recover import _moved
+
+    read = AccountRead(
+        positions=PositionsRead({}, page(), True),
+        open_orders=orders,
+        cash=CashRead(D(1), page(), True),
+        since=close_of(DAYS[0]),
+        fills=FillsRead((), page(), True),
+    )
+    flipped = replace(read, open_orders=replace(orders, orders=tuple(reversed(orders.orders))))
+    return _moved(read, flipped)
+
+
 @pytest.mark.parametrize("what", ["positions", "open orders", "a new fill"])
 def test_3_a_second_read_in_which_the_account_moved_halts_on_each_part(what: str) -> None:
     world = ready()
@@ -1558,6 +1616,23 @@ def test_4_an_order_kept_working_across_decisions_is_filled_once() -> None:
     world.decide(close_of(DAYS[6]))
     assert world.kinds().count("fill") == 1
     assert len(world.alarms.sent) == 3
+
+
+def test_4_an_order_open_past_its_session_pages_once_in_a_process() -> None:
+    closes = prices({0: 100, 2: 100, 3: 100, 4: 100}, {n: 50 for n in range(5)})
+    world = RecoverWorld(closes)
+    world.day(DAYS[1], [(10, GLD)], early=20)
+    said: set[str] = set()
+    for n in (2, 3, 4):
+        world.prepare(close_of(DAYS[n]))
+        stage = world.stage()
+        stage._said = said
+        result = world.attempt(stage)
+        assert result.halt is None
+        world.store.put(result_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE), encode(result))
+        world.plan(())
+    assert len(world.alarms.sent) == 1
+    assert "is still open after its session's close" in world.alarms.sent[0]
 
 
 def test_4_a_second_attempt_whose_bound_moved_past_a_fill_it_journaled_goes_on() -> None:
@@ -2038,3 +2113,42 @@ def test_3_a_stored_valuation_other_than_its_books_halts() -> None:
     assert result.halt.reason == (
         f"{world.key(VALUATION_OUTPUT)} holds another valuation than its book's"
     )
+
+
+def test_3_a_second_read_that_did_not_come_whole_halts() -> None:
+    """Its missing page could hold a fill the first read lacks."""
+    from ithildinruntime.execution.recover import _moved
+
+    world = ready()
+    read = world.broker().fills(close_of(DAYS[0]))
+    first = AccountRead(
+        positions=PositionsRead({}, page(), True),
+        open_orders=OrdersRead((), page(), True),
+        cash=CashRead(D(1), page(), True),
+        since=close_of(DAYS[0]),
+        fills=read,
+    )
+    assert _moved(first, replace(first, fills=replace(read, whole=False))) == [
+        "whether each came whole"
+    ]
+    twice = replace(first.open_orders, orders=(foreign_order(), foreign_order()))
+    assert _moved(replace(first, open_orders=twice), first) == ["open orders"]
+
+
+def test_3_a_fill_gone_at_the_later_bound_itself_counts_as_a_move() -> None:
+    """A read since a time holds a fill at that time, so its absence is the broker's doing."""
+    from ithildinruntime.execution.recover import _moved
+
+    world = ready()
+    read = world.broker().fills(close_of(DAYS[0]))
+    first = AccountRead(
+        positions=PositionsRead({}, page(), True),
+        open_orders=OrdersRead((), page(), True),
+        cash=CashRead(D(1), page(), True),
+        since=close_of(DAYS[0]),
+        fills=replace(read, fills=read.fills[:1]),
+    )
+    at = read.fills[0].at
+    gone = replace(first, fills=replace(read, fills=()))
+    assert _moved(first, replace(gone, since=at)) == ["fills"]
+    assert _moved(first, replace(gone, since=at + MICRO)) == []

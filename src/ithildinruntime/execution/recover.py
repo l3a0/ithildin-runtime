@@ -29,7 +29,10 @@ Where the account itself moved between the two reads, the attempt halts.
 What a person reads shows a broker's order or fill id where it is one the journal
 takes, an instrument where it is a name, and a client order id where it is a stamp
 of the platform's, and no other text of the broker's. The broker's own words are in
-`account.json`. An alarm goes once in a process, and monitoring pages each halt.
+`account.json`. An alarm goes once in a process, and again after a restart.
+Monitoring alarms on a halt as design.md's `### Rule 7: monitoring tells the owner
+once` says, once for a run of halts with one reason. Until #11 builds it, this
+stage's alarm is the only page about an order a crash left.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ from ithildinruntime.core import (
     BlobRef,
     Book,
     Broker,
+    BrokerOrder,
     BrokerState,
     BrokerUnavailable,
     Clock,
@@ -79,6 +83,7 @@ from ithildinruntime.core import (
 from ithildinruntime.journal import (
     DOUBTFUL,
     ENDED,
+    NOT_SENT,
     OPEN,
     RAW_LIMIT,
     DisputedFillEntry,
@@ -109,8 +114,8 @@ _ZERO = Decimal(0)
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
 # An order the broker has, as the journal's own groups of states give it, and every other
 # state that has not ended, which only a lookup, a person or #147 settles.
-_AT_THE_BROKER = OPEN - DOUBTFUL - {OrderState.APPROVED}
-_UNSETTLED = frozenset(OrderState) - ENDED - _AT_THE_BROKER
+_UNSETTLED = NOT_SENT | DOUBTFUL
+_AT_THE_BROKER = frozenset(OrderState) - ENDED - _UNSETTLED
 
 
 class _Item(Protocol):
@@ -147,7 +152,7 @@ class RecoverStage:
         self._account = account
         self._brokers = brokers
         # Each alarm this process has sent, so a cause that stands pages once and not at
-        # every decision. Monitoring pages each halt as its own rule says.
+        # every decision. Monitoring alarms on the halts themselves, by its own rule.
         self._said: set[str] = set()
         self._clock = clock
         self._data_stage = data_stage
@@ -220,8 +225,7 @@ class RecoverStage:
         if found := reconcile(book, view.live.values(), read):
             said = "; ".join(str(difference) for difference in found)
             raise Halt(f"the book and the broker differ, as {capture.ref.key} holds it: {said}")
-        held = {o.client_order_id for opens in book.open_orders_by_strategy.values() for o in opens}
-        self._past_their_session([o for n, o in view.live.items() if n in held], at, report)
+        self._past_their_session([o for o in view.live.values() if o.state in OPEN], at, report)
 
         caps = self._caps(decision)
         return (caps, *self._files(decision, book, view, snapshot, at))
@@ -318,7 +322,8 @@ class RecoverStage:
         """Alarm on each order still open past the close it was to end by, which halts nothing.
 
         Both sides hold it open, so the comparison agrees. A day with no bar
-        for its instrument leaves a simulated order so.
+        for its instrument leaves a simulated order so. It goes once in a
+        process, and a restart sends it again.
         """
         for order in orders:
             name = order.intent.client_order_id
@@ -413,13 +418,34 @@ def _undated(read: AccountRead) -> dict[str, object]:
     }
 
 
+# The parts of two reads that may differ while the account stands still: when the pages
+# came, and their bytes. A later read that did not come whole could hide a fill, so it
+# counts as a move.
+_UNMOVED = frozenset({"the time the fills were asked from", "the pages' bytes"})
+
+
 def _moved(first: AccountRead, later: AccountRead) -> list[str]:
-    """What the account did between two reads, apart from a fill the later bound leaves out."""
+    """What the account did between two reads.
+
+    A fill only the first holds counts as no move where the later read asked from a
+    later time than that fill's, as a bound moved by the first attempt's own fills
+    does. Open orders are compared by the broker's id, so a list in another order is
+    the same list.
+    """
     one, two = _undated(first), _undated(later)
-    named = [name for name in ("positions", "open orders", "cash") if one[name] != two[name]]
-    if set(two["fills"]) - set(one["fills"]):  # type: ignore[arg-type]
+    named = [p for p in one if p not in _UNMOVED and p != "fills" and one[p] != two[p]]
+    if "open orders" in named and _by_id(first) == _by_id(later):
+        named.remove("open orders")
+    gone = [f for f in one["fills"] if f not in two["fills"]]  # type: ignore[attr-defined]
+    new = [f for f in two["fills"] if f not in one["fills"]]  # type: ignore[attr-defined]
+    if new or any(f.at >= later.since for f in gone):
         named.append("fills")
     return named
+
+
+def _by_id(read: AccountRead) -> list[BrokerOrder]:
+    """The open orders sorted by the broker's id, so one listed twice stays twice."""
+    return sorted(read.open_orders.orders, key=lambda order: order.broker_order_id)
 
 
 def _asked[R](call: Callable[[], R]) -> R:

@@ -459,6 +459,30 @@ def test_10_an_alarm_the_channel_will_not_take_is_named_as_the_process_ends(case
     assert "PKFAKEKEY" not in raised.value.reason
 
 
+def test_10_an_answer_and_its_alarm_both_lost_are_named_as_the_process_ends(case: Case) -> None:
+    worker, _, _ = owing(case, refuse=True)
+    worker.account._shared.alerts._alerts.error = RuntimeError("PKFAKEKEY")  # type: ignore[union-attr]
+    with pytest.raises(Halt) as raised:
+        worker.run(Looped())  # type: ignore[arg-type]
+    said = raised.value.reason
+    assert f"the journal was not given {ACK}" in said
+    assert "the alarm 'the process is ending with" in said
+    assert "the alarm 'the process ends and the journal was not given" in said
+    assert "PKFAKEKEY" not in said
+
+
+def test_10_a_last_settle_that_fails_with_nothing_owed_ends_with_an_error(case: Case) -> None:
+    worker = case.worker()
+
+    def broken(report: Callable[[], None]) -> None:
+        raise RuntimeError("PKFAKEKEY")
+
+    worker.account.settle = broken  # type: ignore[method-assign]
+    with pytest.raises(Halt) as raised:
+        worker.run(Looped())  # type: ignore[arg-type]
+    assert raised.value.reason == "the process ends and its last settle failed: RuntimeError"
+
+
 def test_10_an_error_that_is_no_halt_at_the_end_names_its_type_alone(case: Case) -> None:
     worker, _, said = owing(case, refuse=True)
 

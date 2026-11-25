@@ -3,7 +3,8 @@
 The mode builds the broker, and this is the one file that does.
 
 1. A backtest over a folder trades through the simulated broker, with no fault.
-2. Every other mode, and a backtest over any other store, builds no broker. Each
+2. Every other mode, a backtest over any other store, and a stage table whose row of
+   recover is not the one this file declares, build no broker. Each
    decision of each of this worker's stages halts with the reason stored, and the
    worker starts all the same, because a start that fails only restarts it. The
    reason names the parts of #10 that lift it.
@@ -133,9 +134,11 @@ class ExecutionWorker:
         """Run the loop to its end, then store what the journal still lacks.
 
         An answer of a broker's that the journal has not taken is known to this
-        process alone. One that still cannot be stored alarms, naming each entry
-        that is lost with the process, and ends the process with an error, so
-        the host's restart record says it too.
+        process alone. So the worker pages before its last tries, naming each
+        entry it owes. One that still cannot be stored alarms again, naming each
+        entry lost with the process, and ends the process with an error, so the
+        host's restart record says it too. An alarm the channel would not take,
+        and a last settle that failed for any other reason, end it the same way.
         """
         try:
             loop.run()
@@ -152,22 +155,25 @@ class ExecutionWorker:
                 f"tries once more. {step}",
                 lambda: None,
             )
+        failed = False
         try:
             account.settle(lambda: None)
             said = ""
         except Halt as halt:
             said = f": {halt.reason}"
         except Exception as error:
-            said = f": {type(error).__name__}"
-        owed, unsent = account.unstored(), account.unsent()
-        if not owed and not unsent:
+            said, failed = f": {type(error).__name__}", True
+        owed = account.unstored()
+        if owed:
+            reason = f"the process ends and the journal was not given {'; '.join(owed)}{said}"
+            account.alarm(f"{reason}. {step}", lambda: None)
+        unsent = account.unsent()
+        if not owed and not unsent and not failed:
             # An account that cannot be used holds nothing, so it loses nothing.
             return
         lost = [*(f"the journal was not given {one}" for one in owed)]
         lost += [f"the alarm '{one}' was not sent" for one in unsent]
-        reason = f"the process ends and {'; '.join(lost)}{said}"
-        if owed:
-            account.alarm(f"{reason}. {step}", lambda: None)
+        reason = f"the process ends and {'; '.join(lost) or 'its last settle failed'}{said}"
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)
 

@@ -90,6 +90,8 @@ from ithildinruntime.core import (
     to_utc,
 )
 from ithildinruntime.journal import (
+    DOUBTFUL,
+    NOT_SENT,
     RAW_LIMIT,
     AbandonedEntry,
     AckEntry,
@@ -121,8 +123,8 @@ _NUMBERS = 100
 # How long one pass of a submit's checks may take, in seconds, for its first read to still hold
 # at its last.
 _PASS = 5.0
-_NOT_SENT = frozenset({OrderState.INTENDED, OrderState.APPROVED})
-_DOUBTFUL = frozenset({OrderState.SENDING, OrderState.IN_DOUBT})
+_NOT_SENT = NOT_SENT
+_DOUBTFUL = DOUBTFUL
 
 
 def quietly(report: Callable[[], None]) -> Callable[[], None]:
@@ -209,7 +211,8 @@ class Unstored:
     An order's fate is known here alone once the broker has answered, so an
     entry stays until the journal takes it or shows that it already knows. An
     alarm about one that could not be sent waits in a queue of its own, which
-    each `settle` tries once through, and halts nothing.
+    each `settle` tries once through, and halts nothing. So does one sent through
+    `alarm`, as `Account.alarm` sends a stage's and the worker's.
     """
 
     def __init__(

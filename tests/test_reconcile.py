@@ -257,6 +257,13 @@ def test_4_an_order_the_broker_lists_twice() -> None:
     assert alone.fields == ("listed twice",)
 
 
+def test_4_two_records_that_hold_one_brokers_id_are_a_difference() -> None:
+    one, two = record(1, "b-1"), record(2, "b-1")
+    given = reconcile(book({}, (one, two)), (one, two), read({}, (copy(one),)))
+    assert [found(x) for x in given] == [(Compared.OPEN_ORDER, "b-1", ("listed twice",))]
+    assert str(given[0]) == "two records of the book's open orders hold the broker's id b-1"
+
+
 @pytest.mark.parametrize("state", [OrderState.APPROVED, OrderState.SENDING, OrderState.IN_DOUBT])
 def test_4_an_order_with_no_brokers_id_is_a_difference(state: OrderState) -> None:
     order = record(broker=None, state=state)

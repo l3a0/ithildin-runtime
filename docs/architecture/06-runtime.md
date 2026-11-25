@@ -522,7 +522,7 @@ The stage is `execution/recover.py`. It waits for the decision's time, having wr
 9. It reads the owner's hard caps.
 10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
 
-A difference that is nothing but a fee, a dividend or a split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms at each decision and halts nothing, because the comparison agrees.
+A difference that is nothing but a fee, a dividend or a split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
 
 Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 
@@ -567,7 +567,7 @@ The first recover of a session values the book at the official closes of the ses
 
 | Mode | What it builds | What lifts the halt |
 | --- | --- | --- |
-| A backtest over a folder | The simulated broker, with no fault | Nothing halts |
+| A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares |
 | Shadow | No broker. Every decision of each of its stages halts | Whichever of [#147](https://github.com/l3a0/ithildin-runtime/issues/147) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151), [#155](https://github.com/l3a0/ithildin-runtime/issues/155) and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) closes last |
 | Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
 | Live | The same | Only the owner switches an account to live |

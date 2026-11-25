@@ -13,7 +13,8 @@ What it compares, exactly and with no tolerance:
 2. **Open orders**, by the broker's order id, each in its instrument, signed
    shares, filled total and client order id. One on either side alone is a
    difference, and so is one the broker lists twice, and one it lists in any state
-   but working or of another type or time in force. A book's open orders carry no
+   but working or of another type or time in force. A cancel pending is such a state,
+   and #149 decides what one reads as. A book's open orders carry no
    broker's id, so the caller hands the journal's records of them beside it, such
    as every order that has not ended, and a record of no order the book holds
    open is left out. An open order with no record, or whose record holds no
@@ -77,6 +78,9 @@ class Difference:
             return f"{_instrument(self.name)} is {self.book} in the book and {held} at the broker"
         ours = None if not isinstance(self.book, OrderRecord) else self.book
         theirs = None if not isinstance(self.broker, BrokerOrder) else self.broker
+        if self.fields == (_TWICE,) and self.broker is None:
+            name = broker_id_shown(self.name)
+            return f"two records of the book's open orders hold the broker's id {name}"
         if self.fields == (_TWICE,):
             return f"the broker lists its order {broker_id_shown(self.name)} more than once"
         if ours is not None and theirs is not None:
@@ -130,6 +134,11 @@ def _open_orders(
     for name, order in records.items():
         if order.broker_order_id is None:
             found.append(Difference(Compared.OPEN_ORDER, name, order, None))
+        elif order.broker_order_id in ours:
+            # The journal gives no two orders one id, so a caller handed two records of one.
+            found.append(
+                Difference(Compared.OPEN_ORDER, order.broker_order_id, order, None, (_TWICE,))
+            )
         else:
             ours[order.broker_order_id] = order
     listed: dict[str, list[BrokerOrder]] = {}
