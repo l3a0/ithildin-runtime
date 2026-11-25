@@ -6,6 +6,8 @@ but `rfc8785`. docs/architecture/05-building-blocks.md's `## Package layout
 and the import rule` says what it holds and why.
 """
 
+from .clock import *  # noqa: F403
+from .clock import __all__ as _clock
 from .codec import (
     CodecError,
     Places,
@@ -121,6 +123,7 @@ __all__ = [
     "require_utc",
     "to_decimal",
     "to_utc",
+    *_clock,
     *_exact,
     *_keys,
     *_limits,

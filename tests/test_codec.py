@@ -282,6 +282,7 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
         rows={InstrumentId("USO"): ({"bid": "60.5", "ask": None},)},
         faults=("a reason",),
         quotes_read_at=AT,
+        clock=core.ClockReading(AT, None),
     )
     back = decode(encode(value), core.Snapshot)
     assert back == value

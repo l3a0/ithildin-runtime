@@ -19,31 +19,36 @@ the mode, because both answer `wait_until(at, report)`.
 
 The machine's offset from reference time and the age of its last sync are
 readings of the clock, under rule 2 of design.md's `### Time comes from one
-clock, and order from sequence numbers`. No issue builds the time client that
-reads them yet, so both clocks raise on those two reads rather than report a
-value nothing measured.
+clock, and order from sequence numbers`. Both come from one call, `reading`,
+because two calls could straddle an update. The wall clock hands through what
+its `TimeServers` last measured. Under the history clock the time is the
+decision's by definition, so nothing is measured, unless it is handed the
+readings a recorded session took.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 
-from ithildinruntime.core import Progress, Stopped, Timer
+from ithildinruntime.core import ClockReading, Halt, Progress, Stopped, Timer
+
+from .time_servers import TimeServers
 
 __all__ = ["HistoryClock", "WallClock"]
 
-_NO_TIME_CLIENT = (
-    "the clock's offset and sync age need a time client, which no issue builds yet, "
-    "so this clock does not report them"
-)
-
 
 class HistoryClock:
-    """The backtest's clock, which never waits and reads the decision being worked on."""
+    """The backtest's clock, which never waits and reads the decision being worked on.
 
-    def __init__(self) -> None:
+    `readings` is `None`, where nothing is measured, or each decision time's
+    recorded `ClockReading`. It has no default, so a replay cannot forget it.
+    """
+
+    def __init__(self, *, readings: Mapping[datetime, ClockReading] | None) -> None:
+        self._readings = None if readings is None else dict(readings)
         self._local = threading.local()
 
     def now(self) -> datetime:
@@ -55,11 +60,13 @@ class HistoryClock:
     def monotonic(self) -> float:
         return time.monotonic()
 
-    def offset(self) -> timedelta:
-        raise NotImplementedError(_NO_TIME_CLIENT)
-
-    def sync_age(self) -> timedelta:
-        raise NotImplementedError(_NO_TIME_CLIENT)
+    def reading(self) -> ClockReading:
+        at = self.now()
+        if self._readings is None:
+            return ClockReading(at, None)
+        if at not in self._readings:
+            raise Halt(f"no reading of the clock is recorded for the decision at {at.isoformat()}")
+        return self._readings[at]
 
     def wait_until(self, at: datetime, report: Progress) -> None:
         _utc(at)
@@ -67,12 +74,17 @@ class HistoryClock:
 
 
 class WallClock:
-    """The clock shadow, paper and live run on, read through a timer a test can fake."""
+    """The clock shadow, paper and live run on, read through a timer a test can fake.
 
-    def __init__(self, timer: Timer, *, interval: float = 5.0) -> None:
+    `servers` is `None` for a command that reads the time and trades nothing,
+    whose reading then holds no answers. It has no default.
+    """
+
+    def __init__(self, timer: Timer, *, servers: TimeServers | None, interval: float = 5.0) -> None:
         if interval <= 0:
             raise ValueError("a wall clock reports on a positive interval")
         self._timer = timer
+        self._servers = servers
         self._interval = interval
 
     def now(self) -> datetime:
@@ -81,11 +93,10 @@ class WallClock:
     def monotonic(self) -> float:
         return self._timer.monotonic()
 
-    def offset(self) -> timedelta:
-        raise NotImplementedError(_NO_TIME_CLIENT)
-
-    def sync_age(self) -> timedelta:
-        raise NotImplementedError(_NO_TIME_CLIENT)
+    def reading(self) -> ClockReading:
+        if self._servers is None:
+            return ClockReading(self.now(), None)
+        return self._servers.reading()
 
     def wait_until(self, at: datetime, report: Progress) -> None:
         _utc(at)

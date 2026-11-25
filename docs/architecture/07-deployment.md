@@ -119,7 +119,7 @@ The journal is one of the three things the premise says cannot be recovered, so 
 
 - The execution worker runs as a Unix user of its own, started by a systemd unit with that user, never by a process that keeps root.
 - Only root and one provisioning user can reach the VM's instance metadata service, because any process that can reach that service can fetch the VM's credentials. A firewall rule matched on the process's owner enforces that across reboots.
-- Each VM has no inbound port, and Docker listens on its Unix socket alone. Every role is refused remote commands and remote sessions.
+- Each VM has no inbound port, and Docker listens on its Unix socket alone. Outbound, the data, execution and monitoring containers ask the two [time servers](03-context-and-scope.md#the-time-servers) on UDP 123 and need DNS for the public one. AWS's [security groups](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) and [network ACLs](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-network-acls.html) filter neither the link-local time server nor Amazon's DNS, so only the public server's traffic passes them, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds the rules that let it out. Every role is refused remote commands and remote sessions.
 - At boot the provisioning step writes each worker user a credential file only that user can read, never carried in the VM's start-up data.
 - Only the execution user's credential can read the secret store's broker path.
 
@@ -478,7 +478,10 @@ Five things follow.
    [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
    give 2 for an AMI that requires IMDSv2, and 2 lets a container
    through. A `DOCKER-USER` firewall rule also drops traffic from
-   Docker's bridges to the metadata service's addresses. [The drill on the metadata fence](../halts-and-drills.md#drills-with-no-alarm)
+   Docker's bridges to the metadata service's two addresses, `169.254.169.254`
+   and `fd00:ec2::254`. It names those two and never `169.254.0.0/16`, because
+   data, execution and monitoring ask AWS's time server at `169.254.169.123`,
+   and a rule on the whole range would halt all three. [The drill on the metadata fence](../halts-and-drills.md#drills-with-no-alarm)
    tests this from inside each container.
 4. **A restart writes its own record.** Each unit's stop handler on the
    host records why the container stopped, its count of restarts and
@@ -1175,6 +1178,7 @@ This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 - the bucket policy
 - the key paths
 - the metadata fence
+- the time servers, asked from inside each container that judges the clock
 - CloudTrail
 - the operator's grants
 - the event rules, queues and their policies

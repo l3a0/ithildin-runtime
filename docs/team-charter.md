@@ -409,7 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
-  idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Holds the rule for what a halt
+  idea is a person's panic button that cuts risk (L994). Also owns the halts on the clock's offset from each time server and on the age of each server's last answer. Holds the rule for what a halt
   and the kill switch cancel and keep at the broker, per the design doc. No clock or cutoff reading stops a sort's adding cancel or a pair-keeping cancel, so a clock that failed its check holds neither back. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
@@ -564,7 +564,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   comes first (AoS L3421). Here restoring service means reconciling with the
   broker before trading resumes. Plans headroom for each component, per the
   design doc, and runs the release's production check below. Watches the clock's
-  offset and sync age, which halt trading past their bounds, and the lag of
+  offset from each time server and the age of each one's last answer, which halt trading past their bounds, and the lag of
   capture and of the off-machine copy, which alarms, since a drifting clock
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
@@ -839,7 +839,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
   says, which also says what each finding serves, read every component's
   restart and scaling switch and execution's restart count, and check the
-  clock's offset and sync age. A failure of the release's own digest or the
+  clock's offset from each time server and the age of each one's last answer. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
   interface, and that instance receives nothing and runs the two again at a written
   interval. Once they pass, the order path reads the kill switch and serves it, and resumes any sort [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes, which is no Startup check. A failure of any other check, apart from a store finding, which

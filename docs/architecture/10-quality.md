@@ -255,7 +255,8 @@ restart behaviour, so no test host that reimplements systemd exists.
 
 What CI cannot cover runs in each environment that has the resource, as [When drills run](07-deployment.md#environment-rule-10-when-drills-run) says, as drills on
 [#11](https://github.com/l3a0/ithildin-runtime/issues/11): the instance
-metadata fence against AWS's own service, S3's bucket policy and CloudTrail,
+metadata fence against AWS's own service, the time servers' answers inside a
+container, S3's bucket policy and CloudTrail,
 and the account's real roles. The memory-backed folder and the emulator only
 imitate S3's rules, which the real test bucket checks.
 

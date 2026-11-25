@@ -20,6 +20,7 @@ from ithildinruntime.core import (
     Bar,
     BarStatus,
     Book,
+    ClockReading,
     Constraints,
     GateInputs,
     HardCaps,
@@ -211,6 +212,7 @@ def snapshot(
         "segments": (),
         "ledgers": {},
         **NONE_READ,
+        "clock": ClockReading(at, None),
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

@@ -76,6 +76,7 @@ def data_handler(
     storage: Storage,
     clock: Clock,
     timer: Timer,
+    measured: bool,
     deployment: str,
     run: str,
     release: str,
@@ -91,7 +92,8 @@ def data_handler(
     to one moves the hash of the file that writes it. Files that build no
     settings halt each decision with the reason stored, and never the worker's
     start. One `LakeSource` serves every decision, because it keeps each
-    session's answer for the run.
+    session's answer for the run. `measured` is true where the clock is the
+    machine's, so a history clock wired into a trading run halts.
     """
     source: LakeSource | Halt
     try:
@@ -99,7 +101,14 @@ def data_handler(
     except Halt as halt:
         source = halt
     else:
-        source = LakeSource(Mirror(bucket, mirror), settings, live=live, clock=clock, timer=timer)
+        source = LakeSource(
+            Mirror(bucket, mirror),
+            settings,
+            live=live,
+            clock=clock,
+            timer=timer,
+            measured=measured,
+        )
     return DataStage(
         source,
         storage,

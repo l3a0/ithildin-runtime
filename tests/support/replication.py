@@ -78,6 +78,7 @@ def every_session(built_lake: Path, tmp_path_factory: pytest.TempPathFactory) ->
         live=FolderBucket(built_lake.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
+        measured=False,
     )
     return source.snapshot(sessions[-1].close)
 

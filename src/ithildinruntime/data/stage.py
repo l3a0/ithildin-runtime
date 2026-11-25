@@ -22,9 +22,10 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote, segment, row, fault or provisional mark, or says that a capture holds
-   other than one snapshot, that the first capture is no snapshot the codec
-   reads, or that only the read time differs, as on a redelivery after a crash.
+   quote, segment, row, fault or provisional mark, and whether the clock was
+   past a bound, or says that a capture holds other than one snapshot, that the
+   first capture is no snapshot the codec reads, or that only the read time or
+   the clock's reading differs, as on a redelivery after a crash.
    Where only the segments and their rows differ, the later capture names one
    the first lacks, and every segment both name kept its version and SHA-256,
    it says so, and that a later listing adds them where it names all the first does.
@@ -37,9 +38,9 @@ things, in order.
    one snapshot or was written under another release or other strategy
    configuration hashes.
    That read is the alarm's single try, so one failed read of the first
-   capture halts its decision. A missing or stale instrument, a bar of
-   unstated kind, a bar whose prices contradict each other, two
-   consecutive bars of one instrument that are of two series, a fault in the
+   capture halts its decision. A clock past a bound, a missing or stale
+   instrument, a bar of unstated kind, a bar whose prices contradict each
+   other, two consecutive bars of one instrument that are of two series, a fault in the
    read of the quotes, or a quote that is absent or cannot be read, and on a
    redelivery each case `data.source.judge` lists, ends the decision with a
    halt as data's result that names the stored snapshot, as
@@ -73,6 +74,7 @@ from ithildinruntime.core import (
     StageKind,
     Storage,
     attempt_key,
+    clock_faults,
     decode_output,
     encode_output,
     output_key,
@@ -86,7 +88,7 @@ __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 STAGE = DATA_STAGE
 SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
-_FORMAT = 2
+_FORMAT = 3
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 
 
@@ -149,7 +151,7 @@ class DataStage:
 
         def explain(held: bytes) -> str:
             first.append(held)
-            return differences(held, data)
+            return differences(held, data, measured=source.measured)
 
         stored = self._storage.put(
             StageKind.CAPTURING,
@@ -164,7 +166,12 @@ class DataStage:
             reasons = reading.halts
         else:
             reasons = _counted(
-                stored.counts, first, source.instruments, self._release, self._config_hashes
+                stored.counts,
+                first,
+                source.instruments,
+                self._release,
+                self._config_hashes,
+                source.measured,
             )
         halt = None
         if reasons:
@@ -178,6 +185,7 @@ def _counted(
     instruments: Sequence[InstrumentId],
     release: str,
     config_hashes: Mapping[str, str],
+    measured: bool,
 ) -> tuple[str, ...]:
     """The halts of the capture that counts, which every later stage reads.
 
@@ -215,10 +223,11 @@ def _counted(
     if len(stored.entries) != 1:
         return (f"{counts.key} counts and holds {len(stored.entries)} snapshots, not one",)
     snapshot = stored.entries[0]
-    return tuple(f"{counts.key}, which counts: {r}" for r in judge(snapshot, instruments))
+    reasons = judge(snapshot, instruments, measured=measured)
+    return tuple(f"{counts.key}, which counts: {r}" for r in reasons)
 
 
-def differences(first: bytes, later: bytes) -> str:
+def differences(first: bytes, later: bytes, *, measured: bool) -> str:
     """What differs between two captures of one decision's snapshot, for the alarm."""
     try:
         one = decode_output(first, Snapshot)
@@ -253,9 +262,12 @@ def differences(first: bytes, later: bytes) -> str:
     ):
         if getattr(a, name) != getattr(b, name):
             snapshot.append(name)
+    past = [bool(clock_faults(s.clock, measured=measured)) for s in (a, b)]
+    if past[0] != past[1]:
+        snapshot.append("whether the clock was past a bound")
     named = ", ".join(header + snapshot)
     if not named:
-        return "Only the read time differs, as on a redelivery after a crash"
+        return "Only the read time or the clock's reading differs, as on a redelivery after a crash"
     if not header and set(snapshot) <= {"segments", "rows"}:
         return f"These differ: {named}{_listings(a, b)}"
     return f"These differ: {named}"

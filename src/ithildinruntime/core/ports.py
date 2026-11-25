@@ -14,7 +14,7 @@ build, and `Journal` lives in the `journal` package.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Protocol
 
 from .queue import Event
@@ -23,6 +23,7 @@ from .records import (
     Book,
     BrokerRead,
     BucketObject,
+    ClockReading,
     Constraints,
     CostSchedule,
     ForecastSet,
@@ -88,9 +89,13 @@ class Clock(Protocol):
 
     def monotonic(self) -> float: ...
 
-    def offset(self) -> timedelta: ...
+    def reading(self) -> ClockReading:
+        """The machine's clock against each time server, from memory.
 
-    def sync_age(self) -> timedelta: ...
+        On a wall clock it never raises. A history clock handed recorded
+        readings raises `Halt` on a decision they lack.
+        """
+        ...
 
     def wait_until(self, at: datetime, report: Progress) -> None:
         """Return once the clock reads `at`, calling `report` while it waits.

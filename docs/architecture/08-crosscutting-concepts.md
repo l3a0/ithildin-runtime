@@ -50,6 +50,7 @@ erDiagram
         string rows "every other row read, as text"
         string faults "each reason the read failed"
         string quotes_read_at "the worker's clock, or null"
+        string clock "the reading the decision was judged by"
         string ledgers "each ledger's SHA-256"
     }
     ACCOUNT_FILE {

@@ -358,6 +358,21 @@ The writing commands are for the cases the platform cannot resolve alone:
 - a halt of all trading that waits for a person, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says
 - any halt on live
 
+#### What to do about a halt on the clock
+
+A halt on the machine's clock is one decision's on shadow and paper, and the next decision reads the clock again, so most need no command. What the reason says decides the step.
+
+**Table:** The owner's step for each reason a halt on the clock gives
+
+| The reason says | What it means | Step |
+| --- | --- | --- |
+| One server's answer is too old or missing, with why the ask failed, and the other server has no fault | That server, its name's lookup or the path to it is out | Wait. A reading with no fault comes back within 128 seconds of the server's return |
+| Both servers' answers are too old or missing, with why each ask failed | Nothing leaves the host on UDP 123, or the host is cut off | Revert the last apply, if one touched the network or the firewall |
+| An answer is too old or missing, and no ask has ended since | The thread that asks has died or hangs | Replace the VM |
+| The clock is past the bound against a server, and still is at the next decision | chrony is not holding the clock | Replace the VM |
+
+[The time servers](architecture/03-context-and-scope.md#the-time-servers) says how each reason comes about.
+
 #### What to do away from a computer
 
 Away from a computer, the fallback is the runbook's: cancel at the broker's own app, and journal it with `ithildin override` once back. A page or a phone app that runs these commands waits for evidence that the command line is not enough.

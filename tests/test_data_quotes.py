@@ -23,6 +23,8 @@ from ithildinruntime.adapters import FolderBucket, FolderStore, HistoryClock
 from ithildinruntime.core import (
     BlobHeader,
     BlobMissing,
+    Bucket,
+    ClockReading,
     Halt,
     Mode,
     OutputFile,
@@ -47,6 +49,7 @@ from ithildinruntime.data.source import _session_read, judge
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
+from tests.support.clocks import slow
 from tests.support.segments import (
     AT,
     DAY,
@@ -97,12 +100,14 @@ class Ticking(Clock):
 def source(lake: Path, tmp_path: Path, **changes) -> LakeSource:
     given = {k: changes.pop(k) for k in ("bucket", "live", "clock") if k in changes}
     kinds = changes.pop("quote_kinds", KINDS)
+    measured = changes.pop("measured", False)
     return LakeSource(
         Mirror(given.get("bucket") or FolderBucket(lake), tmp_path / "mirror"),
         settings(**{"quotes": LIMITS} | changes),
         live=given.get("live") or FolderBucket(lake.with_name(lake.name + "-live")),
         clock=given.get("clock") or Clock(),
         timer=Timer(),
+        measured=measured,
         quote_kinds=kinds,
     )
 
@@ -152,7 +157,7 @@ def test_7_close_minus_20_reads_its_quotes_and_its_snapshot_names_each_segment(
     assert result.halt is None and alarms.reasons == []
     snap = stored(tmp_path)
     data = (tmp_path / "store" / key()).read_bytes()
-    assert decode_output(data, Snapshot).header.format == 2
+    assert decode_output(data, Snapshot).header.format == 3
     assert snap.provisional is True
     held = [
         FolderBucket(live).read(key_of(ticker, back))
@@ -189,7 +194,7 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
     )
     buckets = data_buckets(Mode.BACKTEST, folder=lake)
     alarms = Alarms()
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     handler = data_handler(
         bucket=buckets.lake,
         live=buckets.live,
@@ -204,6 +209,7 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
         ),
         clock=clock,
         timer=Timer(),
+        measured=False,
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
@@ -658,19 +664,19 @@ def test_31_the_judge_names_an_absent_quote_only_where_the_decision_reads_one(
     lake: Path, live: Path, tmp_path: Path
 ) -> None:
     snap = source(lake, tmp_path).read(AT).snapshot
-    assert judge(snap, (GLD, USO)) == ()
+    assert judge(snap, (GLD, USO), measured=False) == ()
     bare = replace(snap, quotes={GLD: snap.quotes[GLD]})
-    assert judge(bare, (GLD, USO)) == ("USO has no quote in the snapshot",)
-    assert judge(replace(bare, faults=("a reason",)), (GLD, USO)) == (
+    assert judge(bare, (GLD, USO), measured=False) == ("USO has no quote in the snapshot",)
+    assert judge(replace(bare, faults=("a reason",)), (GLD, USO), measured=False) == (
         "a reason",
         "USO has no quote in the snapshot",
     )
     # A capture that says it is not provisional is judged by its decision all the same.
-    assert judge(replace(bare, provisional=False, quotes_read_at=None), (GLD, USO)) == (
-        "USO has no quote in the snapshot",
-    )
+    assert judge(
+        replace(bare, provisional=False, quotes_read_at=None), (GLD, USO), measured=False
+    ) == ("USO has no quote in the snapshot",)
     at_close = source(lake, tmp_path).read(TABLE.session(LAST).close).snapshot
-    assert judge(at_close, (GLD, USO)) == ()
+    assert judge(at_close, (GLD, USO), measured=False) == ()
 
 
 def test_31_a_stored_contradiction_the_quote_does_not_raise_halts_as_recorded(
@@ -685,11 +691,11 @@ def test_31_a_stored_contradiction_the_quote_does_not_raise_halts_as_recorded(
     )
     flags = tuple(spikes.quote_contradictions(crossed, DAY))
     one = replace(snap, quotes={**snap.quotes, GLD: crossed}, flags={GLD: flags})
-    assert len(judge(one, (GLD, USO))) == 1
-    (reason,) = judge(replace(snap, flags={GLD: flags}), (GLD, USO))
+    assert len(judge(one, (GLD, USO), measured=False)) == 1
+    (reason,) = judge(replace(snap, flags={GLD: flags}), (GLD, USO), measured=False)
     assert "halts as recorded: its ask of 160.0 against 160.5" in reason
     other_day = tuple(replace(f, session=LAST) for f in flags)
-    assert len(judge(replace(one, flags={GLD: other_day}), (GLD, USO))) == 2
+    assert len(judge(replace(one, flags={GLD: other_day}), (GLD, USO), measured=False)) == 2
 
 
 def test_31_a_later_listing_is_named_as_what_adds_the_segments(
@@ -711,10 +717,10 @@ def test_31_a_later_listing_is_named_as_what_adds_the_segments(
 
 def two(first: Snapshot, later: Snapshot, release: str = "r1") -> str:
     def encoded(snap: Snapshot, by: str) -> bytes:
-        header = BlobHeader(2, DEPLOYMENT, RUN, "data", "capturing", AT, {}, by, HASHES)
+        header = BlobHeader(3, DEPLOYMENT, RUN, "data", "capturing", AT, {}, by, HASHES)
         return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
-    return differences(encoded(first, "r1"), encoded(later, release))
+    return differences(encoded(first, "r1"), encoded(later, release), measured=False)
 
 
 def test_31_what_a_later_listing_does_and_does_not_explain(
@@ -747,7 +753,12 @@ def test_31_what_a_later_listing_does_and_does_not_explain(
     )
     assert two(snap, replace(snap, segments=snap.segments[1:])) == "These differ: segments"
     later = replace(snap, quotes_read_at=snap.quotes_read_at + MINUTE)
-    assert two(snap, later) == "Only the read time differs, as on a redelivery after a crash"
+    assert two(snap, later) == (
+        "Only the read time or the clock's reading differs, as on a redelivery after a crash"
+    )
+    # The clock's fault is named beside the segments, so the listing explains nothing.
+    past = replace(more, clock=slow(AT))
+    assert two(snap, past) == "These differ: segments, whether the clock was past a bound"
 
 
 def test_31_a_first_capture_of_the_format_before_halts_as_no_snapshot_the_codec_reads(
@@ -755,11 +766,12 @@ def test_31_a_first_capture_of_the_format_before_halts_as_no_snapshot_the_codec_
 ) -> None:
     made, alarms = stage(lake, tmp_path)
     old = (
-        b'{"body":{"entries":[{"bars":{},"decision_at":"2012-04-10T19:40:00.000000Z","flags":{},'
-        b'"ledgers":{},"provisional":false,"quotes":{},"segments":[],"status":{}}],'
+        b'{"body":{"entries":[{"bars":{},"decision_at":"2012-04-10T19:40:00.000000Z","faults":[],'
+        b'"flags":{},"ledgers":{},"provisional":false,"quotes":{},"quotes_read_at":null,'
+        b'"rows":{},"segments":[],"status":{}}],'
         b'"trade_nothing":false},"header":{"config_hashes":{"chan":"'
         + HASHES["chan"].encode()
-        + b'"},"decision_at":"2012-04-10T19:40:00.000000Z","deployment":"test","format":1,'
+        + b'"},"decision_at":"2012-04-10T19:40:00.000000Z","deployment":"test","format":2,'
         b'"inputs":{},"kind":"capturing","release":"r1","run":"2012-04-10","stage":"data"}}'
     )
     path = tmp_path / "store" / key()
@@ -768,7 +780,54 @@ def test_31_a_first_capture_of_the_format_before_halts_as_no_snapshot_the_codec_
     result = made(Item(AT, "data"), Reports())
     assert result.halt is not None
     assert result.halt.reason.startswith(f"{key()} counts and is no snapshot the codec reads: ")
-    assert "'faults'" in result.halt.reason and "'rows'" in result.halt.reason
+    assert "holds fields ['bars', 'decision_at', 'faults'," in result.halt.reason
+    assert "not ['bars', 'clock', 'decision_at', 'faults'," in result.halt.reason
+
+
+# The clock's reading.
+
+
+class Noting:
+    """A live bucket that notes each call it answers."""
+
+    def __init__(self, bucket: Bucket, order: list[str]) -> None:
+        self._bucket, self._order = bucket, order
+
+    def list(self, prefix: str):
+        self._order.append("list")
+        return self._bucket.list(prefix)
+
+    def read(self, key: str, version: str | None = None):
+        self._order.append("read")
+        return self._bucket.read(key, version)
+
+
+def test_the_clock_is_read_after_the_last_answer_of_the_quotes(
+    lake: Path, live: Path, tmp_path: Path
+) -> None:
+    order: list[str] = []
+
+    class Noted(Ticking):
+        def now(self) -> datetime:
+            order.append("now")
+            return super().now()
+
+        def reading(self) -> ClockReading:
+            order.append("reading")
+            return slow(AT)
+
+    reading = source(
+        lake,
+        tmp_path,
+        live=Noting(FolderBucket(live), order),
+        clock=Noted(),
+        quote_kinds=QuoteKinds(()),
+    ).read(AT)
+    # The quotes' read time is taken after its last answer, and the reading after that.
+    assert order[-3:] == ["read", "now", "reading"] and order.count("reading") == 1
+    assert reading.snapshot.clock == slow(AT)
+    assert reading.halts[0].startswith("the clock is 2.000000 seconds slow against")
+    assert len(reading.halts) == 4 and "quote cannot be read" in reading.halts[1]
 
 
 # 21. What is recorded and not judged.
@@ -817,7 +876,7 @@ def test_a_backtests_clock_reads_the_decision_time_over_a_folder_of_the_whole_da
     for ticker in ("GLD", "USO"):
         for back in range(-19, 1):
             capture(live, ticker, back)
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     clock.wait_until(AT, None)  # type: ignore[arg-type]
     reading = source(lake, tmp_path, clock=clock).read(AT)
     assert reading.halts == ()

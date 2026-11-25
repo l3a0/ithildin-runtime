@@ -160,6 +160,7 @@ def _snapshot(bars: dict, status: dict) -> Snapshot:
         segments=(),
         ledgers={},
         **NONE_READ,
+        clock=core.ClockReading(AT, None),
     )
 
 
@@ -260,6 +261,7 @@ def test_a_quote_filed_under_another_instrument_is_refused() -> None:
             segments=(),
             ledgers={},
             **NONE_READ,
+            clock=core.ClockReading(AT, None),
         )
 
 
