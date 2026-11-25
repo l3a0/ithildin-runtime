@@ -35,11 +35,13 @@ from .sessions import load_sessions, require_utc
 __all__ = [
     "Effect",
     "Exposure",
+    "Series",
     "classify",
     "exposure",
     "held",
     "mark",
     "position",
+    "series_of",
     "unstated_fields",
     "value_book",
 ]
@@ -175,6 +177,28 @@ def value_book(book: Book, snapshot: Snapshot, session: date) -> Valuation:
         marks=marks,
         replayed_through=book.replayed_through,
     )
+
+
+class Series(NamedTuple):
+    """One recording of an instrument's history: which price, from which source, as of when.
+
+    A captured bar's is `raw` with no source and no date, so every captured bar
+    of an instrument is of one series.
+    """
+
+    basis: str
+    source: str | None
+    source_as_of: date | None
+
+    def __str__(self) -> str:
+        source = "no source" if self.source is None else self.source
+        dated = "no date" if self.source_as_of is None else self.source_as_of.isoformat()
+        return f"{self.basis} from {source} as of {dated}"
+
+
+def series_of(bar: Bar) -> Series:
+    """The series a bar is of. Two series of one instrument can be on two scales."""
+    return Series(bar.basis, bar.source, bar.source_as_of)
 
 
 def unstated_fields(bar: Bar) -> tuple[str, ...]:

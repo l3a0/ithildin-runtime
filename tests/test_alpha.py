@@ -829,6 +829,28 @@ HALTS = {
         ),
         "SPY stale for the session",
     ),
+    "both-legs-captured": (
+        replace(
+            HAND_SNAPSHOT,
+            bars={
+                i: {
+                    "1d": tuple(
+                        replace(b, basis="raw", source=None, source_as_of=None) for b in by["1d"]
+                    )
+                }
+                for i, by in HAND_SNAPSHOT.bars.items()
+            },
+        ),
+        "strategy chan reads adjusted prices, and USO's bar of 2011-11-17 has the basis raw",
+    ),
+    "a-leg-as-traded": (
+        leg(
+            HAND_SNAPSHOT,
+            USO,
+            [replace(bar, basis="raw") for bar in HAND_SNAPSHOT.bars[USO]["1d"]],
+        ),
+        "strategy chan reads adjusted prices, and USO's bar of 2011-11-17 has the basis raw",
+    ),
     "a-bar-as-traded": (
         basis(GLD, 0),
         "strategy chan reads adjusted prices, and GLD's bar of 2011-11-17 has the basis raw",
