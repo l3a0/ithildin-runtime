@@ -117,6 +117,7 @@ def test_1_both_stages_decide_at_close_20_on_the_midpoints(tmp_path: Path) -> No
             live=FolderBucket(live),
             clock=Clock(),
             timer=Timer(),
+            measured=False,
             kinds=made_lake.KINDS,
             quote_kinds=segments.KINDS,
         ),
