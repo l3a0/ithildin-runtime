@@ -310,6 +310,8 @@ CUT = {
         "6",
         (Limit.MAX_POSITION, Limit.MAX_GROSS, Limit.MAX_NET),
     ),
+    # 0.9 ÷ 0.4 = 2.25 baskets, which leaves no whole share of GLD beside two of USO.
+    "position-gld-below-a-share": ({"max_position": {GLD: "0.9"}}, "0", "2", (Limit.MAX_POSITION,)),
     "both-legs-positions": (
         {"max_position": {GLD: 3, USO: 5}},
         "-2",
@@ -481,6 +483,8 @@ def test_1_the_sizing_agrees_with_an_oracle_in_exact_fractions() -> None:
             assert not any(expected.values()), halt.reason
             seen["zero"] += 1
             continue
+        # A held direction that comes to nothing halts, so it is never a target.
+        assert any(expected.values())
         assert {i: Fraction(q) for i, q in target.shares.items()} == expected
         assert list(record.cut) == cut
         wanted, _ = oracle(turned, marks, g, constraints(max_position=loose), move, NINE)
@@ -675,6 +679,68 @@ def test_5_a_basket_of_nothing_halts(direction, zero) -> None:
 
 
 @DIRECTIONS
+def test_5_a_leg_of_zero_is_held_to_a_limit_and_a_price_too(direction) -> None:
+    legs = {USO: 1, GLD: 0}
+    of_uso = {"max_order_qty": {USO: LOOSE}, "max_position": {USO: LOOSE}}
+    assert refused(direction=direction, legs=legs, limits=constraints(**of_uso)) == (
+        "no limit names GLD, a leg of chan's basket"
+    )
+    assert refused(direction=direction, legs=legs, marked=snapshot({USO: 50})) == (
+        "GLD missing for the session"
+    )
+
+
+def test_5_the_first_fault_in_order_decides() -> None:
+    """Every fault of items 6 to 11 and the zero target at once, each cleared in turn."""
+    faults: list[tuple[dict[str, object], str]] = [
+        ({"config": CHAN}, "has no [portfolio] section"),
+        ({"holds": book({"chan": {SPY: 1}})}, "under 'other', which the deployment does not run"),
+        ({"name": "chan"}, "chan's forecast is of strategy 'reversal'"),
+        (
+            {"legs": {USO: "NaN", GLD: 0}},
+            "chan's basket and the instruments it trades do not both name SPY",
+        ),
+        ({"holds": book()}, "chan holds SPY, or an open order in it"),
+        ({"legs": {USO: 0, GLD: 0}}, "chan's leg in USO is"),
+        ({"legs": {USO: 1, GLD: 0}}, "every leg of chan's basket is zero"),
+        ({"v": valuation(0)}, "the valuation is of 2026-11-03"),
+        ({"v": valuation(10)}, "the valuation's value is 0"),
+        ({"limits": held_to(max_gross=1)}, "no limit names GLD"),
+        ({"marked": MARKED}, "GLD missing for the session"),
+        ({"limits": held_to()}, "cut by max_gross and max_net"),
+    ]
+    given: dict[str, object] = {
+        "config": NO_SECTION,
+        "holds": book({"chan": {SPY: 1}, OTHER: {USO: 1}}),
+        "name": "reversal",
+        "legs": {USO: "NaN", GLD: 0, SPY: 1},
+        "v": valuation(0, session=TODAY),
+        "limits": constraints(max_order_qty={USO: LOOSE}, max_position={USO: LOOSE}),
+        "marked": snapshot({USO: 50}),
+    }
+
+    def asked() -> dict[str, object]:
+        rest = {k: v for k, v in given.items() if k not in ("name", "legs")}
+        return rest | {"given": forecast(1, given["legs"], given["name"])}  # type: ignore[arg-type]
+
+    for cleared, reason in faults:
+        assert reason in refused(**asked())
+        given |= cleared
+    # With a net cap of 0.5 × 10 ÷ 0.25 = 20 dollars, less than a share of USO is left.
+    assert refused(**asked()).endswith("cut by max_net")
+    given["v"] = V
+    assert sized(**asked())[0].shares == {GLD: d(0), USO: d(18)}  # type: ignore[arg-type]
+
+
+def test_5_a_count_past_what_a_record_holds_halts() -> None:
+    """The reader takes a G of 1e30, and at a cent a share that is a count of 33 digits."""
+    vast = strategy(text("1e30"))
+    legs = {USO: "0.0001", GLD: 0}
+    reason = refused(config=vast, legs=legs, marked=snapshot({GLD: 100, USO: "0.01"}))
+    assert reason.startswith("chan's target in USO cannot be recorded at ")
+
+
+@DIRECTIONS
 @pytest.mark.parametrize(
     ("changes", "reason"),
     [
@@ -809,6 +875,33 @@ ZEROS = {
 
 
 @pytest.mark.parametrize("direction", [1, -1])
+def test_5_a_v_read_100_times_low_halts_a_book_on_one_side(direction) -> None:
+    """The gate approves every sale there, so this halt is what stops them."""
+    owners = replace(CAPS, share=d("0.02"))
+    holds = book({"chan": {USO: 10 * direction, GLD: 4 * direction}})
+    # A true V of 100,000 read as 1,000: 0.02 × 1,000 ÷ 0.25 = 80, less room 64, under 90.
+    given = {"legs": {USO: 1, GLD: "0.4"}, "owners": owners, "holds": holds}
+    assert sized(direction, v=valuation(100_000), **given)[1].cut == ()  # type: ignore[arg-type]
+    assert refused(direction=direction, v=valuation(1000), **given) == (
+        f"chan forecasts {direction} and its target is zero shares in every leg, at a gross of 900 "
+        "cut by max_net"
+    )
+
+
+def test_5_a_cap_below_one_share_of_one_leg_sells_down_to_the_other() -> None:
+    """Left standing: the gate approves both orders, and #11's alert reports the target."""
+    holds = book({"chan": {USO: 10, GLD: -4}})
+    for limits, uso in ((held_to(max_position={GLD: "0.9"}), 2), (held_to(max_gross=120), 1)):
+        target, record = sized(limits=limits, holds=holds)
+        assert target.shares == {GLD: d(0), USO: d(uso)} and record.cut
+        first, second = order(4, GLD), order(uso - 10, USO, name="new-2")
+        world = World(first, holds, MARKED, limits).given(caps=CAPS)
+        sent = replace(holds, open_orders_by_strategy={"chan": (first,)})
+        for verdict in (world.check(), world.at(intent=second, book=sent).check()):
+            assert verdict.approved and not verdict.adding
+
+
+@pytest.mark.parametrize("direction", [1, -1])
 @pytest.mark.parametrize("case", ZEROS)
 def test_5_a_held_direction_sized_to_nothing_halts_naming_g_and_what_cut_it(
     case, direction
@@ -898,6 +991,13 @@ def test_8_a_g_the_strategy_reader_refuses_fails_the_load(written) -> None:
 )
 def test_8_a_section_is_read_exactly(written) -> None:
     assert str(gross(strategy(text(written)))) == str(Decimal(written))
+
+
+@pytest.mark.parametrize("bad", ["Infinity", "NaN"])
+def test_8_a_g_that_is_not_finite_halts_where_a_config_is_built_in_memory(bad) -> None:
+    config = replace(CHAN, sections={NAME: {"gross": d(bad)}})
+    with pytest.raises(Halt, match="gross = .*, which is not a finite number above zero"):
+        gross(config)
 
 
 # Each tracked strategy with no G written yet, and the issue that writes it.
@@ -1113,7 +1213,23 @@ def test_7_a_second_run_stores_the_same_bytes_and_the_same_result(tmp_path) -> N
     assert blobs(tmp_path) == kept
 
 
-def test_7_mappings_built_in_another_order_store_the_same_bytes(tmp_path) -> None:
+def test_7_mappings_in_another_order_in_memory_give_the_same_bytes() -> None:
+    """Storage hands back sorted keys, so the function is asked directly."""
+    turned = {
+        "given": forecast(legs=dict(reversed(LEGS.items()))),
+        "marked": snapshot(dict(reversed(MARKS.items()))),
+        "holds": book({"chan": {USO: 3, GLD: -1}}),
+        "limits": constraints(max_gross=d(900), max_position={USO: LOOSE, GLD: LOOSE}),
+        "owners": replace(CAPS, max_position={USO: LOOSE, GLD: LOOSE}),
+    }
+    for one, other in zip(sized(limits=LIMITS), sized(**turned), strict=True):  # type: ignore[arg-type]
+        assert encode(one) == encode(other)
+        for name in ("shares", "wanted"):
+            if hasattr(one, name):
+                assert list(getattr(other, name)) == [GLD, USO]
+
+
+def test_7_blobs_built_from_mappings_in_another_order_store_the_same_bytes(tmp_path) -> None:
     def turned(mapping: Mapping) -> dict:
         return dict(reversed(mapping.items()))
 
@@ -1171,6 +1287,25 @@ def test_the_stage_reads_its_inputs_in_order_and_nothing_else(tmp_path) -> None:
     assert run(handler(storage_over(Watched(tmp_path)))).halt is None
     assert read == ORDER
     assert not any("accounts/" in key for key in read)
+
+
+def test_the_stage_reads_each_strategys_forecast_and_then_its_schedule(tmp_path) -> None:
+    write(store(tmp_path), PAIR, TWO)
+    read: list[str] = []
+
+    class Watched(FolderStore):
+        def get(self, key: str) -> bytes:
+            read.append(key)
+            return super().get(key)
+
+    assert run(handler(storage_over(Watched(tmp_path)), TWO)).halt is None
+    files = [
+        key_of(f"{component}/{name}", output)
+        for name in ("chan", "reversal")
+        for component, output in (("alpha", FORECAST_OUTPUT), ("cost", SCHEDULE_OUTPUT))
+    ]
+    assert read[: len(PAIR)] == [key_of(stage) for stage in TWO.stage("portfolio").inputs]
+    assert read[-4:] == files
 
 
 def test_a_second_decision_of_one_handler_names_only_its_own_inputs(tmp_path) -> None:
@@ -1280,6 +1415,14 @@ def test_5_a_result_of_another_set_of_strategies_halts(tmp_path) -> None:
     table = table_of(CHAN, strategy(name="reversal"))
     wrote = write(storage, {"data": INPUTS["data"]}, table)
     reason, _ = own_halt(tmp_path, storage, {key_of("data"): wrote[key_of("data")]})
+    assert reason.startswith(f"{key_of('data')} does not carry the configuration of reversal that")
+
+
+def test_5_a_result_that_lacks_a_strategys_configuration_halts(tmp_path) -> None:
+    """Data's result of a run before the deployment gained a strategy."""
+    storage = store(tmp_path)
+    wrote = write_stage(storage, "data", PAIR["data"], ONE)
+    reason, _ = own_halt(tmp_path, storage, {key_of("data"): wrote[key_of("data")]}, TWO)
     assert reason.startswith(f"{key_of('data')} does not carry the configuration of reversal that")
 
 

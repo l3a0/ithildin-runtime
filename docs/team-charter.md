@@ -122,6 +122,7 @@ flowchart LR
     data -->|"point-in-time data"| alpha
     data -->|"positions, data"| risk
     data -->|"snapshot"| cost
+    data -->|"snapshot"| pc
     alpha -->|"forecast"| pc
     risk -->|"constraints"| pc
     cost -->|"cost schedule"| pc

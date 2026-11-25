@@ -1,9 +1,9 @@
 """What a book is worth and how far it could move, counted one way for every reader.
 
 The gate, the risk model, portfolio construction and execution each need a
-price for an instrument, and all but the risk model the range a position could
-reach and whether an order only reduces. No worker imports another, so the
-functions live here, once. docs/design.md's `### Rule 9: how the gate counts
+price for an instrument and what is held. The gate and execution also need the
+range a position could reach and whether an order only reduces. No worker
+imports another, so the functions live here, once. docs/design.md's `### Rule 9: how the gate counts
 open orders` says why an open order is counted both filled and not.
 
 Every sum and product is exact, as `core/exact.py` says. A book or an order

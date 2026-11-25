@@ -154,7 +154,7 @@ flowchart LR
     d5 -->|"7.4 hard caps"| exec
     exec -->|"7.5 book, caps as read,<br/>valuation"| d1
     d1 -->|"8.1 snapshot, book,<br/>caps as read, valuation"| models
-    models -->|"8.2 forecast, signals,<br/>constraints, costs, target"| d1
+    models -->|"8.2 forecast, signals,<br/>constraints, costs, target<br/>and how it was sized"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
     exec -->|"9.3 every step, before it happens"| d3
@@ -190,7 +190,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
+| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
@@ -325,7 +325,7 @@ Alpaca [rejects a market-on-close order](https://docs.alpaca.markets/docs/orders
 also checks the cutoff again just before each broker call, and keeps a pair
 whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening. Monitoring then reports how far the decision's price and the fills sat from it.
 
-That the recover stage reads the hard caps, and stores the book, the hard caps as read and the session's valuation for the risk model, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+That the recover stage reads the hard caps, and stores the book, the hard caps as read and the session's valuation for the risk model and portfolio construction, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 The figure below is a C4 dynamic diagram.
 
@@ -497,7 +497,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
 4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
 5. **Execution compares them,** position by position, order by order and cash against cash, and each stamped order's filled quantity against the journal's. A cash difference a listed record explains in full passes, and any other difference halts.
-6. **Execution stores what the risk model reads,** by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). It reads the hard caps blob, then stores the book, the hard caps as it read them and the session's valuation.
+6. **Execution stores what the risk model and portfolio construction read,** by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). It reads the hard caps blob, then stores the book, the hard caps as it read them and the session's valuation.
 7. **Monitoring repeats the same check** for its report, and nothing waits on it.
 
 ### Phase 2: decide
@@ -565,7 +565,7 @@ The steps run in this order.
      5. The instance running the send stage.
      6. Each strategy that is off.
      7. Each strategy whose late forecast reads as no change.
-   - **What the target must name.** A target portfolio names every leg of its strategy's forecast, with a flat leg as an explicit zero. By this doc's proposal for [#9](https://github.com/l3a0/ithildin-runtime/issues/9), portfolio construction halts on an instrument the strategy holds that the forecast does not name, so a target names everything its strategy's book holds. Execution halts on one that leaves an instrument out, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+   - **What the target must name.** A target portfolio names every leg of its strategy's forecast, with a flat leg as an explicit zero. By this doc's proposal for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), portfolio construction halts on an instrument the strategy holds that the forecast does not name, so a target names everything its strategy's book holds. Execution halts on one that leaves an instrument out, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
    - **What a strategy that is off gets.** A strategy that is off when this step reads it gets no planned orders, cancels or replacements. So its resting orders are left to the sort, and the entry names it as off. A strategy is off when either of two things holds, the same two things the check before each send reads.
      1. Its off switch is set.
      2. By this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased.

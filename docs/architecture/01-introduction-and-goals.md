@@ -93,9 +93,9 @@ flowchart TD
 The diagram shows one close, from the refit to what trades. Look for the two
 paths that keep the same units. A refit moves `h` even when the units hold
 still, so the target moves too, and the engine trades the difference as it
-would for any strategy. A unit is sized to G, a fixed amount of gross dollars,
-so a new `h` or a new price changes how many baskets come to G, and both legs
-resize.
+would for any strategy. The engine holds as many of the strategy's units as come
+to G, a fixed amount of gross dollars, which the figure calls `k` baskets. So a
+new `h` or a new price changes `k`, and both legs resize.
 
 These numbers are made up to show the mechanics, at a G of $10,000 and whole
 shares rounded toward zero. USO closes at $50 and GLD at $100 each day, except
@@ -124,8 +124,8 @@ Four facts make it the simplest candidate there.
 3. **A discrete unit.** The number of spread units held is only ever −1, 0 or
    +1, so a test can check it on each day, not only a summary ratio. The share
    counts are not discrete. One unit holds `−h` shares of GLD, and `h` is a
-   regression slope refitted daily, so the GLD leg is fractional on every day
-   the strategy holds a position. The replication never deals in shares. It
+   regression slope refitted daily, so the replication's GLD leg is fractional
+   on every day the strategy holds a position. The replication never deals in shares. It
    turns units, the hedge ratio and prices into a dollar position per leg, so
    test 1 checks the unit and the dollars, never a share count.
 4. **Tight pins.** [`tests/test_bollinger.py`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/tests/test_bollinger.py) pins the APR at 0.17824928 and the

@@ -1,8 +1,8 @@
 """How one strategy's target is sized: a forecast's basket, scaled to a fixed gross and cut.
 
 The strategy's `[portfolio]` section holds one key, `gross`, in dollars, above
-zero and at no more than the places money declares. It is the gross dollars one
-unit of the strategy is sized to, the sum of each leg's size in dollars, and
+zero and at no more than the places money declares. It is the gross dollars a
+position of the strategy is sized to, the sum of each leg's size in dollars, and
 the owner sets it. A section looks like this, and its figure is made up.
 
     [portfolio]
@@ -19,9 +19,10 @@ weight be its shares in one basket times its mark, as a size.
    with the other unfilled.
 3. **A dollar limit is read less room for one stress move**, as the limit over
    one plus the stress move. A leg the market moved that far is then still
-   inside a limit that has not moved, so an exit is not refused.
+   inside a limit that has not moved, so an exit is not refused on that limit.
 4. **Each leg is rounded toward zero** to the account's share step, so no leg
-   passes `gross` or a limit.
+   passes `gross` or a limit. A leg can round to zero beside one that does not,
+   and only a target of zero in every leg halts.
 
 Each bound is kept as one exact fraction, two bounds are compared across their
 divisors, and each share count is one division, so a target that sits exactly
@@ -88,7 +89,7 @@ class _Baskets(NamedTuple):
 
 
 def gross(strategy: StrategyConfig) -> Decimal:
-    """The gross dollars one unit of the strategy is sized to, from its section."""
+    """The gross dollars a position of the strategy is sized to, from its section."""
     section = strategy.section(SECTION)
 
     def refuse(what: str) -> Halt:

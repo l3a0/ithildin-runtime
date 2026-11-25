@@ -12,10 +12,11 @@ named here too, because portfolio construction reads the forecast and no
 worker module imports another. So are cost's schedule, which it reads beside
 it, and the parts that begin an alpha and a cost stage's name. So are the risk
 stage and its constraints, which portfolio construction and execution read,
-execution's recover stage and the three of its files risk reads, and the
-portfolio stage and its two files, which execution reads. So are the daily
-interval a bar is filed under and the word a price-kind field holds where its
-source states nothing, which data writes and the gate reads.
+execution's recover stage and the three of its files risk and portfolio
+construction read, and the portfolio stage and its two files, which execution
+reads. So are the daily interval a bar is filed under and the word a price-kind
+field holds where its source states nothing, which data writes and the gate
+reads.
 """
 
 from __future__ import annotations
