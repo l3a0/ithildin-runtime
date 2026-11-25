@@ -494,7 +494,7 @@ apply it.
    decides again, and appends after it, as [The journal is the one numbered log](#rule-8-the-journal-is-the-one-numbered-log) says.
 3. **Every order** waits on a fetch of the broker's positions, open orders, cash and
    fills made at the start of execution's send stage, as [How a rerun never doubles anything](#rule-9-how-a-rerun-never-doubles-anything) says, and,
-   just before the broker call, on the kill switch, the strategy's off switch, the run's halt, its own send-stage result key, the account's lease's tag and the cutoff, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+   just before the broker call, on the kill switch, the strategy's off switch and halts, the run's and the account's halts, its own send-stage result key, the account's lease's tag, the loss stop, the hard caps and the order's last moment, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 4. **Every lease** is fetched before it is taken, and one another process
    holds, on this VM or another, is taken over only once it has gone
    unrenewed past its expiry and the margin for clock skew, as [Who takes over a lease](#rule-9-who-takes-over-a-lease) says.
@@ -1124,7 +1124,7 @@ rerun from doubling anything. The first three follow, and the last two each have
 ### Rule 9, fourth item: what is checked right before a broker call
 
 **Right before every submit**, after the order's `sending` entry
-is stored, execution checks six things.
+is stored, execution checks eight things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop and the hard caps, which the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent. A control that stands stops the order, and so does one that could not be read, with the error's code in the reason. A read that has to be tried again, or that answers slowly, leaves the ones before it behind, and a switch pulled in the meantime must stop the order. So a pass counts only where no read was tried again and it took at most 5 seconds. Any other is made again whole, from a new view of the journal, until one counts or their shared deadline ends the order. The price is that a store whose reads come to more than 5 seconds a pass stops every order, where a pass is ten reads. The numbers below name the checks. The two on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give.
 
 1. The kill switch is absent.
 2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with [the kill
@@ -1137,11 +1137,13 @@ is stored, execution checks six things.
    `accounts/<account>/halts/` that is not released, by the release test in
    [Halts and drills](halts-and-drills.md#how-a-sort-runs),
    reading as a stored halt, and the plan's lease holds the run's status as running, so a halt or stop the supervisor has
-   recorded but not yet announced also stops the send.
+   recorded but not yet announced also stops the send. Until [#150](https://github.com/l3a0/ithildin-runtime/issues/150) reads a release, any file in that folder stops an order, and the plan's lease is read once [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it.
 4. Its own send-stage result key is still empty.
 5. The account's lease still carries the tag that the holder's own
-   last take or renewal of it returned.
-6. The market-on-close cutoff has not passed, for such an order.
+   last take or renewal of it returned, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds the lease.
+6. The loss stop has not fired, and its state can be read.
+7. The hard caps' limits are the ones the gate was handed, so a change to one during a send, looser or tighter, stops that order.
+8. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. A quote the gate marked an instrument at ends it sooner, at the moment the quote reaches its written maximum age. It is read last, and at that moment itself the order goes.
 
 Any one failing journals the
 order `Abandoned`, sends nothing, and halts the decision, except the
@@ -1149,12 +1151,12 @@ second when it finds the off switch, which abandons only that
 strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
 `accounts/<account>/strategies/<strategy>/off.json`, stops one
 strategy without a deploy and never reads as a target of zero, as [Every
-change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. So a run the
+change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. Until both leases are read, only a backtest runs, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. So a run the
 supervisor has halted, a switch pulled mid-loop, or a lease another
 execution has taken over stops the next send, even when the message
 saying so is lost or unread.
 
-An order under a valid close entry reads these checks as [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) says of what holds a close after a broker's trade. The second and third stand aside only for the stops named there, and the kill switch, any other halt, unreadable state and the lease's tag still hold it. A failed check ends that leg's one try rather than halting a decision, and the one order entry each leg of the close gets stands where the fourth would. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
+An order under a valid close entry reads these checks as [A fill is measured from the decision, and a position depends on a market it does not control](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) says of what holds a close after a broker's trade. The second, third and sixth stand aside only for the stops named there, and the kill switch, any other halt, unreadable state and the lease's tag still hold it. A failed check ends that leg's one try rather than halting a decision, and the one order entry each leg of the close gets stands where the fourth would. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
 
 ### Rule 9, fourth item: what a cancel checks
 
@@ -1175,7 +1177,7 @@ counted, and ends the clock on a cancel whose answer is lost, because only a fai
 nothing was sent. A plan's cancel
 skips the strategy's off switch, so a switched-off strategy's
 cancels still go out, and the replacement itself is a submit, which
-checks all six. A cancel skips the risk gate's limits on purpose: every open
+checks all eight. A cancel skips the risk gate's limits on purpose: every open
 order is already counted at its worst case, so a cancel can only lower
 each counted limit.
 
@@ -2101,14 +2103,17 @@ Five rules keep a day of decisions safe.
    cutoff and never a later one. The cutoff applies to market-on-close orders
    only, so a market order, such as the shadow run on
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at close−20,
-   meets no cutoff. It applies to new orders only, and never stops a cancel.
-   1. **Before every send, twice.** Execution reads the clock before it
-      starts the order loop, before each order, and again after the order's
-      `sending` entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
-      call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past the cutoff is journaled `Abandoned`
+   meets no cutoff. Its last moment is its session's close, or the moment a
+   quote the gate marked reaches its maximum age where that is sooner. The
+   cutoff applies to new orders only, and never stops a cancel.
+   1. **Before every send.** Execution reads the clock before it
+      starts the order loop, before each order, ahead of its `sending` entry, and again after that
+      entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
+      call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past its last moment is journaled `Abandoned`
       and the decision halts. Inside the send stage, the retry deadline of a
-      write ahead of a send that S3 does not answer ends no later than the cutoff, so a slow write
-      cannot carry a send past it.
+      write ahead of a send that S3 does not answer ends no later than that moment, so a slow write
+      cannot carry a send past it. The `intent`'s ends by the account's cutoff or the close, and the
+      `verdict`'s by the order's, because neither is a send.
    2. **A clock that cannot be trusted halts.** At the start of the send
       stage, execution compares the VM's clock with the broker's own clock,
       Alpaca's `GET /v2/clock`, and
@@ -2860,7 +2865,7 @@ A job that consumes broker messages, the journal or captured data halts with the
 
 ### The code holds its own rules, and every check runs in production
 
-1. **A rule that guards money is held by the code's structure, a type or a test, never by a comment or a convention alone.** McConnell separates programming in a language, limited to what it offers, from programming into one, deciding what the program needs and making the language supply it (CC p. 68, p. 69). Python enforces no boundary between modules, so the import rule test that [#22](https://github.com/l3a0/ithildin-runtime/issues/22) specifies enforces the boundaries, and that issue holds the full rule. In short, no worker module imports another worker module. The shared code they import sits below them, in `core` and `journal`. Only the composition package, `runtime`, imports the broker adapters. The order path reaches the broker through the `Broker` interface in `core`. An import check guards the wiring and not the call, since a module handed the adapter can call it without importing anything. McConnell's way to make one step's dependence on another visible is to pass the earlier step's output to the later one (CC p. 349). Python lets any module build any type, so the argument shows a reader the order of the steps and a check in the send is what holds it. The send of an order takes the journal's acknowledgement alone, reads the order from the entry it names, and refuses an entry that is missing, not yet durable, or already marked as sending, which covers a forged, swapped or reused acknowledgement. The send also checks the lease's tag and reads the halt state itself, just before the call. A cancel takes an acknowledgement the same way, so it too is journaled before it is sent, including the kill switch's cancels while the journal's store cannot take a write. The design accepts that an S3 outage holds cancels back, as a low risk given S3's availability. Until the store takes the write again, the kill switch keeps retrying and the owner is paged.
+1. **A rule that guards money is held by the code's structure, a type or a test, never by a comment or a convention alone.** McConnell separates programming in a language, limited to what it offers, from programming into one, deciding what the program needs and making the language supply it (CC p. 68, p. 69). Python enforces no boundary between modules, so the import rule test that [#22](https://github.com/l3a0/ithildin-runtime/issues/22) specifies enforces the boundaries, and that issue holds the full rule. In short, no worker module imports another worker module. The shared code they import sits below them, in `core` and `journal`. Only the composition package, `runtime`, imports the broker adapters. The order path reaches the broker through the `Broker` interface in `core`. An import check guards the wiring and not the call, since a module handed the adapter can call it without importing anything. McConnell's way to make one step's dependence on another visible is to pass the earlier step's output to the later one (CC p. 349). Python lets any module build any type, so the argument shows a reader the order of the steps and a check in the send is what holds it. The send of an order takes the journal's acknowledgement of its `sending` entry alone, and reads the order from its `intent`. It refuses an acknowledgement the account is not holding, which covers one that is forged, swapped or used before, and an entry that is not the order's newest, not right after the order's approval or not stored as it was acknowledged. The send also checks the lease's tag and reads the halt state itself, just before the call. A cancel takes an acknowledgement the same way, so it too is journaled before it is sent, including the kill switch's cancels while the journal's store cannot take a write. The design accepts that an S3 outage holds cancels back, as a low risk given S3's availability. Until the store takes the write again, the kill switch keeps retrying and the owner is paged.
 2. **Every check that guards an order or a record runs the same way in tests and in production.** McConnell's default compiles assertions out of the production build (CC p. 190), though he keeps the code that checks for important errors and the code that lets a program fail safely, which the Mars Pathfinder's engineers left in and used to fix it after landing (CC p. 209, p. 210). Python drops every `assert`, and every `if __debug__:` block, when it runs with `-O`. Here that would make what runs live differ from what was tested, so a guard on the order path or on recorded data raises its exception explicitly. A lint rule refuses `assert` outside the tests, a check refuses `__debug__` outside them, and CI runs the suite a second time under `python -O`. A check that can halt trading, such as reconciliation, runs on the same schedule in every environment, read from the shared clock. Only a check off the order path, such as the restore drill, takes an interval per deployment, and that interval has a maximum written beside the code, so no setting turns a check off.
 3. **An absent, unknown or invalid value fails, and no code turns it into a neutral one.** McConnell lists ways to handle a bad value, among them returning a neutral value, substituting the closest legal one, and logging a warning and carrying on (CC p. 194, p. 195). He calls the choice an architectural decision, and defines correctness as returning no result rather than a wrong one, which safety-critical software favors (CC p. 197). Hard limit 3 makes that choice wherever trading reads an input: market data as the loop parses it, the broker's holdings and open orders, the journal at restart, the gate's limits, the clock's readings and the halt state. Its one exception is a strategy's forecast missing at portfolio construction's deadline, which, while the owner's written age is above its default of 0, reads as no change on the terms hard limit 3 states, never a target of zero. An age that is unreadable, negative or not a finite number counts as missing, so the strategy halts and the owner is alerted. Each such reading is counted on the daily report, and [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how. This doc proposes that the age stays at 0 until [#54](https://github.com/l3a0/ithildin-runtime/issues/54)'s drills pass. Capture sits outside it. Capture stores a bad value as received and flags it, and the check runs where the value is parsed, under the faults rules above. The choice takes four forms in the code.
    1. One variable holds one meaning, and no value such as −1 or zero stands for "missing", which McConnell calls hybrid coupling (CC p. 257).

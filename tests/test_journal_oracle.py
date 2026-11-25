@@ -54,6 +54,7 @@ MOVES = (
     "rejected from Sending",
     "rejected from Acknowledged",
     "in_doubt from Sending",
+    "in_doubt from InDoubt",
     "fill to PartlyFilled from Acknowledged",
     "fill to PartlyFilled from PartlyFilled",
     "fill to Filled from Acknowledged",

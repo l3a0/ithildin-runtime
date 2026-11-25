@@ -65,6 +65,11 @@ ROWS = [
         core.account_halt_key("paper1", "execution", "cancel", FIRED, 1),
         "accounts/paper1/halts/execution-cancel-20261105T204100Z-1.json",
     ),
+    (core.account_halts_prefix("paper1"), "accounts/paper1/halts/"),
+    (
+        core.strategy_halts_prefix("paper1", "bollinger"),
+        "accounts/paper1/strategies/bollinger/halts/",
+    ),
     (core.off_switch_key("paper1", "bollinger"), "accounts/paper1/strategies/bollinger/off.json"),
     (
         core.strategy_halt_key("paper1", "bollinger", "risk", "loss", FIRED, 2),

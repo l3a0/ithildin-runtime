@@ -42,7 +42,7 @@ _TABLE: tuple[tuple[Move, tuple[OrderState | None, ...], OrderState], ...] = (
     (Move.SENDING, (_S.APPROVED,), _S.SENDING),
     (Move.ACK, (_S.SENDING, _S.IN_DOUBT), _S.ACKNOWLEDGED),
     (Move.REJECTED, (_S.SENDING, _S.ACKNOWLEDGED), _S.REJECTED),
-    (Move.IN_DOUBT, (_S.SENDING,), _S.IN_DOUBT),
+    (Move.IN_DOUBT, (_S.SENDING, _S.IN_DOUBT), _S.IN_DOUBT),
     (Move.PART_FILL, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.PARTLY_FILLED),
     (Move.LAST_FILL, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.FILLED),
     (Move.EXPIRED, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.EXPIRED),
