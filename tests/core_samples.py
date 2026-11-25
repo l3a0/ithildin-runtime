@@ -118,6 +118,7 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             # A verdict agrees with itself: one refused on net, or with nothing set, approved.
             loss = core.LossReading(Decimal(1), Decimal(2), False, date(2026, 11, 2))
             fields |= {"loss": loss, "missing_term": None, "limit": None, "worst_loss": Decimal(1)}
+            fields["stress_move"] = Decimal("0.123456789")
             if not empty:
                 past = core.PastLimit(core.Limit.MAX_NET, Decimal(60), Decimal(50))
                 fields |= {"approved": False, "limit": core.Limit.MAX_NET, "past": (past,)}

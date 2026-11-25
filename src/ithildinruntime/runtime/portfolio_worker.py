@@ -10,6 +10,7 @@ reader would load marketlake and pandas into this process, and no other model.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from ithildinruntime.core import (
     ALPHA_COMPONENT,
@@ -21,6 +22,7 @@ from ithildinruntime.core import (
     StageKind,
     Storage,
     StrategyConfig,
+    read_records,
 )
 from ithildinruntime.portfolio import PortfolioStage
 
@@ -44,17 +46,26 @@ def portfolio_row(strategies: Iterable[StrategyConfig]) -> Stage:
 
 
 def portfolio_handler(
-    *, storage: Storage, deployment: str, run: str, release: str, table: Table
+    *,
+    storage: Storage,
+    deployment: str,
+    run: str,
+    release: str,
+    table: Table,
+    stress_moves: Path,
 ) -> PortfolioStage:
     """The portfolio worker's handler for the receive loop.
 
     It reads the deployment's strategies, its own kind, its inputs and every
-    stage's configuration hashes from `table`.
+    stage's configuration hashes from `table`. A file of stress records it
+    cannot read halts each decision with the reason stored, and never the
+    worker's start.
     """
     stage = table.stage(PORTFOLIO_STAGE)
     return PortfolioStage(
         table.strategies,
         storage,
+        records=read_records(stress_moves),
         stage=stage.name,
         kind=stage.kind,
         inputs={name: table.hashes_for(name) for name in stage.inputs},

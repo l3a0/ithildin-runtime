@@ -18,8 +18,9 @@ weight be its shares in one basket times its mark, as a size.
    legs' dollars and the short legs' dollars, because the gate counts each leg
    with the other unfilled.
 3. **A dollar limit is read less room for one stress move**, as the limit over
-   one plus the stress move. A leg the market moved that far is then still
-   inside a limit that has not moved, so an exit is not refused on that limit.
+   one plus the stress move, which is the one the stress records leave. A leg
+   the market moved that far is then still inside a limit that has not moved, so
+   an exit is not refused on that limit.
 4. **Each leg is rounded toward zero** to the account's share step, so no leg
    passes `gross` or a limit. A leg can round to zero beside one that does not,
    and only a target of zero in every leg halts.
@@ -51,6 +52,7 @@ from ithildinruntime.core import (
     Sizing,
     Snapshot,
     StrategyConfig,
+    StressRecords,
     TargetPortfolio,
     Valuation,
     exact_product,
@@ -58,6 +60,7 @@ from ithildinruntime.core import (
     exceeds_places,
     finite,
     held,
+    hold_to_record,
     mark,
     places,
     quotient,
@@ -123,19 +126,23 @@ def size(
     constraints: Constraints,
     caps: HardCaps,
     valuation: Valuation,
+    records: StressRecords,
 ) -> tuple[TargetPortfolio, Sizing]:
     """One strategy's target for the decision, and the record of how it was sized.
 
     `deployed` names every strategy of the deployment. It halts on the first
     input it cannot size from, and each check holds for a flat forecast too but
-    the last two, of a count too large to record and of a target of zero.
+    the last two, of a count too large to record and of a target of zero. The
+    caps are held to the stress records first, so the net cap and the room for a
+    stress move are the gate's.
     """
     name = strategy.name
     wanted_gross = gross(strategy)
     _check_book(book, deployed)
     legs = _checked_legs(strategy, forecast, book)
     require_current(caps, valuation, snapshot.decision_at)
-    limits = tighten(constraints, caps, valuation)
+    owners = hold_to_record(constraints, caps, records)
+    limits = tighten(constraints, owners, valuation)
     if unlimited := sorted(set(legs) - set(limits.max_position)):
         raise Halt(f"no limit names {unlimited[0]}, a leg of {name}'s basket")
     marks = {i: mark(snapshot, i, valuation.session) for i in legs}
@@ -156,7 +163,7 @@ def size(
         exact_total("a basket's one side", (dollars[i] for i in legs if long[i] is which))
         for which in (True, False)
     )
-    room = exact_total("one plus the stress move", (Decimal(1), caps.stress_move))
+    room = exact_total("one plus the stress move", (Decimal(1), owners.stress_move))
     asked = _Baskets(wanted_gross, whole)
     per_leg = ((limits.max_position[i], q) for i, q in shares.items() if q)
     bounds = [

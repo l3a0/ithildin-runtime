@@ -465,6 +465,7 @@ def _verdict(**changes: object) -> core.Verdict:
         "missing_term": None,
         "adding": True,
         "worst_loss": d(1),
+        "stress_move": d("0.2"),
         "loss": core.LossReading(d(1), d(2), False, PRIOR),
         "past": (),
     }
@@ -519,6 +520,12 @@ CONTRADICTIONS: dict[str, tuple[dict[str, object], str]] = {
     "an-approval-whose-worst-loss-is-not-finite": (
         {"worst_loss": d("NaN")},
         "carries a worst loss of NaN",
+    ),
+    "a-stress-move-of-zero": ({"stress_move": d(0)}, "carries a stress move of 0"),
+    "a-stress-move-below-zero": ({"stress_move": d("-0.2")}, "carries a stress move of -0.2"),
+    "a-stress-move-that-is-not-finite": (
+        {"stress_move": d("NaN")},
+        "carries a stress move of NaN",
     ),
     "an-approval-that-adds-nothing-to-lose": ({"worst_loss": d(0)}, "a worst loss of 0"),
 }

@@ -66,6 +66,8 @@ from .stages import StageDecision, StageRun
 from .storage import *  # noqa: F403
 from .storage import __all__ as _storage
 from .strategy import STRATEGIES, StrategyConfig, load_strategies, parse_strategy
+from .stress import *  # noqa: F403
+from .stress import __all__ as _stress
 from .valuing import *  # noqa: F403
 from .valuing import __all__ as _valuing
 
@@ -124,5 +126,6 @@ __all__ = [
     *_queue,
     *_records,
     *_storage,
+    *_stress,
     *_valuing,
 ]

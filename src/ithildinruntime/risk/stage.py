@@ -26,8 +26,9 @@ A halt at any of the four becomes the stage's result, whose header names each
 blob read and accepted by then, and whose `cause` is empty unless it passes one
 on.
 
-The entry point hands in the stage's name, its kind and the stages it reads,
-as the stage table declares them.
+The entry point hands in the stress records, which the release carries, and the
+stage's name, its kind and the stages it reads, as the stage table declares
+them.
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ from ithildinruntime.core import (
     StageRun,
     Storage,
     StrategyConfig,
+    StressRecords,
     Valuation,
 )
 
@@ -75,6 +77,7 @@ class RiskStage:
         strategies: Iterable[StrategyConfig],
         storage: Storage,
         *,
+        records: StressRecords,
         stage: str,
         kind: StageKind,
         data_stage: str,
@@ -85,6 +88,7 @@ class RiskStage:
         config_hashes: Mapping[str, str],
     ) -> None:
         self._strategies = tuple(strategies)
+        self._records = records
         self._data_stage = data_stage
         self._recover_stage = recover_stage
         self._run = StageRun(
@@ -123,4 +127,4 @@ class RiskStage:
                 f"the deployment runs {len(self._strategies)} strategies ({names}), and the scope "
                 "each one's limits take is decided for one alone"
             )
-        return LimitRisk(self._strategies[0])
+        return LimitRisk(self._strategies[0], self._records)

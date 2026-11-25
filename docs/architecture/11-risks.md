@@ -12,6 +12,8 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
 - [Where the limits come from](05-building-blocks.md#where-the-limits-come-from)
+- [How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured)
+- [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record)
 - [What the risk stage reads and stores](05-building-blocks.md#what-the-risk-stage-reads-and-stores)
 - [An empty journal is never a flat book](05-building-blocks.md#an-empty-journal-is-never-a-flat-book)
 - [Where the figures come from](05-building-blocks.md#where-the-figures-come-from)
@@ -37,6 +39,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [The security master](08-crosscutting-concepts.md#the-security-master)
 - [Who writes and reads a blob](08-crosscutting-concepts.md#who-writes-and-reads-a-blob)
 - [How a computed value is rounded](08-crosscutting-concepts.md#how-a-computed-value-is-rounded)
+- [The stress move's record](08-crosscutting-concepts.md#the-stress-moves-record)
 
 ## Prices in Quality requirements
 
