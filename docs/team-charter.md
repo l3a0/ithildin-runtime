@@ -444,7 +444,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   what can be lost names what it multiplies, and that the daily report shows each position's worst
   loss, the account's fall from its peak and a total once positions share an account, under the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).
-  Owns the halts on a price of unstated kind and on a quote that fails its age and status check, the written widest spread among it, and takes that check's
+  Owns the halts on a price of unstated kind and on a quote that fails its age and status check, the written widest spread and a crossed or non-positive price among it, and takes that check's
   gap to the owner before a Paper sample opens. Each strategy writes its own maximum age and widest spread in tracked configuration, so the owner's merge gates a change. A change to the record types that start the close after a broker's trade, to who may confirm such a trade or what a confirmation names, to that close's written wait, to a written maximum age or widest spread, to the written age on a late forecast in hard limit 3, that missing input means stop, not flatten, to what that check accepts, to the lone leg's written
   time or to the bound on the age of the check of fills is reviewed like a change to a limit. Writes, before the board sits on the Live step, the statement of what
   a broker or a venue can do to a position, from their published text with its date, and reads its dated

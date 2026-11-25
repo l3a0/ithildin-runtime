@@ -400,7 +400,7 @@ A midpoint has no other bound. With a loss stop of 100 and made-up figures, a he
 leg quoted at 60 by 140 in place of 60 by 60.1 hid a loss of 199.75 from the stop,
 and an order that added was approved. A market that wide has no price a midpoint
 can stand for, so it halts, and the halt holds the account until a person clears
-it.
+it. A quote whose ask is below its bid, or with a side at or below zero, holds it too.
 
 ##### What is recorded and not judged
 
