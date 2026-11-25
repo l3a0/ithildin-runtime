@@ -8,6 +8,7 @@ adding one means adding it here too.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -35,7 +36,7 @@ MASTER_ROWS = [
     "2026-11-22,QQQ,QQQ,2011-03-23,",
 ]
 
-_YAHOO = (
+_CHAN_READ_FROM = (
     "owner's ruling of 2026-11-22 on #5. quantitative-trading data/vintages.jsonl at 19aadbeb "
     "records vendor chan-mat and source_workbook inputData_ETF.mat and names no kind. Chan's "
     "closes equal Yahoo's on all 1500 sessions{split} and his volume is Yahoo's in hundreds of "
@@ -56,10 +57,41 @@ _SPLIT = {
     "gld": "",
     "uso": " after Yahoo's factor of 8 for USO's one-for-eight reverse split of 2020",
 }
+_YAHOO_READ_FROM = (
+    "owner's ruling of 2026-11-24 on #137 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7152659296. "
+    "l3a0/marketlake#1025 pins the file at sha256 {sha} and sets its later years beside two other "
+    "vendors in an exploratory comparison whose differences it lists. Its closes equal Chan's on "
+    "all 1500 sessions from 2006-04-26 to 2012-04-09{split} and the owner's ruling of 2026-11-22 "
+    "on #5 gave the kind of Chan's as Yahoo's.{scale} That the volume is consolidated is measured "
+    "from 2025 on and inferred before it and the price's venues rest on the ruling. Yahoo "
+    "publishes no statement of its close so official close is the usual meaning of a Yahoo close "
+    "for a US ETF"
+)
+_SHA = {
+    "gld": "b6675ed455acf0174854377f8a51061fb18c0b1bf0a9a0f7632ac557b6fcb4f9",
+    "uso": "72bb286f57f637c9ef517b98631a68f7e8f2d7869af4935441b555b11f60d561",
+}
+_SCALE = {
+    "gld": "",
+    "uso": (
+        " Prices and volume before 2020-04-29 are on the scale after that split: prices are "
+        "eight times those that traded and volume is divided by eight."
+    ),
+}
+_COUNTED = {
+    "gld": "consolidated in shares to the nearest hundred",
+    "uso": "consolidated in shares to the nearest hundred before its source's split adjustment",
+}
 KIND_ROWS = [
     f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
     f"official close,consolidated,none,consolidated in hundreds of shares,"
-    f"{_YAHOO.format(split=_SPLIT[name], volume=_VOLUME[name])}"
+    f"{_CHAN_READ_FROM.format(split=_SPLIT[name], volume=_VOLUME[name])}"
+    for name in ("gld", "uso")
+] + [
+    f"2026-11-25,yahoo:{name}_daily_yahoo_2026-11-22.csv,2012-04-10,2026-09-03,"
+    f"official close,consolidated,none,{_COUNTED[name]},"
+    f"{_YAHOO_READ_FROM.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
     for name in ("gld", "uso")
 ]
 
@@ -90,6 +122,51 @@ def test_every_file_loads() -> None:
     assert len(load_master().rows) == len(MASTER_ROWS)
     assert len(load_price_kinds().rows) == len(KIND_ROWS)
     assert len(load_quote_kinds().rows) == len(QUOTE_ROWS)
+
+
+CHAN = "quantitative-trading:data/inputdata_etf/{}.csv"
+YAHOO = "yahoo:{}_daily_yahoo_2026-11-22.csv"
+NOTHING = Kind("unstated", "unstated", "unstated", "unstated")
+
+
+@pytest.mark.parametrize("name", ["gld", "uso"])
+@pytest.mark.parametrize(
+    ("source", "before", "first", "last", "after"),
+    [
+        (CHAN, date(2006, 4, 25), date(2006, 4, 26), date(2012, 4, 9), date(2012, 4, 10)),
+        (YAHOO, date(2012, 4, 9), date(2012, 4, 10), date(2026, 9, 3), date(2026, 9, 4)),
+    ],
+)
+def test_a_session_on_each_side_of_each_rows_edges_reads_the_kind_it_should(
+    name: str, source: str, before: date, first: date, last: date, after: date
+) -> None:
+    """Item 4 of the acceptance of #137, whose rows the owner's two rulings state."""
+    kinds, own = load_price_kinds(), source.format(name)
+    # Typed again, so a typo shared by a row and its pin is still caught.
+    shares = "consolidated in shares to the nearest hundred"
+    counted = (
+        "consolidated in hundreds of shares"
+        if source == CHAN
+        else shares + {"gld": "", "uso": " before its source's split adjustment"}[name]
+    )
+    stated = Kind("official close", "consolidated", "none", counted)
+    assert [kinds.kind(own, day) for day in (before, first, last, after)] == [
+        NOTHING,
+        stated,
+        stated,
+        NOTHING,
+    ]
+
+
+@pytest.mark.parametrize("name", ["gld", "uso"])
+def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -> None:
+    """The tracked rows of 2026-11-22 and of Yahoo name one digest for each file."""
+    # By the date each was added, so a later row that corrects one is no second match.
+    rows = _data_rows(PRICE_KINDS)
+    (yahoo,) = [r for r in rows if r.startswith(f"2026-11-25,yahoo:{name}_")]
+    (digest,) = re.findall(r"pins the file at sha256 ([0-9a-f]{64}) ", yahoo)
+    (chan,) = [r for r in rows if r.startswith("2026-11-22,quant") and f"/{name}.csv," in r]
+    assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {digest}" in chan
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"

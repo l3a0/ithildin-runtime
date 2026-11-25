@@ -1301,7 +1301,7 @@ def test_16_a_bar_of_unstated_kind_halts_after_the_snapshot(lake: Path, tmp_path
     assert any("GLD's bar" in r and "unstated price kind" in r for r in reading.halts)
 
 
-def test_16_the_tracked_contract_states_yahoos_kind_for_both_vintages(
+def test_16_the_tracked_contract_states_yahoos_kind_for_both_chan_vintages(
     lake: Path, tmp_path: Path
 ) -> None:
     reading = make(lake, tmp_path).read(close(LAST))
