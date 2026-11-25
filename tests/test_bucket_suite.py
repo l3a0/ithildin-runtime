@@ -417,8 +417,9 @@ def test_an_error_answer_that_breaks_partway_is_unavailable(status: int, fault: 
 
 
 def test_a_mistake_in_the_code_is_no_answer_of_the_buckets() -> None:
-    with pytest.raises(AttributeError):
-        S3Bucket(object(), "b", "lake").read("k")
+    for call in (lambda b: b.list("journal/"), lambda b: b.read("k")):
+        with pytest.raises(AttributeError):
+            call(S3Bucket(object(), "b", "lake"))
 
 
 def test_a_call_the_client_refuses_to_send_is_a_type_error() -> None:

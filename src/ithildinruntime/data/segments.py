@@ -262,6 +262,8 @@ class _Walk:
                 log.warning("data lists %s once more, because: %s", prefix, _said(error))
             except ValueError as error:
                 raise _Fault(f"{prefix} could not be listed: {_said(error)}") from None
+            except Exception as error:
+                raise _Fault(f"{prefix} could not be listed: {_named(prefix, error)}") from None
             finally:
                 self._report()
         raise AssertionError("the second try returns or raises")
@@ -343,6 +345,8 @@ class _Walk:
                 self._once_more(key, f"could not be downloaded: {_said(error)}")
             except ValueError as error:
                 raise _Fault(f"{key} could not be downloaded: {_said(error)}") from None
+            except Exception as error:
+                raise self._fault(key, f"could not be downloaded: {_named(key, error)}") from None
             finally:
                 self._report()
 
@@ -460,6 +464,16 @@ class _Walk:
 
 def _said(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
+
+
+def _named(where: str, error: Exception) -> str:
+    """An error that is no answer of the bucket's, by its type, with its words in the log alone.
+
+    Such an error can be the client's, such as credentials it could not refresh,
+    and its words can hold a path of the machine's.
+    """
+    log.error("data's call to the bucket for %s failed", where, exc_info=error)
+    return type(error).__name__
 
 
 def _values(column: pa.ChunkedArray) -> list[Any]:

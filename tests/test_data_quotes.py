@@ -384,6 +384,11 @@ def _no_answer(bucket: Live, live: Path) -> str:
     return "failed twice"
 
 
+def _expired(bucket: Live, live: Path) -> str:
+    bucket.plant[key_of("USO", 1)] = [RuntimeError("the refreshed credentials are still expired")]
+    return "could not be downloaded: RuntimeError"
+
+
 def _gone(bucket: Live, live: Path) -> str:
     bucket.plant[key_of("USO", 1)] = [BlobMissing(key_of("USO", 1), "404 NoSuchKey")]
     return "is listed and the bucket holds none"
@@ -438,6 +443,7 @@ ANSWERS = (
     _all_gaps,
     _refused_listing,
     _no_answer,
+    _expired,
     _gone,
     _bare,
     _torn,
