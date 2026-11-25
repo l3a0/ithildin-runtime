@@ -73,9 +73,10 @@ The model checks no bar's basis and no earlier bar's price kind, because data
 judges both. Data's stage halts where one leg's bars are of two series, such as
 `adjusted` and `raw` ones, and where a bar leaves one of its four price-kind
 fields unstated. A window of one series can be of prices as traded, as captured
-bars are, and no halt stops a split inside it or between its newest bar and the
-quote. docs/design.md's `#### A lookback that crosses a change of series` says
-what that costs.
+bars are, and no halt on the prices stops a split inside it or between its newest
+bar and the quote. docs/design.md's rule that a split reads as neither a gain nor
+a loss says what that costs, and hard limit 3's second exception, on shadow and
+paper alone, covers captured bars alone.
 
 Every figure is a `Decimal` at 28 digits, worked out inside a context of the
 model's own, so the context a caller set changes no byte. The model decides on

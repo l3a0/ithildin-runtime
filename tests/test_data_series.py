@@ -148,6 +148,14 @@ RAW = f"raw from {made.ONE.format('USO')} as of 2012-04-10"
 CAPTURED = "raw from no source as of no date"
 
 
+def test_1_a_basis_marketlake_does_not_know_halts(one_lake: Path, tmp_path: Path) -> None:
+    """marketlake's refusal of one is the only guard, since the alpha model reads any basis."""
+    lake = copied(one_lake, tmp_path)
+    made.of_series(lake, "USO", SEAM, basis="half-adjusted")
+    with pytest.raises(Halt, match="half-adjusted"):
+        source(lake, tmp_path).read(close(SEAM))
+
+
 @pytest.mark.parametrize("traded", [False, True], ids=["adjusted", "raw"])
 def test_1_a_captured_bar_between_imported_ones_halts_both_ways(
     one_lake: Path, tmp_path: Path, traded: bool

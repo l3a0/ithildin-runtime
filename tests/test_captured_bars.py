@@ -20,6 +20,7 @@ from typing import NamedTuple
 import pytest
 
 from ithildinruntime.adapters import FolderBucket
+from ithildinruntime.alpha import BollingerSpread
 from ithildinruntime.core import (
     STRATEGIES,
     DecisionResult,
@@ -207,13 +208,24 @@ def test_2_a_row_that_ends_a_session_early_halts_on_the_newest_bar_alone(
     assert [str(d) in reason for d in WINDOW] == [False] * 59 + [True]
 
 
-# 3. A split, under the written exception to hard limit 3
+# 3. A split, under hard limit 3's second written exception
 
 # How many sessions before the decision's the split takes effect, and 0 is between the
 # newest bar and the quote.
 EFFECTIVE = {"the-second-bar": 59, "a-middle-bar": 30, "the-newest-bar": 1, "the-quote": 0}
 # The price is divided by the ratio from that session on.
 RATIOS = {"two-for-one": Decimal(2), "one-for-eight": Decimal("0.125")}
+
+
+def read_as_a_move(found: Decided, leg: InstrumentId, planted: Mapping[date, Decimal]) -> None:
+    """The stored bars and the forecast read the planted closes, with no split undone."""
+    assert [b.close for b in found.snapshot.bars[leg]["1d"]] == [planted[d] for d in WINDOW]
+    adjusted = {
+        i: {"1d": tuple(replace(b, basis="adjusted") for b in by["1d"])}
+        for i, by in found.snapshot.bars.items()
+    }
+    expected = BollingerSpread(TRACKED).forecast(replace(found.snapshot, bars=adjusted))
+    assert found.forecast == expected.forecasts[0]
 
 
 @pytest.mark.parametrize("ratio", RATIOS.values(), ids=RATIOS)
@@ -236,7 +248,25 @@ def test_3_a_split_in_the_window_is_flagged_and_the_decision_forecasts(
     assert isinstance(flag, SpikeFlag)
     assert (flag.session, flag.rule) == (effective, MOVE)
     assert list(found.snapshot.flags) == [leg]
-    assert found.forecast is not None
+    read_as_a_move(
+        found, leg, {d: split[d] if d >= effective else c for d, c in WALKS[ticker].items()}
+    )
+
+
+def test_3_a_split_too_small_to_flag_is_read_with_no_flag(lake: Path, tmp_path: Path) -> None:
+    """The flag is no check on every split, which docs/design.md's rule 6 says."""
+    mine = lakes.copy_lake(lake, tmp_path / "split", ((WINDOW[0], WINDOW[-1]),))
+    template = mine / lakes.partition_key("USO", WINDOW[0])
+    for day in WINDOW[30:]:
+        price = (WALKS["USO"][day] / Decimal("1.1")).quantize(Decimal("0.01"))
+        made._capture(mine, "USO", day, price, template)
+    mids = {"USO": (WALKS["USO"][DAY] / Decimal("1.1")).quantize(Decimal("0.01"))}
+    found = decide(mine, tmp_path, DAY, mids=mids)
+    assert found.data.halt is None and found.alpha.halt is None
+    assert found.snapshot.flags == {}
+    small = {d: (c / Decimal("1.1")).quantize(Decimal("0.01")) for d, c in WALKS["USO"].items()}
+    planted = {d: small[d] if d in WINDOW[30:] else c for d, c in WALKS["USO"].items()}
+    read_as_a_move(found, USO, planted)
 
 
 # 4. A change of series
