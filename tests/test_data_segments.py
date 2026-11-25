@@ -808,7 +808,9 @@ def test_2_a_listed_key_no_bucket_call_takes_is_a_fault_and_never_an_error(
     assert reason == f"{odd} could not be downloaded: ValueError"
 
 
-@pytest.mark.parametrize("error", [RuntimeError, ValueError, AttributeError])
+@pytest.mark.parametrize(
+    "error", [RuntimeError, ValueError, AttributeError, TypeError, FileNotFoundError]
+)
 def test_2_an_error_that_is_no_answer_of_the_buckets_keeps_the_rows_and_hides_its_words(
     reader: Reader, error: type[Exception], caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -819,7 +821,7 @@ def test_2_an_error_that_is_no_answer_of_the_buckets_keeps_the_rows_and_hides_it
     read = reader.read()
     assert read.faults == (f"{key} could not be downloaded: {error.__name__}",)
     assert {i: len(rows) for i, rows in read.rows.items()} == {GLD: 1}
-    assert "/a/path/of/the/machine" in caplog.text
+    assert "/a/path/of/the/machine" in caplog.text and key in caplog.messages[-1]
     reader.live.plant[key] = [StoreUnavailable(key, "no answer"), error("/a/path/of/the/machine")]
     (reason,) = reader.read().faults
     assert "failed twice. First it could not be downloaded: StoreUnavailable: " in reason
