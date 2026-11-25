@@ -12,7 +12,7 @@ import hashlib
 import io
 import random
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import NamedTuple
@@ -35,6 +35,8 @@ TABLE = load_sessions()
 DAYS = sorted(TABLE.sessions)
 ONE, TWO = "made-up:one-{}.csv", "made-up:two-{}.csv"
 STATED = Kind("official close", "consolidated", "none", "consolidated in shares")
+# When marketlake fetches a session's daily bar, which is after its close.
+SWEEP = time(18, 30)
 # A Friday, so that the first session a capture span covers is 2026-11-02.
 ONBOARD = datetime(2026, 10, 30, 17, 30, tzinfo=MARKET_TZ)
 
@@ -125,7 +127,7 @@ def _capture(root: Path, ticker: str, day: date, close: Decimal, template: Path)
     """Write one session's partition with no provenance keys, as marketlake captures one."""
     table = pq.read_table(template)
     row = table.to_pylist()[0]
-    stamp = TABLE.session(day).close.isoformat()
+    stamp = datetime.combine(day, SWEEP, MARKET_TZ).astimezone(UTC).isoformat()
     price = float(close)
     row.update(
         bar_ts=datetime(day.year, day.month, day.day, tzinfo=MARKET_TZ).astimezone(UTC).isoformat(),

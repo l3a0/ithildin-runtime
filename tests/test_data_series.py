@@ -269,8 +269,13 @@ def test_2_captured_bars_throughout_add_no_halt(tmp_path: Path) -> None:
         ONE_SERIES,
         {"GLD": made.walk(captured, 3, 300.0), "USO": made.walk(captured, 4, 70.0)},
     )
-    assert both(lake, tmp_path, captured[-1]) == ()
-    bar = source(lake, tmp_path).read(close(captured[-1])).snapshot.bars[USO]["1d"][-1]
+    # A captured bar lands after its close, so this session's is stale at the close.
+    following = made.DAYS[made.DAYS.index(captured[-1]) + 1]
+    at = made.TABLE.session(following).open - timedelta(microseconds=1)
+    reading = source(lake, tmp_path).read(at)
+    assert reading.halts == judge(decode(encode(reading.snapshot), Snapshot), (GLD, USO)) == ()
+    bar = reading.snapshot.bars[USO]["1d"][-1]
+    assert bar.session == captured[-1]
     assert series_of(bar) == ("raw", None, None)
     assert str(series_of(bar)) == "raw from no source as of no date"
 

@@ -50,29 +50,32 @@ each of these.
 1. A leg that is missing, stale or has no daily bar, or any other instrument
    in the snapshot that is missing, stale or has no bar, in
    `Snapshot.require_fresh`'s own words.
-2. A bar whose basis is not `adjusted`, because a split inside a window of
-   bars as traded would read as a move of the market. A quote carries no basis
-   to check. Data's stage halts first where one leg's bars are of two series,
-   such as both `adjusted` and `raw` ones, or where a bar's price kind is
-   unstated.
-3. Legs whose bars name different sessions.
-4. A newest bar that is of neither the decision's own session, meaning the
+2. Legs whose bars name different sessions.
+3. A newest bar that is of neither the decision's own session, meaning the
    latest session that opened by the decision, nor the session before it. With
    an older one the window would miss a session. A decision the calendar holds
    no session for, or none before its own, halts too.
-5. A leg `core.mark` gives no price, in its words. It has none where the
+4. A leg `core.mark` gives no price, in its words. It has none where the
    snapshot holds neither a quote of the leg nor a bar of the decision's
    session, where it holds both, where the judge of a quote finds a fault or its
    older stamp is at or before the last session's close, where the decision
    session's bar is there twice, leaves a price-kind field unstated or has no
    close above zero, and where a bar ended or was knowable after the decision.
    Data halts first on most of these.
-6. Fewer prices than the newest z-score reads.
-7. A window of `independent` prices that are all equal, where the slope has no
+5. Fewer prices than the newest z-score reads.
+6. A window of `independent` prices that are all equal, where the slope has no
    value, and a band window whose spreads do not move, where the z-score has
    none.
-8. A window that ends before it settles which unit is held.
-9. A statistic the codec cannot hold.
+7. A window that ends before it settles which unit is held.
+8. A statistic the codec cannot hold.
+
+The model checks no bar's basis and no earlier bar's price kind, because data
+judges both. Data's stage halts where one leg's bars are of two series, such as
+`adjusted` and `raw` ones, and where a bar leaves one of its four price-kind
+fields unstated. A window of one series can be of prices as traded, as captured
+bars are, and no halt stops a split inside it or between its newest bar and the
+quote. docs/design.md's `#### A lookback that crosses a change of series` says
+what that costs.
 
 Every figure is a `Decimal` at 28 digits, worked out inside a context of the
 model's own, so the context a caller set changes no byte. The model decides on
@@ -109,7 +112,6 @@ _KEYS = frozenset(
     ("model", "dependent", "independent", "hedge_sessions", "band_sessions", "entry", "exit")
 )
 _INTERVAL = "1d"
-_ADJUSTED = "adjusted"
 _ARITHMETIC = Context(prec=28)
 # A spread that never moves in exact arithmetic reads a deviation near 5e-27 at
 # 28 digits, so a band at or below this has no z-score.
@@ -303,13 +305,6 @@ class BollingerSpread:
         legs = (self._dependent, self._independent)
         snapshot.require_fresh({leg: [_INTERVAL] for leg in legs})
         bars = {leg: snapshot.bars[leg][_INTERVAL] for leg in legs}
-        for leg in legs:
-            for bar in bars[leg]:
-                if bar.basis != _ADJUSTED:
-                    raise refuse(
-                        f"reads {_ADJUSTED} prices, and {leg}'s bar of {bar.session} has the "
-                        f"basis {bar.basis}"
-                    )
         days = {leg: [bar.session for bar in bars[leg]] for leg in legs}
         if days[self._dependent] != days[self._independent]:
             apart = sorted(set(days[self._dependent]) ^ set(days[self._independent]))
