@@ -76,8 +76,9 @@ def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetim
     which `core.require_quote` judges as of `now`, and the close where it holds
     none. A stage that reads no clock passes the decision time as `now`, and the
     gate passes its own. It halts unless the price is of a session later than
-    `after` and no later than the decision's own, and on a quote beside a bar of
-    the decision's session, because nothing says which of the two is the mark.
+    `after` and no later than the decision's own, and unless the quote's older
+    stamp is later than `after`'s close. It halts on a quote beside a bar of the
+    decision's session, because nothing says which of the two is the mark.
     The bars are checked either way, and a bar's kind and its close only where
     the close is the mark.
     """
@@ -96,6 +97,14 @@ def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetim
             raise Halt(
                 f"{instrument} has no mark: its quote is for {today.isoformat()}, not later than "
                 f"{after.isoformat()}"
+            )
+        # A quote captured today can carry a stamp of the session V was valued at, under a
+        # maximum age longer than the night, and a book marked there would read no loss.
+        stamp, closed = min(quote.bid_at, quote.ask_at), load_sessions().session(after).close  # type: ignore[type-var]
+        if stamp <= closed:
+            raise Halt(
+                f"{instrument} has no mark: its quote's older stamp is {stamp.isoformat()}, not "
+                f"later than the close of {after.isoformat()} at {closed.isoformat()}"
             )
         return midpoint(quote)
     if newest <= after:

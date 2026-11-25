@@ -143,7 +143,7 @@ flowchart LR
     sup -->|"1 plan"| d1
     d1 -->|"2.1 event"| queue
     queue -->|"2.2 event"| data
-    lake -->|"3.1 bars"| data
+    lake -->|"3.1 bars and quotes"| data
     d2 -->|"3.2 instrument ids"| data
     data -->|"4 snapshot"| d1
     secret -->|"5 broker key"| exec
@@ -187,7 +187,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 9.4 lease | The VM into storage | A holder that lost the lease rewrites it | Among the runtime's roles, only execution's rewrites an account's lease, a take on the tag it read and a renewal or a release on the tag its own last write returned, so a stale holder's write is refused. Execution creates one only where an absent lease allows it, and the bucket refuses every delete there |
 | 7.2, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
 | 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
-| 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
+| 3.1 bars and quotes | marketlake's account into the VM | Bars or quotes are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
 | 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
@@ -205,7 +205,7 @@ The security master is the table that maps each ticker to the platform's own ins
 | --- | --- | --- |
 | Only execution talks to the broker | An order sent around the gate, or a fill nobody journaled entering the book | 6, 10, 11 |
 | The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 7.2, 9.3 |
-| Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
+| Bars and quotes reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
 
 #### Only execution talks to the broker
 
@@ -299,7 +299,7 @@ flowchart LR
 
 | Phase | Who acts | What it produces | What stops it |
 | --- | --- | --- | --- |
-| 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
+| 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars and quotes read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
 | 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on, or one of its own |
 | 3. Send | Execution, then monitoring | Orders at the broker, the decision's report and the heartbeat's ping | A failed check, a refused order or an order in doubt |
 | After the close | Execution, then the supervisor | A result on each open order, then the run's stop | A read that fails or runs late, which pages the owner, or a difference, which halts and pages |
@@ -492,7 +492,7 @@ sequenceDiagram
 
 A run that starts on a book the broker disagrees with would trade the wrong difference. So this phase ends in a comparison, and a difference halts.
 
-1. **Data reads the bars.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, and records which ones it read before any model sees them.
+1. **Data reads the bars and the quotes.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, then, for a decision inside its session, one capture's quote of each, and records which ones it read before any model sees them.
 2. **Execution waits for that snapshot,** so it reads the broker at the decision's own time.
 3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
 4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
@@ -1205,6 +1205,7 @@ stateDiagram-v2
         data missing, stale or not ready,
         a price that contradicts itself,
         a price of unstated kind,
+        a quote that fails its check,
         a lookback that crosses a change of series,
         a journal that does not replay,
         a fill in dispute,
@@ -1269,7 +1270,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and the two halts [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) keeps until a person clears them, a price of unstated kind and a quote that fails its age and status check, which [#155](https://github.com/l3a0/ithildin-runtime/issues/155) builds. So on shadow and paper a price the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### When the run stops
 

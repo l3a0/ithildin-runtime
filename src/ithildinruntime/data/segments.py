@@ -31,12 +31,13 @@ instrument's refusal loses none of another's rows.
 
 A segment marketlake's reader or the bucket cannot vouch for is downloaded once
 more, at the same version where the first answer named one, and a second fault
-of it is a fault of the read. The table in that page's `#### What the read does
+of it is a fault of the read. The table in that page's `##### What the read does
 with each answer` lists every fault, and what ends the halt it causes.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -76,6 +77,8 @@ from ithildinruntime.core.codec import INT_LIMIT
 from .reference import QuoteKind, QuoteKinds, SecurityMaster
 
 __all__ = ["BATCH", "COLUMNS", "QuoteLimits", "QuoteRead", "read_quotes"]
+
+log = logging.getLogger(__name__)
 
 # How many segments of one instrument each round opens.
 BATCH = 5
@@ -138,8 +141,9 @@ class QuoteRead:
       quote's own, in the order it was read.
     - `faults` holds each reason the read failed, in order.
     - `read_at` is the clock after the bucket's last answer.
-    - `listed` counts the segments listed, and `newest_age` is how long before
-      the decision the newest row of any instrument was captured.
+    - `listed` counts the segments listed, and `cycle_age` is how long before
+      the decision the newest capture every instrument has was made, or `None`
+      where they share none.
     """
 
     quotes: Mapping[InstrumentId, Quote]
@@ -148,7 +152,7 @@ class QuoteRead:
     faults: tuple[str, ...]
     read_at: datetime
     listed: int
-    newest_age: timedelta | None
+    cycle_age: timedelta | None
 
 
 def read_quotes(
@@ -174,7 +178,6 @@ def read_quotes(
     cycle = walk.find() if not walk.faults else None
     read_at = clock.now()
     quotes = walk.quotes(cycle, kinds) if cycle is not None else {}
-    newest = max((c for leg in walk.legs for c in leg.captured), default=None)
     return QuoteRead(
         quotes=quotes,
         segments=tuple(sorted(walk.segments.values(), key=lambda s: s.key)),
@@ -182,7 +185,7 @@ def read_quotes(
         faults=tuple(walk.faults),
         read_at=read_at,
         listed=sum(len(leg.keys) for leg in walk.legs),
-        newest_age=None if newest is None else at - newest,
+        cycle_age=None if cycle is None else at - cycle,
     )
 
 
@@ -222,8 +225,8 @@ class _Walk:
         self._at = at
         self._limits = limits
         self._report = report
-        # Each segment that was downloaded once more, which is the most any is.
-        self._again: set[str] = set()
+        # Each segment that was downloaded once more, which is the most any is, and why.
+        self._again: dict[str, str] = {}
         self.legs: list[_Leg] = []
         self.segments: dict[str, Segment] = {}
         self.faults: list[str] = []
@@ -297,10 +300,11 @@ class _Walk:
     def _take(self, leg: _Leg, table: pa.Table) -> list[datetime]:
         """Keep every row of one answer, then check its columns and read its capture instants."""
         where = f"{leg.ticker} on {self._day.isoformat()}"
-        try:
-            rows = table.to_pylist()
-        except (ValueError, OverflowError, pa.ArrowException) as error:
-            raise _Fault(f"{where} has a row that cannot be read: {_said(error)}") from None
+        names = table.schema.names
+        rows = [
+            dict(zip(names, values, strict=True))
+            for values in zip(*(_values(column) for column in table.columns), strict=True)
+        ]
         first = len(leg.rows)
         leg.rows.extend(rows)
         for name, kind in COLUMNS.items():
@@ -341,8 +345,9 @@ class _Walk:
     def _once_more(self, key: str, said: str) -> None:
         """Let one segment be downloaded again, once."""
         if key in self._again:
-            raise _Fault(f"{key} failed twice, and the second time it {said}")
-        self._again.add(key)
+            raise _Fault(f"{key} failed twice. First it {self._again[key]}, and then it {said}")
+        self._again[key] = said
+        log.warning("data downloads %s once more, because it %s", key, said)
 
     def _write(self, key: str, data: bytes) -> None:
         path = self._root.joinpath(*key.split("/"))
@@ -426,7 +431,7 @@ class _Walk:
         return out
 
     def _no_cycle(self) -> str:
-        """Why no quote was read, told so that a stopped capture and a wrong prefix differ."""
+        """Why no quote was read: what each prefix listed, and how far each instrument's rows go."""
         each = []
         for leg in self.legs:
             newest = max(leg.captured, default=None)
@@ -443,6 +448,21 @@ class _Walk:
 
 def _said(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"
+
+
+def _values(column: pa.ChunkedArray) -> list[Any]:
+    """One column's values, as text where Python cannot hold one, so no row is ever lost.
+
+    marketlake's reader leaves most columns' types alone, and a retyped one can
+    hold a value past any of Python's, such as a time past its last year.
+    """
+    try:
+        return column.to_pylist()
+    except (ValueError, OverflowError, pa.ArrowException):
+        try:
+            return column.cast(pa.string()).to_pylist()
+        except (ValueError, OverflowError, pa.ArrowException):
+            return [f"a {column.type} that cannot be read"] * len(column)
 
 
 def _instant(text: object) -> datetime | None:

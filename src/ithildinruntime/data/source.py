@@ -109,11 +109,13 @@ from ithildinruntime.core import (
     series_of,
     unstated_fields,
 )
+from ithildinruntime.core.names import is_unstated
 from ithildinruntime.core.sessions import SessionTable
 
 from .mirror import MANIFEST, Checked, LakeRoot, Mirror
 from .reference import (
     CAPTURE_SOURCE,
+    QUOTE_SOURCE,
     PriceKinds,
     QuoteKinds,
     SecurityMaster,
@@ -196,8 +198,9 @@ class Reading:
     """One decision's snapshot, and why it halts once stored, if it is the capture that counts.
 
     The rest is the load of the read and how far capture lagged it.
-    `quote_seconds` and `newest_cycle_age` are `None` where the decision read no
-    quote, and the second one where no row was read.
+    `quote_seconds` and `cycle_age` are `None` where the decision read no quote,
+    and the second one where the instruments share no capture. It is the age of the
+    newest capture they share, so one instrument that lags shows in it.
     """
 
     snapshot: Snapshot
@@ -207,7 +210,7 @@ class Reading:
     segments_listed: int
     segments_opened: int
     quote_seconds: float | None
-    newest_cycle_age: timedelta | None
+    cycle_age: timedelta | None
 
 
 @dataclass
@@ -342,7 +345,7 @@ class LakeSource:
                 segments_listed=quoted.listed if quoted else 0,
                 segments_opened=len(snapshot.segments),
                 quote_seconds=quote_seconds,
-                newest_cycle_age=quoted.newest_age if quoted else None,
+                cycle_age=quoted.cycle_age if quoted else None,
             )
         finally:
             root.remove()
@@ -367,11 +370,13 @@ class LakeSource:
             report=report,
         )
         seconds = self._timer.monotonic() - start
-        age = quoted.newest_age
+        age = quoted.cycle_age
         log.info(
-            "data opened %d of %d segments listed, in %.3f seconds, and its newest row was %s",
+            "data opened %d of %d segments listed for the decision at %s, in %.3f seconds, and the "
+            "newest capture its instruments share was %s",
             len(quoted.segments),
             quoted.listed,
+            decision_at.isoformat(),
             seconds,
             "not found" if age is None else f"{age.total_seconds():.3f} seconds old",
         )
@@ -683,16 +688,26 @@ def _quote_halts(
     """Why a snapshot's quotes halt its decision, on the first delivery and on a redelivery.
 
     Each fault of the read comes first, then each instrument whose quote is
-    absent or cannot be read at the decision time.
+    absent or cannot be read at the decision time, then where a kind the quotes
+    need is unstated, which the judge names by instrument alone.
     """
     reasons = list(snapshot.faults)
-    if _session_read(sessions, snapshot.decision_at) is None:
+    session = _session_read(sessions, snapshot.decision_at)
+    if session is None:
         return reasons
     for instrument in instruments:
         try:
             require_quote(snapshot, instrument, snapshot.decision_at)
         except Halt as halt:
             reasons.append(halt.reason)
+    if any(
+        is_unstated(quote.price_kind) or is_unstated(quote.normal_status)
+        for quote in snapshot.quotes.values()
+    ):
+        reasons.append(
+            f"data/quote_kinds.csv states no price kind or no normal status of {QUOTE_SOURCE} on "
+            f"{session.day.isoformat()}"
+        )
     return reasons
 
 

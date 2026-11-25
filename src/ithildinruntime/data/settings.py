@@ -14,10 +14,10 @@ its instruments are the file's own `instruments`, which it does not repeat.
     USO = 2006-04-26
 
     [data.quotes]
-    max_age_seconds = 600
-    max_spread_share = 0.5
+    max_age_seconds = N
+    max_spread_share = X
 
-The quote maxima here are made up. `lookback` is how many sessions of bars each
+`lookback` is how many sessions of bars each
 decision reads, and `stale_lag` how many sessions an instrument's newest bar may
 be behind. `spike_multiple` is how many standard deviations a close may move
 before it is flagged, and `first_sessions` says where the lake's series of each
@@ -25,7 +25,8 @@ instrument starts. A date later than that start halts each decision whose
 lookback it cuts, as `LakeSource._refuse_late` says.
 `max_age_seconds` is how old a quote may be when
 it is read, and `max_spread_share` how far apart its bid and ask may be, as a
-share of their midpoint. Both hold for every instrument the file lists.
+share of their midpoint. Both hold for every instrument the file lists, and
+#133 holds the owner's values of both.
 
 Every key is written, because an absent value never reads as a default (hard
 limit 3). The one table a file may leave out is `[data.quotes]`. A file without

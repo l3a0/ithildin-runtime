@@ -2,7 +2,7 @@
 
 Each segment is one marketlake's own writer wrote, through `lakes.quotes_segment`,
 in a folder laid out as the live prefix is. The fixture day is the session after
-the built lake's last. Every price is made up.
+the built lake's last. Every price, maximum and kind is made up.
 """
 
 from __future__ import annotations

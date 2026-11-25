@@ -28,7 +28,7 @@ flowchart LR
     end
     qt[("quantitative-trading<br/>committed vintages")]
     vendor[("Vendor download<br/>fetches recent sessions once")]
-    lake[("marketlake<br/>captured and imported bars")]
+    lake[("marketlake<br/>bars and quotes")]
     broker["Broker<br/>paper or live account"]
     alerts["Alert channel"]
     heartbeat["Heartbeat service<br/>outside the machine"]
@@ -36,7 +36,7 @@ flowchart LR
 
     qt -->|"marketlake imports them once"| lake
     vendor -->|"marketlake imports it once"| lake
-    lake -->|"bars, through one query"| loop
+    lake -->|"bars and quotes, through marketlake's readers"| loop
     loop -->|"orders"| broker
     broker -->|"answers, fills, positions"| loop
     loop -->|"reports, alarms"| alerts
@@ -153,13 +153,14 @@ sequenceDiagram
 
 The diagram shows one day's read before sealing. Look for the two checks either
 side of the seal, and for monitoring's comparison, which runs after the decision
-has already acted. The read has five parts, and each has a heading below.
+has already acted. The read has six parts, and each has a heading below.
 
 1. [What is read](#what-is-read).
 2. [What is checked before deciding](#what-is-checked-before-deciding).
-3. [Which read a decision uses](#which-read-a-decision-uses).
-4. [What is compared after the seal](#what-is-compared-after-the-seal).
-5. [What this rests on](#what-this-rests-on).
+3. [How a quote is judged](#how-a-quote-is-judged).
+4. [Which read a decision uses](#which-read-a-decision-uses).
+5. [What is compared after the seal](#what-is-compared-after-the-seal).
+6. [What this rests on](#what-this-rests-on).
 
 #### What is read
 
@@ -185,7 +186,9 @@ itself always halts, because nothing is captured by then.
 
 Until [#132](https://github.com/l3a0/ithildin-runtime/issues/132) builds the read
 of a quote from a sealed day, a decision inside its session reads segments
-whenever it runs, so a backtest of one reads them from a folder too. A snapshot's
+whenever it runs, so a backtest of one reads them from a folder too. The cut is
+each row's own landing time, so such a backtest can read a capture that reached
+the bucket after its decision time, and [#132](https://github.com/l3a0/ithildin-runtime/issues/132) holds the lag it should allow. A snapshot's
 `provisional` is true exactly when its decision read segments, an empty listing
 included.
 
@@ -197,7 +200,7 @@ either bucket is called, because a quote read under no maximum is stale.
 The data worker reads an unsealed day through the one reader marketlake
 publishes, in [Read an unsealed day](https://github.com/l3a0/marketlake/blob/2d41793ab92028cf3b746a681394bb3df6db4ee0/README.md#read-an-unsealed-day).
 The reader comes from marketlake's package, a dependency at a pinned commit. The
-read takes five steps, and `data/segments.py` holds them.
+read takes five steps. `data/source.py` holds the first and `data/segments.py` the rest.
 
 1. **The bars are read first**, and a halt in that read ends the decision before
    any quote is read.
@@ -254,10 +257,14 @@ An instrument has none left to open in two cases.
    before the decision by more than its maximum age. The check of a quote refuses
    such a row, and any older one.
 
-Each instrument stops alone. A rule that stopped them all at the first one lost a
-usable capture on 1,796 of 200,000 seeded days, and this one on none. A day with
-no common capture opens 20 segments for two instruments whose capture is live. An
-instrument whose capture wrote only gap markers is opened to its listing's end.
+Each instrument stops alone, because a rule that stopped them all at the first one
+can lose a capture they share. How far the read goes back grows with the maximum
+age. At a made-up maximum of 90 seconds, a day with no common capture opens 20
+segments for two instruments whose capture is live. An instrument whose capture
+wrote only gap markers is opened to its listing's end, which is 370 segments at
+15:40, and nothing here bounds the time that takes.
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s deadline on the stage
+does.
 
 ##### Why no decision waits for a listing to fill
 
@@ -277,7 +284,7 @@ the segments opened it is not seen.
 ##### What the read does with each answer
 
 A fault in the read of the quotes never takes the snapshot's place, and nothing
-in that read raises. Each fault becomes a reason in the snapshot's `faults`, and
+in that read raises for what the bucket, marketlake's reader or a row holds. Each fault becomes a reason in the snapshot's `faults`, and
 the snapshot is stored before the halt with the bars, each segment opened and
 every row marketlake's reader returned. A fault ends the read once every
 instrument's turn in that round of five is done, so one instrument's refusal
@@ -287,20 +294,39 @@ loses none of another's rows.
 
 | Answer | What happens | Ended by |
 | --- | --- | --- |
-| A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it, and both hashes where there are two | The next decision |
-| A listed key the bucket does not hold | A halt naming the key | The next decision |
+| A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it and what each try met, with both hashes where there are two. The first try's reason is logged whichever way the second goes | The next decision |
+| A listed key the bucket does not hold, or one no bucket call takes | A halt naming the key | The next decision, or a person who removes a key that does not belong under the prefix |
 | A segment with no version or no stored SHA-256 | A halt naming it | The next decision, or marketlake's upload |
 | A listing with no answer, twice | A halt naming the prefix and the answer | The next decision, or the grant |
 | A row of a schema version the pinned marketlake does not read | A halt naming the segment, the versions, and that the marketlake pin is raised | A release |
 | Any other refusal by marketlake's reader, or an error opening a segment | A halt naming the segment, or the ticker and day | The next decision, or marketlake's release of a day it withholds |
+| A row whose `fetch_end_ts` is past any date | A halt naming the ticker, the day and the stamp | The next decision |
+| A segment that cannot be written into the decision's lake root, such as on a full disk | A halt naming the segment | The machine's operator |
 | A published column of another type than marketlake publishes. One that is absent reads as null | A halt naming it | A release |
 | No security master row for the day, or two rows of `data/quote_kinds.csv` for it | A halt naming the instrument or the source | A release |
-| No segment listed, no row by the decision, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, and each instrument's newest capture, so a capture that stopped, an upload that stopped and a wrong prefix read apart | The next decision |
+| No segment listed, no row by the decision, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, and each instrument's newest capture | The next decision, or the configuration where the prefix is wrong |
 | Two rows of one instrument at the capture taken | A halt naming the instrument | The next decision |
 
-Such a halt ends its own decision, as a missing bar does. Which halts hold an
-account until a person clears them is the rule that a quote failing its check
-holds it ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)).
+Data's stage ends its own decision on each of these. [A fill is measured from the
+decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
+says which halts hold an account until a person clears them, and
+[#155](https://github.com/l3a0/ithildin-runtime/issues/155) builds that hold and
+says which of these answers take it.
+
+**Table:** What a stored reason says of each way the quotes can be missing
+
+| What happened | What the reason shows |
+| --- | --- |
+| A grant is missing | The answer S3 gave, a 403, with the prefix or the key |
+| Capture or the upload stopped partway through the day for every instrument | Every quote refused on its age, with a capture time as old as the stamp |
+| Schwab's stamp froze while capture went on | A quote refused on its age, with a capture time under a minute old |
+| Capture or the upload stopped for one instrument | No capture every instrument has, with the newest capture of each |
+| Capture never started, the upload never ran, or the configured prefix is wrong | No segment listed under one or every prefix |
+
+Two pairs read alike, because the bucket holds the same objects. A capture that
+stopped and an upload that stopped differ only in what marketlake's own capture
+host reports. A prefix that is wrong and a day that has not started differ only in
+the configuration.
 
 #### What is checked before deciding
 
@@ -366,10 +392,19 @@ clock and pass the decision time, so they answer alike in a backtest and live. T
 risk gate passes its own `now`, so a quote that was good at the decision and has
 aged past its maximum when its order is checked halts that order.
 
-Past the decision plus the maximum, or with a wide quote, every order through the
-gate halts, one that only reduces included.
+An order has the maximum less the quote's age at the decision and less the clock
+bound. At a made-up maximum of 90 seconds, a quote 59 seconds old at the decision
+halts every order from 30 seconds after it, so a written maximum has to hold the
+order path's seconds too. Any other fault halts them at once. One that only reduces
+is no exception.
 [What halts every order on a quote](../halts-and-drills.md#what-halts-every-order-on-a-quote)
-says what closes a position then.
+says what a person can do then.
+
+A plan's orders are checked one at a time, so one leg can pass while its partner, a
+second later, halts on its age. So where the snapshot holds a quote of an instrument
+the plan orders, every such quote passes `core.require_quote`, with a written margin
+past the send stage's `now`, before the plan's first order goes out.
+[#155](https://github.com/l3a0/ithildin-runtime/issues/155) holds how.
 
 ##### Why a wide quote is a fault
 
@@ -381,9 +416,11 @@ it.
 
 ##### What is recorded and not judged
 
-Venue coverage, volume counting, the last sale, its kind and its stamp, and the
-time the request went out are recorded and halt nothing, because nothing reads
-them to decide. Unstated coverage is shown on the report.
+Venue coverage, volume counting, each side's size, the last sale, its kind and its
+stamp, and the time the request went out are recorded and halt nothing, because
+nothing reads them to decide. A side with no size therefore passes where its price,
+stamp and status do, and [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s
+measurement can count how often that happens. Unstated coverage is shown on the report.
 
 #### Which read a decision uses
 

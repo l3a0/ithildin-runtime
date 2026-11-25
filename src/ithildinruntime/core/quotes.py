@@ -183,7 +183,8 @@ class _Judge:
             self.faults.append(
                 f"its {name} has the stamp {raw}, at {older.isoformat()}, which is "
                 f"{_seconds(aged - _BOUND)} seconds old at {now.isoformat()}, and with the clock "
-                f"bound of {_seconds(_BOUND)} past the written maximum of {age}"
+                f"bound of {_seconds(_BOUND)} past the written maximum of {age}, and it was "
+                f"captured at {self._shown(quote.captured_at)}"
             )
 
     def _captured(self, captured: datetime | None) -> None:

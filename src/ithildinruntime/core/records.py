@@ -216,7 +216,7 @@ class Bar(_Record):
 class SpikeFlag(_Record):
     """A price the data module flags as wrong, beside the price it was judged against.
 
-    The price stays in its bar as received. `rule` names the check that
+    The price stays in its bar or its quote as received. `rule` names the check that
     flagged it, and `note` says what the check could not weigh, such as a
     volume the source never stated.
     """

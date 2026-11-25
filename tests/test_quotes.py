@@ -277,7 +277,7 @@ def test_the_age_is_the_older_sides_with_the_clock_bound_added(
     said = (
         f"its {older} has the stamp '{MILLIS}', at {at.isoformat()}, which is 89.000001 seconds "
         "old at 2026-11-03T20:40:00+00:00, and with the clock bound of 1 past the written "
-        "maximum of 90"
+        f"maximum of 90, and it was captured at {CAPTURE.isoformat()}"
     )
     assert faults(**changed) == (() if fine else (said,))
 
@@ -411,6 +411,24 @@ def test_require_quote_gives_the_quote_or_every_reason_it_cannot_be_read() -> No
     )
 
 
+def test_a_read_before_the_decision_halts_through_the_mark_and_require_quote() -> None:
+    made = quoted(BOTH)
+    for read in (
+        lambda: require_quote(made, GLD, DECISION - TICK),
+        lambda: mark(made, GLD, PRIOR, DECISION - TICK),
+    ):
+        with pytest.raises(Halt, match="now is 2026-11-03T20:39:59.999999"):
+            read()
+
+
+def test_a_quote_captured_after_the_decision_halts_at_a_later_now() -> None:
+    late = DECISION + timedelta(seconds=5)
+    after = replace(GOOD, captured_at=late)
+    for now in (late, late + timedelta(seconds=1)):
+        with pytest.raises(Halt, match="it was captured at 2026-11-03T20:40:05"):
+            require_quote(quoted({GLD: after}), GLD, now)
+
+
 def test_5_the_mark_is_the_midpoint_where_the_snapshot_holds_a_quote() -> None:
     made = quoted(BOTH)
     assert made.bars[GLD]["1d"][-1].session == PRIOR
@@ -436,6 +454,29 @@ def test_5_a_quote_of_the_session_it_is_compared_with_is_no_mark() -> None:
     for after in (TODAY, date(2026, 11, 4)):
         with pytest.raises(Halt, match="GLD has no mark: its quote is for 2026-11-03, not later"):
             mark(quoted(BOTH), GLD, after, DECISION)
+
+
+CLOSED = TABLE.session(PRIOR).close
+
+
+@pytest.mark.parametrize("older", ["bid", "ask"])
+@pytest.mark.parametrize(("step", "marks"), [(-TICK, False), (timedelta(0), False), (TICK, True)])
+def test_5_a_quote_stamped_at_or_before_the_close_v_was_valued_at_is_no_mark(
+    older: str, step: timedelta, marks: bool
+) -> None:
+    """Captured today and within a maximum age longer than the night, it would read no loss."""
+    old = replace(GOOD, **{f"{older}_at": CLOSED + step}, max_age=86_400)
+    made = quoted({**BOTH, GLD: old})
+    assert quote_faults(old, DECISION, DECISION) == ()
+    if marks:
+        assert mark(made, GLD, PRIOR, DECISION) == d("100.25")
+        return
+    with pytest.raises(Halt) as halted:
+        mark(made, GLD, PRIOR, DECISION)
+    assert halted.value.reason == (
+        f"GLD has no mark: its quote's older stamp is {(CLOSED + step).isoformat()}, not later "
+        f"than the close of 2026-11-02 at {CLOSED.isoformat()}"
+    )
 
 
 def test_5_the_mark_judges_the_quote_at_the_now_it_is_handed() -> None:

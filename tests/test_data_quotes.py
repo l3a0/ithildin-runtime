@@ -9,15 +9,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pyarrow as pa
 import pytest
+from lake import journal
 
 from ithildinruntime.adapters import FolderBucket, FolderStore, HistoryClock
 from ithildinruntime.core import (
     BlobHeader,
+    BlobMissing,
     Halt,
     Mode,
     OutputFile,
@@ -38,7 +41,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.data import DataStage, LakeSource, Mirror, QuoteLimits, differences, spikes
 from ithildinruntime.data.reference import QUOTE_KINDS, QuoteKinds, load_quote_kinds
-from ithildinruntime.data.source import judge
+from ithildinruntime.data.source import _session_read, judge
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support.segments import (
@@ -55,6 +58,7 @@ from tests.support.segments import (
     Live,
     capture,
     flipped,
+    gap,
     key_of,
     landed,
 )
@@ -208,10 +212,15 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
     assert snap.quotes_read_at == AT
     assert load_quote_kinds().rows == ()
     assert result.halt is not None
-    assert result.halt.reason == "; ".join(
-        f"{i}'s quote cannot be read: its status is 'Normal', and the stated normal one is "
-        f"'unstated'; {i}'s quote is of unstated price kind"
-        for i in (GLD, USO)
+    assert (
+        result.halt.reason
+        == "; ".join(
+            f"{i}'s quote cannot be read: its status is 'Normal', and the stated normal one is "
+            f"'unstated'; {i}'s quote is of unstated price kind"
+            for i in (GLD, USO)
+        )
+        + "; data/quote_kinds.csv states no price kind or no normal status of marketlake:quotes "
+        f"on {DAY}"
     )
     assert QUOTE_KINDS.read_text().splitlines()[-1].startswith("added,source,")
 
@@ -242,7 +251,7 @@ def test_5_a_decision_reads_quotes_exactly_inside_its_session(
     if not reads:
         assert snap.quotes == snap.rows == {} and snap.segments == snap.faults == ()
         assert (reading.segments_listed, reading.segments_opened) == (0, 0)
-        assert (reading.quote_seconds, reading.newest_cycle_age) == (None, None)
+        assert (reading.quote_seconds, reading.cycle_age) == (None, None)
         assert not any("quote" in reason for reason in reading.halts)
 
 
@@ -341,6 +350,108 @@ def test_8_a_fault_halts_beside_a_stored_snapshot_that_keeps_what_was_read(
         source(lake, tmp_path, live=bucket).snapshot(AT)
 
 
+def _no_listing(bucket: Live, live: Path) -> str:
+    for back in (1, 2):
+        (live / key_of("USO", back)).unlink()
+    return "USO has 0 segments under "
+
+
+def _one_leg_stopped(bucket: Live, live: Path) -> str:
+    for back in (1, 2):
+        (live / key_of("USO", back)).unlink()
+        capture(live, "USO", back + 200)
+    return "no capture by "
+
+
+def _all_gaps(bucket: Live, live: Path) -> str:
+    for back in (1, 2):
+        (live / key_of("USO", back)).unlink()
+        gap(live, "USO", back)
+    return "and no row read"
+
+
+def _refused_listing(bucket: Live, live: Path) -> str:
+    prefix = key_of("USO", 1).rpartition("/")[0] + "/"
+    bucket.plant[prefix] = [StoreUnavailable(prefix, "403 AccessDenied: no")] * 2
+    return "could not be listed: StoreUnavailable"
+
+
+def _no_answer(bucket: Live, live: Path) -> str:
+    bucket.plant[key_of("USO", 1)] = [StoreUnavailable(key_of("USO", 1), "no answer")] * 2
+    return "failed twice"
+
+
+def _gone(bucket: Live, live: Path) -> str:
+    bucket.plant[key_of("USO", 1)] = [BlobMissing(key_of("USO", 1), "404 NoSuchKey")]
+    return "is listed and the bucket holds none"
+
+
+def _bare(bucket: Live, live: Path) -> str:
+    bucket.plant[key_of("USO", 1)] = [lambda got: replace(got, sha256=None)]
+    return "has no stored SHA-256 in the bucket"
+
+
+def _torn(bucket: Live, live: Path) -> str:
+    path = live / key_of("USO", 1)
+    path.write_bytes(path.read_bytes()[:-8])
+    return "was refused by marketlake's reader"
+
+
+def _newer_version(bucket: Live, live: Path) -> str:
+    capture(live, "USO", 1, schema_version=journal.SCHEMA_VERSION + 1)
+    return "so the marketlake pin is raised"
+
+
+def _retyped(bucket: Live, live: Path) -> str:
+    schema = journal.schema_for(journal.QUOTES_SURFACE)
+    place = schema.get_field_index("bid_size")
+    for back in (1, 2):
+        capture(live, "USO", back, schema=schema.set(place, pa.field("bid_size", pa.int32())))
+    return "has bid_size as int32"
+
+
+def _twice(bucket: Live, live: Path) -> str:
+    capture(live, "USO", 3, fetch_end_ts=landed(1).isoformat())
+    return "USO has 2 rows captured at "
+
+
+ANSWERS = (
+    _no_listing,
+    _one_leg_stopped,
+    _all_gaps,
+    _refused_listing,
+    _no_answer,
+    _gone,
+    _bare,
+    _torn,
+    _newer_version,
+    _retyped,
+    _twice,
+)
+
+
+@pytest.mark.parametrize("answer", ANSWERS, ids=lambda a: a.__name__.strip("_"))
+def test_8_each_answer_stores_the_snapshot_and_then_halts(
+    lake: Path, live: Path, tmp_path: Path, answer
+) -> None:
+    """The drill of each alarm on the read: the stored record, then the decision's halt."""
+    bucket = Live(live)
+    said = answer(bucket, live)
+    made, _ = stage(lake, tmp_path, live=bucket)
+    result = made(Item(AT, "data"), Reports())
+    snap = stored(tmp_path)
+    (fault,) = snap.faults
+    assert said in fault
+    assert result.halt is not None and result.halt.cause == result.outputs[0]
+    assert result.halt.reason == "; ".join(
+        [fault, "GLD has no quote in the snapshot", "USO has no quote in the snapshot"]
+    )
+    assert snap.provisional is True and snap.quotes == {}
+    assert len(snap.bars[GLD]["1d"]) == 40
+    opened = bool(bucket.reads)
+    assert (GLD in snap.rows) is opened
+
+
 def test_8_a_quote_the_judge_refuses_halts_beside_every_row(
     lake: Path, live: Path, tmp_path: Path
 ) -> None:
@@ -409,11 +520,11 @@ def test_33_a_reading_and_the_log_carry_the_load_and_the_lag(
         reading = made.read(AT)
     assert (reading.segments_listed, reading.segments_opened) == (16, 10)
     assert reading.quote_seconds == 1.5
-    assert reading.newest_cycle_age == timedelta(seconds=59)
+    assert reading.cycle_age == timedelta(seconds=59)
     (line,) = [r.getMessage() for r in caplog.records if "segments" in r.getMessage()]
     assert line == (
-        "data opened 10 of 16 segments listed, in 1.500 seconds, and its newest row was 59.000 "
-        "seconds old"
+        f"data opened 10 of 16 segments listed for the decision at {AT.isoformat()}, in 1.500 "
+        "seconds, and the newest capture its instruments share was 59.000 seconds old"
     )
 
 
@@ -441,6 +552,27 @@ def test_8_a_spiked_midpoint_is_flagged_beside_its_unchanged_price_and_halts_not
     # A redelivery judges the stored flag by its rule, and halts nothing either.
     again = made(Item(AT, "data"), Reports())
     assert again.outputs[1].key == key(2) and again.halt is None
+
+
+def test_30_a_quotes_flag_stands_beside_its_bars_flags(
+    lake: Path, live: Path, tmp_path: Path
+) -> None:
+    from tests.support import lake as lakes
+
+    lakes.with_row(lake, "GLD", LAST, close=150.0)
+    capture(live, "GLD", 1, bid=1600.0, ask=1600.5)
+    reading = source(lake, tmp_path, spike_multiple=Decimal(10)).read(AT)
+    assert [(f.session, f.field, f.rule) for f in reading.snapshot.flags[GLD]] == [
+        (LAST, "close", spikes.BELOW_LOW),
+        (DAY, "midpoint", spikes.MOVE),
+    ]
+
+
+def test_5_a_half_day_reads_quotes_until_its_own_close() -> None:
+    half = TABLE.session(date(2026, 11, 27))
+    assert half.close - half.open < SESSION.close - SESSION.open
+    assert _session_read(TABLE, half.close - MINUTE) == half
+    assert _session_read(TABLE, half.close) is None
 
 
 def test_8_a_quote_whose_prices_contradict_each_other_is_flagged_and_halts(
@@ -581,11 +713,28 @@ def test_31_what_a_later_listing_does_and_does_not_explain(
     # No segment was added, or something else moved too, or one both name changed.
     assert two(snap, replace(snap, rows=rows)) == "These differ: rows"
     assert two(snap, replace(more, faults=("a reason",))) == "These differ: segments, faults"
+    quotes = {i: replace(q, bid=q.bid - 1) for i, q in snap.quotes.items()}
+    assert two(snap, replace(more, quotes=quotes)) == "These differ: quotes, segments"
+    flags = {GLD: tuple(spikes.quote_contradictions(replace(quotes[GLD], bid=Decimal(0)), DAY))}
+    assert two(snap, replace(more, flags=flags)) == "These differ: flags, segments"
     assert two(snap, more, release="r2") == "These differ: the release, segments"
     first, *rest = snap.segments
     for change in ({"version": "v9"}, {"sha256": "1" * 64}):
         moved = replace(snap, segments=(replace(first, **change), *rest, added))
         assert two(snap, moved) == "These differ: segments"
+    # A longer listing moves the newest five on, which drops the oldest, and nothing else does.
+    gld = [s for s in snap.segments if "ticker=GLD/" in s.key]
+    uso = [s for s in snap.segments if "ticker=USO/" in s.key]
+    newer = [replace(s, key=s.key.replace("seg-", "seg-9")) for s in (gld[-1], uso[-1])]
+    moved = replace(snap, segments=(*gld[1:], newer[0], *uso[1:], newer[1]))
+    assert explained in two(snap, moved)
+    for gone in (
+        (gld[0], *uso, newer[1]),
+        (gld[0], newer[0], *uso, newer[1]),
+        (*gld, *uso[:1]),
+        (*uso, newer[1]),
+    ):
+        assert two(snap, replace(snap, segments=gone)) == "These differ: segments"
     later = replace(snap, quotes_read_at=snap.quotes_read_at + MINUTE)
     assert two(snap, later) == "Only the read time differs, as on a redelivery after a crash"
 
@@ -608,7 +757,7 @@ def test_31_a_first_capture_of_the_format_before_halts_as_no_snapshot_the_codec_
     result = made(Item(AT, "data"), Reports())
     assert result.halt is not None
     assert result.halt.reason.startswith(f"{key()} counts and is no snapshot the codec reads: ")
-    assert "faults" in result.halt.reason or "field" in result.halt.reason
+    assert "'faults'" in result.halt.reason and "'rows'" in result.halt.reason
 
 
 # 21. What is recorded and not judged.
@@ -625,7 +774,8 @@ def test_21_unstated_venues_and_volume_counting_halt_nothing(
     assert reading.snapshot.quotes[GLD].venues == "unstated"
     for field in ("price_kind", "normal_status"):
         loud = QuoteKinds((replace(row, kind=replace(row.kind, **{field: "unstated"})),))
-        assert len(source(lake, tmp_path, quote_kinds=loud).read(AT).halts) == 2
+        halts = source(lake, tmp_path, quote_kinds=loud).read(AT).halts
+        assert len(halts) == 3 and "data/quote_kinds.csv states no price kind" in halts[2]
 
 
 def test_28_a_lapsed_last_session_halts_every_decision_inside_a_session(
@@ -634,7 +784,8 @@ def test_28_a_lapsed_last_session_halts_every_decision_inside_a_session(
     (row,) = KINDS.rows
     lapsed = QuoteKinds((replace(row, first_session=LAST, last_session=LAST),))
     halts = source(lake, tmp_path, quote_kinds=lapsed).read(AT).halts
-    assert len(halts) == 2 and all("unstated price kind" in h for h in halts)
+    assert len(halts) == 3 and all("unstated price kind" in h for h in halts[:2])
+    assert halts[2].endswith(f"of marketlake:quotes on {DAY}")
 
 
 def test_29_each_instruments_quote_carries_its_own_maxima(

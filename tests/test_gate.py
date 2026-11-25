@@ -1455,14 +1455,33 @@ def test_4_a_spread_past_its_written_share_halts(ask: str, halts: bool) -> None:
 
 
 def test_4_a_wide_quote_halts_rather_than_hide_a_loss_past_the_stop() -> None:
-    """Short 10 at 60, a market that went to 60 by 140 in place of 60 by 60.1."""
-    short = book({CHAN: {GLD: -10}}, cash=1600)
-    narrow = World(book=short, snapshot=legs(gld=(60, "60.1")), intent=order(-1))
+    """Long 5, in a market that fell to 60 by 60.1 and is shown as 60 by 140."""
+    long = book({CHAN: {GLD: 5}}, cash=500)
+    narrow = World(book=long, snapshot=legs(gld=(60, "60.1")), intent=order(1))
     narrow = narrow.held_to(loss_stop=d(100)).given(valuation=valuation("1000"))
-    assert narrow.loss().loss == d("0.5")
+    assert narrow.loss().loss == d("199.75")
+    assert narrow.check().limit is Limit.LOSS_STOP
     wide = narrow.at(snapshot=legs(gld=(60, 140)))
-    with pytest.raises(Halt, match="further apart"):
-        wide.check()
+    for read in (wide.check, wide.loss):
+        with pytest.raises(Halt, match="further apart"):
+            read()
+    # With no bound on the spread the midpoint of 100 reads no loss, and the order goes out.
+    blind = narrow.at(snapshot=legs(gld=(60, 140), max_spread_share=d("0.999")))
+    assert blind.loss().loss == 0 and blind.check().approved
+
+
+@pytest.mark.parametrize("name", ORDERS)
+def test_4_a_quote_captured_after_the_decision_halts_however_late_the_gate_reads_it(
+    name: str,
+) -> None:
+    """The judge is handed the decision time beside `now`, and not `now` for both."""
+    after = DECISION + timedelta(seconds=5)
+    made = quoted({GLD: (100, 100), USO: (10, 10)}, bid_at=after, ask_at=after, captured_at=after)
+    world = World(book=book({CHAN: {GLD: 10}}), snapshot=made, intent=ORDERS[name])
+    late = world.at(now=DECISION + timedelta(seconds=10))
+    for read in (late.check, late.loss):
+        with pytest.raises(Halt, match="it was captured at 2026-11-03T20:40:05"):
+            read()
 
 
 def test_4_from_flat_one_aged_leg_halts_its_own_order_and_not_its_partners() -> None:
@@ -1486,6 +1505,6 @@ def test_7_a_price_wrong_by_100_times_on_both_sides_is_refused_on_a_share_cap(
     verdict = world.check()
     assert (verdict.approved, verdict.adding, verdict.limit) == (False, True, Limit.MAX_POSITION)
     assert world.at(intent=order(5)).check().approved
-    one_side = legs(gld=(100, 100 * max(factor, 1 / factor)))
-    with pytest.raises(Halt, match="further apart"):
+    one_side = legs(gld=(100, 100 * factor))
+    with pytest.raises(Halt, match="further apart|below its bid"):
         world.at(snapshot=one_side).check()

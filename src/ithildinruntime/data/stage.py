@@ -25,9 +25,10 @@ things, in order.
    quote, segment, row, fault or provisional mark, or says that a capture holds
    other than one snapshot, that the first capture is no snapshot the codec
    reads, or that only the read time differs, as on a redelivery after a crash.
-   Where only the segments and their rows differ, and every segment both
-   captures name kept its version and SHA-256, it says a later listing adds
-   them. It names no cause beyond that, because the same difference can come
+   Where only the segments and their rows differ, the later capture names one
+   the first lacks, every segment both name kept its version and SHA-256, and
+   each one only the first names is older than all the later one opened, it says
+   a later listing adds them. It names no cause beyond that, because the same difference can come
    from a restatement by marketlake, a nightly upload or a redeploy.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
@@ -264,12 +265,21 @@ def differences(first: bytes, later: bytes) -> str:
 
 
 def _added_by_a_listing(a: Snapshot, b: Snapshot, differ: Sequence[str]) -> bool:
-    """Whether a later listing of the same segments explains what differs, and nothing else does."""
-    if "segments" not in differ or not set(differ) <= {"segments", "rows"}:
+    """Whether a later listing of the same segments explains what differs, and nothing else does.
+
+    A longer listing moves the newest five on, so it can drop the oldest the
+    first capture opened. One dropped from any other place is gone from the bucket.
+    """
+    if not set(differ) <= {"segments", "rows"}:
         return False
     one = {segment.key: segment for segment in a.segments}
     two = {segment.key: segment for segment in b.segments}
-    return all(one[key] == two[key] for key in one.keys() & two.keys())
+    if not two.keys() - one.keys() or any(one[k] != two[k] for k in one.keys() & two.keys()):
+        return False
+    opened: dict[str, str] = {}
+    for key in sorted(two):
+        opened.setdefault(key.rpartition("/")[0], key)
+    return all(key < opened.get(key.rpartition("/")[0], "") for key in one.keys() - two.keys())
 
 
 def _without_read_time(bars: object) -> object:

@@ -7,6 +7,7 @@ each call to the bucket and to that reader.
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -133,6 +134,8 @@ class Reader:
             assert made.listed == sum(len(self.live.bucket.list(p)) for p in self.live.lists[-2:])
         # Every segment opened is named by its version and stored SHA-256, in key order.
         assert [s.key for s in made.segments] == sorted(s.key for s in made.segments)
+        if not made.faults or made.faults[0].startswith("no capture by"):
+            assert {s.key for s in made.segments} == set(self.live.keys)
         for segment in made.segments:
             held = self.live.bucket.read(segment.key)
             assert segment == Segment(segment.key, held.version, held.sha256)
@@ -169,7 +172,7 @@ def test_1_one_cycle_gives_one_quote_of_each_from_its_own_row(reader: Reader) ->
     assert reader.live.lists == [PREFIX[GLD], PREFIX[USO]]
     assert counts(reader) == {"GLD": 1, "USO": 1}
     assert len(reader.door) == 2
-    assert read.newest_age == AT - landed(1) == timedelta(seconds=59)
+    assert read.cycle_age == AT - landed(1) == timedelta(seconds=59)
     assert read.listed == 2
     assert read.rows == {}
 
@@ -207,7 +210,7 @@ def test_1_an_instrument_that_lists_nothing_opens_nothing(
         f"{said['GLD']} {PREFIX[GLD]}, 0 of them opened, and no row read; "
         f"{said['USO']} {PREFIX[USO]}, 0 of them opened, and no row read",
     )
-    assert read.newest_age is None
+    assert read.cycle_age is None
     assert reader.live.lists == [PREFIX[GLD], PREFIX[USO]]
 
 
@@ -246,12 +249,12 @@ def test_1_an_older_cycle_both_legs_have_is_taken_over_a_newer_one_only_one_has(
     reader.capture("USO", [2, 3])
     read = reader.read()
     assert captured(read) == landed(2)
-    # The newer row GLD alone has is kept, and it dates the newest row read.
+    # The newer row GLD alone has is kept, and the age is the capture's that both have.
     assert [r["fetch_end_ts"] for r in read.rows[GLD]] == [
         landed(3).isoformat(),
         landed(1).isoformat(),
     ]
-    assert read.newest_age == AT - landed(1)
+    assert read.cycle_age == AT - landed(2)
 
 
 def no_cycle(reader: Reader, read: QuoteRead) -> str:
@@ -303,6 +306,8 @@ def test_1_one_leg_that_stopped_is_left_and_the_other_goes_on(reader: Reader) ->
     reader.capture("USO", range(200, 230))
     read = reader.read()
     reason = no_cycle(reader, read)
+    # GLD's newest row is fresh, and the age that says how far capture lags is not its own.
+    assert read.cycle_age is None
     assert counts(reader) == {"GLD": 10, "USO": 5}
     assert f"its newest row captured at {landed(200).isoformat()}" in reason
 
@@ -329,7 +334,7 @@ def test_1_a_leg_whose_capture_wrote_only_gaps_is_opened_to_its_listings_end(
     assert counts(reader) == {"GLD": 10, "USO": 12}
     assert "12 of them opened, and no row read" in reason
     assert set(read.rows) == {GLD}
-    assert read.newest_age == AT - landed(1)
+    assert read.cycle_age is None
 
 
 def test_1_gap_only_newest_segments_are_passed_over(reader: Reader) -> None:
@@ -357,21 +362,28 @@ def test_1_a_cycle_run_by_hand_and_late_is_seen_only_inside_the_segments_opened(
     assert counts(reader) == {"GLD": 5, "USO": 5}
 
 
+@pytest.mark.parametrize("ticker", ["GLD", "USO"])
 @pytest.mark.parametrize("apart", [True, False], ids=["two segments", "one segment"])
-def test_1_two_rows_of_one_instrument_at_the_cycle_are_a_fault(reader: Reader, apart: bool) -> None:
+def test_1_two_rows_of_one_instrument_at_the_cycle_are_a_fault(
+    reader: Reader, apart: bool, ticker: str
+) -> None:
     reader.both([1, 2])
+    minute = AT - MINUTE
     if apart:
-        reader.capture("USO", [3], fetch_end_ts=landed(1).isoformat())
+        reader.capture(ticker, [3], fetch_end_ts=landed(1).isoformat())
     else:
-        minute = AT - MINUTE
-        row = lakes.quote_row("USO", minute)
-        lakes.quotes_segment(reader.live_root, "USO", minute + SECOND, row)
+        (reader.live_root / key_of(ticker, 1)).unlink()
+        row = lakes.quote_row(ticker, minute)
+        lakes.quotes_segment(reader.live_root, ticker, minute, row, row)
     read = reader.read()
     assert read.quotes == {}
     assert read.faults == (
-        f"USO has 2 rows captured at {landed(1).isoformat()}, under {PREFIX[USO]}",
+        f"{ticker} has 2 rows captured at {landed(1).isoformat()}, under "
+        f"{PREFIX[GLD if ticker == 'GLD' else USO]}",
     )
-    assert {i: len(rows) for i, rows in read.rows.items()} == {GLD: 2, USO: 3}
+    assert {str(i): len(rows) for i, rows in read.rows.items()} == {"GLD": 2, "USO": 2} | {
+        ticker: 3
+    }
 
 
 @pytest.mark.parametrize("after", [timedelta(microseconds=1), 30 * SECOND])
@@ -382,7 +394,7 @@ def test_1_a_row_landed_after_the_decision_is_never_read(reader: Reader, after: 
     read = reader.read()
     assert captured(read) == landed(1)
     assert read.rows == {}
-    assert read.newest_age == AT - landed(1)
+    assert read.cycle_age == AT - landed(1)
 
 
 def test_1_a_row_landed_at_the_decision_is_read(reader: Reader) -> None:
@@ -408,6 +420,16 @@ def test_1_spy_never_reads_spygs_segments(reader: Reader) -> None:
     assert read.quotes[SPY].captured_at == landed(2)
     assert reader.live.lists == [PREFIX[SPY]]
     assert len(reader.live.reads) == 1
+
+
+def test_1_an_instrument_is_read_under_its_ticker_and_filed_under_its_id(reader: Reader) -> None:
+    reader.capture("GLD", [1])
+    row = MasterRow(DAY, SPY, "GLD", DAY, None)
+    read = reader.read({SPY: LIMITS[GLD]}, master=SecurityMaster((row,)))
+    assert read.faults == () and list(read.quotes) == [SPY]
+    assert read.quotes[SPY].instrument == SPY
+    assert read.quotes[SPY].received["ticker"] == "GLD"
+    assert reader.live.lists == [PREFIX[GLD]]
 
 
 def test_1_a_decision_read_ten_minutes_late_reads_what_it_would_have(reader: Reader) -> None:
@@ -492,12 +514,37 @@ def test_2_a_byte_changed_in_both_downloads_is_a_fault_naming_both_digests(
     held = reader.live.bucket.read(key)
     assert read.quotes == {}
     assert read.faults == (
-        f"{key} failed twice, and the second time it hashed to {digest(flipped(held).data)}, "
-        f"where the bucket stored {held.sha256}",
+        f"{key} failed twice. First it hashed to {digest(flipped(held).data)}, where the bucket "
+        f"stored {held.sha256}, and then it hashed to {digest(flipped(held).data)}, where the "
+        f"bucket stored {held.sha256}",
     )
     # GLD's rows are kept, and no row of USO's batch was returned.
     assert kept(read) == {"GLD": 2}
     assert counts(reader) == {"GLD": 2, "USO": 3}
+
+
+def test_2_a_second_download_is_checked_against_the_first_answers_digest(
+    reader: Reader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Another object under the same key, beside its own digest, is not the one first named."""
+    reader.both([1])
+    key = key_of("USO", 1)
+    held = reader.live.bucket.read(key)
+    other = (reader.live_root / key_of("GLD", 1)).read_bytes()
+    reader.live.plant[key] = [
+        flipped,
+        lambda got: replace(got, data=other, sha256=digest(other), version="v9"),
+    ]
+    with caplog.at_level(logging.WARNING):
+        (reason,) = reader.read().faults
+    assert reason == (
+        f"{key} failed twice. First it hashed to {digest(flipped(held).data)}, where the bucket "
+        f"stored {held.sha256}, and then it hashed to {digest(other)}, where the bucket stored "
+        f"{held.sha256}"
+    )
+    # The first failure is on the log even where a second download passes.
+    (line,) = [r.getMessage() for r in caplog.records]
+    assert line.startswith(f"data downloads {key} once more, because it hashed to ")
 
 
 def test_2_a_second_damaged_segment_gets_a_second_download_of_its_own(reader: Reader) -> None:
@@ -532,10 +579,8 @@ def test_2_a_second_failed_download_is_a_fault_naming_the_segment(
     error = ANSWERS[answer](key)
     reader.live.plant[key] = [error, error]
     read = reader.read()
-    assert read.faults == (
-        f"{key} failed twice, and the second time it could not be downloaded: "
-        f"{type(error).__name__}: {error}",
-    )
+    said = f"could not be downloaded: {type(error).__name__}: {error}"
+    assert read.faults == (f"{key} failed twice. First it {said}, and then it {said}",)
     assert kept(read) == {"USO": 1}
     assert [s.key for s in read.segments] == [key_of("USO", 1)]
 
@@ -546,13 +591,15 @@ def test_2_a_segment_that_fails_two_ways_has_failed_twice(reader: Reader) -> Non
     reader.live.plant[key] = [StoreUnavailable(key, "no answer"), flipped]
     read = reader.read()
     (reason,) = read.faults
-    assert reason.startswith(f"{key} failed twice, and the second time it hashed to ")
+    assert reason.startswith(f"{key} failed twice. First it could not be downloaded: Store")
+    assert ", and then it hashed to " in reason
     reader.live.reads.clear()
     reader.live.events.clear()
     reader.live.lists.clear()
     reader.live.plant[key] = [flipped, StoreUnavailable(key, "no answer")]
     (reason,) = reader.read().faults
-    assert reason.startswith(f"{key} failed twice, and the second time it could not be downloaded")
+    assert reason.startswith(f"{key} failed twice. First it hashed to ")
+    assert ", and then it could not be downloaded: StoreUnavailable" in reason
 
 
 def test_2_a_segment_that_left_the_root_is_downloaded_once_more(
@@ -579,10 +626,11 @@ def test_2_a_segment_that_left_the_root_is_downloaded_once_more(
         seen.clear()
     monkeypatch.setattr(segments, "load_unsealed_quotes", gone(2))
     (reason,) = reader.read().faults
-    assert reason == (
-        f"{key} failed twice, and the second time it was refused by marketlake's reader: "
-        f"SegmentAbsent: {key} is not under the lake root. Download it again."
+    said = (
+        f"was refused by marketlake's reader: SegmentAbsent: {key} is not under the lake root. "
+        "Download it again."
     )
+    assert reason == f"{key} failed twice. First it {said}, and then it {said}"
 
 
 def test_2_a_listed_key_the_bucket_does_not_hold_is_a_fault_with_no_second_try(
@@ -783,6 +831,33 @@ def test_2_a_column_of_another_type_is_a_fault_naming_it_and_its_row_is_kept(
     assert key in {s.key for s in read.segments}
 
 
+@pytest.mark.parametrize("kind", [pa.timestamp("s"), pa.duration("s")], ids=str)
+def test_2_a_value_python_cannot_hold_keeps_its_row_as_text(
+    reader: Reader, kind: pa.DataType
+) -> None:
+    schema = journal.schema_for(journal.QUOTES_SURFACE)
+    place = schema.get_field_index("vendor_quote_ts")
+    retyped = schema.set(place, pa.field("vendor_quote_ts", kind))
+    reader.capture("GLD", [1])
+    value = pa.scalar(10**15, pa.int64()).cast(kind)
+    minute = AT - MINUTE
+    row = lakes.quote_row("USO", minute, vendor_quote_ts=None)
+    table = pa.Table.from_pylist([row], schema=retyped)
+    held = pa.chunked_array([pa.array([10**15], pa.int64()).cast(kind)])
+    table = table.set_column(place, retyped.field(place), held)
+    path = reader.live_root / key_of("USO", 1)
+    with journal.SegmentWriter(path, retyped) as writer:
+        writer.write_cycle(table)
+    read = reader.read()
+    assert value.is_valid
+    assert read.faults == (
+        f"USO on {DAY} has vendor_quote_ts as {kind}, and marketlake publishes string",
+    )
+    assert kept(read) == {"GLD": 1, "USO": 1}
+    assert read.rows[USO][0]["vendor_quote_ts"]
+    assert read.rows[USO][0]["bid"] == "60.0"
+
+
 @pytest.mark.parametrize("name", UNCHECKED)
 def test_2_a_column_absent_from_the_segments_opened_reads_as_null(
     reader: Reader, name: str
@@ -840,6 +915,12 @@ def test_2_a_ticker_no_prefix_can_hold_is_a_fault_naming_the_instrument(reader: 
     assert read.faults == ("GLD has no segments to list: 'G/D' is not a ticker.",)
 
 
+def test_2_a_prefix_no_bucket_call_takes_is_a_fault_and_never_an_error(reader: Reader) -> None:
+    master = SecurityMaster((MasterRow(DAY, GLD, "G\\D", DAY, None),))
+    (reason,) = reader.read({GLD: LIMITS[GLD]}, master=master).faults
+    assert "could not be listed: ValueError: " in reason
+
+
 def test_2_a_stamp_the_reader_passes_and_no_clock_holds_is_a_fault(reader: Reader) -> None:
     reader.capture("GLD", [1])
     stamp = "0001-01-01T00:00:00+14:00"
@@ -876,9 +957,9 @@ def one(reader: Reader, **changes: object) -> Quote:
 
 def test_a_quote_holds_its_row_as_received_and_each_instant_in_utc(reader: Reader) -> None:
     minute = AT - MINUTE
-    quote = one(reader, bid=160.12345, trade_time=1, extra='{"a": 1}')
+    quote = one(reader, bid=160.12345, last=0.00001, trade_time=1, extra='{"a": 1}')
     assert quote.bid == Decimal("160.12345")
-    assert quote.excess_places == ("bid",)
+    assert quote.excess_places == ("bid", "last")
     assert (quote.volume, quote.realtime, quote.status) == (4, True, "Normal")
     assert quote.bid_at == quote.ask_at == quote.fetched_at == minute
     assert quote.last_at == datetime(1970, 1, 1, 0, 0, 0, 1000, tzinfo=UTC)
@@ -890,7 +971,7 @@ def test_a_quote_holds_its_row_as_received_and_each_instant_in_utc(reader: Reade
     )
     assert (quote.volume_counted, quote.normal_status) == (KIND.volume_counted, "Normal")
     assert (quote.max_age, quote.max_spread_share) == (90, Decimal("0.02"))
-    assert quote.received["bid"] == "160.12345" and quote.received["last"] == "1.0"
+    assert quote.received["bid"] == "160.12345" and quote.received["last"] == "1e-05"
     assert quote.received["bid_time"] == str(int(minute.timestamp() * 1000))
     assert quote.received["realtime"] == "True" and quote.received["close_tag"] is None
     # Every column the row returned is kept, and not the published ones alone.

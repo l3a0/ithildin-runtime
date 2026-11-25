@@ -252,14 +252,17 @@ class Bucket(Protocol):
     that holds no object, or not the version asked for, raises
     `core.BlobMissing`. A download whose bytes fail the checksum stored with
     them raises `core.ChecksumMismatch`. Any other refusal or no answer raises
-    `core.StoreUnavailable`. Each is the same from every adapter.
+    `core.StoreUnavailable`. Each is the same from every adapter. A key or a
+    prefix that could climb out of the bucket's root is a `ValueError`, and a
+    call the adapter's client refuses to send is a `TypeError`, since each is a
+    mistake here and no answer of the bucket's.
     """
 
     def list(self, prefix: str) -> Sequence[str]:
         """Every key that starts with `prefix`, sorted by its UTF-8 bytes.
 
-        A prefix that holds nothing is an empty list, and a listing raises
-        `core.StoreUnavailable` alone, with the bucket's answer in it.
+        A prefix that holds nothing is an empty list, and the one refusal a
+        listing raises is `core.StoreUnavailable`, with the bucket's answer in it.
         """
         ...
 

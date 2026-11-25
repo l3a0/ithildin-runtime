@@ -35,6 +35,7 @@ from botocore.exceptions import (
     FlexibleChecksumError,
     ParamValidationError,
 )
+from urllib3.exceptions import HTTPError
 
 from ithildinruntime.core import (
     BlobMissing,
@@ -127,8 +128,10 @@ class S3Bucket:
             data = reply["Body"].read()
         except FlexibleChecksumError as error:
             raise ChecksumMismatch(key, str(error)) from None
-        except BotoCoreError as error:
-            raise StoreUnavailable(key, f"no answer: {error}") from None
+        except (BotoCoreError, HTTPError) as error:
+            # botocore wraps urllib3's timeout and protocol errors as a body is read, and
+            # none of its others, such as a TLS failure partway through.
+            raise StoreUnavailable(key, f"no answer: {type(error).__name__}: {error}") from None
         checksum = reply.get("ChecksumSHA256")
         sha = None
         if checksum and reply.get("ChecksumType", "FULL_OBJECT") == "FULL_OBJECT":

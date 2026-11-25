@@ -356,10 +356,10 @@ def test_a_midpoint_past_the_written_multiple_is_flagged_beside_the_newest_close
 @pytest.mark.parametrize(
     ("closes", "price", "flags"),
     [
-        # The returns are 10% and -10%, a deviation of 14.14%, and one of 20% is 1.41421... of it.
+        # The returns are 10% and -10%, a deviation of 14.14%, and 1.4 of it is 19.8%.
         (("100", "110", "99"), "118.8", 1),
-        (("100", "110", "99"), "118.7", 1),
-        # The returns are 20% and 0%, a deviation of 14.14%, and a multiple is read at the boundary.
+        (("100", "110", "99"), "118.5", 0),
+        # A midpoint at the newest close has not moved.
         (("100", "120", "120"), "120", 0),
     ],
 )

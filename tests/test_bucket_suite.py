@@ -12,6 +12,7 @@ import base64
 import hashlib
 import io
 import itertools
+import ssl
 
 import boto3
 import pytest
@@ -340,6 +341,46 @@ def test_bytes_that_fail_the_stored_checksum_are_a_mismatch() -> None:
 
     with pytest.raises(ChecksumMismatch, match="k: .*did not match"):
         S3Bucket(Answers(), "b", "lake").read("k")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        ssl.SSLError("DECRYPTION_FAILED_OR_BAD_RECORD_MAC"),
+        ssl.SSLEOFError("EOF occurred in violation of protocol"),
+        TimeoutError("timed out"),
+        ConnectionResetError("reset by peer"),
+    ],
+    ids=lambda fault: type(fault).__name__,
+)
+def test_a_body_that_breaks_partway_is_unavailable(fault: Exception) -> None:
+    """Through urllib3's own response, whose TLS failures botocore does not wrap."""
+    from botocore.response import StreamingBody
+    from urllib3.response import HTTPResponse
+
+    class Breaks(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def readinto(self, into) -> int:
+            raise fault
+
+    raw = HTTPResponse(body=Breaks(), preload_content=False, headers={"content-length": "9"})
+
+    class Answers:
+        def get_object(self, **kwargs):
+            return {"Body": StreamingBody(raw, 9), "VersionId": "v1", "ChecksumSHA256": B64}
+
+    with pytest.raises(StoreUnavailable, match="k: no answer: "):
+        S3Bucket(Answers(), "b", "lake").read("k")
+
+
+def test_a_call_the_client_refuses_to_send_is_a_type_error() -> None:
+    """No answer of the bucket's, so it is no refusal a reader tries again."""
+    client = boto3.client("s3", region_name=REGION, **EMULATOR_KEYS)
+    for call in (lambda b: b.list("journal/"), lambda b: b.read("k")):
+        with pytest.raises(TypeError, match="botocore refused the call before sending it"):
+            call(S3Bucket(client, "not a bucket name", "lake"))
 
 
 def test_a_read_at_a_version_asks_s3_for_it() -> None:
