@@ -31,7 +31,7 @@ MASTER_ROWS = [
     "2026-11-22,QQQ,QQQ,2011-03-23,",
 ]
 
-_YAHOO = (
+_CHAN_READ_FROM = (
     "owner's ruling of 2026-11-22 on #5. quantitative-trading data/vintages.jsonl at 19aadbeb "
     "records vendor chan-mat and source_workbook inputData_ETF.mat and names no kind. Chan's "
     "closes equal Yahoo's on all 1500 sessions{split} and his volume is Yahoo's in hundreds of "
@@ -52,14 +52,16 @@ _SPLIT = {
     "gld": "",
     "uso": " after Yahoo's factor of 8 for USO's one-for-eight reverse split of 2020",
 }
-_IMPORTED = (
+_YAHOO_READ_FROM = (
     "owner's ruling of 2026-11-24 on #137 at "
     "https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7152659296. "
     "l3a0/marketlake#1025 pins the file at sha256 {sha} and sets its later years beside two other "
-    "vendors. Its closes equal Chan's on all 1500 sessions from 2006-04-26 to 2012-04-09{split} "
-    "and the owner's ruling of 2026-11-22 on #5 gave the kind of Chan's as Yahoo's.{scale} "
-    "Consolidated is measured from 2025 on and inferred before it. Yahoo publishes no statement "
-    "of its close so official close is the usual meaning of a Yahoo close for a US ETF"
+    "vendors in an exploratory comparison whose differences it lists. Its closes equal Chan's on "
+    "all 1500 sessions from 2006-04-26 to 2012-04-09{split} and the owner's ruling of 2026-11-22 "
+    "on #5 gave the kind of Chan's as Yahoo's.{scale} That the volume is consolidated is measured "
+    "from 2025 on and inferred before it and the price's venues rest on the ruling. Yahoo "
+    "publishes no statement of its close so official close is the usual meaning of a Yahoo close "
+    "for a US ETF"
 )
 _SHA = {
     "gld": "b6675ed455acf0174854377f8a51061fb18c0b1bf0a9a0f7632ac557b6fcb4f9",
@@ -79,12 +81,12 @@ _COUNTED = {
 KIND_ROWS = [
     f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
     f"official close,consolidated,none,consolidated in hundreds of shares,"
-    f"{_YAHOO.format(split=_SPLIT[name], volume=_VOLUME[name])}"
+    f"{_CHAN_READ_FROM.format(split=_SPLIT[name], volume=_VOLUME[name])}"
     for name in ("gld", "uso")
 ] + [
     f"2026-11-25,yahoo:{name}_daily_yahoo_2026-11-22.csv,2012-04-10,2026-09-03,"
     f"official close,consolidated,none,{_COUNTED[name]},"
-    f"{_IMPORTED.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
+    f"{_YAHOO_READ_FROM.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
     for name in ("gld", "uso")
 ]
 
@@ -129,7 +131,13 @@ def test_a_session_on_each_side_of_each_rows_edges_reads_the_kind_it_should(
 ) -> None:
     """Item 4 of the acceptance of #137, whose rows the owner's two rulings state."""
     kinds, own = load_price_kinds(), source.format(name)
-    counted = "consolidated in hundreds of shares" if source == CHAN else _COUNTED[name]
+    # Typed again, so a typo shared by a row and its pin is still caught.
+    shares = "consolidated in shares to the nearest hundred"
+    counted = (
+        "consolidated in hundreds of shares"
+        if source == CHAN
+        else shares + {"gld": "", "uso": " before its source's split adjustment"}[name]
+    )
     stated = Kind("official close", "consolidated", "none", counted)
     assert [kinds.kind(own, day) for day in (before, first, last, after)] == [
         NOTHING,
@@ -137,6 +145,14 @@ def test_a_session_on_each_side_of_each_rows_edges_reads_the_kind_it_should(
         stated,
         NOTHING,
     ]
+
+
+@pytest.mark.parametrize("name", ["gld", "uso"])
+def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -> None:
+    """The 2026-11-22 rows state each file's digest beside its name, so a swap of two shows."""
+    assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {_SHA[name]}" in _CHAN_READ_FROM
+    row = next(line for line in KIND_ROWS if line.startswith("2026-11-25") and f":{name}_" in line)
+    assert f"pins the file at sha256 {_SHA[name]} " in row
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"

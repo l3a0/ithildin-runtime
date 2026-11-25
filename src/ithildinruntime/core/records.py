@@ -163,7 +163,7 @@ class Bar(_Record):
     each price field whose received value carries more places than `Price`
     declares, which is kept rather than rounded.
 
-    - `volume` is `None` where the source stated none, as on an imported vintage.
+    - `volume` is `None` where marketlake holds none, as on both Chan vintages.
     - `fetched` and `fetched_end` are marketlake's `fetch_ts` and `fetch_end_ts`
       as received, each beside its UTC instant, and `None` where marketlake
       holds none, as on the Chan vintages.
@@ -215,7 +215,7 @@ class SpikeFlag(_Record):
 
     The price stays in its bar as received. `rule` names the check that
     flagged it, and `note` says what the check could not weigh, such as a
-    volume the source never stated.
+    volume the bar does not carry.
     """
 
     session: date
