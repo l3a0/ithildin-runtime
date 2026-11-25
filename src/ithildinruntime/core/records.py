@@ -663,6 +663,8 @@ class Verdict(_Record):
     - `adding` is false only for an order `core.classify` says reduces.
     - `worst_loss` is the strategy's loss under the stress move with the order
       counted, or `None` where the order names no strategy.
+    - `stress_move` is the stress move the check used, which a stress record can
+      hold above the hard caps' own.
     - `loss` is the day's loss the check read.
     - `past` names each of the three limits an order that only reduces may go
       out past, where the figure with this order counted is over its bound.
@@ -678,6 +680,7 @@ class Verdict(_Record):
     missing_term: str | None
     adding: bool
     worst_loss: Money | None
+    stress_move: Statistic
     loss: LossReading
     past: tuple[PastLimit, ...]
 
@@ -706,6 +709,8 @@ class Verdict(_Record):
             raise ValueError(f"an approval that adds is past {', '.join(named)}")
         if self.limit == Limit.LOSS_STOP and not self.loss.past:
             raise ValueError("a refusal on loss_stop reads a loss inside the stop")
+        if not self.stress_move.is_finite() or self.stress_move <= 0:
+            raise ValueError(f"a verdict carries a stress move of {self.stress_move}")
         if self.approved and (self.worst_loss is None or not self.worst_loss.is_finite()):
             raise ValueError(f"an approval carries a worst loss of {self.worst_loss}")
         if self.approved and self.adding and self.worst_loss <= 0:

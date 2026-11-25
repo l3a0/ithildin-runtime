@@ -1,6 +1,6 @@
 # What a person runs
 
-This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, how a person goes from an alarm to the command that answers it, and the steps the owner takes once per account. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
+This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, how a person goes from an alarm to the command that answers it, the steps the owner takes once per account, and the command that measures a stress move. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
 
 ## Contents
 
@@ -9,6 +9,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [The commands](#the-commands)
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
+  - [Measure a stress move](#measure-a-stress-move)
   - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
@@ -386,6 +387,41 @@ Every command below runs under the owner's credential, signed in to the account 
 To move the email to another address, subscribe and confirm the new address by steps 1 to 4 first. Then find the old subscription's ARN with `aws sns list-subscriptions-by-topic --region <region> --topic-arn <topic ARN>` and remove it with `aws sns unsubscribe`, so the topic always has at least one confirmed subscription. Last, run the drill row for an email subscription on that account. The same `aws sns unsubscribe` command ends a subscription on purpose.
 
 The drill rows for an email subscription under [Drills with no alarm](halts-and-drills.md#drills-with-no-alarm) read the subscription's `ConfirmationWasAuthenticated` attribute and expect `true`.
+
+### Measure a stress move
+
+The risk gate's net cap follows the stress move, m, and every order halts until the hard caps name a record of it. [How the stress move is measured](architecture/05-building-blocks.md#how-the-stress-move-is-measured) says what the command reads and why, and [The stress move's record](architecture/08-crosscutting-concepts.md#the-stress-moves-record) what each key holds.
+
+#### Run the command
+
+It reads a folder that holds a copy of marketlake's lake, so it needs no credential, and it writes nothing but what it prints.
+
+```bash
+uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy <name> --through <YYYY-MM-DD> --seam <YYYY-MM-DD>
+```
+
+1. `--through` is the last session, and `--seam` a session a new series starts on, given once for each in order. Each leg's start comes from the strategy's own file, and no option changes it.
+2. A run takes minutes, and longer the more partitions the lake lists.
+3. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. The line names no folder of the machine.
+4. A comment line above the record names each record of the strategy that is larger, or whose move this run did not count. Read why before committing the new one.
+
+#### Commit a record
+
+1. Append what the command printed to `src/ithildinruntime/core/stress_moves.toml`. Never change or remove a record that is there.
+2. Fill in each flag's empty `what`, which says what the flagged price was. The reader refuses a record with one empty.
+3. Where the record's `series` hold captured bars, read marketlake's action ledger for a split in their span. A split there reads as a move, and the flag misses some, so a split missed makes m larger than it was.
+4. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
+
+#### Raise the stress move
+
+A larger record binds as soon as the release that carries it runs, whatever the caps hold. It stops binding if that release is rolled back or the record is withdrawn, and the net cap then grows with nothing halted. So the owner writes the caps in two steps.
+
+1. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. The caps allow that before the release runs as well as after. Raise `stress_high` in the same write where the new m is above it, because every order halts under the new release until then.
+2. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back.
+
+#### Withdraw a record
+
+A change that withdraws a record adds `withdrawn` with the reason, and says what the owner's caps hold before it merges. Caps that name the withdrawn record halt every order once the release runs, so the owner first moves them to another record.
 
 ### Set up the test environment
 

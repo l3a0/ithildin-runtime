@@ -113,14 +113,7 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
     The tighter of two maxima or two loss stops is the smaller, and of two
     cutoffs the larger number of minutes, which is the earlier time.
     """
-    if not isinstance(constraints, Constraints):
-        raise Halt("the constraints are missing")
-    if not isinstance(caps, HardCaps):
-        raise Halt("the hard caps are missing")
-    check_constraints(constraints)
-    _check_caps(caps)
-    if extra := sorted(set(constraints.max_position) - set(caps.max_position)):
-        raise Halt(f"the constraints limit {extra[0]}, which the hard caps do not")
+    check_pair(constraints, caps)
     if not isinstance(valuation, Valuation):
         raise Halt("the valuation is missing")
     value = valuation.value
@@ -143,6 +136,18 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
         loss_stop=min(constraints.loss_stop, caps.loss_stop),
         moc_cutoff=max(constraints.moc_cutoff, caps.moc_cutoff),
     )
+
+
+def check_pair(constraints: Constraints, caps: HardCaps) -> None:
+    """Halt naming the first field of `constraints` or `caps` that no limit could be read from."""
+    if not isinstance(constraints, Constraints):
+        raise Halt("the constraints are missing")
+    if not isinstance(caps, HardCaps):
+        raise Halt("the hard caps are missing")
+    check_constraints(constraints)
+    _check_caps(caps)
+    if extra := sorted(set(constraints.max_position) - set(caps.max_position)):
+        raise Halt(f"the constraints limit {extra[0]}, which the hard caps do not")
 
 
 def require_current(caps: HardCaps, valuation: Valuation, decision_at: datetime) -> None:

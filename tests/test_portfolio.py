@@ -59,6 +59,7 @@ from ithildinruntime.core import (
     StageKind,
     Storage,
     StrategyConfig,
+    StressRecords,
     TargetPortfolio,
     Valuation,
     decode_output,
@@ -95,18 +96,22 @@ from tests.support.gates import (
     caps,
     constraints,
     d,
+    fitting,
     order,
     snapshot,
+    stress_record,
     valuation,
 )
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
 from tests.test_risk import (
     DEPLOYMENT,
+    MOVES,
     RECOVER_ROW,
     RELEASE,
     RUN,
     blobs,
+    moves,
     storage_over,
     store,
     tracked,
@@ -159,16 +164,20 @@ def sized(
     owners: HardCaps = CAPS,
     v: Valuation = V,
     step: Decimal | None = None,
+    records: StressRecords | None = None,
 ) -> tuple[TargetPortfolio, Sizing]:
+    limits = limits or constraints()
+    owners = owners if step is None else replace(owners, share_step=step)
     return size(
         config,
         tuple(deployed),
         given or forecast(direction, legs),
         marked,
         holds or book(),
-        limits or constraints(),
-        owners if step is None else replace(owners, share_step=step),
+        limits,
+        owners,
         v,
+        fitting(limits, owners) if records is None else records,
     )
 
 
@@ -553,6 +562,121 @@ def test_2_a_lower_stress_move_alone_grows_the_target() -> None:
     lower, record = sized(owners=replace(owners, stress_move=d("0.2")), v=v)
     assert lower.shares == {GLD: d("-3.333333333"), USO: d("8.333333333")}
     assert record.cut == (Limit.MAX_NET,)
+
+
+# The hold to the stress records
+
+NAMED = stress_record(stress_move=d("0.25"))
+RAISED = stress_record(vintage="c" * 64, stress_move=d("0.4"))
+
+
+def test_a_raised_record_lowers_the_net_cap_and_widens_the_room() -> None:
+    owners = replace(CAPS, share=d("0.02"), share_step=NINE)
+    given = {"owners": owners, "v": valuation(5000)}
+    # 0.02 × 5,000 ÷ 0.25 = 400, less room 320, over 50 dollars is 6.4 baskets.
+    assert sized(**given, records=(NAMED,))[0].shares == {GLD: d("-2.56"), USO: d("6.4")}
+    # 0.02 × 5,000 ÷ 0.4 = 250, and 250 ÷ 1.4 ÷ 50 = 3.571428571428….
+    held = {GLD: d("-1.428571428"), USO: d("3.571428571")}
+    for records in ((NAMED, RAISED), (RAISED, NAMED)):
+        target, cut = sized(**given, records=records)
+        assert (target.shares, cut.cut) == (held, (Limit.MAX_NET,))
+    for other in (
+        replace(RAISED, withdrawn="x"),
+        replace(RAISED, strategy=OTHER),
+        replace(RAISED, instruments=(SPY, USO), leg=SPY),
+    ):
+        assert sized(**given, records=(NAMED, other)) == sized(**given, records=(NAMED,))
+
+
+def test_the_room_alone_is_the_raised_moves() -> None:
+    """The limit is the strategy's own, which no stress move changes. 900 × 1.4 = 1,260."""
+    for gross_limit, cut in ((1260, ()), ("1259.9999", (Limit.MAX_GROSS,))):
+        limits = held_to(max_gross=gross_limit)
+        assert sized(limits=limits, records=(NAMED, RAISED))[1].cut == cut
+        assert sized(limits=limits, records=(NAMED,))[1].cut == ()
+
+
+def left(target: TargetPortfolio, leg: InstrumentId, factor: str, limits, owners, v) -> list[bool]:
+    """Whether the real gate lets each leg out, in the order given, once `leg` has moved."""
+    marks = {**MARKS, leg: MARKS[leg] * d(factor)}
+    said, sent = [], []
+    for n, instrument in enumerate((GLD, USO)):
+        intent = order(-target.shares[instrument], instrument, name=f"out-{n}")
+        world = World(
+            intent,
+            book({"chan": dict(target.shares)}, sent),
+            snapshot(marks),
+            limits,
+            records=(NAMED, RAISED),
+        ).given(caps=owners, valuation=v)
+        verdict = world.check()
+        assert not verdict.adding and verdict.stress_move == d("0.4")
+        said.append(verdict.approved)
+        if verdict.approved:
+            sent.append(intent)
+    return said
+
+
+def test_a_stress_move_of_the_raised_size_lets_the_pair_leave() -> None:
+    owners = replace(CAPS, share=d("0.02"), share_step=NINE)
+    v = valuation(5000)
+    limits = constraints(max_net=d(250))
+    given = {"owners": owners, "v": v, "limits": limits}
+    roomy = sized(**given, records=(NAMED, RAISED))[0]
+    # Read at the caps' own move, the room is a quarter and not two fifths.
+    bare = sized(**given, records=(NAMED,))[0]
+    asked = [(leg, factor) for leg in (GLD, USO) for factor in ("1.4", "0.6")]
+    assert {left(roomy, *a, limits, owners, v) == [True, True] for a in asked} == {True}
+    assert [left(bare, *a, limits, owners, v) for a in asked].count([True, True]) < len(asked)
+
+
+@pytest.mark.parametrize("direction", [1, 0, -1])
+@pytest.mark.parametrize(
+    ("records", "why"),
+    [
+        ((), "there is no stress record"),
+        (Halt("moves.toml is missing"), "moves.toml is missing"),
+        ((replace(NAMED, vintage="c" * 64),), "of no record of chan"),
+        ((replace(NAMED, withdrawn="mistyped"),), "withdrawn: mistyped"),
+        ((replace(NAMED, instruments=(USO,)),), "do not both name GLD"),
+        ((replace(NAMED, through=PRIOR),), "its record's is 2026-11-02"),
+        ((replace(NAMED, stress_move=d("0.25000001")),), "stress_move is 0.25, below"),
+        ((NAMED, replace(RAISED, stress_move=d("0.7"))), "stress_high is 0.6"),
+    ],
+)
+def test_the_hold_halts_a_sizing_at_every_direction(direction, records, why) -> None:
+    assert why in refused(direction=direction, records=records)
+    # The caps' own halt comes first, and V's sign after.
+    assert "share_step" in refused(direction=direction, records=records, step=d(2))
+    assert why in refused(direction=direction, records=records, v=valuation(0))
+
+
+def test_the_loop_stores_the_target_a_raised_record_leaves(tmp_path) -> None:
+    raised = moves(tmp_path, "0.40000000")
+    inputs = with_file(caps=replace(CAPS, share=d("0.02")), valuation=valuation(5000))
+    root, result, _ = looped(tmp_path, inputs, ONE, stress_moves=raised)
+    assert result.halt is None
+    assert stored(root)[0] == (replace(TARGET, shares={GLD: d(-1), USO: d(3)}),)
+
+
+@pytest.mark.parametrize(
+    ("written", "why"),
+    [
+        (None, "moves.toml is missing"),
+        ("x = 1\n", "moves.toml holds x, which this release does not read"),
+        ("", "there is no stress record, so none holds the hard caps' stress_vintage"),
+    ],
+    ids=["absent", "bad", "empty"],
+)
+def test_a_file_of_no_use_lets_the_worker_start_and_halts_its_decision(
+    tmp_path, written, why
+) -> None:
+    path = tmp_path / "moves.toml"
+    if written is not None:
+        path.write_text(written)
+    _, result, wrote = looped(tmp_path, INPUTS, ONE, stress_moves=path)
+    assert result.halt.reason == why and result.halt.cause is None
+    assert result.header == own_header(wrote)
 
 
 # Acceptance 5 and 6, on the function: what must agree before it sizes
@@ -1190,9 +1314,14 @@ def write(
     return wrote
 
 
-def handler(storage: Storage, table: Table = ONE) -> PortfolioStage:
+def handler(storage: Storage, table: Table = ONE, stress_moves: Path = MOVES) -> PortfolioStage:
     return portfolio_handler(
-        storage=storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=table
+        storage=storage,
+        deployment=DEPLOYMENT,
+        run=RUN,
+        release=RELEASE,
+        table=table,
+        stress_moves=stress_moves,
     )
 
 
@@ -1650,7 +1779,7 @@ FAULTS: dict[str, tuple[dict[str, object], str]] = {
     ),
     "a-limit-missing": (
         {"constraints": replace(LIMITS, max_order_qty={GLD: LOOSE}, max_position={GLD: LOOSE})},
-        "no limit names USO, a leg of chan's basket",
+        "whose record and the constraints do not both name USO",
     ),
     **{
         f"a-step-of-{step}": (
@@ -1667,6 +1796,10 @@ FAULTS: dict[str, tuple[dict[str, object], str]] = {
             ("0.10", "0.10"),
         )
     },
+    "a-vintage-of-no-record": (
+        {"caps": replace(CAPS, stress_vintage="c" * 64)},
+        f"the hard caps' stress_vintage is {'c' * 64}, of no record of chan",
+    ),
     "no-mark": (
         {"snapshot": snapshot(MARKS, day=PRIOR)},
         "GLD has no mark: its newest bar is for 2026-11-02, not later than 2026-11-02",
@@ -1783,6 +1916,16 @@ def test_7_two_strategies_each_get_one_target_sized_as_if_alone(tmp_path) -> Non
     assert set(result.header.config_hashes) == {"chan", "reversal"}
 
 
+def test_the_strategy_whose_record_the_caps_do_not_name_halts_the_stage(tmp_path) -> None:
+    """The caps hold one vintage, and a real one is of one strategy's legs."""
+    alone = tmp_path / "moves.toml"
+    alone.write_text("[[record]]" + MOVES.read_text().split("[[record]]")[1])
+    storage = store(tmp_path / "store")
+    write(storage, PAIR, TWO)
+    result = run(handler(storage, TWO, alone))
+    assert result.halt.reason.endswith(", of no record of reversal") and result.outputs == ()
+
+
 def test_7_one_strategys_halt_stores_nothing_for_the_other(tmp_path) -> None:
     storage = store(tmp_path)
     alpha = {FORECAST_OUTPUT: (Forecast, (forecast(0, {SPY: 0, USO: 0}, "reversal"),))}
@@ -1855,7 +1998,9 @@ def test_11_the_portfolio_worker_loads_no_other_module_and_no_reader() -> None:
     assert ran.stdout.strip() == "[] []"
 
 
-def looped(tmp_path: Path, inputs: Written, table: Table, halts=None) -> tuple:
+def looped(
+    tmp_path: Path, inputs: Written, table: Table, halts=None, stress_moves: Path = MOVES
+) -> tuple:
     """The portfolio stage's result from the receive loop, beside stand-ins for what it reads."""
     folder = Folder(tmp_path / "store", tmp_path / "queues")
     alarms = Alarms()
@@ -1878,7 +2023,7 @@ def looped(tmp_path: Path, inputs: Written, table: Table, halts=None) -> tuple:
         queue=folder.queue("portfolio"),
         storage=storage,
         bucket=folder.bucket,
-        handlers={PORTFOLIO_STAGE: handler(storage, table)},
+        handlers={PORTFOLIO_STAGE: handler(storage, table, stress_moves)},
         alerts=alarms,
         timer=SystemTimer(),
         beat=lambda: None,

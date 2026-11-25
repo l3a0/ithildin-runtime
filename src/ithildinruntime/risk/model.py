@@ -54,9 +54,11 @@ from ithildinruntime.core import (
     HardCaps,
     Snapshot,
     StrategyConfig,
+    StressRecords,
     Valuation,
     check_constraints,
     held,
+    hold_to_record,
     mark,
     require_current,
     tighten,
@@ -73,20 +75,24 @@ _COUNTS = ("max_open_orders", "moc_cutoff")
 class LimitRisk:
     """One strategy's written limits, which implements `core.RiskModel`."""
 
-    def __init__(self, strategy: StrategyConfig) -> None:
+    def __init__(self, strategy: StrategyConfig, records: StressRecords) -> None:
         self._strategy = strategy
+        self._records = records
 
     def constraints(
         self, book: Book, snapshot: Snapshot, caps: HardCaps, valuation: Valuation
     ) -> Constraints:
         """The strategy's limits, tightened by the hard caps and the session's V.
 
-        It halts on a V or a stress move the decision may not use. It also halts
-        on a book the snapshot cannot mark, because no limit in dollars can be
-        read for a position or an open order with no price.
+        It halts on a V or a stress move the decision may not use, and on caps
+        the stress records do not hold. It also halts on a book the snapshot
+        cannot mark, because no limit in dollars can be read for a position or
+        an open order with no price.
         """
-        tightened = tighten(self._written(), caps, valuation)
-        require_current(caps, valuation, snapshot.decision_at)
+        written = self._written()
+        owners = hold_to_record(written, caps, self._records)
+        tightened = tighten(written, owners, valuation)
+        require_current(owners, valuation, snapshot.decision_at)
         for instrument in held(book):
             mark(snapshot, instrument, valuation.session)
         return tightened

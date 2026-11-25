@@ -25,8 +25,9 @@ blob read and accepted by then. `TargetPortfolio` has no form for the "trade
 nothing" mark, so an input that carries it halts rather than reading as a
 target.
 
-The entry point hands in the stage's name, its kind, and each stage it reads
-with the configuration hashes the stage table gives it.
+The entry point hands in the stress records, which the release carries, the
+stage's name, its kind, and each stage it reads with the configuration hashes
+the stage table gives it.
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ from ithildinruntime.core import (
     StageRun,
     Storage,
     StrategyConfig,
+    StressRecords,
     TargetPortfolio,
     Valuation,
 )
@@ -88,6 +90,7 @@ class PortfolioStage:
         strategies: Iterable[StrategyConfig],
         storage: Storage,
         *,
+        records: StressRecords,
         stage: str,
         kind: StageKind,
         inputs: Mapping[str, Mapping[str, str]],
@@ -98,6 +101,7 @@ class PortfolioStage:
     ) -> None:
         self._strategies = tuple(sorted(strategies, key=lambda s: s.name))
         self._names = tuple(s.name for s in self._strategies)
+        self._records = records
         self._inputs = {name: dict(hashes) for name, hashes in inputs.items()}
         self._run = StageRun(
             storage,
@@ -143,6 +147,7 @@ class PortfolioStage:
                 limits[strategy.name],
                 caps,
                 valuation,
+                self._records,
             )
             for strategy in self._strategies
         ]

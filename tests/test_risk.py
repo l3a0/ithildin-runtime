@@ -48,6 +48,8 @@ from ithildinruntime.core import (
     StageRun,
     Storage,
     StrategyConfig,
+    StressRecord,
+    StressRecords,
     Valuation,
     attempt_key,
     decode_output,
@@ -79,6 +81,7 @@ from tests.support.gates import (
     d,
     order,
     snapshot,
+    stress_record,
     valuation,
 )
 from tests.support.queues import Folder, SystemTimer, running
@@ -143,14 +146,27 @@ def strategy(text: str = TEXT, name: str = "chan") -> StrategyConfig:
     return parse_strategy(name, text.encode())
 
 
+def fitted(config: StrategyConfig, owners: HardCaps = CAPS) -> tuple[StressRecord, ...]:
+    return (
+        stress_record(
+            strategy=config.name,
+            instruments=tuple(sorted(config.instruments)),
+            vintage=owners.stress_vintage,
+            through=owners.stress_through,
+        ),
+    )
+
+
 def limits(
     config: StrategyConfig = CHAN,
     held: Book = HELD,
     marked: Snapshot = MARKED,
     owners: HardCaps = CAPS,
     v: Valuation = V,
+    records: StressRecords | None = None,
 ) -> Constraints:
-    return LimitRisk(config).constraints(held, marked, owners, v)
+    made = fitted(config, owners) if records is None else records
+    return LimitRisk(config, made).constraints(held, marked, owners, v)
 
 
 # The model
@@ -632,6 +648,8 @@ def table_of(*strategies: StrategyConfig) -> Table:
 
 
 ONE = table_of(CHAN)
+# A made-up record of chan on its two legs, which the caps above name.
+MOVES = Path(__file__).parent / "support" / "stress_moves.toml"
 DATA_RESULT = result_key(DEPLOYMENT, RUN, DECISION, "data")
 SNAPSHOT_KEY = output_key(DEPLOYMENT, RUN, DECISION, "data", "snapshot")
 RECOVER_RESULT = result_key(DEPLOYMENT, RUN, DECISION, RECOVER_STAGE)
@@ -722,9 +740,14 @@ def write_both(storage: Storage, table: Table = ONE) -> dict[str, str]:
     return write_data(storage, table=table) | write_recover(storage, table=table)
 
 
-def handler(storage: Storage, table: Table = ONE) -> RiskStage:
+def handler(storage: Storage, table: Table = ONE, stress_moves: Path = MOVES) -> RiskStage:
     return risk_handler(
-        storage=storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=table
+        storage=storage,
+        deployment=DEPLOYMENT,
+        run=RUN,
+        release=RELEASE,
+        table=table,
+        stress_moves=stress_moves,
     )
 
 
@@ -1221,7 +1244,12 @@ def test_the_risk_worker_loads_neither_marketlake_nor_pandas() -> None:
     assert ran.stdout.strip() == "[]"
 
 
-def looped(tmp_path: Path, write: Callable[[Storage], object], table: Table = ONE) -> tuple:
+def looped(
+    tmp_path: Path,
+    write: Callable[[Storage], object],
+    table: Table = ONE,
+    stress_moves: Path = MOVES,
+) -> tuple:
     """The risk stage's result from the receive loop, once `write` has stored its inputs."""
     folder = Folder(tmp_path / "store", tmp_path / "queues")
     alarms = Alarms()
@@ -1244,7 +1272,7 @@ def looped(tmp_path: Path, write: Callable[[Storage], object], table: Table = ON
         queue=folder.queue("risk"),
         storage=storage,
         bucket=folder.bucket,
-        handlers={RISK_STAGE: handler(storage, table)},
+        handlers={RISK_STAGE: handler(storage, table, stress_moves)},
         alerts=alarms,
         timer=SystemTimer(),
         beat=lambda: None,
@@ -1295,3 +1323,78 @@ def test_a_decision_at_the_close_is_bounded_as_one_before_it(tmp_path) -> None:
 def test_every_field_of_the_constraints_but_the_name_is_in_the_form() -> None:
     assert set(FIELDS) == {f for f in Constraints.__dataclass_fields__ if f != "strategy"}
     assert isinstance(EXPECTED.max_gross, Decimal)
+
+
+# The hold to the stress records
+
+
+def moves(tmp_path: Path, *sizes: str, **changes: str) -> Path:
+    """The made-up record, and one more of another vintage for each size."""
+    text = MOVES.read_text(encoding="utf-8")
+    for old, new in changes.items():
+        assert old in text
+        text = text.replace(old, new)
+    made = text
+    for n, size in enumerate(sizes):
+        more = text.replace("a" * 64, "cdef"[n] * 64)
+        made += more.replace('stress_move = "0.00000001"', f'stress_move = "{size}"')
+    path = tmp_path / "moves.toml"
+    path.write_text(made, encoding="utf-8")
+    return path
+
+
+def test_a_raised_record_lowers_the_models_net_cap() -> None:
+    own, more = stress_record(), stress_record(vintage="c" * 64, stress_move=d("0.4"))
+    # 0.02 × 5,000 ÷ 0.4 = 250, where the caps' own 0.2 gives 500.
+    assert limits(records=(own, more)) == replace(EXPECTED, max_net=d("250.0000"))
+    assert limits(records=(more, own)).max_net == 250
+    for other in (replace(more, strategy=OTHER), replace(more, withdrawn="x")):
+        assert limits(records=(own, other)) == EXPECTED
+
+
+@pytest.mark.parametrize(
+    ("records", "why"),
+    [
+        ((), "there is no stress record"),
+        (Halt("moves.toml is missing"), "^moves.toml is missing$"),
+        ((stress_record(vintage="c" * 64),), "of no record of chan"),
+        ((stress_record(withdrawn="x"),), "withdrawn: x"),
+        ((stress_record(instruments=(GLD,)),), "do not both name USO"),
+        ((stress_record(through=date(2026, 10, 29)),), "stress_through"),
+        ((stress_record(stress_move=d("0.3")),), "stress_move is 0.2, below"),
+        (
+            (stress_record(), stress_record(vintage="c" * 64, stress_move=d("0.7"))),
+            "stress_high is 0.6",
+        ),
+    ],
+)
+def test_the_model_halts_on_caps_no_record_holds(records, why) -> None:
+    with pytest.raises(Halt, match=why):
+        limits(records=records)
+
+
+def test_the_loop_stores_the_limits_a_raised_record_leaves(tmp_path) -> None:
+    raised = moves(tmp_path, "0.40000000")
+    storage, result, inputs = looped(tmp_path, write_both, stress_moves=raised)
+    assert result.halt is None and result.header == risk_header(inputs)
+    (ref,) = result.outputs
+    file = storage.read_output(RESULT, result, ref, DECISION, Constraints)
+    assert file.entries == (replace(EXPECTED, max_net=d("250.0000")),)
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        (None, "moves.toml is missing"),
+        ("x = 1\n", "moves.toml holds x, which this release does not read"),
+        ("", "there is no stress record, so none holds the hard caps' stress_vintage"),
+    ],
+    ids=["absent", "bad", "empty"],
+)
+def test_a_file_of_no_use_lets_the_worker_start_and_halts_its_decision(tmp_path, text, why) -> None:
+    path = tmp_path / "moves.toml"
+    if text is not None:
+        path.write_text(text)
+    _, result, inputs = looped(tmp_path, write_both, stress_moves=path)
+    assert result.halt.reason == why and result.halt.cause is None
+    assert result.header == risk_header(inputs)

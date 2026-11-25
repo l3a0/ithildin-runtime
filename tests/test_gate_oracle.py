@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 
@@ -22,6 +23,7 @@ from ithildinruntime.core import (
     OrderIntent,
     OrderType,
     StopState,
+    StressRecord,
     TimeInForce,
     Valuation,
     classify,
@@ -41,6 +43,7 @@ from tests.support.gates import (
     book,
     caps,
     constraints,
+    fitting,
     inputs,
     order,
     snapshot,
@@ -166,7 +169,40 @@ def _world(seed: int) -> World:
     # V sits near the book's own value, so a loss stop can bind either way, and
     # the net cap is half of it.
     worth = made.losing(draw.randint(-30, 30)).inputs.valuation.value
-    return made.given(valuation=_valued(draw, max(worth, Decimal(1)), instruments))
+    made = made.given(valuation=_valued(draw, max(worth, Decimal(1)), instruments))
+    return made.at(records=_records(seed, made))
+
+
+def _records(seed: int, made: World) -> tuple[StressRecord, ...]:
+    """The record the caps name, and in some worlds a raised one, and others that do not count."""
+    # A draw of its own, so the rest of each world is what it was without records.
+    draw = random.Random(f"records-{seed}")
+    (named,) = fitting(made.constraints, made.inputs.caps, stress_move=Decimal("0.2"))
+    named = replace(named, leg=draw.choice(named.instruments))
+    found = [named]
+
+    def another(vintage: str, **changes: object) -> None:
+        size = Decimal(draw.randint(20_000_001, 60_000_000)).scaleb(-8)
+        found.append(replace(named, vintage=vintage * 64, stress_move=size, **changes))
+
+    if draw.random() < 0.3:
+        another("b")
+    if draw.random() < 0.2:
+        another("c", strategy=OTHER)
+    if draw.random() < 0.2:
+        another("d", withdrawn="read the wrong bars")
+    if draw.random() < 0.2:
+        another("e", instruments=(*named.instruments, InstrumentId("ZZZ")))
+    if draw.random() < 0.2:
+        zzz = InstrumentId("ZZZ")
+        another("f", instruments=(*named.instruments, zzz), leg=zzz)
+    draw.shuffle(found)
+    return tuple(found)
+
+
+def _move(world: World) -> Decimal:
+    """The stress move the world's records leave, which "b" and "e" alone raise."""
+    return max(r.stress_move for r in world.records if r.vintage[0] in "abe")
 
 
 def _valued(draw: random.Random, value: Decimal, instruments: tuple) -> Valuation:
@@ -191,6 +227,7 @@ def _asked(world: World) -> Answer:
         missing_term=verdict.missing_term,
         adding=verdict.adding,
         worst_loss=f(verdict.worst_loss),
+        stress_move=f(verdict.stress_move),
         loss=f(verdict.loss.loss),
         loss_bound=f(verdict.loss.bound),
         loss_past=verdict.loss.past,
@@ -222,6 +259,7 @@ def _expected(world: World) -> Answer:
         world.inputs,
         world.now,
         CLOSE,
+        world.records,
     )
 
 
@@ -270,10 +308,18 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
                 seen[f"approved past {entry.limit}"] += 1
         seen["reducing refused on net"] += not verdict.adding and verdict.limit is Limit.MAX_NET
         if not verdict.adding:
-            bound = min(world.constraints.max_net, world.inputs.valuation.value / 2)
+            owners = world.inputs.valuation.value / 10 / _move(world)
+            bound = min(world.constraints.max_net, owners)
             before, after = (_net_end(world, with_order) for with_order in (False, True))
             seen["reducing to net's bound"] += after == bound < before
         seen["adding"] += verdict.adding
+        raised = _move(world) > world.inputs.caps.stress_move
+        seen["raised"] += raised
+        seen["raised and refused on net"] += raised and verdict.limit is Limit.MAX_NET
+        seen["another strategy's"] += any(r.strategy == OTHER for r in world.records)
+        seen["withdrawn"] += any(r.withdrawn is not None for r in world.records)
+        seen["raised by a wider record"] += any(r.vintage[0] == "e" for r in world.records)
+        seen["another leg's"] += any(r.leg == "ZZZ" for r in world.records)
         seen["approved"] += verdict.approved
         if verdict.limit is not None:
             seen[f"refused on {verdict.limit}"] += 1
@@ -291,6 +337,12 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         "in doubt elsewhere",
         "two in doubt",
         "adding",
+        "raised",
+        "raised and refused on net",
+        "another strategy's",
+        "withdrawn",
+        "raised by a wider record",
+        "another leg's",
         "approved",
         *(f"refused on {limit}" for limit in Limit if limit is not Limit.CLOSE_ENTRY),
     ):

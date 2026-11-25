@@ -455,16 +455,50 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | `max_open_orders` | A JSON integer | Orders |
 | `moc_cutoff` | A JSON integer | Minutes before the close |
 | `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
-| `stress_move` | A decimal string | The stress move, as a fraction |
+| `stress_move` | A decimal string | The stress move, as a fraction, at or above the one its record holds |
 | `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
-| `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over |
-| `stress_through` | `YYYY-MM-DD` | That vintage's last session |
+| `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over, which names [its record](#the-stress-moves-record) |
+| `stress_through` | `YYYY-MM-DD` | That vintage's last session, as the record holds it |
 | `stress_max_age_days` | A JSON integer from 1 to 365 | How many days past that session a decision may still use it |
 | `share_step` | One of the ten decimal strings `1`, `0.1` and so on to `0.000000001` | The step a share count moves in on the account, which is the broker's rule and no limit. Portfolio construction rounds each target to it |
 
 A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
 
 A blob that cannot be read halts every order, naming what is wrong: bytes that are not JSON, a key given twice, another `format`, another account's blob, a missing or unknown field of `limits`, or a value out of its range. The halt shows little of a long value, and nothing of the account the blob names. A release rolled back past a field a newer one added halts on it too, so trading stops until the field goes.
+
+#### The stress move's record
+
+Each measurement of a strategy's stress move is one `[[record]]` table of `core/stress_moves.toml`, a tracked file the release carries. A record is never removed or changed, so `tests/test_stress.py` pins every one by hand. One found wrong gains `withdrawn` with the reason, and no longer counts toward the largest m.
+
+A record is named by its strategy and its vintage, which is the SHA-256 of the bars the measurement read. The hash is over one UTF-8 line for each bar, in order of instrument and then of session. A line holds the instrument, the session, the partition's key and the partition's SHA-256, joined by tabs and ended by a newline. The bucket's version is left out, so a run on the bucket and one on a copy agree. The lines name the legs, so the vintage fixes them. The record holds no price, because the source's terms keep its bytes out of this repository.
+
+**Table:** Each key of a record, what it holds and who reads it
+
+| Key | Holds | Read by |
+| --- | --- | --- |
+| `strategy`, `instruments` | The strategy's name, and its legs in order of name | The hold |
+| `vintage` | The vintage's SHA-256 | The hold |
+| `through` | The last session, a date | The hold |
+| `stress_move` | m, a decimal string of eight places | The hold and the command |
+| `leg`, `moved_from`, `moved_to` | The move that set m | The hold reads `leg`, and the command all three |
+| `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person |
+| `series` | A table for each series of each leg: `instrument`, `first`, `last`, `basis`, and `source` and `source_as_of` where the bars have them | A person |
+| `left_out` | A table for each move left out: `instrument`, `sessions` (1 or 2), `moved_from`, `moved_to` | A person |
+| `flagged` | A table for each flag the read raised: `instrument`, `session`, `field`, `rule`, and `what`, which the person who commits the record fills in | A person |
+| `manifest`, `measured_on` | The SHA-256 of the manifest the run read, and the run's date | A person |
+| `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold |
+
+The reader refuses each of these as a halt naming the file, the record and the key, and nothing of the folder it sits in.
+
+1. A file that is absent or is not TOML.
+2. A key it does not know, or one left out.
+3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
+4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
+5. Two records of one strategy and vintage.
+
+Each entry point takes the file's path and hands on the records or the halt. The price is that a partition marketlake rewrote with the same close makes a new vintage, whose record has to be measured again.
+
+[How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured) and [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record) say what writes a record and what reads it.
 
 #### How a journal entry is hashed and checked
 

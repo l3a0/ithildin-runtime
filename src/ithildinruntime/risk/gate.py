@@ -1,10 +1,11 @@
 """The risk gate: the one check on the one order path.
 
 `check` answers one order and `loss` reads the day's loss with none. Both are
-pure functions of what they are handed, with no store, no clock and no mode,
-so one order checked twice on the same inputs gets one answer, in a backtest
-and live alike. docs/architecture/05-building-blocks.md's `#### The risk gate
-holds no state of its own` draws the inputs.
+pure functions of what they are handed and of the stress records the gate was
+built with, with no store, no clock and no mode, so one order checked twice on
+the same inputs gets one answer, in a backtest and live alike.
+docs/architecture/05-building-blocks.md's `#### The risk gate holds no state of
+its own` draws the inputs.
 
 Two outcomes are kept apart.
 
@@ -44,6 +45,7 @@ from ithildinruntime.core import (
     Session,
     Snapshot,
     StopState,
+    StressRecords,
     TimeInForce,
     Valuation,
     Verdict,
@@ -53,6 +55,7 @@ from ithildinruntime.core import (
     exposure,
     finite,
     held,
+    hold_to_record,
     load_sessions,
     mark,
     places,
@@ -78,9 +81,13 @@ _MINUTE = 60_000_000
 
 @dataclass(frozen=True)
 class _Read:
-    """What a check read once no input halted it."""
+    """What a check read once no input halted it.
+
+    `stress_move` is the one the hold left, and the caps' own where nothing held them.
+    """
 
     limits: Constraints
+    stress_move: Decimal
     session: Session
     cutoff: datetime
     marks: Mapping[InstrumentId, Decimal]
@@ -97,7 +104,10 @@ class _Figure(NamedTuple):
 
 
 class Gate:
-    """`core.RiskGate`. It keeps nothing from one call to the next."""
+    """`core.RiskGate`. It keeps the stress records, and nothing from one call to the next."""
+
+    def __init__(self, records: StressRecords) -> None:
+        self._records = records
 
     def check(
         self,
@@ -111,7 +121,7 @@ class Gate:
         """Approve one order, or refuse it naming the first limit that does."""
         if not isinstance(intent, OrderIntent):
             raise Halt("the order is missing")
-        read = _read(book, snapshot, constraints, inputs, now, intent)
+        read = _read(book, snapshot, constraints, inputs, now, intent, self._records)
         adding = classify(book, intent) is Effect.ADDS
         reached = {i: exposure(book, i, intent) for i in read.marks}
         past = tuple(f for f in _three(intent, reached, read) if f.value > f.bound)
@@ -123,7 +133,8 @@ class Gate:
             bound=_recorded(first.limit, first.bound) if first else None,
             missing_term="position" if first and first.limit is Limit.POSITION else None,
             adding=adding,
-            worst_loss=_worst_loss(intent, book, inputs, read),
+            worst_loss=_worst_loss(intent, book, read),
+            stress_move=read.stress_move,
             loss=read.reading,
             past=tuple(
                 PastLimit(f.limit, _recorded(f.limit, f.value), _recorded(f.limit, f.bound))
@@ -139,8 +150,12 @@ class Gate:
         inputs: GateInputs,
         now: datetime,
     ) -> LossReading:
-        """The day's loss, which the send stage reads on every decision with no order."""
-        return _read(book, snapshot, constraints, inputs, now, None).reading
+        """The day's loss, which the send stage reads on every decision with no order.
+
+        It reads no stress move, so it holds the caps to no record. A record
+        that went missing would otherwise stop the loss stop from firing.
+        """
+        return _read(book, snapshot, constraints, inputs, now, None, ()).reading
 
 
 def _read(
@@ -150,8 +165,12 @@ def _read(
     inputs: GateInputs,
     now: datetime,
     intent: OrderIntent | None,
+    records: StressRecords,
 ) -> _Read:
-    """Every input checked, or a halt naming the first one that is absent, stale or invalid."""
+    """Every input checked, or a halt naming the first one that is absent, stale or invalid.
+
+    An order's caps are held to the stress records, and a loss reading's are not.
+    """
     for what, part, kind in (
         ("the book is", book, Book),
         ("the snapshot is", snapshot, Snapshot),
@@ -169,7 +188,10 @@ def _read(
     valuation = inputs.valuation
     if not isinstance(valuation, Valuation):
         raise Halt("the valuation is missing")
-    limits = tighten(constraints, inputs.caps, valuation)
+    caps = inputs.caps
+    if intent is not None:
+        caps = hold_to_record(constraints, caps, records)
+    limits = tighten(constraints, caps, valuation)
     if not isinstance(inputs.stop, StopState):
         raise Halt(f"the loss stop's state is {inputs.stop!r}, which names none")
     table = load_sessions()
@@ -181,7 +203,7 @@ def _read(
             f"session's close at {session.close.isoformat()}"
         )
     cutoff = to_utc(session.day, BeforeClose(limits.moc_cutoff))
-    require_current(inputs.caps, valuation, decision)
+    require_current(caps, valuation, decision)
     _check_book(book, valuation, table.before(session.day))
     if intent is not None:
         _check_intent(intent, book, limits)
@@ -190,6 +212,7 @@ def _read(
     loss = _day_loss(book, valuation, marks)
     return _Read(
         limits=limits,
+        stress_move=caps.stress_move,
         session=session,
         cutoff=cutoff,
         marks=marks,
@@ -403,7 +426,7 @@ def _widened_net(
         yield _Figure(Limit.MAX_NET, size, read.limits.max_net)
 
 
-def _worst_loss(intent: OrderIntent, book: Book, inputs: GateInputs, read: _Read) -> Decimal | None:
+def _worst_loss(intent: OrderIntent, book: Book, read: _Read) -> Decimal | None:
     """The strategy's loss under the stress move, every leg moving against it, the order counted.
 
     `None` for an order that names no strategy, whose legs nothing lists.
@@ -417,7 +440,7 @@ def _worst_loss(intent: OrderIntent, book: Book, inputs: GateInputs, read: _Read
                 f"the worst loss in {i}",
                 exposure(book, i, intent, intent.strategy).size,
                 price,
-                inputs.caps.stress_move,
+                read.stress_move,
             )
             for i, price in read.marks.items()
         ),

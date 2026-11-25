@@ -473,6 +473,7 @@ classDiagram
         +str or None missing_term
         +bool adding
         +Decimal or None worst_loss
+        +Decimal stress_move
         +LossReading loss
         +list past
     }
@@ -1099,7 +1100,7 @@ A refusal names the first of these that applies, so the same order always names 
 4. An order that names no strategy, which has no position to count a worst loss against.
 5. The seven limits, in the order of the table below. A figure at its limit passes, for all seven.
 
-`Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, raises an error as it is built.
+`Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the stress move the check used, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, raises an error as it is built.
 
 ##### How the gate values the book
 
@@ -1123,7 +1124,7 @@ Each instrument has a range: what the account would hold if only its open sales 
 | `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
 | `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The instant that many minutes before the close, against `now` | No |
 
-`max_net` and the worst loss assume the stress move. `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
+`max_net` and the worst loss assume the stress move, as [its record leaves it](#how-the-caps-are-held-to-the-stress-moves-record). `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
 
 The **worst loss** a verdict carries is the strategy's own: each leg's range, the order included, at its further end and its mark, summed over legs, times the stress move. A larger loss an exit rule fixes at a price level would count too, and the gate reads none, because no strategy has such an exit ([#33](https://github.com/l3a0/ithildin-runtime/issues/33)).
 
@@ -1160,7 +1161,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
-3. The stress move's vintage is a SHA-256, and its age a whole number of days from 1 to 365, since a larger one would switch the next check off. The gate and the risk stage halt a decision later than its last session plus that age. A last session in the future passes, until [#116](https://github.com/l3a0/ithildin-runtime/issues/116) holds it to a record.
+3. The stress move's vintage is a SHA-256, and its age a whole number of days from 1 to 365, since a larger one would switch the next check off. The gate and the risk stage halt a decision later than its last session plus that age. A last session after the decision passes this check, and [the hold](#how-the-caps-are-held-to-the-stress-moves-record) asks that it be the record's own.
 4. V is above zero.
 5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
@@ -1177,6 +1178,63 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 | The cutoff | The earlier cutoff, which is the larger number of minutes |
 
 The price is that a limit is set in two places.
+
+##### How the stress move is measured
+
+`core/stress.py` holds the calculation, which reads bars and no store. A move over n sessions is |C(t+n) − C(t)| ÷ C(t), where C is a leg's close. It is one division that rounds up at eight places, so the rounding never raises the net cap. The stress move, **m**, is the largest move over two sessions across the legs, and the largest over one session is recorded beside it. Moves are compared as rounded, and a tie goes to the earliest date and then to the first leg by name.
+
+1. **No move crosses a change of series**, which [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) defines. Every bar from the move's first to its last is of one series, and each move left out is listed. Two series can be on two scales, and a step of eight left in would read as a move of about 7.0.
+2. **Legs may begin on different sessions and end on one.** A leg cut to a younger one's start can lose the move that sets m.
+3. **It halts**, naming the leg and the session, on a session missing or repeated, a close at or below zero, a leg with no bar or with no move left, legs whose last sessions differ, and an m of zero.
+
+m can read less than one session did. Over the Chan vintages USO sets m at 17.98%, from 2008-12-30 to 2009-01-02, while GLD's largest one-session move, 11.29% on 2008-09-17, is larger than its largest two-session one, 10.19%. These figures are exploratory, and `tests/test_stress.py` pins them. [#138](https://github.com/l3a0/ithildin-runtime/issues/138) asks the owner whether m reads one-session moves.
+
+The command `python -m ithildinruntime.runtime.stress_move` reads the bars and prints one record, and [Measure a stress move](../what-a-person-runs.md#measure-a-stress-move) says how to run it. It reads through `data.LakeSource`, the read every decision makes, in three steps.
+
+1. **Each leg's start.** A leg starts at its own `[data.first_sessions]` date, and no option moves it, because a later start lowers m. So the command first reads each leg alone, over the two sessions that end at its start, and data halts there if the lake lists an earlier partition, as [Where each series starts](../design.md#where-each-series-starts) says.
+2. **Each series' span.** A `--seam` names each session a new series starts on. Each span between two seams is one read, so each read holds one series, data halts on a seam nobody named, and the spike rules judge each series against its own returns. The command refuses a named seam at which no leg changes series.
+3. **The moves**, over the spans joined, so a seam one leg does not change at leaves nothing out on it.
+
+Every read is at a stale lag of 0 and of one manifest, and any other manifest refuses the run. The price is that an import of days before a leg's start refuses each run until the strategy's file names the new start.
+
+##### How the caps are held to the stress move's record
+
+Nothing in the caps' own range tells a measured m from a mistyped one, and an m too small lets a lone leg lose more than the share the owner set. So each measurement leaves a record in a tracked file, as [The stress move's record](08-crosscutting-concepts.md#the-stress-moves-record) says, and `core.hold_to_record` holds the caps to those records. The gate's `check`, the risk model and portfolio construction each call it before they tighten a limit, and each is handed the records the release carries. So sizing and the gate read one net cap and one m.
+
+The figure below is a C4 component diagram.
+
+```mermaid
+flowchart TB
+    caps["The hard caps,<br/>which the owner writes"] --> hold["core.hold_to_record"]
+    records["The stress records,<br/>which the release carries"] --> hold
+    written["One strategy's constraints"] --> hold
+    hold -->|"the caps name no record,<br/>or one they disagree with"| halt["Halt, naming what is wrong"]
+    hold -->|"the caps agree with<br/>the record they name"| held["The held caps, whose m is<br/>the largest of their own<br/>and each record that counts"]
+    held --> gate["The gate's check<br/>reads them"]
+    held --> risk["The risk model<br/>reads them"]
+    held --> portfolio["Portfolio construction<br/>reads them"]
+```
+
+It first makes the checks `core.tighten` makes of the constraints and of the caps, in the same order. Then it halts on each of these.
+
+1. A file of records that cannot be read, or one that holds none.
+2. A `stress_vintage` of no record of the constraints' strategy.
+3. A record that is withdrawn, quoting its reason.
+4. A record whose legs are not exactly the instruments the constraints limit, since no measurement read the odd one.
+5. A `stress_through` that is not the record's last session.
+6. A `stress_move` below the record's.
+7. A larger m, of any record that counts, above `stress_high`.
+
+It gives back the caps with m the largest of their own and of every record that counts. A record counts when it is of the strategy, is not withdrawn, and names as the leg that made its move one the constraints limit. Its other legs do not matter, because that leg made the move. So a record can only tighten, and `Verdict` carries the m the check used.
+
+The gate's `loss` does not hold the caps. The day's loss reads no m, and a record arrives by a merge or a rollback rather than by the owner's hand. Held there, a decision past the loss stop would read no loss and write no stop, and trading would start again once the record was repaired. `check` halts every order meanwhile.
+
+The price is four things.
+
+1. **A raised record binds at once, and a release rolled back or a withdrawal releases it at once.** The net cap then grows with nothing halted. So on a raise the owner writes the caps' own `stress_move` up to it, as [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) says, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) alerts while the held m is above the caps' own.
+2. **A release rolled back past the record the caps name halts every order**, as one rolled back past a new cap does.
+3. **A backtest reads a move its past could not have known.** A last session after a decision passes, because test 1's decisions run from 2006 to 2012. A result run under such a record names its last session and how many orders the cap refused, is labelled exploratory, and says it read a move after its decisions.
+4. **The caps hold one vintage for an account.** Two strategies of other legs never share a vintage, so each strategy the named record is not of halts. With the smaller m's record named, the gate alone would approve that strategy's order against a book that holds the larger's leg. What stops that is the risk stage's halt on two strategies. So the change that lifts it says which record the caps name, with that case in its test.
 
 #### The risk model writes each decision's limits
 
@@ -1195,7 +1253,7 @@ It reads four files, each holding one entry.
 | `caps.json` | The same | The `HardCaps` as recover parsed them, with the owner's blob named by its key and SHA-256 in the file's header |
 | `valuation.json` | The same | The session's `Valuation`, which gives V |
 
-It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move, and a target is sized within a net cap no tracked file holds.
+It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move its record leaves, and a target is sized within a net cap no tracked file holds.
 
 The stage never reads the owner's caps blob, which the owner can rewrite between two attempts at one decision. It reads the caps recover stored, so a second attempt writes the same bytes. The gate still reads the blob just before each check. The price is that a cap the owner lowers after recover has run binds at the gate and not in the sizing, so a target sized within the older cap can be refused there.
 
@@ -1209,7 +1267,7 @@ A halt in data's result or in recover's is passed on. Every other halt the handl
 
 1. A `[risk]` section that is absent, leaves a field out, holds one the form lacks, names other instruments than the strategy's in a table, or holds a value `core` refuses. The check runs at each decision, so a bad section stops this stage and never the worker's start.
 2. An input with no result or one storage refuses, a result that lists one of the four files other than once, a file storage refuses or that holds other than one entry, and a snapshot of another decision.
-3. Caps or a valuation that `core.tighten` refuses, a V of any session but the one before the decision's, and a stress move past its age.
+3. Caps or a valuation that `core.tighten` refuses, caps [the stress records do not hold](#how-the-caps-are-held-to-the-stress-moves-record), a V of any session but the one before the decision's, and a stress move past its age. A file of records that cannot be read halts each decision, and never the worker's start.
 4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position or has an open order.
 5. Two strategies in one deployment, because what scope each one's limits take is not decided.
 6. A write storage refuses, such as constraints already stored with other bytes.
@@ -1306,7 +1364,7 @@ One leg can round to zero beside one that does not, and that target stands. So s
 
 ##### Why a dollar limit is read less room for one stress move
 
-This doc proposes, for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), that a dollar limit is read as the limit over one plus the stress move, with the stress move from the hard caps. Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
+This doc proposes, for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), that a dollar limit is read as the limit over one plus the stress move, with the stress move [its record leaves](#how-the-caps-are-held-to-the-stress-moves-record). Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
 
 Room covers no more than that. An exit is still refused on a day the loss stop is past, which a stress move can bring, and where it is larger than `max_order_qty`. The net cap falls with V, so a full stress move against a lone leg can still leave the pair a little over it. A position the gate stops from resizing drifts for longer than two sessions. `max_position` counts shares and needs no room. The price is a target about a quarter under the limit, at the exploratory stress move of 34.7%, wherever a dollar limit binds.
 
@@ -1329,7 +1387,7 @@ A halt in any input is passed on, the first in the order the stage reads them. E
 5. A forecast of another strategy, or a basket whose instruments are not exactly the strategy's.
 6. An instrument the strategy holds shares of, or has an open order in, that the forecast does not name. This doc proposes that for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), because a target of zero there would sell a position nobody forecast.
 7. A leg that is not a finite number, or a basket whose legs are all zero.
-8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, a share step of another form than the ten, and a leg no limit names.
+8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, caps [the stress records do not hold](#how-the-caps-are-held-to-the-stress-moves-record), a share step of another form than the ten, and a leg no limit names.
 9. A leg `core.mark` cannot price. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision here, where the book is flat, and at the risk stage where it holds anything.
 10. A share count, of the target or before any limit, too large for a record to hold.
 11. A held direction sized to zero shares in every leg.
@@ -1464,6 +1522,7 @@ An arrow means "may import". The diagram draws four rules.
    - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage and the three files risk and portfolio construction read, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
+   - `moves`, `largest_move` and `stress_vintage`, which measure the stress move and name the bars it read, the tracked stress records and their reader, and `hold_to_record`, which holds the caps to them, because the gate, the risk model and portfolio construction each call it;
    - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 

@@ -28,6 +28,8 @@ from ithildinruntime.core import (
     OrderType,
     Snapshot,
     StopState,
+    StressRecord,
+    StressRecords,
     TimeInForce,
     Valuation,
     Verdict,
@@ -86,6 +88,45 @@ def caps(**changes: object) -> HardCaps:
         "share_step": Decimal(1),
     }
     return HardCaps(**fields | changes)  # type: ignore[arg-type]
+
+
+def stress_record(**changes: object) -> StressRecord:
+    """A measurement of the two legs through the caps' last session, far below their stress move."""
+    fields: dict[str, object] = {
+        "strategy": CHAN,
+        "instruments": (GLD, USO),
+        "vintage": VINTAGE,
+        "through": date(2026, 10, 30),
+        "stress_move": d("0.00000001"),
+        "leg": USO,
+        "moved_from": date(2008, 12, 30),
+        "moved_to": date(2009, 1, 2),
+        "one_session": d("0.00000001"),
+        "one_session_leg": GLD,
+        "one_session_on": date(2008, 9, 17),
+        "series": (),
+        "left_out": (),
+        "flagged": (),
+        "manifest": "b" * 64,
+        "measured_on": date(2026, 11, 24),
+    }
+    return StressRecord(**fields | changes)  # type: ignore[arg-type]
+
+
+def fitting(made: object, owners: object, **changes: object) -> tuple[StressRecord, ...]:
+    """One record that these constraints and these caps are held to, where both can be read."""
+    if not isinstance(made, Constraints) or not isinstance(owners, HardCaps):
+        return ()
+    legs = made.max_position if isinstance(made.max_position, Mapping) else {}
+    instruments = tuple(sorted(str(leg) for leg in legs))
+    fields = {
+        "strategy": made.strategy,
+        "instruments": instruments,
+        "leg": instruments[-1] if instruments else USO,
+        "vintage": owners.stress_vintage,
+        "through": owners.stress_through,
+    }
+    return (stress_record(**fields | changes),)
 
 
 def constraints(**changes: object) -> Constraints:
@@ -207,6 +248,13 @@ class World:
     constraints: Constraints = field(default_factory=constraints)
     inputs: GateInputs = field(default_factory=inputs)
     now: datetime = DECISION
+    # The stress records the gate holds, or one that fits the constraints and the caps.
+    records: StressRecords | None = None
+
+    def gate(self) -> Gate:
+        if self.records is not None:
+            return Gate(self.records)
+        return Gate(fitting(self.constraints, getattr(self.inputs, "caps", None)))
 
     def at(self, **changes: object) -> World:
         return replace(self, **changes)  # type: ignore[arg-type]
@@ -229,12 +277,12 @@ class World:
         return self.given(valuation=valuation((worth + d(loss)).quantize(CENT)))
 
     def check(self) -> Verdict:
-        return Gate().check(
+        return self.gate().check(
             self.intent, self.book, self.snapshot, self.constraints, self.inputs, self.now
         )
 
     def loss(self) -> LossReading:
-        return Gate().loss(self.book, self.snapshot, self.constraints, self.inputs, self.now)
+        return self.gate().loss(self.book, self.snapshot, self.constraints, self.inputs, self.now)
 
 
 def utc(*parts: int) -> datetime:
