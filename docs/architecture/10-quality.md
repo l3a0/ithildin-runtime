@@ -81,7 +81,8 @@ package.
 | The flat and linear cost model, `CostSchedule` and `CostTerm`, the form of each strategy's cost section | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
 | Equal-risk-weight portfolio construction and its stage, the `[portfolio]` section of a strategy's file, `Sizing`, the record of how a target was sized, `share_step` in the hard caps, and a stage's reads of a file of several entries and of an input's configuration hashes | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | `OrderPath` and `Account`, the controls read before a broker call, what each broker call answers, the fake broker and the sweep that nothing reaches a broker around the path | [#143](https://github.com/l3a0/ithildin-runtime/issues/143) |
-| Order manager, a plan's cancels and replacements, the simulator and the Alpaca adapter around its SDK, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
+| The simulated broker, its fill rule, its prices, its account's log and its faults, with the relay broker and the adapter cases | [#144](https://github.com/l3a0/ithildin-runtime/issues/144) |
+| Order manager, a plan's cancels and replacements, the Alpaca adapter around its SDK, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, the third level of CI and its second required check, the journal entry for a capture lost when a worker's process dies, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
 Each module issue also writes its own worker's entry point under `runtime`,

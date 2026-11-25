@@ -168,8 +168,8 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
-| Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until the data source holds the official close at the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten | The shadow environment's bucket, with the shadow journal | Sent |
+| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order, a buy at the decision's ask and a sale at its bid, rejected until [#155](https://github.com/l3a0/ithildin-runtime/issues/155) | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until a decision's stored snapshot holds the official close, which the data source holds from the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten: at the stale lag of 0 a strategy's file writes, data reads the instrument as stale and its result holds the halt. The order keeps working | The shadow environment's bucket, with the shadow journal | Sent |
 | Paper | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
 | Live | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
@@ -229,12 +229,89 @@ never shares the paper account's lease.
 ### One simulator serves backtest and shadow
 
 1. **It fills by the order, not by the mode.** The order's type and time in
-   force decide the fill.
-2. **Its state outlives a run.** It keeps orders and positions as one
-   blob per account per call, written before the call returns, outside any
-   run's prefix.
-3. **It can fail on purpose.** A seeded fault fills one leg of a pair in part,
-   or not at all, so a replay runs the stranded-leg path paper trading will.
+   force decide the fill, and [What fills, and when](#what-fills-and-when) gives
+   the rule.
+2. **Its state outlives a run.** It keeps the account as a log, one blob for each
+   call that changed it, written before the call returns, outside any run's
+   prefix, as [The simulated broker's account](08-crosscutting-concepts.md#the-simulated-brokers-account) says.
+3. **Its prices are what data stored.** `StoredPrices` reads one decision's
+   result and snapshot through `core.Storage`, with the checks every stage
+   makes of them, and `execution.brokers` imports `core` alone, so marketlake's
+   reader never loads there.
+4. **It can fail on purpose.** A test hands it `Faults`, a value that names what
+   happens to an order, a read or the account. One fills one leg of a pair in
+   part, or not at all, so a replay runs the stranded-leg path paper trading
+   will. A fault changes an order as it enters, or what the account does, and
+   none holds randomness. The account's own checks answer a repeated id, a wrong
+   type and zero shares, and `reject` gives a fixed rejection.
+5. **It is reached as any broker is.** `OrderPath` alone submits to it, in `src/`
+   and in the tests, through a relay where a test needs the clock to move first,
+   as [a sweep of the source](#which-calls-reach-the-broker) holds. So each order
+   meets the gate and the journal first.
+
+#### What fills, and when
+
+1. **A market-on-close order at `cls`** rests when it comes at or before its
+   session's close by the clock, and is rejected after it. Its session is the one
+   of the decision that sent it.
+2. **It fills whole at that session's official close**, at the first call after
+   the close by the clock that reads a price and whose decision's snapshot holds
+   that session's bar.
+   Until then it is working, and it can be cancelled while the clock reads no
+   later than the close, as item 9 says. Nothing here ends an order whose bar never comes, and
+   data halts only while that session is in the lookback.
+3. **The fill says what price it was given.** Its `at` is the session's close, its
+   `received_at` is the clock's, and the log names the stored snapshot that
+   gave the price. Its `basis` is `signal_close` where the decision that sent it
+   had read a close of that session, and `official_close` otherwise. So a result
+   that fills at a close its signal read is told by its own fills. The price
+   itself is the settling snapshot's, which a revision can have moved.
+4. **Cash and shares move exactly**, as the journal's book moves them, with no
+   rounding. A sale can open a short.
+5. **Any other order is rejected.** The day's market order gets its fill with
+   [#155](https://github.com/l3a0/ithildin-runtime/issues/155).
+6. **A client order id of an order it took, or has or had on its way, is refused** with
+   an answer that says so, which the order path reads as in doubt.
+7. **It moves only forward.** A call whose clock reads before the log's newest
+   call, or before the decision its prices are of, halts, apart from those of
+   item 9.
+8. **A price it needs and cannot read halts the call**, apart from those of item
+   9. An order past its close needs one, and so does an order it is sent. A result
+   or a snapshot that is missing, stale or of another decision gives none.
+9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
+   a price, and both leave a close that needs one to the next call that reads one.
+   A cancel is judged by the clock it reads, or by the log's newest call where the
+   clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
+   which say what there is to cancel, give the log as it stands where the clock
+   would halt them, dated by the later of the clock and the log's newest call. The price is that a clock that
+   went back can cancel an order whose close had passed and was not yet settled.
+   What stops these calls is the log: one that cannot be read or written, a number
+   lost 101 times, and a clock that gives no UTC time on an account that holds no
+   call but its opening. A test's fault can stop a read of the orders, and stops no
+   cancel.
+
+#### What a simulated fill leaves out
+
+A result that quotes one of these fills as evidence names what it leaves out, as
+[A backtest names what it could not have traded](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
+asks.
+
+1. **The scale.** A fill is at the bar's close on the bar's own scale, which
+   `basis` does not state. The USO prices imported from Yahoo, 2012-04-10 to
+   2020-04-28, are eight times those that traded
+   ([A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series)).
+2. **The auction.** `official_close` never means the closing auction's print. The
+   bar the fill was priced from states its `venues`, and a consolidated close is
+   the last trade on any of them.
+3. **The cutoffs.** A live order or cancel past the broker's or the exchange's
+   cutoff is refused, and this account takes both up to the close. `basis` says
+   nothing of that. The order's `submitted_at` does.
+4. **Size.** A fill is whole whatever its size, and moves no price.
+5. **Terms it does not book.** Commission, borrow, interest, distributions, credit
+   on a short's proceeds and buying power read as unknown, never as zero. A split
+   is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
+
+That an order fills this way is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling).
 
 The figure below is a C4 dynamic diagram.
 
@@ -242,15 +319,17 @@ The figure below is a C4 dynamic diagram.
 sequenceDiagram
     participant R1 as Shadow run 1
     participant S as Simulated broker
-    participant B as Account blob
+    participant B as The account's log
     participant R2 as Shadow run 2, new VM
     R1->>S: submits an order that rests
-    S->>B: writes orders and positions
-    S-->>R1: returns
+    S->>B: reads the log forward
+    S->>B: stores a call that holds the order
+    S-->>R1: answers that it is accepted
     Note over R1: The run ends
-    R2->>S: makes its next call
-    S->>B: reads orders and positions
-    S-->>R2: reports that the order fills
+    R2->>S: reads the fills, under a decision whose snapshot holds the close
+    S->>B: reads every call the log holds
+    S->>B: stores a call that holds the fill
+    S-->>R2: answers with the fill
 ```
 
 ### What a worker works through
