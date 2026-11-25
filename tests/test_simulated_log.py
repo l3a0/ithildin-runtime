@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     StoreUnavailable,
     decode,
     encode,
+    sha256_of,
     sim_account_key,
 )
 from ithildinruntime.execution.brokers.faults import (
@@ -1379,23 +1380,24 @@ def committed() -> SimWorld:
     return made
 
 
-def _priced_by(blobs: Iterable[bytes]) -> set[bytes]:
-    """The digest of each snapshot a fill in the log names."""
-    ends = [end for data in blobs for end in decode(data, SimCall).events.closed]
-    return {end.priced_from.sha256.encode() for end in ends if end.priced_from is not None}
+# The digest, when the log was committed, of the snapshot that priced its fills.
+PRICED_FROM = "9910432dd2bbd1174e8982d18d1063b88c8911a86b6d4fb307c7d798928fbbd7"
 
 
 def test_5_this_release_reads_and_writes_the_committed_log() -> None:
     """A shadow account's log outlives a release, so its bytes never change.
 
-    The digest of the snapshot that priced a fill is the one exception, because it moves
-    with `Snapshot`'s fields. `test_2_a_fill_names_the_snapshot_that_gave_its_price` in
-    tests/test_broker_cases.py holds it.
+    The digest of the snapshot that priced a fill moves with `Snapshot`'s fields, so it
+    is compared with that snapshot's own bytes, and left out of the comparison.
     """
     made = committed()
     stored = {p.name: p.read_bytes() for p in sorted(FIXTURES.glob("*.json"))}
     written = {k.rpartition("/")[2]: v for k, v in made.blobs().items()}
-    (then,), (now,) = (_priced_by(blobs.values()) for blobs in (stored, written))
+    ends = [end for data in written.values() for end in decode(data, SimCall).events.closed]
+    # One snapshot priced both fills.
+    (ref,) = {end.priced_from for end in ends if end.priced_from is not None}
+    assert ref.sha256 == sha256_of(made.store.blobs[ref.key])
+    now, then = ref.sha256.encode(), PRICED_FROM.encode()
     assert {name: data.replace(now, then) for name, data in written.items()} == stored
     store = Wired({f"sim/{ACCOUNT}/{name}": data for name, data in stored.items()})
     log = SimulatedAccount.load(store, ACCOUNT, OTHER)
