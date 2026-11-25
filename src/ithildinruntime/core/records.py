@@ -678,7 +678,9 @@ class Ack(_Record):
     """A broker's answer about one order, with the bytes it sent beside the converted value.
 
     `raw` is a body and never a header. An `accepted` with no broker's order
-    id, and a time that is not UTC, raise.
+    id, and a time that is not UTC, raise. The order path takes exactly an
+    `Ack`, with an id that is exactly a `str`, `raw` exactly `bytes` and
+    `received_at` exactly a `datetime`. Any other is in doubt.
     """
 
     outcome: Outcome

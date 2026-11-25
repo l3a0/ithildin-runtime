@@ -32,6 +32,7 @@ from ithildinruntime.core import (
     HaltRecord,
     OrderState,
     Outcome,
+    PositionsRead,
     Snapshot,
     StopState,
     StoreUnavailable,
@@ -791,9 +792,9 @@ def test_11_a_submit_that_raises_says_nothing_of_the_vendors(
     raised: BaseException | None = None
     try:
         world.send()
-    except (Halt, KeyboardInterrupt) as error:
+    except Halt as error:
         raised = error
-    assert (raised is not None) == (store_down or kind in (Halt, KeyboardInterrupt))
+    assert (raised is not None) == (store_down or kind is Halt)
     captured = capfd.readouterr()
     said = [*everything_said(world), *told(raised), captured.out, captured.err, caplog.text]
     assert not leaks(*said)
@@ -948,6 +949,29 @@ class Unequal:
         raise RuntimeError(KEY)
 
     __hash__ = None  # type: ignore[assignment]
+
+
+def test_11_a_read_of_an_adapters_own_kind_is_no_read() -> None:
+    class Mine(PositionsRead):
+        pass
+
+    world = World()
+    plain = world.path().positions()
+    world.broker.reads["positions"] = lambda: Mine(plain.positions, plain.received, plain.whole)
+    with pytest.raises(BrokerUnavailable, match="failed with Mine$"):
+        world.path().positions()
+
+
+def test_11_an_unavailable_that_was_never_made_is_unnamed() -> None:
+    world = World()
+
+    def raises() -> object:
+        raise BrokerUnavailable.__new__(BrokerUnavailable, f"key {KEY}")
+
+    world.broker.reads["positions"] = raises
+    with pytest.raises(BrokerUnavailable, match="failed with Unnamed$") as raised:
+        world.path().positions()
+    assert not leaks(*told(raised.value))
 
 
 class _Nameless(type):

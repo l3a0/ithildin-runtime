@@ -10,7 +10,6 @@ import json
 import threading
 from asyncio import CancelledError
 from collections.abc import Callable
-from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
@@ -802,7 +801,10 @@ def test_6_every_other_outcome_is_in_doubt(outcome: Outcome) -> None:
 
 @pytest.mark.parametrize(
     "error",
-    [ValueError("x"), SystemExit("x"), CancelledError("x"), BrokerUnavailable("submit", "Timeout")],
+    [
+        *(ValueError("x"), SystemExit("x"), CancelledError("x"), KeyboardInterrupt("x")),
+        BrokerUnavailable("submit", "Timeout"),
+    ],
 )
 def test_6_whatever_a_submit_raises_is_in_doubt(error: BaseException) -> None:
     world = World()
@@ -822,16 +824,6 @@ def test_6_a_halt_from_the_adapter_is_in_doubt_and_then_halts() -> None:
     with pytest.raises(Halt, match="is in doubt: the simulated clock went back"):
         world.send()
     assert world.state() is OrderState.IN_DOUBT and len(world.alarms.sent) == 1
-
-
-def test_6_an_error_that_ends_the_process_leaves_the_sending_alone() -> None:
-    world = World()
-    world.broker.answer = raising(KeyboardInterrupt())
-    with pytest.raises(KeyboardInterrupt):
-        world.send()
-    assert world.kinds() == SENT[:3]
-    assert world.reader().in_doubt()
-    assert world.send() is OrderState.SENDING and world.submits == 1
 
 
 @pytest.mark.parametrize("answer", [None, "accepted", object()])
@@ -1067,14 +1059,10 @@ def test_6_an_alarm_that_cannot_be_sent_halts_once_the_entry_is_stored(
         world.send(account=account)
     assert "own text" not in raised.value.reason
     assert world.state() is OrderState.IN_DOUBT
-    # The alarm is tried again at each settle until it goes out.
+    # The alarm is tried again at each settle until it goes out, and halts nothing.
     assert account.unstored() == ()
-    ends = {SystemExit: Halt, CancelledError: Halt, KeyboardInterrupt: KeyboardInterrupt}
     for tries in (2, 3):
-        # What ends the process stops the order that would go out next, and any other error none.
-        stops = ends.get(type(error))
-        with pytest.raises(stops) if stops else nullcontext():
-            account.settle(world.report)
+        account.settle(world.report)
         assert len(world.alarms.sent) == tries
     world.alarms.error = None
     account.settle(world.report)
@@ -1331,7 +1319,7 @@ ANSWERS: dict[str, Callable[[OrderIntent, int], object]] = {
             lambda intent, n, name=name, error=error: hostile(**{name: error})
         )
         for name in ("outcome", "broker_order_id", "order", "raw", "received_at")
-        for error in (RuntimeError("PKFAKEKEY"), SystemExit("PKFAKEKEY"), MemoryError())
+        for error in (RuntimeError("PKFAKEKEY"), SystemExit("PKFAKEKEY"), KeyboardInterrupt())
     },
     **{
         f"its {name} is an adapter's own": (
@@ -1364,6 +1352,7 @@ def test_6_nothing_an_answer_does_as_it_is_read_makes_it_one_that_was_not_sent(n
     assert state is OrderState.IN_DOUBT
     (alarm,) = world.alarms.sent
     assert f"the order {ID} is in doubt" in alarm
+    assert "sent at" in alarm and "not sent" not in alarm
     said = [
         alarm,
         *(str({k: v for k, v in e.body.items() if k != "raw"}) for e in world.reader().read()),
@@ -1417,21 +1406,6 @@ def test_6_a_time_whose_zone_is_an_adapters_own_is_kept_in_utc() -> None:
         world.broker.answer = lambda intent, n, answer=answer: answer
         world.send()
         assert last(world).received_at == AT and last(world).received_at.tzinfo is UTC
-
-
-def test_6_an_interrupt_as_an_answer_is_read_ends_the_process_with_the_order_sending() -> None:
-    world = World()
-    world.broker.answer = lambda intent, n: bent(order=Interrupts())
-    with pytest.raises(KeyboardInterrupt) as raised:
-        world.send()
-    assert raised.value.args == () and raised.value.__context__ is None
-    assert world.kinds() == SENT[:3] and world.submits == 1
-
-
-class Interrupts:
-    @property
-    def client_order_id(self) -> str:
-        raise KeyboardInterrupt("PKFAKEKEY")
 
 
 @pytest.mark.parametrize("raises", [False, True], ids=["answered", "raised"])
@@ -2013,7 +1987,7 @@ def test_7_a_cap_lowered_while_an_append_waits_stops_the_order(appended: int) ->
 
 @pytest.mark.parametrize("at", [CREATES[0], CREATES[1], CREATES[2] + 1])
 def test_7_a_caps_blob_whose_limits_are_the_same_stops_nothing(at: int) -> None:
-    """The owner may add a section another reader reads, between two legs of a pair."""
+    """The owner may add a section another reader reads, during a send."""
     world = World()
     blob = json.loads(world.store.blobs[caps_key(ACCOUNT)])
     again = json.dumps(blob | {"holds": ["a cause"]}).encode() + b"\n"
@@ -2349,26 +2323,6 @@ def test_7_a_create_that_lands_late_doubles_nothing_and_unsays_nothing(
     assert world.reader().in_doubt() == () and account.unstored() == ()
 
 
-@pytest.mark.parametrize("error", [KeyboardInterrupt("x"), SystemExit("x"), CancelledError("x")])
-def test_6_what_ends_the_process_as_an_owed_alarm_goes_out_stops_the_next_order(
-    error: BaseException,
-) -> None:
-    world = World(orders=PAIR)
-    account = world.account()
-    world.broker.answer = raising(TimeoutError())
-    world.alarms.error = ConnectionError("down")
-    with pytest.raises(Halt):
-        world.send(1, account)
-    world.broker.answer, world.alarms.error = says(Outcome.ACCEPTED, "b-1"), error
-    ends = KeyboardInterrupt if isinstance(error, KeyboardInterrupt) else Halt
-    with pytest.raises(ends):
-        world.send(2, account)
-    assert world.submits == 1
-    world.alarms.error, world.alarms.sent = None, []
-    account.settle(world.report)
-    assert len(world.alarms.sent) == 1
-
-
 def test_6_an_alarm_error_with_no_name_stops_no_answers_entry() -> None:
     world = World()
     world.broker.answer = raising(TimeoutError())
@@ -2511,3 +2465,64 @@ def test_6_an_error_whose_name_cannot_be_read_after_the_call_is_in_doubt(monkeyp
 
     monkeypatch.setattr(order_path, "error_name", once)
     assert world.send() is OrderState.IN_DOUBT and world.submits == 1
+
+
+ENDS = [SystemExit("PKFAKEKEY"), CancelledError("PKFAKEKEY"), KeyboardInterrupt("PKFAKEKEY")]
+
+
+@pytest.mark.parametrize("error", ENDS)
+def test_7_an_alarm_that_raises_anything_loses_no_order_that_was_not_sent(
+    error: BaseException,
+) -> None:
+    world = World()
+    account = world.account()
+    world.alarms.error = error
+
+    def before(number: int, op: str, key: str) -> None:
+        if number > CREATES[2]:
+            down(number, op, key)
+
+    world.store.before = before
+    said = halted(world, "The alarm could not be sent", lambda: world.send(account=account))
+    assert "PKFAKEKEY" not in said and account.unstored()
+    world.store.before = lambda n, op, key: None
+    account.settle(world.report)
+    assert world.state() is OrderState.ABANDONED
+
+
+@pytest.mark.parametrize("error", ENDS)
+def test_6_an_alarm_raised_as_an_answer_is_settled_stops_nothing(error: BaseException) -> None:
+    world = World(orders=PAIR)
+    account = world.account()
+    world.broker.answer = raising(TimeoutError())
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    with pytest.raises(Halt):
+        world.send(1, account)
+    world.store.before = lambda n, op, key: None
+    world.record(AckEntry(ID, "b-0", b"", False, AT))
+    world.broker.answer, world.alarms.error = says(Outcome.ACCEPTED, "b-1"), error
+    assert world.send(2, account) is OrderState.ACKNOWLEDGED
+    world.alarms.error, world.alarms.sent = None, []
+    account.settle(world.report)
+    (alarm,) = world.alarms.sent
+    assert "was kept as in doubt" in alarm
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "said"),
+    [
+        ("raw", Bytes(b"{}"), "its bytes are a Bytes"),
+        ("raw", None, "its bytes are a NoneType"),
+        ("received_at", Time(2026, 11, 3, 20, 48, tzinfo=UTC), "its time is a Time"),
+        ("received_at", None, "its time is a NoneType"),
+        ("received_at", AT.replace(tzinfo=None), "its answer's time is not UTC"),
+        ("broker_order_id", Ours("b-1"), "its broker's id is a Ours"),
+    ],
+)
+def test_6_an_answer_whose_field_is_of_another_type_is_in_doubt_and_says_which(
+    field: str, value: object, said: str
+) -> None:
+    world = World()
+    world.broker.answer = lambda intent, n: bent(**{field: value})
+    assert world.send() is OrderState.IN_DOUBT
+    assert last(world).reason == said

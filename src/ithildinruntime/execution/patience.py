@@ -35,7 +35,7 @@ def code_of(error: BaseException) -> str:
     the answer is the store's own text and is left out.
     """
     name = error_name(error)
-    code = error.answer.partition(":")[0] if issubclass(type(error), StoreError) else ""
+    code = error.answer.partition(":")[0] if isinstance(error, StoreError) else ""
     return f"{name} {code}" if _CODE.fullmatch(code) else name
 
 

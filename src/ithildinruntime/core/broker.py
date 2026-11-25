@@ -33,7 +33,8 @@ class BrokerUnavailable(Exception):
     def __init__(self, call: str, error: BaseException | type) -> None:
         self.call = _word(call)
         # A subclass is an adapter's own, whose word could be a key.
-        self.error = _word(error.error) if type(error) is BrokerUnavailable else error_name(error)
+        own = type(error) is BrokerUnavailable
+        self.error = _word(getattr(error, "error", None)) if own else error_name(error)
         super().__init__(f"the broker's {self.call} failed with {self.error}")
 
 
