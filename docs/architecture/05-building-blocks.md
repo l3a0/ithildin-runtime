@@ -1251,7 +1251,7 @@ flowchart LR
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The stress records are no argument and no entry holds them, so the verdict carries `stress_move`, the one the check used. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book and the order by an earlier entry, so that the verdict can be computed again. The stress records are no argument and no entry holds them, so the verdict carries `stress_move`, the one the check used. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
 
 ##### What halts and what refuses
 
@@ -1393,7 +1393,7 @@ It first makes the checks `core.tighten` makes of the constraints and of the cap
 
 It gives back the caps with m the largest of their own and of every record that counts. A record counts when it is of the strategy, is not withdrawn, and names as the leg that made its move one the constraints limit. Its other legs do not matter, because that leg made the move. So a record can only tighten, and `Verdict` carries the m the check used.
 
-The gate's `loss` does not hold the caps. The day's loss reads no m, and a record arrives by a merge or a rollback rather than by the owner's hand. So where the caps or the release change after the risk stage has run, a decision past the loss stop still reads its loss, while `check` halts every order.
+The gate's `loss` does not hold the caps, because the day's loss reads no m. So where the owner rewrites the caps after the risk stage has run, and only the hold refuses them, `check` halts every order and the loss is still read.
 
 The price is seven things.
 

@@ -130,7 +130,7 @@ class IntentEntry:
 
 @dataclass(frozen=True)
 class VerdictEntry:
-    """The gate's answer, and all it was handed but the stress records.
+    """The gate's answer, and all it was handed but the order and the stress records.
 
     The verdict's `stress_move` is the one the check used, which a record can hold
     above the caps'.
@@ -139,7 +139,7 @@ class VerdictEntry:
       `close_entry` the number of the entry of a close after a broker's trade,
       or `None`.
     - `book` is the number of the entry before this one, whose view holds the
-      book the gate was handed.
+      book and the order the gate was handed.
     - `caps` is the canonical bytes of the parsed `HardCaps`, and
       `caps_sha256` the SHA-256 of the blob it was parsed from. The owner
       rewrites that blob, so its values are kept here. They are bytes the fold

@@ -545,7 +545,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `read` | `stage`, `decision_at`, `ref`, `at` | Execution | The stored file that holds a broker read, named before any value in it is used, and when the read was made |
 | `decision` | `deployment`, `run`, `decision_at`, `targets`, `orders`, `off`, `inputs`, `read`, `synced` | Execution | Every strategy's whole target, the planned orders in order, each strategy that was off, each input by name, and the entries it was planned on and synced through |
 | `intent` | `decision`, `order` | Execution's order path | One planned order, under its `decision` entry's number |
-| `verdict` | `client_order_id`, `verdict`, `now`, `stop`, `close_entry`, `book`, `caps`, `caps_sha256`, `snapshot`, `constraints`, `valuation` | Execution's order path | The gate's answer, with the stress move it used, and all it was handed but the stress records |
+| `verdict` | `client_order_id`, `verdict`, `now`, `stop`, `close_entry`, `book`, `caps`, `caps_sha256`, `snapshot`, `constraints`, `valuation` | Execution's order path | The gate's answer, with the stress move it used, and all it was handed but the order, which the `intent` holds, and the stress records |
 | `abandoned` | `client_order_id`, `reason` | Execution's order path | Nothing was sent, and why |
 | `sending` | `client_order_id` | Execution's order path | The order may leave now |
 | `ack` | `client_order_id`, `broker_order_id`, `raw`, `cut`, `received_at` | Execution's order path | The broker has the order, with the bytes it sent |

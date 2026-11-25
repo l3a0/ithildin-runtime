@@ -153,8 +153,8 @@ class Gate:
     ) -> LossReading:
         """The day's loss, which the send stage reads on every decision with no order.
 
-        It reads no stress move, so it holds the caps to no record. A record
-        lost after the risk stage ran would otherwise stop the loss stop from firing.
+        It reads no stress move, so it holds the caps to no record. Caps rewritten
+        after the risk stage ran would otherwise stop the loss stop from firing.
         """
         return _read(book, snapshot, constraints, inputs, now, None, ()).reading
 
