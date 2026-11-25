@@ -316,6 +316,8 @@ def test_5_a_quote_that_ages_after_the_gate_stops_the_order(
             lambda: world.send(1, account),
         )
         assert world.state() is OrderState.ABANDONED
+        # A `sending` on its own reads as in doubt, so none is journaled past the moment.
+        assert world.kinds()[-2] == entry_of
     else:
         assert world.send(1, account) is OrderState.ACKNOWLEDGED
     assert moved
@@ -330,13 +332,14 @@ def _stopped_again(world: World, match: str, call: Callable[[], object]) -> None
 
 @pytest.mark.parametrize("short", [False, True])
 def test_9_a_quote_that_ages_as_the_verdict_waits_hides_no_loss(short: bool) -> None:
-    """The verdict is no send, so its append is tried to the order's own last moment."""
+    """The verdict is no send, so its append is tried to the order's cutoff or close."""
     world = World(
         snapshot=gates.quoted(QUOTED, at=AT),
         valuation=gates.valuation(CASH + 101, replayed_through=1),
         constraints=(gates.constraints(loss_stop=gates.d(100)),),
     )
     world.clock.at = EXPIRES - timedelta(seconds=0.5 if short else 20)
+    world.clock.moves = True
     tried: list[int] = []
 
     def before(number: int, op: str, key: str) -> None:

@@ -2112,7 +2112,8 @@ Five rules keep a day of decisions safe.
       call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past its last moment is journaled `Abandoned`
       and the decision halts. Inside the send stage, the retry deadline of a
       write ahead of a send that S3 does not answer ends no later than that moment, so a slow write
-      cannot carry a send past it.
+      cannot carry a send past it. The `intent`'s and the `verdict`'s end by the cutoff or the close
+      alone, because neither is a send.
    2. **A clock that cannot be trusted halts.** At the start of the send
       stage, execution compares the VM's clock with the broker's own clock,
       Alpaca's `GET /v2/clock`, and

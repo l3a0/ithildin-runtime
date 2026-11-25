@@ -4,7 +4,7 @@
 entry and a control are not among them, because an entry is resent unchanged by
 its own writer, and a control that cannot be read stops an order rather than a
 decision. So execution waits here, calling `report` after each call and between
-tries, and never past the last moment an order may go out.
+tries, and never past the moment its caller gives.
 """
 
 from __future__ import annotations

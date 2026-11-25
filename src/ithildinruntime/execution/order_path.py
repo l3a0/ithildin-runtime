@@ -812,6 +812,8 @@ class OrderPath:
     def _sending(self, name: str, approved: _Approved) -> JournalAck:
         went = self._shared.clock.now()
         try:
+            # The verdict may have waited past it, and a `sending` on its own reads as in doubt.
+            self._before(name, approved.last)
             ack, _ = self._record(approved.view, SendingEntry(name), approved.last.at)
         except NumberTaken:
             raise self._ended(name, _taken(name, "sending")) from None

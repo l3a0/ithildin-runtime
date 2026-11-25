@@ -546,6 +546,11 @@ def test_the_last_moment_a_quote_can_be_read_is_the_judges_own(older: str, age: 
     assert quote_faults(made, DECISION, until + TICK)
 
 
+def test_a_stamp_too_old_to_bound_is_no_moment_at_all() -> None:
+    with pytest.raises(OverflowError):
+        readable_until(replace(GOOD, bid_at=datetime.min.replace(tzinfo=UTC)))
+
+
 def test_a_maximum_age_past_any_date_is_readable_to_the_last_one() -> None:
     until = readable_until(replace(GOOD, max_age=INT_LIMIT - 1))
     assert until == datetime.max.replace(tzinfo=UTC)

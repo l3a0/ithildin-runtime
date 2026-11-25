@@ -433,6 +433,7 @@ sequenceDiagram
         X->>F: has the loss stop not fired?
         X->>X: runs the risk gate check
         X->>J: journals the approval
+        X->>X: is it before the order's last moment?
         X->>J: journals the sending entry
         X->>J: replays the book again
         X->>F: are the hard caps' limits unchanged?
@@ -593,7 +594,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
 6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
 7. Ask the risk gate, and journal its answer. A quote it marked ends the order's last moment sooner, where the quote reaches its maximum age first. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
-8. Journal that it is sending.
+8. Check the order's last moment again, and journal that it is sending.
 9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
 10. Send, with the order's client order id.
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
