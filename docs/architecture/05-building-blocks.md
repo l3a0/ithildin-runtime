@@ -311,8 +311,6 @@ asks.
    on a short's proceeds and buying power read as unknown, never as zero. A split
    is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
 
-That an order fills this way is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling).
-
 The figure below is a C4 dynamic diagram.
 
 ```mermaid

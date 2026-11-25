@@ -218,7 +218,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 3. [The security master](#the-security-master) holds `INSTRUMENT`.
 4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
 5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
-6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, in a form this doc proposes for [#144](https://github.com/l3a0/ithildin-runtime/issues/144).
+6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions.
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
 8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place is not yet written.
 
@@ -259,7 +259,7 @@ The security master holds `INSTRUMENT`. It is a small committed file, `src/ithil
 
 #### The journal
 
-The journal holds `JOURNAL_ENTRY`. It is the one numbered log: one per broker account, outside every run, because the book is replayed from it across runs.
+The journal holds `JOURNAL_ENTRY`. It is the one numbered log of what the platform did: one per broker account, outside every run, because the book is replayed from it across runs.
 
 Each entry is a blob at a key fixed by the account and its sequence number, and an account's first entry is number 1. It holds these, so the entry itself is the record.
 
@@ -300,7 +300,7 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them. That the rule allows it is part of the proposal below.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
 
 ##### What a blob holds
 
@@ -397,7 +397,7 @@ Every call first reads the log forward from the newest call it knows, and takes 
 
 The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
 
-That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). Its prices are four.
+This form has four prices.
 
 1. Each call costs one read for the next number, and one more for each close it asks for, since it lets the log go to read one. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix, as `infra/test/bootstrap/roles.tf` says of the test role. To any other role it reads as access denied, and every call fails. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each role's grant.
 2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs can differ, so the clock's bound has to stay below that time.
