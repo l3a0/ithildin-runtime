@@ -1057,7 +1057,7 @@ Monitoring's report says the switch is set.
 
 A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
 
-A journal whose entries read and do not replay holds a cancel too, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) and there is none. This doc proposes, for [#150](https://github.com/l3a0/ithildin-runtime/issues/150), that the pull then goes the same way, with the alarm and a person at the broker's console.
+The same holds where the entries read and do not replay, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) and there is none. Execution sends no cancel and alarms, and a person cancels at the broker's console, as the [2026-11-25](../design.md#2026-11-25) entries say. [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds it.
 
 ##### What happens when execution is down at the pull
 
