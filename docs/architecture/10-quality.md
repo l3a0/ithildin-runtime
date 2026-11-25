@@ -25,8 +25,8 @@ Chan's script assumes. The paper run
 trades that close too, with market-on-close orders, so both fill at the same
 price. The two still decide at different times. Test 1's deployment decides
 at the close, on the imported daily bars, through a simulated account whose
-cutoff is the close, because a close−20 decision there would see only the day
-before's close and shift every signal a session. The paper deployment
+cutoff is the close, because a close−20 decision there would halt: the vintages
+hold no quotes, so each leg has no price for the decision's session. The paper deployment
 decides at close−20, because no live decision can read a close that has not
 happened. Test 1 checks the engine against Chan's timing. A backtest of the
 deployed close−20 schedule needs minute history at that minute that the imported

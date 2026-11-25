@@ -1,10 +1,17 @@
 """Chan's Bollinger band on the price spread between two instruments.
 
 docs/architecture/01-introduction-and-goals.md's `## The strategy the skeleton
-runs` gives the rule and says why the held unit is recomputed from closes at
+runs` gives the rule and says why the held unit is recomputed from prices at
 every decision rather than remembered. The model keeps nothing between
 decisions. It reads the snapshot and its strategy's `[alpha]` section, and no
 clock, mode or book.
+
+A decision reads a window of each leg's prices, one per session. The newest is
+the decision price, which `core.mark` gives as of the decision time: the midpoint
+of the leg's quote where the snapshot holds one, and the close of the decision
+session's own bar where it holds none. Each price before it is the close of an
+earlier session's bar. So one path serves a decision before the close and one at
+it, and the model prices a leg the way its size and the gate do.
 
 The section looks like this.
 
@@ -18,7 +25,7 @@ The section looks like this.
     exit = 0
 
 `dependent` is the leg held at one share per unit, and `independent` the leg
-that hedges it. `hedge_sessions` is how many closes the hedge ratio is fitted
+that hedges it. `hedge_sessions` is how many prices the hedge ratio is fitted
 on, and `band_sessions` how many spreads the z-score is measured against.
 `entry` and `exit` count standard deviations of the spread from its mean.
 
@@ -44,21 +51,25 @@ each of these.
    in the snapshot that is missing, stale or has no bar, in
    `Snapshot.require_fresh`'s own words.
 2. A bar whose basis is not `adjusted`, because a split inside a window of
-   prices as traded would read as a move of the market. Data's stage halts first
-   where one leg's bars are of two series, such as both `adjusted` and `raw`
-   ones, or where a bar's price kind is unstated.
+   bars as traded would read as a move of the market. A quote carries no basis
+   to check. Data's stage halts first where one leg's bars are of two series,
+   such as both `adjusted` and `raw` ones, or where a bar's price kind is
+   unstated.
 3. Legs whose bars name different sessions.
-4. A newest bar that is not the decision's own session, meaning the latest
-   session that opened by the decision. Data's newest bar before the close is
-   the day before's, and it reads `fresh`, so without this check every signal
-   would trade a session late. A decision the calendar holds no session for
-   halts too.
-5. Fewer sessions than the newest z-score reads.
-6. A window of `independent` closes that are all equal, where the slope has no
+4. A newest bar that is of neither the decision's own session, meaning the
+   latest session that opened by the decision, nor the session before it. With
+   an older one the window would miss a session. A decision the calendar holds
+   no session for, or none before its own, halts too.
+5. A leg `core.mark` gives no price, in its words. It has none where the
+   snapshot holds neither a quote of the leg nor a bar of the decision's
+   session, where it holds both, where the judge of a quote finds a fault, and
+   where a bar ended or was knowable after the decision.
+6. Fewer prices than the newest z-score reads.
+7. A window of `independent` prices that are all equal, where the slope has no
    value, and a band window whose spreads do not move, where the z-score has
    none.
-7. A window that ends before it settles which unit is held.
-8. A statistic the codec cannot hold.
+8. A window that ends before it settles which unit is held.
+9. A statistic the codec cannot hold.
 
 Every figure is a `Decimal` at 28 digits, worked out inside a context of the
 model's own, so the context a caller set changes no byte. The model decides on
@@ -83,6 +94,7 @@ from ithildinruntime.core import (
     Snapshot,
     StrategyConfig,
     load_sessions,
+    mark,
     places,
     to_decimal,
 )
@@ -280,7 +292,7 @@ class BollingerSpread:
         )
 
     def _fits(self, snapshot: Snapshot) -> _Fits:
-        """The two legs' closes, after the checks a window of prices must pass."""
+        """The two legs' prices, after the checks a window of them must pass."""
 
         def refuse(what: str) -> Halt:
             return Halt(f"strategy {self._strategy} {what}")
@@ -303,27 +315,38 @@ class BollingerSpread:
                 f"{self._independent} have bars of different ones"
                 + (f", such as {apart[0]}" if apart else "")
             )
+        table = load_sessions()
         try:
-            own = load_sessions().opened_by(snapshot.decision_at).day
+            own = table.opened_by(snapshot.decision_at).day
+            before = table.before(own).day
         except Halt as halt:
             raise refuse(f"cannot place its decision on a session: {halt.reason}") from None
         newest = days[self._dependent][-1]
-        if newest != own:
+        if newest not in (before, own):
             raise refuse(
                 f"decides on the session {own}, and the newest bar of {self._dependent} and "
                 f"{self._independent} is {newest}'s"
             )
+
+        def prices(leg: InstrumentId) -> list[Decimal]:
+            try:
+                price = mark(snapshot, leg, before, snapshot.decision_at)
+            except Halt as halt:
+                raise refuse(f"has no price for {own}: {halt.reason}") from None
+            return [*(bar.close for bar in bars[leg] if bar.session != own), price]
+
+        dependent, independent = prices(self._dependent), prices(self._independent)
         reads = self._hedge_sessions + self._band_sessions - 1
-        if len(days[self._dependent]) < reads:
+        if len(dependent) < reads:
             raise refuse(
                 f"reads {reads} sessions of {self._dependent} and {self._independent}, and the "
-                f"snapshot holds {len(days[self._dependent])} to {newest}"
+                f"snapshot holds {len(dependent)} to {own}"
             )
         return _Fits(
             refuse=refuse,
-            days=days[self._dependent],
-            dependent=[bar.close for bar in bars[self._dependent]],
-            independent=[bar.close for bar in bars[self._independent]],
+            days=[*(day for day in days[self._dependent] if day != own), own],
+            dependent=dependent,
+            independent=independent,
             hedged_by=self._independent,
             hedge_sessions=self._hedge_sessions,
             band_sessions=self._band_sessions,
@@ -356,20 +379,20 @@ class _Fits:
         self._hedges: dict[int, Decimal] = {}
 
     def hedge(self, at: int) -> Decimal:
-        """The slope fitted on the closes that end at `at`."""
+        """The slope fitted on the prices that end at `at`."""
         if at not in self._hedges:
             window = slice(at - self._hedge_sessions + 1, at + 1)
-            closes = self._independent[window]
-            if all(close == closes[0] for close in closes):
+            prices = self._independent[window]
+            if all(price == prices[0] for price in prices):
                 raise self._refuse(
                     f"cannot fit a hedge ratio on {self.days[at]}: {self._hedged_by}'s last "
-                    f"{self._hedge_sessions} closes are all {closes[0]}"
+                    f"{self._hedge_sessions} prices are all {prices[0]}"
                 )
-            self._hedges[at] = slope(self._dependent[window], closes)
+            self._hedges[at] = slope(self._dependent[window], prices)
         return self._hedges[at]
 
     def spread(self, at: int) -> Decimal:
-        """The spread at `at`'s closes, under the ratio fitted on that session."""
+        """The spread at `at`'s prices, under the ratio fitted on that session."""
         return self._dependent[at] - self.hedge(at) * self._independent[at]
 
     def band(self, at: int) -> _Band:

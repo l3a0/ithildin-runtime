@@ -6,6 +6,7 @@ This page is section 1 of [the architecture](00-README.md), in the order of the 
 
 - [The strategy the skeleton runs](#the-strategy-the-skeleton-runs)
   - [How the model knows which unit it holds](#how-the-model-knows-which-unit-it-holds)
+  - [Which price a decision reads](#which-price-a-decision-reads)
   - [What ends a position](#what-ends-a-position)
   - [What forces the spread back](#what-forces-the-spread-back)
   - [What a pin on this data cannot show](#what-a-pin-on-this-data-cannot-show)
@@ -186,17 +187,19 @@ the hypothesis was committed in writing before the number was seen.
 The rule holds a unit from its entry to its exit, so today's unit depends on
 days gone by. A live run is one trading day, and a worker carries nothing from
 one decision to the next except blobs. So the alpha model remembers no unit.
-It works the unit out again at every decision, from the closes in that
-decision's snapshot, in four steps.
+It works the unit out again at every decision, from a window of prices of each
+leg in that decision's snapshot. Every price but the newest is the close of an
+earlier session's bar. The newest is [the decision price](#which-price-a-decision-reads),
+which stands for the decision's own session. The model then takes four steps.
 
-1. Start at the decision's own session and walk back, working out each
-   session's z-score only when the walk reaches it.
+1. Start at the decision's own session, whose price is the decision price, and
+   walk back, working out each session's z-score only when the walk reaches it.
 2. Settle the long side at the newest z-score that enters it, below −1, or ends
    it, above 0. Settle the short side at the newest one that enters it, above
    +1, or ends it, below 0.
 3. Stop once both sides are settled. The unit is +1 if the long is held, −1 if
    the short is, and 0 if neither is.
-4. Halt if the window of bars ends before both sides settle. Positions stay as
+4. Halt if the window of prices ends before both sides settle. Positions stay as
    they are.
 
 A z-score exactly on a threshold settles nothing, because the rule's
@@ -211,8 +214,9 @@ comparisons are strict.
 | +1.3 | Not held, by +1.3 | Held, by +1.3 | −1, after one z-score |
 | −0.4, then −0.9 | Not settled | Not held, by −0.4 | Unknown, so the walk goes on, and halts if the window ends |
 
-A settled unit equals the rule run forward over every close today's snapshot
-knows, whatever the window's length, and a day that halted leaves no gap in
+A settled unit equals the rule run forward over every session to the decision's
+own, on the closes today's snapshot knows and the decision price, whatever the
+window's length, and a day that halted leaves no gap in
 it. `tests/test_alpha_replication.py` holds it to the replication's unit on
 each of test 1's 1,461 decisions. The longest walk among them reads 55
 sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
@@ -220,12 +224,13 @@ sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
 2006 to 2012 and of 2012 to 2026 were both read, so "none halts" is exploratory,
 and a longer walk is rare rather than impossible. A settled unit does not
 depend on the lookback. The strategy's lookback is 60 sessions, which the
-`[data]` section of its tracked file states.
+`[data]` section of its tracked file states. A decision at close−20 reads 60 bars
+and the decision price, which is 61 prices where a decision at the close has 60.
 
 The price has three parts.
 
-1. A live decision reads a price before the close, so the unit worked out from
-   closes the next day can differ from the one traded. An entry or an exit that
+1. A live decision reads the midpoint before the close, so the unit worked out
+   from closes the next day can differ from the one traded. An entry or an exit that
    the close does not confirm is undone then, at the cost of one round trip, and
    one the earlier price missed is taken a session late.
 2. A bar corrected inside the window can change today's unit with no move of
@@ -234,6 +239,48 @@ The price has three parts.
    reads it, which is up to 60 sessions. So does any other fault in a session of
    the lookback that halts a decision, such as a session with no bar or [a change
    of series](../design.md#a-lookback-that-crosses-a-change-of-series).
+
+### Which price a decision reads
+
+The model prices each leg with `core.mark`, as of the decision time, so the
+signal reads the same price that sizes and values the position.
+
+**Table:** The decision price of one leg
+
+| The snapshot holds | The decision price |
+| --- | --- |
+| A quote of the leg, as a decision at close−20 reads | The midpoint of its bid and ask, where [the judge of a quote](03-context-and-scope.md#how-a-quote-is-judged) finds no fault and its older stamp is later than the last session's close |
+| No quote, and a bar of the decision's own session, as a decision at the close reads | That bar's close |
+| Both, or neither | None, and the decision halts |
+
+The newest bar is of the decision's own session or of the one before it, on both
+legs, and any other halts. Nothing asks which environment or time it is, so test
+1 at the close, shadow, paper, live and a replay run the same lines.
+
+Two other prices were left out. The last sale can sit at either side of the
+market, and nothing judges its stamp or its kind, so the signal would read one
+price and the size another. Which of the bid and the ask applies depends on the
+side of the trade, which is what the model is deciding. The price of the midpoint
+is that no order fills at it. Half the spread is a cost, which the cost schedule
+and a fill at the bid or the ask
+([#155](https://github.com/l3a0/ithildin-runtime/issues/155)) carry.
+
+[A decision that reads two kinds of price says
+so](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control),
+and a decision before the close reads two.
+
+**Table:** The kind, coverage and delay of each price the strategy reads
+
+| Price | Kind | Venues | Delay |
+| --- | --- | --- | --- |
+| The vintages it is tested on | Official close | Consolidated | None |
+| The bars behind a paper decision, which marketlake captures | What `data/price_kinds.csv` states of capture. It states nothing until [#174](https://github.com/l3a0/ithildin-runtime/issues/174) | What the same row states | What the same row states |
+| The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag, which has to say it is real time, and a written maximum age |
+
+So at close−20 the newest hedge ratio and z-score mix one midpoint with closes,
+and every earlier one reads closes alone. What the mix does to the unit is
+unmeasured, and [#176](https://github.com/l3a0/ithildin-runtime/issues/176) holds
+the measure.
 
 ### What ends a position
 

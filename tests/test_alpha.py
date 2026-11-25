@@ -878,8 +878,23 @@ HALTS = {
         replace(
             HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 29)).close - timedelta(hours=1)
         ),
-        "strategy chan decides on the session 2011-11-29, and the newest bar of USO and GLD is "
+        "strategy chan has no price for 2011-11-29: USO has no mark: its newest bar is for "
+        "2011-11-28, not later than 2011-11-28",
+    ),
+    "a-newest-bar-two-sessions-back": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 30)).close),
+        "strategy chan decides on the session 2011-11-30, and the newest bar of USO and GLD is "
         "2011-11-28's",
+    ),
+    "a-newest-bar-that-ends-after-the-open": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 28)).open),
+        "strategy chan has no price for 2011-11-28: USO's bar for 2011-11-28 ends at "
+        "2011-11-28T21:00:00+00:00, after the decision at 2011-11-28T14:30:00+00:00",
+    ),
+    "a-newest-bar-that-ends-a-second-after-the-decision": (
+        replace(HAND_SNAPSHOT, decision_at=CLOSE - timedelta(seconds=1)),
+        "strategy chan has no price for 2011-11-28: USO's bar for 2011-11-28 ends at "
+        "2011-11-28T21:00:00+00:00, after the decision at 2011-11-28T20:59:59+00:00",
     ),
     "a-newest-bar-after-the-decision": (
         replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 25)).close),
@@ -891,13 +906,18 @@ HALTS = {
         "strategy chan cannot place its decision on a session: 2050-01-03T21:00:00+00:00 is "
         "outside the session table's range, 2006-01-01 to 2027-12-31",
     ),
+    "a-decision-on-the-calendars-first-session": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(DAYS[0]).close),
+        "strategy chan cannot place its decision on a session: the session table holds no "
+        "session before 2006-01-03",
+    ),
     "too-few-sessions": (
         HAND.at(NEWEST, 4),
         "strategy chan reads 5 sessions of USO and GLD, and the snapshot holds 4 to 2011-11-28",
     ),
     "a-hedging-leg-that-does-not-move": (
         with_closes((10, 11, 12, 13, 14, 14, 14), OIL),
-        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 closes are all 14",
+        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 prices are all 14",
     ),
     "a-band-that-does-not-move": (
         # USO is 3 + GLD / 2 throughout, so each spread is 3.
@@ -939,9 +959,8 @@ def test_a_section_the_model_refuses_halts_with_its_inputs_and_no_cause(tmp_path
 @pytest.mark.parametrize(
     "at",
     [
-        # From the session's own open, through its close, to just before the next one opens.
-        TABLE.session(date(2011, 11, 28)).open,
-        CLOSE - timedelta(minutes=20),
+        # From the session's close, where its bar ends, to just before the next one opens.
+        CLOSE,
         CLOSE + timedelta(hours=2),
         TABLE.session(date(2011, 11, 29)).open - timedelta(microseconds=1),
     ],
