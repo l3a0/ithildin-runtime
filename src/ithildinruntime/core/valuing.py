@@ -43,6 +43,7 @@ __all__ = [
     "mark",
     "position",
     "series_of",
+    "session_close",
     "unstated_fields",
     "value_book",
 ]
@@ -182,6 +183,18 @@ def held(book: Book, strategy: str | None = None) -> tuple[InstrumentId, ...]:
     }
     found.update(order.instrument for order in _open(book, strategy))
     return tuple(sorted(found))
+
+
+def session_close(snapshot: Snapshot, instrument: InstrumentId, session: date) -> Decimal | None:
+    """The official close of one session, or `None` where the snapshot holds no bar of it.
+
+    The bar is checked as a mark's is, so one that ends or was knowable after
+    the decision halts, and so does a close of unstated kind.
+    """
+    bars = _daily(snapshot, instrument)
+    if all(bar.session != session for bar in bars):
+        return None
+    return _close(instrument, bars, session)
 
 
 def value_book(book: Book, snapshot: Snapshot, session: date) -> Valuation:

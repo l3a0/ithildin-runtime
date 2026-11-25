@@ -218,7 +218,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 3. [The security master](#the-security-master) holds `INSTRUMENT`.
 4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
 5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
-6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, as proposed for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, in a form this doc proposes for [#144](https://github.com/l3a0/ithildin-runtime/issues/144).
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
 8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place is not yet written.
 
@@ -300,11 +300,33 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-One blob per simulated account per call, written before the call returns, outside every run, holds the orders, open and closed, with both ids and each submission time, and the positions the simulator keeps.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none.
+
+A blob holds four things.
+
+1. The log's format, the account, the call's number, the `writer` that made it and the clock's time.
+2. The call's events, which are what a fault had someone do by hand, the orders it took, the orders on their way, and each order that ended, with the state it ended in, when, and its fill.
+3. The account after them, which is its cash, its positions, the orders open and the orders on their way.
+4. No order that ended before this call. A blob that carried every order would cost the square of the run's length.
+
+Call 1 opens the account flat with its cash, and names no writer and no time, so opening it again is the same bytes and is done. Nothing else opens an account, so a lost log never reads as a new one.
+
+**Table:** What the log does when a store or another process is in the way
+
+| What happens | What the log does |
+| --- | --- |
+| The store refuses a create, or gives no answer | The call raises, and nothing this process remembers changes. The next call first reads the log forward and takes in what is there |
+| The number holds this writer's own blob, which landed late | The call raises, and the next call takes that blob in |
+| The number holds these same bytes | The create is done, since its first answer was lost |
+| The number holds another writer's blob | The call halts, because two processes are writing one account |
+| A gap, a blob that is not canonical, one of another account, or one that is not the blob before it with its events applied | Every call halts |
+| A process starts | It reads the whole log at its first call, and keeps the closed orders and the fills in memory from then on |
+
+Each event is applied again as the log is read, and the account it gives has to be the one the blob holds.
 
 The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
 
-This is a proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144). The price is that a process that starts reads the whole log. At two orders a decision that is three blobs a decision, so 4,384 for the 1,461 decisions of acceptance test 1.
 
 #### Account controls
 
@@ -623,7 +645,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
 | A journal checkpoint | `journal/<account>/checkpoints/<seq>.json`, with `seq` padded to twelve digits |
 | A book snapshot, derived | `accounts/<account>/books/<seq>.json`, with `seq` padded to twelve digits |
-| The simulated account, written before each call returns | `sim/<account>/<decision>/<call>.json`, with the call padded to four digits |
+| The simulated account, one blob for each call that changed it, written before the call returns | `sim/<account>/<call>.json`, with the call padded to twelve digits |
 | The plan's lease, holding the run's status | `leases/plans/<deployment>/<run>.json` |
 | The account's lease | `leases/accounts/<account>.json` |
 | The kill switch | `accounts/<account>/switch.json` |
