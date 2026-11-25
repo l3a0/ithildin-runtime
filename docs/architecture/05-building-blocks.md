@@ -1094,13 +1094,13 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `origin` | Whether marketlake captured the bar or imported it |
 | `vintage_id` | The vintage the bar was read from |
 | `first_seen` | When the platform first held the bar |
-| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for split and dividend adjusted, as quantitative-trading's vintage records do |
+| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for numbers its source had already adjusted, where the word does not say for what |
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
 | `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
 | `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series) |
-| `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
+| `volume` | The volume, or `None` where marketlake holds none, as on both Chan vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
 A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. A reader takes a field that holds no word as `unstated` too. The data module copies the four fields into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored.
@@ -1114,7 +1114,7 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
 3. A captured bar's knowable time is marketlake's `fetch_end_ts`, when the answer arrived, because that is the earliest the platform could have held it. A captured bar with none halts the decision, and so does a stamp with no stated zone. `fetch_ts`, when the request left, is kept beside it. A daily bar is fetched the evening before the decision that reads it, so no daily decision turns on which of the two counts.
-4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections.
+4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages and 2026-11-22 for both Yahoo files. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections. USO's Yahoo prices before 2020-04-29 are eight times those that traded and its volume an eighth, as USO's row in `data/price_kinds.csv` states, on a factor in effect only from 2020-04-29. So a backtest there holds an eighth as many shares as the same dollars bought then. A per-share cost reads an eighth of what it was, a share cap binds late, and a share of the volume is unchanged. `adjusted` does not say the scale, because Chan's bars read `adjusted` too.
 
 ##### What a quote and a snapshot's flags carry
 
