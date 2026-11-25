@@ -114,8 +114,9 @@ _ZERO = Decimal(0)
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
 # An order the broker has, as the journal's own groups of states give it, and every other
 # state that has not ended, which only a lookup, a person or #147 settles.
-_UNSETTLED = NOT_SENT | DOUBTFUL
-_AT_THE_BROKER = frozenset(OrderState) - ENDED - _UNSETTLED
+# A state no group names is unsettled, so it halts rather than being looked up.
+_AT_THE_BROKER = OPEN - NOT_SENT - DOUBTFUL
+_UNSETTLED = frozenset(OrderState) - ENDED - _AT_THE_BROKER
 
 
 class _Item(Protocol):
@@ -204,7 +205,8 @@ class RecoverStage:
             # The account moved since the first attempt read it, so its files would be stale.
             raise Halt(
                 f"{capture.ref.key} and this attempt's read of the broker differ in "
-                f"{', '.join(moved)}, so the account moved between two attempts at one decision"
+                f"{', '.join(moved)}, so the account may have moved between two attempts at "
+                "one decision"
             )
         view = self._record(view, lambda v: self._read_entry(v, capture.ref, read, at), report)
         seq = next(n for n, entry in view.reads.items() if entry.ref == capture.ref)
@@ -430,7 +432,8 @@ def _moved(first: AccountRead, later: AccountRead) -> list[str]:
     A fill only the first holds counts as no move where the later read asked from a
     later time than that fill's, as a bound moved by the first attempt's own fills
     does. Open orders are compared by the broker's id, so a list in another order is
-    the same list.
+    the same list, and one that holds an order twice is another. A fill listed twice
+    is no move, since each is applied once by its id.
     """
     one, two = _undated(first), _undated(later)
     named = [p for p in one if p not in _UNMOVED and p != "fills" and one[p] != two[p]]

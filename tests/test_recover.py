@@ -1312,7 +1312,7 @@ def test_3_a_second_read_in_which_the_account_moved_is_stored_and_halts() -> Non
     assert result.halt is not None
     assert result.halt.reason == (
         f"{world.key(ACCOUNT_OUTPUT)} and this attempt's read of the broker differ in cash, so "
-        "the account moved between two attempts at one decision"
+        "the account may have moved between two attempts at one decision"
     )
     stored = world.stored()
     attempt = attempt_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE, ACCOUNT_OUTPUT, 2)
@@ -1344,7 +1344,10 @@ def test_3_a_second_read_that_lost_a_fill_under_the_same_bound_halts() -> None:
     none = {"fills": lambda asked: FillsRead((), page(), True)}
     result = world.attempt(world.stage(brokers=doctored(world, **none)))
     assert world.entry(ACCOUNT_OUTPUT).since == since
-    assert result.halt is not None and "differ in fills, so the account" in result.halt.reason
+    assert (
+        result.halt is not None
+        and "differ in fills, so the account may have moved" in result.halt.reason
+    )
 
 
 def test_3_a_second_read_that_lists_the_open_orders_in_another_order_goes_on() -> None:
@@ -1353,10 +1356,22 @@ def test_3_a_second_read_that_lists_the_open_orders_in_another_order_goes_on() -
     world.day(DAYS[2], [(5, GLD), (2, USO)], early=20)
     world.prepare(close_of(DAYS[3]))
     listed = world.broker().open_orders()
-    two = replace(listed, orders=(*listed.orders, *listed.orders)[:2])
-    flipped = replace(two, orders=tuple(reversed(two.orders)))
-    for orders in (two, flipped):
-        assert recover_moved(world, orders) == []
+    assert len(listed.orders) == 2
+    assert recover_moved(world, listed) == []
+
+
+def test_3_a_second_read_that_lists_an_order_twice_is_a_move() -> None:
+    from ithildinruntime.execution.recover import _moved
+
+    read = AccountRead(
+        positions=PositionsRead({}, page(), True),
+        open_orders=OrdersRead((foreign_order(),), page(), True),
+        cash=CashRead(D(1), page(), True),
+        since=close_of(DAYS[0]),
+        fills=FillsRead((), page(), True),
+    )
+    twice = replace(read.open_orders, orders=(foreign_order(), foreign_order()))
+    assert _moved(read, replace(read, open_orders=twice)) == ["open orders"]
 
 
 def recover_moved(world: RecoverWorld, orders: OrdersRead) -> list[str]:
@@ -1394,7 +1409,10 @@ def test_3_a_second_read_in_which_the_account_moved_halts_on_each_part(what: str
     world.restart()
     result = world.attempt()
     word = "fills" if what == "a new fill" else what
-    assert result.halt is not None and f"differ in {word}, so the account" in result.halt.reason
+    assert (
+        result.halt is not None
+        and f"differ in {word}, so the account may have moved" in result.halt.reason
+    )
     assert world.kinds(world.before) == []
 
 
@@ -1444,7 +1462,10 @@ def test_3_a_fill_the_first_capture_lacks_halts_a_second_attempt_and_is_not_jour
     calls: list[str] = []
     result = world.attempt(world.stage(brokers=doctored(world, calls)))
     assert result.halt is not None
-    assert "differ in positions, open orders, cash, fills, so the account" in result.halt.reason
+    assert (
+        "differ in positions, open orders, cash, fills, so the account may have moved"
+        in result.halt.reason
+    )
     # Nothing of either read is journaled, and nothing is looked up.
     assert world.kinds(world.before) == []
     assert calls == list(READS)
@@ -2131,8 +2152,6 @@ def test_3_a_second_read_that_did_not_come_whole_halts() -> None:
     assert _moved(first, replace(first, fills=replace(read, whole=False))) == [
         "whether each came whole"
     ]
-    twice = replace(first.open_orders, orders=(foreign_order(), foreign_order()))
-    assert _moved(replace(first, open_orders=twice), first) == ["open orders"]
 
 
 def test_3_a_fill_gone_at_the_later_bound_itself_counts_as_a_move() -> None:

@@ -480,7 +480,8 @@ def test_10_a_last_settle_that_fails_with_nothing_owed_ends_with_an_error(case: 
     worker.account.settle = broken  # type: ignore[method-assign]
     with pytest.raises(Halt) as raised:
         worker.run(Looped())  # type: ignore[arg-type]
-    assert raised.value.reason == "the process ends and its last settle failed: RuntimeError"
+    said = "the process ends and its last settle failed: RuntimeError. The owner's step: "
+    assert raised.value.reason == f"{said}the broker's site"
 
 
 def test_10_an_error_that_is_no_halt_at_the_end_names_its_type_alone(case: Case) -> None:
@@ -515,7 +516,10 @@ def test_9_a_table_whose_recover_row_follows_nothing_halts_each_decision(case: C
     case.data(0, case.silent)
     result = worker.recover(Item(AT[0], RECOVER_STAGE), _Quiet())
     assert result.halt is not None
-    assert result.halt.reason == "the table's row of execution/recover is not the one it declares"
+    assert result.halt.reason == (
+        "the table's row of execution/recover is not the one it declares, so the deployment's "
+        "stage table gives recover its row, RECOVER_ROW"
+    )
 
 
 # Acceptance 5: the order of stages

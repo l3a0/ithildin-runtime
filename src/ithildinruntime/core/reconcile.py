@@ -12,7 +12,8 @@ What it compares, exactly and with no tolerance:
    not list is missing, which agrees with a sum of zero alone.
 2. **Open orders**, by the broker's order id, each in its instrument, signed
    shares, filled total and client order id. One on either side alone is a
-   difference, and so is one the broker lists twice, and one it lists in any state
+   difference, and so is one the broker lists twice, two records the caller hands
+   that hold one broker's id, and one the broker lists in any state
    but working or of another type or time in force. A cancel pending is such a state,
    and #149 decides what one reads as. A book's open orders carry no
    broker's id, so the caller hands the journal's records of them beside it, such
@@ -61,7 +62,8 @@ class Difference:
     - `book` and `broker` are the shares, the order or the cash of each side,
       and `None` where that side holds none.
     - `fields` names each field of an order both sides hold that differs, and
-      is `("listed twice",)` for one the broker lists more than once.
+      is `("listed twice",)` for one the broker lists more than once, or for two
+      records handed in that hold one broker's id.
     """
 
     of: Compared

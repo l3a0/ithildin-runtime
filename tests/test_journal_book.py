@@ -38,7 +38,7 @@ from ithildinruntime.journal import (
     kind_of,
 )
 from ithildinruntime.journal.book import after
-from ithildinruntime.journal.orders import DOUBTFUL, ENDED, MOVES, OPEN, Move
+from ithildinruntime.journal.orders import DOUBTFUL, ENDED, MOVES, NOT_SENT, OPEN, Move
 from tests.support.journals import (
     ACCOUNT,
     AT,
@@ -244,6 +244,7 @@ def test_3_the_table_holds_no_other_move() -> None:
         OrderState.PARTLY_FILLED,
     }
     assert DOUBTFUL == {OrderState.SENDING, OrderState.IN_DOUBT}
+    assert NOT_SENT == {OrderState.INTENDED, OrderState.APPROVED}
     assert ENDED == set(OrderState) - OPEN - {OrderState.INTENDED}
     for move, start in MOVES:
         assert start not in ENDED, (move, start)
