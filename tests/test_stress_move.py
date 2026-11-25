@@ -6,8 +6,10 @@ import errno
 import hashlib
 import io
 import os
+import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -131,7 +133,8 @@ def refused(ran: Ran, why: str, tmp_path: Path) -> None:
     assert ran.code != 0 and ran.out == ""
     assert why in ran.err and ran.err.count("\n") == 1 and ran.err.endswith("\n")
     for folder in (tmp_path, Path(__file__).parents[1], Path.home(), Path("/private/var")):
-        assert str(folder) not in ran.err
+        # A folder's whole name, since a word such as `<mirror>/roots` can hold root's home.
+        assert re.search(re.escape(str(folder)) + r"\b", ran.err) is None
     assert "/T/" not in ran.err and "pytest" not in ran.err
 
 
@@ -564,10 +567,15 @@ def test_3_a_record_stdout_cannot_hold_is_refused_on_one_line(
     assert err.getvalue().count("\n") == 1
 
 
+@pytest.mark.parametrize("zone", ["Etc/GMT+12", "Pacific/Kiritimati"])
 def test_3_a_run_by_hand_dates_the_record_by_the_machines_clock_in_utc(
-    lake: Path, tmp_path: Path
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request, zone: str
 ) -> None:
-    """The entry point's own clock, where no test hands one in."""
+    """The entry point's own clock. At any instant one of the two zones is on another date."""
+    monkeypatch.setenv("TZ", zone)
+    time.tzset()
+    request.addfinalizer(time.tzset)
+    request.addfinalizer(monkeypatch.undo)
     Ran(tmp_path, lake, *ARGS)
     out = io.StringIO()
     before = datetime.now(UTC).date()

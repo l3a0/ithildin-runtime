@@ -274,7 +274,7 @@ def stress_vintage(bars: Mapping[InstrumentId, Sequence[Bar]]) -> str:
 
 
 def load_records(path: Path) -> tuple[StressRecord, ...]:
-    """The records in `path`, or a halt naming the file, the record and the key it refuses."""
+    """The records in `path`, or a halt naming the file, and the record and key at fault."""
     try:
         data = path.read_bytes()
     except FileNotFoundError:
@@ -287,7 +287,7 @@ def load_records(path: Path) -> tuple[StressRecord, ...]:
         # `tomllib` lets through what a number too large or too many brackets raise, and an
         # int of too many digits raises once a halt shows it.
         why = f"{type(error).__name__}: {shown(str(error))}"
-        raise Halt(f"{path.name} cannot be read as TOML: {why}") from None
+        raise Halt(f"{path.name} cannot be read: {why}") from None
 
 
 def _records(name: str, document: Mapping[str, object]) -> tuple[StressRecord, ...]:

@@ -157,7 +157,7 @@ class Journal:
         A call with nothing new costs one listing.
 
         `through` gives the reading at an earlier entry, folded from the first
-        with nothing read past it, which is how a verdict is run again. It
+        with nothing read past it, which is the book a verdict was given on. It
         halts past the end.
         """
         if through is not None:

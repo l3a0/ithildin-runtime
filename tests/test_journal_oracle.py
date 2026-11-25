@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 
@@ -112,7 +113,10 @@ def _the_gate_reads(view: View) -> None:
 
 
 def _checked_again(book: Book, checked: Checked) -> None:
-    """Both gates give a verdict again from its entry and the book its `book` names."""
+    """Both gates give a verdict again from its entry and the book its `book` names.
+
+    The entry holds no stress record, so the verdict's own m stands for the caps'.
+    """
     entry = checked.entry
     assert book.replayed_through == entry.book
     snapshot, constraints, valuation = (
@@ -123,9 +127,8 @@ def _checked_again(book: Book, checked: Checked) -> None:
             (entry.valuation, Valuation),
         )
     )
-    inputs = gates.inputs(
-        caps=decode(entry.caps, HardCaps), valuation=valuation, stop=StopState(entry.stop)
-    )
+    caps = replace(decode(entry.caps, HardCaps), stress_move=entry.verdict.stress_move)
+    inputs = gates.inputs(caps=caps, valuation=valuation, stop=StopState(entry.stop))
     records = gates.fitting(constraints, inputs.caps)
     again = Gate(records).check(checked.intent, book, snapshot, constraints, inputs, entry.now)
     assert again == entry.verdict
@@ -187,6 +190,8 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
             assert book == books[number]
             _checked_again(book, checked)
             seen["a verdict given again"] += 1
+            raised = checked.entry.verdict.stress_move > CAPS.stress_move
+            seen["a verdict under a larger record"] += raised
     for what in (
         *ENDS,
         *MOVES,
@@ -195,6 +200,7 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
         "an order in doubt",
         "a short position",
         "a verdict given again",
+        "a verdict under a larger record",
     ):
         assert seen[what] > 10, (what, seen)
 

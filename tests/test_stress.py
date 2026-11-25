@@ -446,6 +446,11 @@ def put(old: str, new: str) -> str:
     return SAMPLE.replace(old, new)
 
 
+LONG = "x" * 10_000
+MORE = (
+    '    { instrument = "SPY", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", '
+    'source = "s", source_as_of = 2026-11-22 },\n'
+)
 BAD = {
     "an-unknown-key": (SAMPLE + "x = 1\n", "record 1 holds 'x', which"),
     "a-top-level-key": ("x = 1\n" + SAMPLE, "moves.toml holds 'x', which"),
@@ -525,17 +530,37 @@ BAD = {
         "record 1's series do not end at its through for each",
     ),
     "a-series-of-no-leg": (
-        put('{ instrument = "USO", first', '{ instrument = "SPY", first'),
+        put("series = [\n", "series = [\n" + MORE),
         "record 1's series do not end at its through for each",
+    ),
+    "a-series-that-ends-after-its-through": (
+        put(
+            '"USO", first = 2006-04-26, last = 2026-10-30',
+            '"USO", first = 2006-04-26, last = 2026-11-02',
+        ),
+        "record 1's series do not end at its through for each",
+    ),
+    "a-long-leg": (
+        put('leg = "USO"\nmoved', f'leg = "{LONG}"\nmoved'),
+        "record 1's leg is 'xxxx",
+    ),
+    "a-long-key-of-a-record": (SAMPLE + f"{LONG} = 1\n", "record 1 holds 'xxxx"),
+    "a-long-text-for-a-list": (
+        put("flagged = [", f'flagged = "{LONG}" # ['),
+        "record 1's flagged is 'xxxx",
+    ),
+    "a-key-twice-of-many-characters": (
+        f"a = {{ {LONG} = 1, {LONG} = 2 }}\n" + SAMPLE,
+        "moves.toml cannot be read: TOMLDecodeError",
     ),
     "a-leading-zero": (put('"0.17980000"', '"00.17980000"'), "1's stress_move is"),
     "a-number-past-any-decimal": (
         put('"0.17980000"', "1e9999999999999999999"),
-        "moves.toml cannot be read as TOML: InvalidOperation",
+        "moves.toml cannot be read: InvalidOperation",
     ),
     "a-number-of-too-many-digits": (
         put('"0.17980000"', "9" * 5000),
-        "moves.toml cannot be read as TOML: ValueError",
+        "moves.toml cannot be read: ValueError",
     ),
     "a-hex-number-too-long-to-show": (
         put("through = 2026-10-30", "through = 0x" + "f" * 5000),
@@ -543,7 +568,7 @@ BAD = {
     ),
     "a-list-of-one-too-long-to-show": (
         put("through = 2026-10-30", "through = [0x" + "f" * 5000 + "]"),
-        "moves.toml cannot be read as TOML: ValueError",
+        "moves.toml cannot be read: ValueError",
     ),
     "a-text-of-many-characters": (
         put("through = 2026-10-30", f'through = "{"x" * 10_000}"'),
@@ -552,14 +577,14 @@ BAD = {
     "a-key-of-many-characters": (f"{'x' * 10_000} = 1\n" + SAMPLE, "moves.toml holds 'xxxx"),
     "brackets-past-any-depth": (
         "x = " + "[" * 100_000,
-        "moves.toml cannot be read as TOML: RecursionError",
+        "moves.toml cannot be read: RecursionError",
     ),
     "an-empty-withdrawn": (SAMPLE + 'withdrawn = ""\n', "1's withdrawn is ''"),
     "two-of-one-vintage": (
         SAMPLE + SAMPLE.replace("0.17980000", "0.20000000"),
         "record 2 has the strategy and vintage of record 1",
     ),
-    "not-toml": ("[[record]\n", "moves.toml cannot be read as TOML: TOMLDecodeError"),
+    "not-toml": ("[[record]\n", "moves.toml cannot be read: TOMLDecodeError"),
 }
 
 
@@ -584,7 +609,7 @@ def test_4_a_file_that_is_absent_unreadable_or_not_utf8_halts(tmp_path: Path) ->
         (tmp_path / "moves.toml").mkdir()
         load_records(tmp_path / "moves.toml")
     (tmp_path / "bad.toml").write_bytes(b"\xff")
-    with pytest.raises(Halt, match="^bad.toml cannot be read as TOML: UnicodeDecodeError"):
+    with pytest.raises(Halt, match="^bad.toml cannot be read: UnicodeDecodeError"):
         load_records(tmp_path / "bad.toml")
 
 

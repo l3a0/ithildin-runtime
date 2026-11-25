@@ -419,7 +419,10 @@ class Seeded:
                     yield expired(name, order.qty - left)
 
     def _check(self, order: OrderIntent, *, refuse: bool) -> Checked:
-        """The gate's answer on the newest view, which a small order limit refuses where asked."""
+        """The gate's answer on the newest view, which a small order limit refuses where asked.
+
+        Half the checks hold a larger stress record than the caps name.
+        """
         none = dict.fromkeys(NAMES, Decimal(0))
         small = {"max_order_qty": none, "max_position": none} if refuse else {}
         constraints = gates.constraints(strategy=order.strategy, **LIMITS | small)
@@ -431,7 +434,11 @@ class Seeded:
             return BlobRef("runs/d/x.json", sha256_of(data))
 
         view = self._view
-        gate = Gate(gates.fitting(constraints, inputs.caps))
+        named = gates.fitting(constraints, inputs.caps)
+        # A draw of its own, so the rest of each journal is what it was without it.
+        raised = random.Random(f"record of {order.client_order_id}").random() < 0.5
+        more = replace(named[0], vintage="c" * 64, stress_move=Decimal("0.25"))
+        gate = Gate((*named, more) if raised else named)
         answer = gate.check(order, view.book, SNAPSHOT, constraints, inputs, gates.DECISION)
         assert refuse <= (not answer.approved)
         entry = VerdictEntry(

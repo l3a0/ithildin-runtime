@@ -1289,7 +1289,7 @@ Each instrument has a range: what the account would hold if only its open sales 
 | `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
 | `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The instant that many minutes before the close, against `now` | No |
 
-`max_net` and the worst loss assume the stress move, as [its record leaves it](#how-the-caps-are-held-to-the-stress-moves-record). `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
+`max_net` and the worst loss assume the stress move, as [the hold leaves it](#how-the-caps-are-held-to-the-stress-moves-record). `loss_stop` assumes nothing about a price between two decisions, so a loss can pass it by whatever the price moves in that time. The other five assume no move and bound what is sent or held.
 
 The **worst loss** a verdict carries is the strategy's own: each leg's range, the order included, at its further end and its mark, summed over legs, times the stress move. A larger loss an exit rule fixes at a price level would count too, and the gate reads none, because no strategy has such an exit ([#33](https://github.com/l3a0/ithildin-runtime/issues/33)).
 
@@ -1339,7 +1339,7 @@ The caps are first held to the stress record they name, as [How the caps are hel
 | The pair | The one that applies |
 | --- | --- |
 | A maximum | The smaller maximum |
-| The net cap, where the hard caps' is the share of V over the stress move its record leaves, rounded down | The smaller |
+| The net cap, where the hard caps' is the share of V over the stress move the hold leaves, rounded down | The smaller |
 | The loss stop | The smaller loss |
 | The cutoff | The earlier cutoff, which is the larger number of minutes |
 
@@ -1358,7 +1358,7 @@ A leg can move further in one session than in two, so m can read less than one s
 The command `python -m ithildinruntime.runtime.stress_move` reads the bars and prints one record, and [Measure a stress move](../what-a-person-runs.md#measure-a-stress-move) says how to run it. It reads through `data.LakeSource`, the read every decision makes, in three steps.
 
 1. **Each leg's start.** A leg starts at its own `[data.first_sessions]` date, and no option moves it, because a later start lowers m. So the command first reads each leg alone, over the two sessions that end at its start, and data halts there if the lake lists an earlier partition, as [Where each series starts](../design.md#where-each-series-starts) says.
-2. **Each series' span.** A `--seam` names each session a new series starts on. Each span between two seams is one read, so each read holds one series, data halts on a seam nobody named, and the spike rules judge each series against its own returns. The command refuses a named seam at which no leg changes series.
+2. **Each series' span.** A `--seam` names each session a new series starts on. Each span between two seams is one read, so each read holds one series, data halts on a seam nobody named, and the move rule judges each series against its own returns within that span. A leg whose series runs on past a seam has its move across it counted in m and judged by no read. The command refuses a named seam at which no leg changes series.
 3. **The moves**, over the spans joined, so a seam one leg does not change at leaves nothing out on it.
 
 Every read is at a stale lag of 0 and of one manifest, and any other manifest refuses the run. The price is that an import of days before a leg's start refuses each run until the strategy's file names the new start.
@@ -1399,9 +1399,9 @@ The price is six things.
 
 1. **A raised record binds at once, and a release rolled back or a withdrawal releases it at once.** The net cap then grows with nothing halted. So the owner writes the caps' own `stress_move` up to a raise before its release runs, as [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) says, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) alerts while the held m is above the caps' own.
 2. **A release rolled back past the record the caps name halts every order**, as one rolled back past a new cap does.
-3. **A backtest can read a move its past could not have known.** A last session after a decision passes, because test 1's decisions run from 2006 to 2012, and a larger record binds whichever one the caps name. A result run while a record that counts ends after its first decision names each such record's last session and the m it was held to. It says how many sizings were cut by `max_gross` or `max_net`, how many halted at zero shares and how many orders `max_net` refused, because a larger m can shrink a target and leave no order to refuse. It is labelled exploratory, and says it read a move after its decisions.
+3. **A backtest can read a move its past could not have known.** A last session after a decision passes, because test 1's decisions run from 2006 to 2012, and a larger record binds whichever one the caps name. A result run while a record that counts ends after its first decision names each such record's last session and the m it was held to. It says how many sizings were cut by `max_gross` or `max_net`, how many halted at zero shares and how many orders `max_net` refused, because a larger m can shrink a target and leave no order to refuse. It says that every worst loss reads that m. It is labelled exploratory, and says it read a move after its decisions.
 4. **The caps hold one vintage for an account.** Two strategies of other legs never share a vintage, so each strategy the named record is not of halts. With the smaller m's record named, the gate alone would approve that strategy's order against a book that holds the larger's leg. What stops that is the risk stage's halt on two strategies. So the change that lifts it says which record the caps name, with that case in its test.
-5. **A larger record can refuse both exits of a pair already held.** A pair cut to the older cap can be past the new one, and closing either leg first then widens net. [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) has the owner look first.
+5. **A larger record can refuse both exits of a pair already held.** A pair cut to the older cap can have each leg past the new one, and closing either first then widens net. [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) has the owner look first.
 6. **A leg the strategy holds and the constraints do not limit counts at the m of the legs they do**, whatever its own record holds. Portfolio construction halts on a held leg its forecast does not name, so no order forms.
 
 #### The risk model writes each decision's limits
@@ -1421,7 +1421,7 @@ It reads four files, each holding one entry.
 | `caps.json` | The same | The `HardCaps` as recover parsed them, with the owner's blob named by its key and SHA-256 in the file's header |
 | `valuation.json` | The same | The session's `Valuation`, which gives V |
 
-It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move its record leaves, and a target is sized within a net cap no tracked file holds.
+It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move the hold leaves, and a target is sized within a net cap no tracked file holds.
 
 The stage never reads the owner's caps blob, which the owner can rewrite between two attempts at one decision. It reads the caps recover stored, so a second attempt writes the same bytes. The gate still reads the blob just before each check. The price is that a cap the owner lowers after recover has run binds at the gate and not in the sizing, so a target sized within the older cap can be refused there.
 
@@ -1467,7 +1467,7 @@ The gate reads two facts from `corrections`: the newest correction's number agai
 
 A view never changes. It copies the positions, the cash and every order that has not ended, which do not grow with the journal. Orders that ended, decisions, reads and fills are kept once, and a view shows none whose entry is past its own.
 
-`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view and the entry's own fields are enough to ask the gate again.
+`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view and the entry's own fields are enough to ask the gate again, with the verdict's `stress_move` in place of the caps'. The stress records the gate was built with are not in the entry.
 
 ##### Nothing is stored that a replay would refuse
 
@@ -1610,7 +1610,7 @@ One leg can round to zero beside one that does not, and that target stands. So s
 
 ##### Why a dollar limit is read less room for one stress move
 
-This doc proposes, for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), that a dollar limit is read as the limit over one plus the stress move, with the stress move [its record leaves](#how-the-caps-are-held-to-the-stress-moves-record). Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
+This doc proposes, for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), that a dollar limit is read as the limit over one plus the stress move, with the stress move [the hold leaves](#how-the-caps-are-held-to-the-stress-moves-record). Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
 
 Room covers no more than that. An exit is still refused on a day the loss stop is past, which a stress move can bring, and where it is larger than `max_order_qty`. The net cap falls with V, so a full stress move against a lone leg can still leave the pair a little over it. A position the gate stops from resizing drifts for longer than two sessions. `max_position` counts shares and needs no room. The price is a target about a quarter under the limit, at the exploratory stress move of 34.7%, wherever a dollar limit binds.
 
