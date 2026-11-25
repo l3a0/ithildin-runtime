@@ -426,13 +426,13 @@ class SimulatedAccount:
         seen: set[str | None] = set()
         for order in (*events.placed, *events.delayed):
             name = order.client_order_id
-            if order.id in self.orders or order.id in seen and order.id is not None:
+            if order.id in self.orders or order.id in seen:
                 raise Halt(f"{what} places {order.id}, which it holds already")
             # An order on its way comes once more, as it arrives.
             arrives = name in waiting and order.id is not None
             if name in seen or name in self.names and not arrives:
                 raise Halt(f"{what} places {name} a second time")
-            seen |= {name, order.id}
+            seen |= {name, order.id} - {None}
         opened = {order.id: order for order in unended.open_orders}
         for close in events.closed:
             if not _fits(opened[close.id], close):

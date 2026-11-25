@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from decimal import Decimal
 
 import pytest
@@ -577,8 +577,85 @@ def test_12_a_clock_that_cannot_be_read_stops_no_cancel() -> None:
 
     made.clock.now = broken  # type: ignore[method-assign]
     assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
-    with pytest.raises(Halt, match="the simulated account sim-1's clock raised RuntimeError"):
+    with pytest.raises(Halt) as raised:
         made.broker().positions()
+    # The type alone, and no word of the error's.
+    assert raised.value.reason == "the simulated account sim-1's clock raised RuntimeError"
+
+
+class NoZone(tzinfo):
+    """A zone that raises when a time is asked its offset."""
+
+    def utcoffset(self, at: datetime | None) -> timedelta | None:
+        raise RuntimeError("no zone")
+
+
+@pytest.mark.parametrize("call", ["cancel", "open_orders", "orders", "lookup"])
+def test_12_a_clock_whose_offset_raises_stops_no_cancel_and_no_read_of_the_orders(call) -> None:
+    made, _ = sent(early=20)
+    made.clock.at = made.clock.at.replace(tzinfo=NoZone())
+    with pytest.raises(Halt):
+        made.broker().positions()
+    READS[call](made.broker())
+
+
+def test_12_a_read_of_the_orders_the_clock_stops_does_nothing_that_is_due() -> None:
+    """An order on its way would otherwise be taken after its close, at the newest call's time."""
+    made, _ = sent(early=20, faults=Faults({ids(early=20)[0]: Late(1)}))
+    number = made.log.number
+    made.clock.at = (close_of(FULL) + timedelta(minutes=5)).replace(tzinfo=None)
+    assert made.broker().open_orders().orders == ()
+    assert made.log.number == number
+    made.clock.at = close_of(FULL) + timedelta(minutes=5)
+    assert made.broker().orders(LONG_AGO).orders == ()
+    assert made.log.account_now.delayed == ()
+
+
+@pytest.mark.parametrize("call", ["open_orders", "orders", "lookup"])
+def test_12_a_read_past_the_clock_is_dated_by_the_later_of_it_and_the_newest_call(call) -> None:
+    made, _ = sent(early=20)
+    newest = made.clock.at
+    made.decide(close_of(after(FULL)), recover=False)
+    for clock in (newest - timedelta(hours=1), newest + timedelta(hours=1)):
+        made.clock.at = clock
+        found = READS[call](made.broker())
+        dated = found.received_at if call == "lookup" else found.received[0].at
+        assert dated == max(clock, newest)
+
+
+@pytest.mark.parametrize("call", ["open_orders", "orders", "lookup"])
+def test_12_a_read_of_the_orders_ends_an_order_that_needs_no_price(call: str) -> None:
+    made, _ = sent(early=20, faults=Faults({ids(early=20)[0]: OrderFault.FILL_NONE}))
+    made.clock.at = close_of(FULL) + MICRO
+    READS[call](made.broker())
+    assert made.log.orders["sim-o-1"].state is BrokerState.EXPIRED
+
+
+@pytest.mark.parametrize("call", OF_ORDERS)
+def test_12_a_hand_placed_order_stops_no_read_of_the_orders_for_a_price(call: str) -> None:
+    made, _ = sent(early=20, faults=Faults(events={2: ForeignOrder(USO, D(3))}))
+    made.store.drop(result_key(DEPLOYMENT, made.run, made.at, DATA_STAGE))
+    READS[call](made.broker())
+    assert [o.id for o in made.log.account_now.open_orders] == ["sim-o-1", "sim-o-2"]
+
+
+def test_2_a_send_that_waits_on_a_price_takes_the_clock_again_after_it() -> None:
+    made = world()
+    at = close_of(FULL) - timedelta(minutes=20)
+    (intent,) = made.decide(at, made.orders(at, [(4, GLD)]))
+    broker = made.broker()
+    result = result_key(DEPLOYMENT, made.run, at, DATA_STAGE)
+
+    def hook(count: int, op: str, key: str) -> None:
+        if key == result:
+            made.clock.at = close_of(FULL) + timedelta(seconds=1)
+
+    def waits() -> None:
+        made.store.before = hook
+
+    assert made.send(intent, RelayBroker(broker, waits)) is OrderState.REJECTED
+    (entry,) = journaled(made, RejectedEntry)
+    assert "it came at 2026-11-03T21:00:01.000000Z" in json.loads(entry.raw)["reason"]
 
 
 @pytest.mark.parametrize(
@@ -649,24 +726,6 @@ def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str
     (one,) = [getattr(o, "order", o) for o in held]
     assert (one.broker_order_id, one.state) == ("sim-o-1", BrokerState.WORKING)
     assert made.log.number == number
-    if hasattr(found, "received") if call != "find_order" else False:
-        # A page the clock did not date carries the newest call's time.
-        assert found.received[0].at == (made.clock.at if why == "price" else at)
-        assert found.whole
-
-
-def test_3_an_order_whose_prices_cannot_be_read_is_in_doubt_and_not_held() -> None:
-    made = world()
-    at = close_of(FULL) - timedelta(minutes=20)
-    (intent,) = made.decide(at, made.orders(at, [(4, GLD)]))
-
-    def lost() -> None:
-        made.store.drop(result_key(DEPLOYMENT, made.run, at, DATA_STAGE))
-
-    why = "in doubt: the simulated account sim-1 cannot read the prices of its order: .* not stored"
-    with pytest.raises(Halt, match=why):
-        made.send(intent, RelayBroker(made.broker(), lost))
-    assert made.broker().orders(LONG_AGO).orders == ()
 
 
 @pytest.mark.parametrize("call", OF_ORDERS)
@@ -1202,18 +1261,18 @@ def test_6_a_foreign_order_carries_no_stamp_and_fills_as_any_other() -> None:
     made.decide(close_of(after(FULL)), recover=False)
     fills = made.broker().fills(LONG_AGO).fills
     assert [(f.client_order_id, f.qty) for f in fills] == [(ids(early=20)[0], 4), (None, -2)]
-    # No decision sent it, so its basis says only whether the decision it came under had the close.
     assert [f.basis for f in fills] == [FillBasis.OFFICIAL_CLOSE] * 2
     assert made.broker().positions().positions == {GLD: 4, USO: -2}
     # 1,000,000 less 4 at 12.50, plus 2 at 1,012.50.
     assert made.broker().account().cash == D("1001975")
 
 
-def test_6_a_foreign_order_under_a_decision_at_the_close_is_signal_close() -> None:
+def test_6_a_foreign_order_under_a_decision_at_the_close_reads_no_signal() -> None:
     made, _ = sent(faults=Faults(events={2: ForeignOrder(USO, D(-2))}))
     made.broker().positions()
     settled(made)
-    assert {f.basis for f in made.broker().fills(LONG_AGO).fills} == {FillBasis.SIGNAL_CLOSE}
+    fills = made.broker().fills(LONG_AGO).fills
+    assert [f.basis for f in fills] == [FillBasis.SIGNAL_CLOSE, FillBasis.OFFICIAL_CLOSE]
 
 
 def test_6_a_foreign_order_the_rule_refuses_halts() -> None:

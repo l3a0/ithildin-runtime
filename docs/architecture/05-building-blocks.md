@@ -255,7 +255,8 @@ never shares the paper account's lease.
    session's close by the clock, and is rejected after it. Its session is the one
    of the decision that sent it.
 2. **It fills whole at that session's official close**, at the first call after
-   the close by the clock whose decision's snapshot holds that session's bar.
+   the close by the clock that reads a price and whose decision's snapshot holds
+   that session's bar.
    Until then it is working, and it can be cancelled while the clock reads no
    later than the close, as item 9 says. Nothing here ends an order whose bar never comes, and
    data halts only while that session is in the lookback.
@@ -282,10 +283,12 @@ never shares the paper account's lease.
    A cancel is judged by the clock it reads, or by the log's newest call where the
    clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
    which say what there is to cancel, give the log as it stands where the clock
-   would halt them, dated by the log's newest call. The price is that a clock that
+   would halt them, dated by the later of the clock and the log's newest call. The price is that a clock that
    went back can cancel an order whose close had passed and was not yet settled.
-   Two things stop these calls all the same: a log that cannot be read, and a clock
-   that gives no UTC time on an account that holds no call but its opening.
+   What stops these calls is the log: one that cannot be read or written, a number
+   lost 101 times, and a clock that gives no UTC time on an account that holds no
+   call but its opening. So does a fault that cannot happen, which only a test hands
+   it.
 
 #### What a simulated fill leaves out
 

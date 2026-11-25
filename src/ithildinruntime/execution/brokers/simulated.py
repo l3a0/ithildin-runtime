@@ -6,8 +6,8 @@ fill rule by order type and no branch on a mode or a test.
 
 - **A market-on-close order at `cls`** rests when it comes at or before its
   session's close, and is rejected after it. It fills whole at that session's
-  official close, at the first call after the close whose prices hold it. Until
-  then it is working, and it can be cancelled up to the close itself.
+  official close, at the first call after it that reads a price and finds that
+  one. Until then it is working, and it can be cancelled up to the close itself.
 - **Any other order is rejected.** The day's market order gets its fill with
   #155, which reads the decision's quote.
 - **It moves only forward.** A call whose clock reads before the log's newest
@@ -20,8 +20,8 @@ fill rule by order type and no branch on a mode or a test.
 
 Every call reads the log forward. Every call but a cancel then does what is due:
 what a fault has someone do to the account, an order that arrives late, a
-rejection that comes later, and the closes, which a read of the orders leaves to
-the next call that reads a price. A call then does its own part, stores
+rejection that comes later, and the closes. A read of the orders leaves each close
+that needs a price to the next call that reads one. A call then does its own part, stores
 one blob where anything changed, and answers. Where its create fails, nothing this
 process remembers has changed, and the next call finds whether the blob landed.
 One whose number another call took starts over on what it then reads.
@@ -196,11 +196,13 @@ class SimulatedBroker:
         It is the time of a call the clock does not stop, and `None` stands for a
         clock that gives no UTC time.
         """
+        clock: datetime | None = None
         try:
-            read: object = self._clock.now()
-        except Exception as error:
-            read = error_name(error)
-        clock = read if isinstance(read, datetime) and read.utcoffset() == timedelta(0) else None
+            read = self._clock.now()
+            clock = read if read.utcoffset() == timedelta(0) else None
+        except Exception:
+            # A clock that gives no time stops no cancel and no read of the orders.
+            read = None
         seen = [at for at in (clock, self._log.at) if at is not None]
         if not seen:
             # An account with no call but its opening holds no order.
@@ -370,7 +372,8 @@ class SimulatedBroker:
                 )
                 if why := refusal(intent, now, self._session.close):
                     raise Halt(f"the fault at call {count} places an order that is refused: {why}")
-                order = replace(self._order_of(intent, now), client_order_id=None)
+                # No decision sent it, so no price says what one had read.
+                order = replace(self._order_of(intent, now, False), client_order_id=None)
                 return SimEdit(count, None, None, None, replace(order, id=self._next_id(events)))
 
     def _arrivals(self, events: SimEvents, now: datetime) -> SimEvents:
@@ -451,10 +454,12 @@ class SimulatedBroker:
             why = f"the account already holds an order under the id {name}"
             return events, Ack(Outcome.UNKNOWN, None, None, _reason(why), now)
         if isinstance(fault, Late):
-            return replace(events, delayed=(*events.delayed, self._order_of(intent, now))), None
+            order = self._order_of(intent, now, self._had_close(intent.instrument))
+            return replace(events, delayed=(*events.delayed, order)), None
         if why := refusal(intent, now, self._session.close):
             return events, _rejected(why, now)
-        placed = replace(self._order_of(intent, now), id=self._next_id(events))
+        order = self._order_of(intent, now, self._had_close(intent.instrument))
+        placed = replace(order, id=self._next_id(events))
         return replace(events, placed=(*events.placed, placed)), _found(placed, now)
 
     @property
@@ -462,7 +467,7 @@ class SimulatedBroker:
         """The session of the decision these prices are for."""
         return load_sessions().opened_by(self._prices.decision_at)
 
-    def _order_of(self, intent: OrderIntent, now: datetime) -> SimOrder:
+    def _order_of(self, intent: OrderIntent, now: datetime, read_close: bool) -> SimOrder:
         session = self._session
         return SimOrder(
             id=None,
@@ -475,13 +480,13 @@ class SimulatedBroker:
             state=BrokerState.WORKING,
             submitted_at=now,
             session=session.day,
-            read_close=self._close_price(
-                intent.instrument,
-                session.day,
-                f"the simulated account {self.alias} cannot read the prices of its order",
-            )
-            is not None,
+            read_close=read_close,
         )
+
+    def _had_close(self, instrument: InstrumentId) -> bool:
+        """Whether the decision had read a close of its own session."""
+        why = f"the simulated account {self.alias} cannot read the prices of its order"
+        return self._close_price(instrument, self._session.day, why) is not None
 
     def _answered(self, intent: OrderIntent, fault: object, answer: Ack | None) -> Ack:
         """What the caller hears of an order the account has dealt with."""

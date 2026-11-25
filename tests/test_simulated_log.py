@@ -622,6 +622,12 @@ def test_4_a_call_that_loses_its_number_too_often_has_no_answer(times, goes, wha
 
     made.sim.before = hook  # type: ignore[attr-defined]
     number, state = made.log.number, made.log.state
+    if what == "read" and not goes:
+        # As the order path gives it, with the call's name and the store's error.
+        with pytest.raises(BrokerUnavailable) as raised:
+            made.path().account()
+        assert str(raised.value) == "the broker's account failed with Conflict"
+        lost.clear()
     if what == "send":
         found = made.send(intent)
         assert found is (OrderState.ACKNOWLEDGED if goes else OrderState.IN_DOUBT)
@@ -790,6 +796,20 @@ def test_4_a_call_lost_under_a_running_process_halts_the_next_process() -> None:
     halts(made, "call 3 is missing, and the next key is")
 
 
+def test_4_a_process_that_stores_a_call_in_a_gap_halts_its_own_next_call() -> None:
+    made, first, second = two()
+    made.faults = Faults(events={n: EditCash(D(1)) for n in range(1, 3)})
+    for _ in range(2):
+        second.fired.clear()
+        made.broker().account()
+    made.faults = Faults()
+    made.sim.drop(key(3))  # type: ignore[attr-defined]
+    made.log = first
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    with pytest.raises(Halt, match="call 4 is not the call before it with its events applied"):
+        made.broker().open_orders()
+
+
 def test_4_a_newest_call_lost_under_the_process_that_made_it_leaves_a_gap() -> None:
     made = full()
     made.sim.drop(key(4))  # type: ignore[attr-defined]
@@ -921,7 +941,11 @@ FILLS: dict[str, Callable[[SimClose], SimClose]] = {
     "expired-with-none": lambda e: _expired(e, D(0)),
     "expired-in-part-with-no-snapshot": lambda e: replace(_expired(e, D(3)), priced_from=None),
     "expired-with-a-snapshot-and-no-fill": lambda e: replace(_expired(e, D(3)), fill=None),
-    "expired-whole": lambda e: replace(e, state=BrokerState.EXPIRED),
+    **{
+        f"{state}-whole": lambda e, state=state: replace(e, state=state)
+        for state in BrokerState
+        if state is not BrokerState.FILLED
+    },
 }
 
 
@@ -1193,7 +1217,7 @@ def test_4_a_price_that_is_slow_holds_no_cancel(what: str) -> None:
     broker, path = made.broker(), None
     waits, goes, done = threading.Event(), threading.Event(), threading.Event()
     if what == "read":
-        # A read waits on the close of an order past it, while another rests.
+        # A read waits on the close of an order past it.
         made.clock.at = at = close_of(after(FULL)) - timedelta(minutes=20)
         made.decide(at, (), recover=False)
         broker = made.broker()
