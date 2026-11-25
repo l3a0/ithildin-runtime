@@ -1754,8 +1754,11 @@ MICRO = timedelta(microseconds=1)
 RETRY = Retry(timedelta(seconds=600), 1.0, 4.0)
 
 
+READS = ["first", "after verdict", "after sending", "last"]
+
+
 def moved(world: World, read: str, at: datetime) -> None:
-    """Set the clock so that one of an order's two reads of its last moment sees `at`.
+    """Set the clock so that one of an order's three reads of its last moment sees `at`.
 
     The submit's is read after its controls, so the clock moves once the last
     store call before the broker's has answered.
@@ -1765,7 +1768,8 @@ def moved(world: World, read: str, at: datetime) -> None:
         return
 
     def after(number: int, op: str, key: str) -> None:
-        if number == {"after sending": CREATES[2], "last": BEFORE_SUBMIT}[read]:
+        at_call = {"after verdict": CREATES[1], "after sending": CREATES[2], "last": BEFORE_SUBMIT}
+        if number == at_call[read]:
             world.clock.at = at
 
     world.store.after = after
@@ -1781,7 +1785,7 @@ def marked_at(quoted: bool) -> Snapshot:
 @pytest.mark.parametrize("quoted", [False, True])
 @pytest.mark.parametrize("later", ["strategy", "caps"])
 @pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
-@pytest.mark.parametrize("read", ["first", "after sending", "last"])
+@pytest.mark.parametrize("read", READS)
 def test_8_the_cutoff(later: str, by: timedelta, read: str, quoted: bool) -> None:
     minutes = {"strategy": (10, 5), "caps": (5, 10)}[later]
     world = World(
@@ -1794,14 +1798,14 @@ def test_8_the_cutoff(later: str, by: timedelta, read: str, quoted: bool) -> Non
         reason = halted(world, "its market-on-close cutoff")
         assert ID in reason
         assert world.state() is OrderState.ABANDONED
-        assert ("sending" in world.kinds()) == (read != "first")
+        assert ("sending" in world.kinds()) == (read in ("after sending", "last"))
     else:
         assert world.send() is OrderState.ACKNOWLEDGED
 
 
 @pytest.mark.parametrize("quoted", [False, True])
 @pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
-@pytest.mark.parametrize("read", ["first", "after sending", "last"])
+@pytest.mark.parametrize("read", READS)
 def test_8_an_order_for_the_day_goes_out_until_its_sessions_close(
     by: timedelta, read: str, quoted: bool
 ) -> None:
@@ -1811,6 +1815,7 @@ def test_8_an_order_for_the_day_goes_out_until_its_sessions_close(
     if by > timedelta(0):
         halted(world, "its session's close")
         assert world.state() is OrderState.ABANDONED
+        assert ("sending" in world.kinds()) == (read in ("after sending", "last"))
     else:
         assert world.send() is OrderState.ACKNOWLEDGED
 

@@ -1108,7 +1108,7 @@ stateDiagram-v2
     Intended --> Approved: risk gate approves
     Intended --> Abandoned: a check before the gate fails, another writer<br/>takes the number of the verdict entry, the store<br/>does not take it, or a restart
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
-    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, the store does not take it,<br/>or a restart comes before it
+    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, the store does not take it,<br/>its last moment passes, or a restart comes before it
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
     Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read, that was cut short, that differs<br/>from the order or that says two things of it

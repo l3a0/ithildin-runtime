@@ -2106,14 +2106,14 @@ Five rules keep a day of decisions safe.
    meets no cutoff. Its last moment is its session's close, or the moment a
    quote the gate marked reaches its maximum age where that is sooner. The
    cutoff applies to new orders only, and never stops a cancel.
-   1. **Before every send, twice.** Execution reads the clock before it
-      starts the order loop, before each order, and again after the order's
-      `sending` entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
+   1. **Before every send.** Execution reads the clock before it
+      starts the order loop, before each order, ahead of its `sending` entry, and again after that
+      entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
       call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past its last moment is journaled `Abandoned`
       and the decision halts. Inside the send stage, the retry deadline of a
       write ahead of a send that S3 does not answer ends no later than that moment, so a slow write
-      cannot carry a send past it. The `intent`'s and the `verdict`'s end by the cutoff or the close
-      alone, because neither is a send.
+      cannot carry a send past it. The `intent`'s ends by the account's cutoff or the close, and the
+      `verdict`'s by the order's, because neither is a send.
    2. **A clock that cannot be trusted halts.** At the start of the send
       stage, execution compares the VM's clock with the broker's own clock,
       Alpaca's `GET /v2/clock`, and

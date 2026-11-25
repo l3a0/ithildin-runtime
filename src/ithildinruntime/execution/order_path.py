@@ -13,7 +13,7 @@ per order` gives the steps.
 5. A second view, the loss stop's state, and the gate, whose quotes can end the
    order's last moment sooner.
 6. The `verdict` entry.
-7. The `sending` entry.
+7. The order's last moment again, and the `sending` entry.
 8. The private submit, which takes that entry's acknowledgement and nothing
    else. It views the journal again, refuses an order the journal does not show
    as just approved and just sending, reads the hard caps and every control

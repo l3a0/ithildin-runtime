@@ -316,7 +316,7 @@ def test_5_a_quote_that_ages_after_the_gate_stops_the_order(
             lambda: world.send(1, account),
         )
         assert world.state() is OrderState.ABANDONED
-        # A `sending` on its own reads as in doubt, so none is journaled past the moment.
+        # A `sending` on its own reads as in doubt, so none is begun past the moment.
         assert world.kinds()[-2] == entry_of
     else:
         assert world.send(1, account) is OrderState.ACKNOWLEDGED
