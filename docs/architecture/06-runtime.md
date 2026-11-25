@@ -592,14 +592,14 @@ Each order goes through the order path alone, and the journal gains a line befor
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
 6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
-7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
+7. Ask the risk gate, and journal its answer. A quote it marked ends the order's last moment sooner, where the quote reaches its maximum age first. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
 8. Journal that it is sending.
 9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
 10. Send, with the order's client order id.
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an order another writer has moved, which is left as it is, an `Abandoned` that loses its number six times, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
+A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an order another writer has moved, which is left as it is, an `Abandoned` that loses its number six times, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `sending` and a check at the submit ends by the order's last moment, and each try of the `verdict` by its cutoff or close, and the order is stopped there however long another read took.
 
 **Table:** The eight checks made right before the broker call
 

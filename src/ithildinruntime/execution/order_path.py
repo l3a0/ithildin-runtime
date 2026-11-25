@@ -10,7 +10,8 @@ per order` gives the steps.
 2. The `intent` entry.
 3. The controls, apart from the order's last moment and the loss stop.
 4. The inputs the gate is handed, and the order's last moment.
-5. A second view, the loss stop's state, and the gate.
+5. A second view, the loss stop's state, and the gate, whose quotes can end the
+   order's last moment sooner.
 6. The `verdict` entry.
 7. The `sending` entry.
 8. The private submit, which takes that entry's acknowledgement and nothing
@@ -713,8 +714,9 @@ class OrderPath:
             handed = GateInputs(caps=caps, valuation=inputs.valuation, stop=state, close_entry=None)
             now, book = shared.clock.now(), view.book
             verdict = shared.gate.check(order, book, inputs.snapshot, limits, handed, now)
-            # The gate read each quote's age once, and the call comes after two appends.
-            last = min([last, *_aged(inputs.snapshot, {*held(book), order.instrument})])
+            # The gate read each quote's age once, and the call comes after two appends. The
+            # verdict is no send, so its own append is not cut short.
+            ends = min([last, *_aged(inputs.snapshot, {*held(book), order.instrument})])
         except Halt as halt:
             raise self._ended(name, halt.reason) from None
         except Exception as error:
@@ -739,7 +741,7 @@ class OrderPath:
             raise self._ended(name, halt.reason) if verdict.approved else halt
         if verdict.limit is Limit.STOP:
             raise Halt(f"the gate refused {name}: {_stop_reason(state, error)}")
-        return _Approved(view, last, order, caps) if verdict.approved else OrderState.REFUSED
+        return _Approved(view, ends, order, caps) if verdict.approved else OrderState.REFUSED
 
     def _planned(self, view: View, name: str) -> _Planned:
         """The order as the journal's `decision` entry holds it, which halts on one in no plan."""

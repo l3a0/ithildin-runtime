@@ -237,6 +237,7 @@ class World:
     plan: bool = True
     # GLD shares the strategy holds from an earlier decision, bought or sold at 1.
     position: Decimal = Decimal(0)
+    holder: str = gates.CHAN
 
     def __post_init__(self) -> None:
         self.clock = Clock(NOW)
@@ -354,7 +355,7 @@ class World:
     def hold(self, qty: Decimal) -> None:
         """Plant an order of the session before, filled whole at 1."""
         at = AT - timedelta(days=1)
-        made = order(1, qty, at=at)
+        made = order(1, qty, strategy=self.holder, at=at)
         name = made.client_order_id
         seq = self.decide((made,), at)
         self.record(IntentEntry(seq, made))

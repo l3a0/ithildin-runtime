@@ -469,7 +469,9 @@ lists leaves none. A quote that fails its age and status check, the spread
 and a crossed, non-positive or missing price among it, also holds the account until a person clears it, as
 [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
 says, which names the cancels that still go out. [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build that
-hold.
+hold. A quote that reaches its maximum age after the gate, before the broker call, stops
+its order as a last moment that has passed, and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked whether that holds the
+account too.
 
 The next decision acts once its own quotes pass and a person has cleared any hold.
 Until then only the owner's act bounds the position, and

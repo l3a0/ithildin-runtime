@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     OrderType,
     Outcome,
     Retry,
+    Snapshot,
     StopState,
     StoreError,
     StoreUnavailable,
@@ -1770,12 +1771,21 @@ def moved(world: World, read: str, at: datetime) -> None:
     world.store.after = after
 
 
+def marked_at(quoted: bool) -> Snapshot:
+    """What the gate marks at: a quote that is good for an hour, or a bar."""
+    if not quoted:
+        return gates.snapshot({gates.GLD: 1, gates.USO: 1})
+    return gates.quoted({gates.GLD: (1, 1), gates.USO: (1, 1)}, at=AT, max_age=3600)
+
+
+@pytest.mark.parametrize("quoted", [False, True])
 @pytest.mark.parametrize("later", ["strategy", "caps"])
 @pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
 @pytest.mark.parametrize("read", ["first", "after sending", "last"])
-def test_8_the_cutoff(later: str, by: timedelta, read: str) -> None:
+def test_8_the_cutoff(later: str, by: timedelta, read: str, quoted: bool) -> None:
     minutes = {"strategy": (10, 5), "caps": (5, 10)}[later]
     world = World(
+        snapshot=marked_at(quoted),
         constraints=(gates.constraints(moc_cutoff=minutes[0]),),
         caps=gates.caps(moc_cutoff=minutes[1]),
     )
@@ -1789,11 +1799,14 @@ def test_8_the_cutoff(later: str, by: timedelta, read: str) -> None:
         assert world.send() is OrderState.ACKNOWLEDGED
 
 
+@pytest.mark.parametrize("quoted", [False, True])
 @pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
 @pytest.mark.parametrize("read", ["first", "after sending", "last"])
-def test_8_an_order_for_the_day_goes_out_until_its_sessions_close(by: timedelta, read: str) -> None:
+def test_8_an_order_for_the_day_goes_out_until_its_sessions_close(
+    by: timedelta, read: str, quoted: bool
+) -> None:
     made = order(1, 2, kind=OrderType.MARKET, tif=TimeInForce.DAY)
-    world = World(orders=(made,), caps=gates.caps(moc_cutoff=390))
+    world = World(orders=(made,), snapshot=marked_at(quoted), caps=gates.caps(moc_cutoff=390))
     moved(world, read, gates.CLOSE + by)
     if by > timedelta(0):
         halted(world, "its session's close")

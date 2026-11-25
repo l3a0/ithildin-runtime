@@ -14,7 +14,8 @@ whose clock runs further behind than the bound reads an old quote as fresh.
 
 An age is compared in whole microseconds and a spread exactly, as
 `core/exact.py` says. `quote_faults` raises nothing, and the other functions
-here raise nothing but `Halt`.
+here raise nothing but `Halt`, apart from `readable_until`, which takes a quote
+with no fault alone.
 """
 
 from __future__ import annotations
@@ -94,9 +95,9 @@ def midpoint(quote: Quote) -> Decimal:
 
 def readable_until(quote: Quote) -> datetime:
     """The last moment a quote with no fault can be read, at its written maximum age."""
-    older = min(quote.bid_at, quote.ask_at)  # type: ignore[type-var]
+    bounded = min(quote.bid_at, quote.ask_at) - CLOCK_BOUND  # type: ignore[type-var,operator]
     try:
-        return older - CLOCK_BOUND + timedelta(seconds=quote.max_age)  # type: ignore[operator,arg-type]
+        return bounded + timedelta(seconds=quote.max_age)  # type: ignore[arg-type]
     except OverflowError:
         return datetime.max.replace(tzinfo=UTC)
 

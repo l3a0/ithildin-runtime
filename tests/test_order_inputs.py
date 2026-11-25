@@ -274,21 +274,28 @@ QUOTED = {gates.GLD: (1, 1), gates.USO: (1, 1)}
 
 @pytest.mark.parametrize("past", [-TICK, 0 * TICK, TICK])
 @pytest.mark.parametrize("during", ["verdict", "sending", "checks"])
-@pytest.mark.parametrize("name", ["ordered", "held"])
+@pytest.mark.parametrize(
+    "name", ["ordered", "beside a working one", "working", "held", "another strategy's"]
+)
 def test_5_a_quote_that_ages_after_the_gate_stops_the_order(
     name: str, during: str, past: timedelta
 ) -> None:
-    """Each wait after the gate's answer counts, for the ordered instrument and for a held one."""
-    old = {"ordered": gates.GLD, "held": gates.USO}[name]
+    """Each wait after the gate's answer counts, for each instrument the gate marks."""
+    old = {"ordered": gates.GLD, "working": gates.USO}.get(name, gates.GLD)
+    held = name in ("held", "another strategy's")
     made = gates.quoted(QUOTED, at=AT)
     other = gates.USO if old == gates.GLD else gates.GLD
     fresh = replace(made.quotes[other], max_age=MAX_AGE * 10)
     world = World(
-        orders=(order(1, 2), order(2, 2, gates.USO)),
+        orders=(order(1, 2, gates.USO if held else gates.GLD), order(2, 2, gates.USO)),
+        position=Decimal(5 if held else 0),
+        holder=gates.CHAN if name == "held" else "another",
+        valuation=gates.valuation(CASH, replayed_through=1),
         snapshot=replace(made, quotes={**made.quotes, other: fresh}),
     )
     account = world.account()
-    if name == "held":
+    other_works = name in ("working", "beside a working one")
+    if other_works:
         assert world.send(2, account) is OrderState.ACKNOWLEDGED
     entry_of = {"verdict": "verdict", "sending": "sending", "checks": "sending"}[during]
     moved: list[int] = []
@@ -302,7 +309,7 @@ def test_5_a_quote_that_ages_after_the_gate_stops_the_order(
 
     world.store.after = after
     if past > 0 * TICK:
-        said = halted if name == "ordered" else _stopped_again
+        said = _stopped_again if other_works else halted
         said(
             world,
             f"when the quote of {old} reaches its maximum age",
@@ -319,6 +326,35 @@ def _stopped_again(world: World, match: str, call: Callable[[], object]) -> None
     with pytest.raises(Halt, match=match):
         call()
     assert world.submits == 1
+
+
+@pytest.mark.parametrize("short", [False, True])
+def test_9_a_quote_that_ages_as_the_verdict_waits_hides_no_loss(short: bool) -> None:
+    """The verdict is no send, so its append is tried to the order's own last moment."""
+    world = World(
+        snapshot=gates.quoted(QUOTED, at=AT),
+        valuation=gates.valuation(CASH + 101, replayed_through=1),
+        constraints=(gates.constraints(loss_stop=gates.d(100)),),
+    )
+    world.clock.at = EXPIRES - timedelta(seconds=0.5 if short else 20)
+    tried: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", entry_key(ACCOUNT, 5)) and len(tried) < 4:
+            tried.append(number)
+            raise StoreUnavailable(key, "503 SlowDown: x")
+
+    world.store.before = before
+    halted(world, "the day's loss of 101")
+    assert world.kinds() == ["intent", "verdict"] and len(world.alarms.sent) == 1
+
+
+def test_5_a_quote_with_no_stamp_halts_by_the_gates_own_words() -> None:
+    made = gates.quoted(QUOTED, at=AT)
+    bad = replace(made.quotes[gates.GLD], bid_at=None)
+    world = World(snapshot=replace(made, quotes={**made.quotes, gates.GLD: bad}))
+    halted(world, "GLD's quote cannot be read: its bid has the stamp")
+    assert world.kinds() == ["intent", "abandoned"]
 
 
 def test_5_a_quote_of_an_instrument_the_gate_did_not_mark_ends_no_order() -> None:
