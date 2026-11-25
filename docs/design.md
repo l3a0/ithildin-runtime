@@ -2478,9 +2478,9 @@ The price is six things.
    fetched on two days would.
 4. A backtest that holds a position across a change values it on the new scale
    once the decisions resume, so V jumps between two decisions. The halts make
-   such a run visible and do not make it right, and it is not quoted. At a lookback of 60
-   over the Yahoo bars, the halts last stop a decision on 2012-07-02 at the close and on
-   2012-07-03 at close−20. After them USO is on a scale eight times the old one.
+   such a run visible and do not make it right, and it is not quoted. At a lookback of 60,
+   the change at 2012-04-10 last halts a decision on 2012-07-02 at the close and on
+   2012-07-03 at close−20. After it USO is on a scale eight times the old one.
 5. This halt does not see a split inside one `raw` series, such as captured bars. The
    rule that [a split reads as neither a gain nor a
    loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
