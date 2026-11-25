@@ -300,33 +300,107 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
 
-A blob holds four things.
+##### What a blob holds
 
-1. The log's format, the account, the call's number, the `writer` that made it and the clock's time.
-2. The call's events, which are what a fault had someone do by hand, the orders it took, the orders on their way, and each order that ended, with the state it ended in, when, and its fill.
-3. The account after them, which is its cash, its positions, the orders open and the orders on their way.
-4. No order that ended before this call. A blob that carried every order would cost the square of the run's length.
+Every process that writes a log draws a name afresh as it starts, 32 hex characters, which is the blob's `writer`. Two processes' calls therefore never have the same bytes.
 
-Call 1 opens the account flat with its cash, and names no writer and no time, so opening it again is the same bytes and is done. Nothing else opens an account, so a lost log never reads as a new one.
+The figure below is a C4 code diagram.
 
-**Table:** What the log does when a store or another process is in the way
+```mermaid
+classDiagram
+    direction LR
 
-| What happens | What the log does |
+    class SimCall {
+        +int format
+        +str account
+        +int call
+        +str or None writer
+        +datetime or None at
+        +datetime or None clock
+        +SimEvents events
+        +SimState after
+    }
+    class SimEvents {
+        +SimEdit[] edits
+        +SimOrder[] placed
+        +str[] missed
+        +SimOrder[] delayed
+        +SimClose[] closed
+    }
+    class SimState {
+        +Decimal cash
+        +Map~InstrumentId, Decimal~ positions
+        +SimOrder[] open_orders
+        +SimOrder[] delayed
+    }
+    class SimOrder {
+        +str or None id
+        +str or None client_order_id
+        +InstrumentId instrument
+        +Decimal qty
+        +Decimal filled
+        +OrderType type
+        +TimeInForce time_in_force
+        +BrokerState state
+        +datetime submitted_at
+        +date session
+        +bool read_close
+    }
+    class SimClose {
+        +str id
+        +BrokerState state
+        +datetime at
+        +Fill or None fill
+        +BlobRef or None priced_from
+    }
+    class SimEdit {
+        +int count
+        +Decimal or None cash
+        +InstrumentId or None instrument
+        +Decimal or None shares
+        +SimOrder or None order
+    }
+    SimCall o-- SimEvents
+    SimCall o-- SimState
+    SimEvents o-- SimEdit
+    SimEvents o-- SimOrder
+    SimEvents o-- SimClose
+    SimState o-- SimOrder
+```
+
+1. `events` is what the call did: what a fault had someone do by hand, the orders the account took, the ones that arrived too late to take, the ones now on their way, and each order that ended. `priced_from` names the stored snapshot that gave a fill its price.
+2. `at` is the account's time, which never goes back, and `clock` the clock's own reading. They differ only on a cancel whose clock read earlier than the account's time, or no time.
+3. `after` is the account then. It holds no order that ended before, because a blob that carried every order would cost the square of the run's length.
+4. Call 1 opens the account flat with its cash, and names no writer and no time. Opening it again is the same bytes and is done. Nothing else opens an account, so a lost log never reads as a new one.
+
+Format 1 stays readable in every later release, because a shadow account's log outlives them. `tests/fixtures/simulated` holds a committed log.
+
+##### How a call reads and writes the log
+
+Every call first reads the log forward from the newest call it knows, and takes in each blob that follows from the one before it, whoever wrote it. So two instances take turns on one account as they would on a broker's. A process's first call lists the whole log.
+
+**Table:** What a call does with what it finds in the log
+
+| What it finds | What the call does |
 | --- | --- |
-| The store refuses a create, or gives no answer | The call raises, and nothing this process remembers changes. The next call first reads the log forward and takes in what is there |
-| The number holds this writer's own blob, which landed late | The call raises, and the next call takes that blob in |
-| The number holds these same bytes | The create is done, since its first answer was lost |
-| The number holds another writer's blob | The call halts, because two processes are writing one account |
-| A gap, a blob that is not canonical, one of another account, or one that is not the blob before it with its events applied | Every call halts |
-| A process starts | It reads the whole log at its first call, and keeps the closed orders and the fills in memory from then on |
+| A blob whose events, applied to the account before it, give the account it holds | Takes it in |
+| A gap, a blob that is not canonical, or one that is not the call before it with its events applied | Halts, and so does every later call |
+| Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed |
+| Its number holding these same bytes | The create is done, since its first answer was lost |
+| Its number holding another call, or a store that says the create raced another and did not land | Starts over on what it then reads, up to 100 times, and then raises with nothing changed |
 
-Each event is applied again as the log is read, and the account it gives has to be the one the blob holds.
+**A lost newest call is not seen here.** The log then reads as the account before it, and gives that call's order id to the next order. Two things find it: recover's comparison with the journal, which is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, and the journal's refusal of an order id it already holds. The bucket refuses a delete under `sim/`.
 
 The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
 
-That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144). The price is that a process that starts reads the whole log. At two orders a decision that is three blobs a decision, so 4,384 for the 1,461 decisions of acceptance test 1.
+That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). Its prices are four.
+
+1. Each call costs one read for the next number. On S3 a key that is not there reads so only to a role that may list the bucket with no limit on the prefix. To any other role it reads as access denied, and every call after a process's first fails.
+2. Two instances whose clocks differ by more than the time between their calls halt on the clock. One VM has one clock. Two VMs meet it, which the clock's bound has to hold below.
+3. Nothing here keeps two processes from acting at once. The account's lease does, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
+4. A process that starts reads the whole log, in turn, and reports nothing to the receive loop while it does. Two orders a decision leave three blobs, as `tests/test_simulated_log.py` counts over 100 decisions, so the 1,461 decisions of acceptance test 1 leave at most 4,384. The journal's cold read has the same shape and more entries, and [#154](https://github.com/l3a0/ithildin-runtime/issues/154) holds both.
 
 #### Account controls
 

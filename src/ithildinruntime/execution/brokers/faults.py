@@ -1,9 +1,9 @@
 """How the simulated broker fails on purpose: a value its constructor is handed.
 
-No fault holds randomness or a canned answer. One changes an order as it enters,
-or what the account does with it, and the adapter's own code answers. It is read
-whenever the account handles what it names, so a fault that has to hold across
-two processes is handed to both.
+No fault holds randomness. `duplicate`, `bad_type` and `bad_qty` change what
+enters, and the account's own checks answer. `reject` is the one answer a fault
+gives by itself. A fault is read whenever the account handles what it names, so
+one that has to hold across two processes is handed to both.
 
 A count is of the calls made on one `SimulatedAccount` in one process, from 1.
 """
@@ -85,6 +85,9 @@ class EditCash:
 
     by: Decimal
 
+    def __post_init__(self) -> None:
+        _finite(self.by)
+
 
 @dataclass(frozen=True)
 class EditPosition:
@@ -92,6 +95,9 @@ class EditPosition:
 
     instrument: InstrumentId
     by: Decimal
+
+    def __post_init__(self) -> None:
+        _finite(self.by)
 
 
 @dataclass(frozen=True)
@@ -101,6 +107,9 @@ class EditOrder:
     broker_order_id: str
     qty: Decimal
 
+    def __post_init__(self) -> None:
+        _finite(self.qty)
+
 
 @dataclass(frozen=True)
 class ForeignOrder:
@@ -108,6 +117,9 @@ class ForeignOrder:
 
     instrument: InstrumentId
     qty: Decimal
+
+    def __post_init__(self) -> None:
+        _finite(self.qty)
 
 
 AccountEvent = EditCash | EditPosition | EditOrder | ForeignOrder
@@ -127,11 +139,19 @@ class Faults:
     events: Mapping[int, AccountEvent] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        for name, order in self.orders.items():
+            if not isinstance(order, OrderFault | Late | FillPart):
+                raise ValueError(f"{order!r} is nothing that happens to the order {name}")
+        for what in self.events.values():
+            if not isinstance(what, EditCash | EditPosition | EditOrder | ForeignOrder):
+                raise ValueError(f"{what!r} is nothing anyone does to an account")
         object.__setattr__(self, "orders", MappingProxyType(dict(self.orders)))
         object.__setattr__(self, "reads", MappingProxyType(dict(self.reads)))
         object.__setattr__(self, "events", MappingProxyType(dict(self.events)))
         for (read, count), fault in self.reads.items():
             _count(count, f"a fault of {read} is at")
+            if not isinstance(fault, ReadFault):
+                raise ValueError(f"{fault!r} is nothing that happens to a read")
             if read not in READS and not (read in _FAILS_ONLY and fault is ReadFault.FAILS):
                 raise ValueError(f"no read {read!r} of the simulated broker can {fault}")
         for count in self.events:
@@ -141,3 +161,8 @@ class Faults:
 def _count(value: object, what: str) -> None:
     if type(value) is not int or value < 1:
         raise ValueError(f"{what} {value!r}, not a count from 1")
+
+
+def _finite(value: object) -> None:
+    if not isinstance(value, Decimal) or not value.is_finite():
+        raise ValueError(f"{value!r} is not a finite decimal")

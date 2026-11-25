@@ -12,6 +12,7 @@ from ithildinruntime.core import (
     DATA_STAGE,
     SNAPSHOT_OUTPUT,
     BarStatus,
+    BlobRef,
     BrokerState,
     DecisionResult,
     Halt,
@@ -21,6 +22,7 @@ from ithildinruntime.core import (
     encode,
     output_key,
     result_key,
+    sha256_of,
 )
 from ithildinruntime.execution.brokers.prices import StoredPrices
 from tests.support import gates
@@ -75,6 +77,8 @@ def test_3_a_close_is_the_bar_of_that_session_and_none_where_there_is_none() -> 
     assert found.close(GLD, FULL) == 12 and found.close(USO, FULL) == 24
     assert found.close(GLD, PRIOR) == 11
     assert found.close(GLD, NEXT) is None
+    name = output_key(DEPLOYMENT, made.run, made.at, DATA_STAGE, SNAPSHOT_OUTPUT)
+    assert found.snapshot() == BlobRef(name, sha256_of(made.store.blobs[name]))
     early = at(world(), early=20)
     assert early.close(GLD, FULL) is None
     assert early.close(GLD, PRIOR) == 11

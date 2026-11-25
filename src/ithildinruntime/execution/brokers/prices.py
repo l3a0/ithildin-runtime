@@ -13,12 +13,15 @@ from typing import Protocol
 
 from ithildinruntime.core import (
     DATA_STAGE,
+    SNAPSHOT_OUTPUT,
+    BlobRef,
     InstrumentId,
     Quote,
     Snapshot,
     StageKind,
     StageRun,
     Storage,
+    output_key,
     session_close,
 )
 
@@ -37,6 +40,10 @@ class Prices(Protocol):
 
     def quote(self, instrument: InstrumentId) -> Quote | None:
         """The quote the decision read, not judged, or `None` where it read none."""
+        ...
+
+    def snapshot(self) -> BlobRef:
+        """The stored snapshot they come from."""
         ...
 
 
@@ -63,20 +70,31 @@ class StoredPrices:
         )
         self._decision_at = decision_at
         self._reader = reader
-        self._read: Snapshot | None = None
+        self._deployment, self._run = deployment, run
+        self._read: tuple[Snapshot, BlobRef] | None = None
 
     @property
     def decision_at(self) -> datetime:
         return self._decision_at
 
     def close(self, instrument: InstrumentId, session: date) -> Decimal | None:
-        return session_close(self._snapshot(), instrument, session)
+        return session_close(self._stored()[0], instrument, session)
 
     def quote(self, instrument: InstrumentId) -> Quote | None:
-        return self._snapshot().quotes.get(instrument)
+        return self._stored()[0].quotes.get(instrument)
 
-    def _snapshot(self) -> Snapshot:
+    def snapshot(self) -> BlobRef:
+        return self._stored()[1]
+
+    def _stored(self) -> tuple[Snapshot, BlobRef]:
         if self._read is None:
             decision = self._reader.decision(self._decision_at, lambda: None)
-            self._read = decision.snapshot(DATA_STAGE)
+            snapshot = decision.snapshot(DATA_STAGE)
+            # The read above halts unless the result lists it exactly once.
+            listed = decision.result(DATA_STAGE).outputs
+            key = output_key(
+                self._deployment, self._run, self._decision_at, DATA_STAGE, SNAPSHOT_OUTPUT
+            )
+            (ref,) = [found for found in listed if found.key == key]
+            self._read = snapshot, ref
         return self._read

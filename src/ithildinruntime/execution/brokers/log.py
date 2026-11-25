@@ -6,11 +6,12 @@ account` says what a blob holds. In short:
 - A blob holds its call's events and the account after them. An order that ended
   is in the event that ended it and in no later blob, so the log of a long run
   does not grow with its square.
-- Only a create the store acknowledged moves what this process remembers. A
-  create with no answer leaves the log unsure, and the next call first reads
-  forward and takes in what is there, where it is this writer's.
-- A log is one process's. A call that finds its number taken by another writer
-  halts, because two processes are writing one account.
+- Every call reads the log forward first, and takes in each blob that follows
+  from the one before it, whoever wrote it. So an answer the store lost, and a
+  call of another process that takes turns on the account, are both in the next
+  answer.
+- Only a create the store acknowledged moves what this process remembers. One
+  that finds its number taken has changed nothing, and its call starts over.
 """
 
 from __future__ import annotations
@@ -25,11 +26,13 @@ from types import MappingProxyType
 
 from ithildinruntime.core import (
     BlobMissing,
+    BlobRef,
     BlobStore,
     BrokerOrder,
     BrokerState,
     BrokerUnavailable,
     CodecError,
+    Conflict,
     Fill,
     Halt,
     InstrumentId,
@@ -124,12 +127,17 @@ class SimEdit:
 
 @dataclass(frozen=True)
 class SimClose:
-    """An order's end: its id, the state it ended in, when, and its fill where it had one."""
+    """An order's end: its id, the state it ended in, when, and its fill where it had one.
+
+    `priced_from` is the stored snapshot that gave the fill its price, and `None`
+    where there is no fill.
+    """
 
     id: str
     state: BrokerState
     at: datetime
     fill: Fill | None
+    priced_from: BlobRef | None
 
 
 @dataclass(frozen=True)
@@ -165,13 +173,19 @@ class SimState:
 
 @dataclass(frozen=True)
 class SimCall:
-    """One blob of the log. Call 1 opens the account, so it names no writer and no time."""
+    """One blob of the log. Call 1 opens the account, so it names no writer and no time.
+
+    `at` is the account's time, which never goes back, and `clock` the clock's
+    own reading, `None` where that was no UTC time. They differ only on a cancel
+    under a clock that reads before the account's time, or no time.
+    """
 
     format: int
     account: str
     call: int
     writer: str | None
     at: datetime | None
+    clock: datetime | None
     events: SimEvents
     after: SimState
 
@@ -225,19 +239,19 @@ def ended(order: SimOrder, close: SimClose) -> SimOrder:
 
 @dataclass(eq=False)
 class SimulatedAccount:
-    """One account's log, held by one process for its whole life.
+    """One account's log, as one process holds it for its whole life.
 
     `load` reads nothing, so no worker fails to start on a log that cannot be
-    read. The log is read once, at the first call of a broker over it, and an
+    read. The whole log is read at the first call of a broker over it, and an
     account that was never opened, a gap and a bad blob halt there.
     """
 
     account: str
     store: BlobStore = field(repr=False)
     writer: str = field(repr=False)
-    # Held through a whole call, so two threads never build on one number.
+    # Held through a whole call, because the receive loop runs its handlers in threads.
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    # The newest call this process knows is stored, and the account after it.
+    # The newest call this process has taken in, and the account after it.
     number: int = 0
     at: datetime | None = None
     state: SimState | None = None
@@ -251,12 +265,15 @@ class SimulatedAccount:
     # The account events this process made, and the call each order on its way arrives at.
     fired: set[int] = field(default_factory=set, repr=False)
     due: dict[str, int] = field(default_factory=dict, repr=False)
-    _loaded: bool = field(default=False, repr=False)
-    _unsure: bool = field(default=False, repr=False)
+    _listed: bool = field(default=False, repr=False)
 
     @classmethod
     def load(cls, store: BlobStore, account: str, writer: str) -> SimulatedAccount:
-        """The log of `account`, unread. `writer` is drawn afresh for each, 32 hex characters."""
+        """The log of `account`, unread. `writer` is drawn afresh for each, 32 hex characters.
+
+        Two processes that share one build the same bytes under one clock, and
+        each would read one order's answer as its own.
+        """
         return cls(account, store, writer)
 
     @staticmethod
@@ -270,7 +287,7 @@ class SimulatedAccount:
         state = SimState(cash, {}, (), ())
         key = _key(account, _OPENING)
         data = _encoded(
-            SimCall(SIM_FORMAT, account, _OPENING, None, None, SimEvents(), state),
+            SimCall(SIM_FORMAT, account, _OPENING, None, None, None, SimEvents(), state),
         )
         try:
             store.create(key, data, sha256_of(data))
@@ -279,72 +296,84 @@ class SimulatedAccount:
                 raise Halt(f"{key} holds another opening of the account") from None
 
     def catch_up(self) -> None:
-        """Read the log, the whole of it the first time and what is unsure after that."""
-        if self._loaded and not self._unsure:
-            return
+        """Take in every call stored since the newest one this process knows.
+
+        The first time lists the whole log, so a gap is seen. After that it asks
+        for the next number until there is none, which costs one read a call.
+        """
         if not _WRITER.fullmatch(self.writer):
             raise Halt(f"the simulated account {self.account}'s writer is no writer")
-        prefix = _key(self.account, _OPENING).rpartition("/")[0] + "/"
-        newest = _key(self.account, self.number) if self.number else None
         try:
-            keys = self.store.list(prefix, newest)
-            for key in keys:
-                number = self.number + 1
-                if key != _key(self.account, number):
-                    raise Halt(
-                        f"the simulated account {self.account}'s call {number} is missing, and "
-                        f"the next key is {key}"
-                    )
-                self._take(self._checked(number, _get(self.store, key)))
+            if not self._listed:
+                self._read_whole()
+            while (data := _there(self.store, _key(self.account, self.number + 1))) is not None:
+                self._keep(self._checked(self.number + 1, data))
         except StoreError as error:
             raise BrokerUnavailable(_UNREACHED, error) from None
+
+    def _read_whole(self) -> None:
+        prefix = _key(self.account, _OPENING).rpartition("/")[0] + "/"
+        newest = _key(self.account, self.number) if self.number else None
+        for key in self.store.list(prefix, newest):
+            # A folder listed while another process adds to it can show a call and miss the one
+            # before it, so the missing one is asked for by its own key before its gap halts.
+            while key != (wanted := _key(self.account, self.number + 1)):
+                data = _there(self.store, wanted)
+                if data is None:
+                    raise Halt(
+                        f"the simulated account {self.account}'s call {self.number + 1} is "
+                        f"missing, and the next key is {key}"
+                    )
+                self._keep(self._checked(self.number + 1, data))
+            self._keep(self._checked(self.number + 1, _get(self.store, key)))
         if not self.number:
             raise Halt(
                 f"the simulated account {self.account} has no call: it was never opened, or its "
                 "log is lost"
             )
-        self._loaded, self._unsure = True, False
+        self._listed = True
 
-    def append(self, events: SimEvents, now: datetime) -> None:
-        """Store one call's events, and remember them once the store has acknowledged them.
+    def append(self, events: SimEvents, now: datetime, clock: datetime | None) -> bool:
+        """Store one call's events, and say whether it was stored.
 
-        A store that does not answer raises `BrokerUnavailable`, with nothing
-        changed and the log unsure.
+        One whose number another call holds changed nothing, and its caller
+        reads forward and starts over. A store that does not answer raises
+        `BrokerUnavailable`, with nothing this process remembers changed, and
+        the next call finds whether the blob landed.
         """
-        state, number = self.account_now, self.number + 1
         call = SimCall(
-            SIM_FORMAT, self.account, number, self.writer, now, events, after(state, events)
+            SIM_FORMAT,
+            self.account,
+            self.number + 1,
+            self.writer,
+            now,
+            clock,
+            events,
+            after(self.account_now, events),
         )
-        key, data = _key(self.account, number), _encoded(call)
-        # Before the create, so whatever it raises leaves the log unsure.
-        self._unsure = True
+        key, data = _key(self.account, call.call), _encoded(call)
+        # Before the create, so a call that could not be read back is never stored.
+        self._follows(call)
         try:
             try:
                 self.store.create(key, data, sha256_of(data))
-            except KeyExists as error:
+            except KeyExists:
                 # These same bytes are this create's own, whose first answer was lost.
-                stored = _get(self.store, key)
-                if stored != data:
-                    self._mine(self._checked(number, stored))
-                    # An earlier create of this process that landed late. The next call takes it in.
-                    raise error
+                if _get(self.store, key) != data:
+                    return False
+        except Conflict:
+            # S3 says it raced another write and did not land.
+            return False
         except StoreError as error:
             raise BrokerUnavailable(_UNREACHED, error) from None
-        self._unsure = False
-        self._take(call)
+        self._keep(call)
+        return True
 
     @property
     def account_now(self) -> SimState:
         if self.state is None:
             raise Halt(f"the simulated account {self.account} has not been read")
         return self.state
-
-    def _mine(self, call: SimCall) -> None:
-        if call.writer != self.writer:
-            raise Halt(
-                f"the simulated account {self.account}'s call {call.call} is another writer's, so "
-                "two processes are writing one account"
-            )
 
     def _checked(self, number: int, data: bytes) -> SimCall:
         what = f"the simulated account {self.account}'s call {number}"
@@ -359,45 +388,65 @@ class SimulatedAccount:
         opening = number == _OPENING
         if (call.writer is None, call.at is None) != (opening, opening):
             raise Halt(f"{what} names the writer {call.writer!r} and the time {call.at}")
+        self._follows(call)
         return call
 
-    def _take(self, call: SimCall) -> None:
-        """Remember one stored call, or halt where it does not follow from the one before."""
+    def _follows(self, call: SimCall) -> None:
+        """Halt on a call that does not follow from the one before it."""
         what, events = f"the simulated account {self.account}'s call {call.call}", call.events
         if call.call == _OPENING:
-            opened = SimState(call.after.cash, {}, (), ())
-            if call.after != opened or events != SimEvents():
+            if call.after != SimState(call.after.cash, {}, (), ()) or events != SimEvents():
                 raise Halt(f"{what} opens an account that is not flat")
-        else:
-            if self._loaded and call.writer != self.writer:
-                self._mine(call)
-            if call.after != after(self.account_now, events):
-                raise Halt(f"{what} is not the call before it with its events applied")
-            if self.at is not None and call.at is not None and call.at < self.at:
-                raise Halt(f"{what} is at {call.at.isoformat()}, before the call before it")
-        placed = [e.order for e in events.edits if e.order and e.order.id not in self.orders]
-        placed.extend(events.placed)
-        for at, order in enumerate(placed, start=len(self.orders) + 1):
-            if order.id != f"sim-o-{at}":
-                raise Halt(f"{what} places {order.id}, not sim-o-{at}")
-        fills = [close.fill for close in events.closed if close.fill is not None]
-        for at, fill in enumerate(fills, start=len(self.fills) + 1):
+            return
+        try:
+            applied = after(self.account_now, events)
+        except Halt as halt:
+            raise Halt(f"{what}: {halt.reason}") from None
+        if call.after != applied:
+            raise Halt(f"{what} is not the call before it with its events applied")
+        if self.at is not None and call.at is not None and call.at < self.at:
+            raise Halt(f"{what} is at {call.at.isoformat()}, before the call before it")
+        for at, name in enumerate(self.new(events), start=len(self.orders) + 1):
+            if name != f"sim-o-{at}":
+                raise Halt(f"{what} places {name}, not sim-o-{at}")
+        for at, fill in enumerate(_fills(events), start=len(self.fills) + 1):
             if fill.fill_id != f"sim-f-{at}":
                 raise Halt(f"{what} holds the fill {fill.fill_id}, not sim-f-{at}")
+
+    def new(self, events: SimEvents) -> list[str]:
+        """The id of each order `events` place, in turn, and none twice."""
+        placed = [e.order.id for e in events.edits if e.order is not None]
+        placed += [order.id for order in events.placed]
+        return [name for name in dict.fromkeys(placed) if name and name not in self.orders]
+
+    def _keep(self, call: SimCall) -> None:
+        """Remember one stored call."""
+        events = call.events
         for edit in events.edits:
             if edit.order is not None and edit.order.id is not None:
                 self.orders[edit.order.id] = edit.order
             if call.writer == self.writer:
                 self.fired.add(edit.count)
-        for order in placed:
+        for order in events.placed:
             self.orders[order.id] = order  # type: ignore[index]
-        for order in (*placed, *events.delayed):
+        for order in (*events.placed, *events.delayed):
             if order.client_order_id is not None:
                 self.names.add(order.client_order_id)
         for close in events.closed:
             self.orders[close.id] = ended(self.orders[close.id], close)
-        self.fills.extend(fills)
+        self.fills.extend(_fills(events))
         self.number, self.at, self.state = call.call, call.at, call.after
+
+
+def _fills(events: SimEvents) -> list[Fill]:
+    return [close.fill for close in events.closed if close.fill is not None]
+
+
+def _there(store: BlobStore, key: str) -> bytes | None:
+    try:
+        return store.get(key)
+    except BlobMissing:
+        return None
 
 
 def _key(account: str, number: int) -> str:

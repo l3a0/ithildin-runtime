@@ -100,6 +100,7 @@ class SimWorld:
     # The store the simulator's log alone uses, where a test gives it another.
     sim_store: BlobStore | None = None
     sim_writer: str = SIM_WRITER
+    share_step: Decimal = Decimal(1)
 
     def __post_init__(self) -> None:
         self.clock = Clock(datetime.min)
@@ -120,6 +121,11 @@ class SimWorld:
         self.store.quiet = False
 
     @property
+    def caps(self) -> HardCaps:
+        through = date(self.year, 1, 1)
+        return gates.caps(stress_through=through, share_step=self.share_step)
+
+    @property
     def sim(self) -> BlobStore:
         return self.store if self.sim_store is None else self.sim_store
 
@@ -131,7 +137,7 @@ class SimWorld:
             storage=self.storage(),
             account=ACCOUNT,
             writer=next(self.writers, "c" * 32),
-            gate=Gate(gates.fitting(self.constraints, _caps(self.year))),
+            gate=Gate(gates.fitting(self.constraints, self.caps)),
             clock=self.clock,  # type: ignore[arg-type]
             alerts=self.alarms,
             retry=Retry(timedelta(seconds=10), 1.0, 4.0),
@@ -174,6 +180,10 @@ class SimWorld:
         }
         return Snapshot(**fields | changes)  # type: ignore[arg-type]
 
+    def stored(self, snapshot: Snapshot) -> None:
+        """Store another snapshot for the newest decision, by hand."""
+        self._file(self.at, DATA_STAGE, SNAPSHOT_OUTPUT, Snapshot, snapshot)
+
     def _file(self, at: datetime, stage: str, name: str, kind: type, entry: object) -> BlobRef:
         header = BlobHeader(
             format=1,
@@ -206,7 +216,7 @@ class SimWorld:
         """Store a decision's files, recover at its time, and journal its plan."""
         quiet, self.store.quiet = self.store.quiet, True
         session = TABLE.opened_by(at).day
-        self.store.put(caps_key(ACCOUNT), caps_blob(_caps(self.year), ACCOUNT))
+        self.store.put(caps_key(ACCOUNT), caps_blob(self.caps, ACCOUNT))
         self.at, self.run, self.clock.at = at, session.isoformat(), max(at, self.clock.at)
         prior = TABLE.before(session).day
         held = gates.valuation(CASH, session=prior, replayed_through=1)
@@ -324,10 +334,6 @@ class SimWorld:
         prefix = sim_account_key(ACCOUNT, 1).rpartition("/")[0] + "/"
         held = self.sim.blobs  # type: ignore[attr-defined]
         return {key: held[key] for key in sorted(held) if key.startswith(prefix)}
-
-
-def _caps(year: int) -> HardCaps:
-    return gates.caps(stress_through=date(year, 1, 1))
 
 
 class Plain(Wired):

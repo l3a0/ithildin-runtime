@@ -11,19 +11,23 @@ fill rule by order type and no branch on a mode or a test.
 - **Any other order is rejected.** The day's market order gets its fill with
   #155, which reads the decision's quote.
 - **It moves only forward.** A call whose clock reads before the log's newest
-  call halts.
+  call, or before the decision its prices are of, halts.
+- **No check on an input stops a cancel**, as the charter's risk engineer vetoes.
+  A cancel reads no price. It is judged at the account's time, which is the
+  latest time any call has shown it, so a clock that went back moves nothing.
 
-Every call first does what is due: what a fault has someone do to the account,
-an order that arrives late, a rejection that comes later, and the closes. Then
-it does its own part, stores one blob where anything changed, and answers. A
-call that fails has changed nothing.
+Every call reads the log forward. Every call but a cancel then does what is due:
+what a fault has someone do to the account, an order that arrives late, a
+rejection that comes later, and the closes. A call then does its own part, stores
+one blob where anything changed, and answers. A call that fails has changed
+nothing, and one whose number another call took starts over on what it then reads.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from ithildinruntime.core import (
@@ -40,6 +44,7 @@ from ithildinruntime.core import (
     FillsRead,
     FoundOrder,
     Halt,
+    KeyExists,
     OrderIntent,
     OrdersRead,
     OrderType,
@@ -69,7 +74,7 @@ from .faults import (
     OrderFault,
     ReadFault,
 )
-from .log import SimClose, SimEdit, SimEvents, SimOrder, SimState, SimulatedAccount, after, ended
+from .log import SimClose, SimEdit, SimEvents, SimOrder, SimState, SimulatedAccount, after
 from .prices import Prices
 
 __all__ = ["SimulatedBroker", "refusal"]
@@ -77,6 +82,9 @@ __all__ = ["SimulatedBroker", "refusal"]
 _ZERO = Decimal(0)
 _SHARE_PLACES = places(OrderIntent, "qty")
 _PRICE_PLACES = places(Fill, "price")
+_CONTENDED = "contended_log"
+# How many times a call starts over on a number another call took.
+_STARTS_OVER = 100
 
 
 def refusal(order: OrderIntent | SimOrder, at: datetime, close: datetime) -> str | None:
@@ -91,6 +99,10 @@ def refusal(order: OrderIntent | SimOrder, at: datetime, close: datetime) -> str
     if at > close:
         return f"it came at {_time(at)}, after its session's close at {_time(close)}"
     return None
+
+
+# A call's events, and what reads its answer once they are stored.
+type _Done[R] = tuple[SimEvents, Callable[[], R]]
 
 
 class SimulatedBroker:
@@ -118,46 +130,58 @@ class SimulatedBroker:
     # The calls that move the account
 
     def submit(self, intent: OrderIntent) -> Ack:
+        fault = self._faults.orders.get(intent.client_order_id)
+
+        def enter(now: datetime, events: SimEvents) -> _Done[Ack]:
+            if fault is OrderFault.REJECT:
+                return events, lambda: _rejected("the account takes no order under this name", now)
+            entered = _changed(intent, fault)
+            events, answer = self._enter(entered, events, now, fault)
+            if fault is OrderFault.DUPLICATE:
+                events, answer = self._enter(entered, events, now, fault)
+            return events, lambda: self._answered(intent, fault, answer)
+
         with self._log.lock:
             self._log.calls += 1
-            fault = self._faults.orders.get(intent.client_order_id)
             if fault is OrderFault.LOSE_REQUEST:
                 raise BrokerUnavailable("request", TimeoutError)
             _, sent_at, _ = read_order_id(intent.client_order_id)
             if sent_at != self._prices.decision_at:
                 raise Halt(
-                    f"the order {intent.client_order_id} is of the decision at "
-                    f"{_time(sent_at)}, and the prices are of {_time(self._prices.decision_at)}"
+                    f"the order {intent.client_order_id} is of the decision at {_time(sent_at)}, "
+                    f"and the prices of account {self.alias} are of "
+                    f"{_time(self._prices.decision_at)}"
                 )
-            now, events = self._due()
-            if fault is OrderFault.REJECT:
-                self._store(events, now)
-                return _rejected("the account takes no order under this name", now)
-            entered = _changed(intent, fault)
-            events, answer = self._enter(entered, events, now, fault)
-            if fault is OrderFault.DUPLICATE:
-                events, answer = self._enter(entered, events, now, fault)
-            self._store(events, now)
-            if isinstance(fault, Late) and answer is None:
-                self._log.due[intent.client_order_id] = self._log.calls + fault.calls
-            if answer is None or fault is OrderFault.LOSE_ANSWER:
-                raise BrokerUnavailable("answer", TimeoutError)
-            return answer
+            return self._call(enter)
 
     def cancel(self, broker_order_id: str) -> Ack:
         with self._log.lock:
             self._log.calls += 1
-            now, events = self._due()
-            order = self._order(broker_order_id, events)
-            if order is None:
-                self._store(events, now)
-                return _rejected("the account holds no such order", now)
-            if order.state is not BrokerState.WORKING or now > _close_of(order):
-                self._store(events, now)
-                return _found(order, now, Outcome.REJECTED)
-            close = SimClose(broker_order_id, BrokerState.CANCELLED, now, None)
-            self._store(replace(events, closed=(*events.closed, close)), now)
-            return _found(self._log.orders[broker_order_id], now)
+            for _ in range(_STARTS_OVER + 1):
+                self._log.catch_up()
+                at, clock = self._account_time()
+                order = self._log.orders.get(broker_order_id)
+                if order is None:
+                    return _rejected("the account holds no such order", at)
+                if order.state is not BrokerState.WORKING or at > _close_of(order):
+                    return _found(order, at, Outcome.REJECTED)
+                close = SimClose(broker_order_id, BrokerState.CANCELLED, at, None, None)
+                if self._log.append(SimEvents(closed=(close,)), at, clock):
+                    return _found(self._log.orders[broker_order_id], at)
+            raise BrokerUnavailable(_CONTENDED, KeyExists)
+
+    def _account_time(self) -> tuple[datetime, datetime | None]:
+        """The later of the clock and the log's newest call, and the clock's own reading."""
+        try:
+            read: object = self._clock.now()
+        except Exception:
+            read = None
+        clock = read if isinstance(read, datetime) and read.utcoffset() == timedelta(0) else None
+        seen = [at for at in (clock, self._log.at) if at is not None]
+        if not seen:
+            # An account with no call but its opening holds nothing to cancel.
+            raise Halt(f"the simulated broker's clock reads {read!r}, not a UTC time")
+        return max(seen), clock
 
     # The reads
 
@@ -227,22 +251,36 @@ class SimulatedBroker:
         fault = self._faults.reads.get((name, log.reads[name]))
         if fault is ReadFault.FAILS:
             raise BrokerUnavailable(name, TimeoutError)
-        now, events = self._due()
-        self._store(events, now)
+        now = self._call(lambda now, events: (events, lambda: now))
         return now, log.account_now, fault is ReadFault.SHORT
 
-    # What is due before a call does its own part
+    # What every call does around its own part
+
+    def _call[R](self, work: Callable[[datetime, SimEvents], _Done[R]]) -> R:
+        """Do what is due and then `work`, store both as one call, and answer.
+
+        `work` gives every event of the call and what reads its answer once they
+        are stored.
+        """
+        for _ in range(_STARTS_OVER + 1):
+            now, due = self._due()
+            events, answer = work(now, due)
+            if events == SimEvents() or self._log.append(events, now, now):
+                return answer()
+        raise BrokerUnavailable(_CONTENDED, KeyExists)
 
     def _due(self) -> tuple[datetime, SimEvents]:
         """The call's time, and every event that comes before the call's own."""
         log = self._log
-        now = require_utc("the simulated broker's clock", self._clock.now())
+        # The log first, since another process can store a call while the clock is read.
         log.catch_up()
-        if log.at is not None and now < log.at:
-            raise Halt(
-                f"the clock reads {_time(now)}, before the simulated account's newest call at "
-                f"{_time(log.at)}"
-            )
+        now = require_utc("the simulated broker's clock", self._clock.now())
+        for what, at in (("newest call", log.at), ("prices' decision", self._prices.decision_at)):
+            if at is not None and now < at:
+                raise Halt(
+                    f"the clock reads {_time(now)}, before the simulated account {self.alias}'s "
+                    f"{what} at {_time(at)}"
+                )
         events = SimEvents()
         for count in sorted(self._faults.events):
             if count <= log.calls and count not in log.fired:
@@ -296,7 +334,13 @@ class SimulatedBroker:
     def _closes(self, events: SimEvents, now: datetime) -> SimEvents:
         """Each open order that ends now: rejected later, filled at its close, or expired."""
         for order in after(self._log.account_now, events).open_orders:
-            close = self._close(order, events, now)
+            try:
+                close = self._close(order, events, now)
+            except Halt as halt:
+                raise Halt(
+                    f"the simulated account {self.alias}'s order {order.id} is past its close and "
+                    f"has no price: {halt.reason}"
+                ) from None
             if close is not None:
                 events = replace(events, closed=(*events.closed, close))
         return events
@@ -305,11 +349,11 @@ class SimulatedBroker:
         closed = _close_of(order)
         fault = self._faults.orders.get(order.client_order_id or "")
         if fault is OrderFault.REJECT_LATER:
-            return SimClose(order.id or "", BrokerState.REJECTED, now, None)
+            return SimClose(order.id or "", BrokerState.REJECTED, now, None, None)
         if now <= closed:
             return None
         if fault is OrderFault.FILL_NONE:
-            return SimClose(order.id or "", BrokerState.EXPIRED, closed, None)
+            return SimClose(order.id or "", BrokerState.EXPIRED, closed, None, None)
         price = self._prices.close(order.instrument, order.session)
         if price is None:
             return None
@@ -332,7 +376,7 @@ class SimulatedBroker:
             basis=FillBasis.SIGNAL_CLOSE if order.read_close else FillBasis.OFFICIAL_CLOSE,
         )
         state = BrokerState.FILLED if qty == order.qty else BrokerState.EXPIRED
-        return SimClose(order.id or "", state, closed, fill)
+        return SimClose(order.id or "", state, closed, fill, self._prices.snapshot())
 
     # One order as it enters
 
@@ -373,26 +417,16 @@ class SimulatedBroker:
             read_close=self._prices.close(intent.instrument, session.day) is not None,
         )
 
+    def _answered(self, intent: OrderIntent, fault: object, answer: Ack | None) -> Ack:
+        """What the caller hears of an order the account has dealt with."""
+        if isinstance(fault, Late) and answer is None:
+            self._log.due[intent.client_order_id] = self._log.calls + fault.calls
+        if answer is None or fault is OrderFault.LOSE_ANSWER:
+            raise BrokerUnavailable("answer", TimeoutError)
+        return answer
+
     def _next_id(self, events: SimEvents) -> str:
-        new = [
-            e for e in events.edits if e.order is not None and e.order.id not in self._log.orders
-        ]
-        return f"sim-o-{len(self._log.orders) + len(new) + len(events.placed) + 1}"
-
-    def _order(self, broker_order_id: str, events: SimEvents) -> SimOrder | None:
-        """An order as it stands once `events` are applied."""
-        for order in after(self._log.account_now, events).open_orders:
-            if order.id == broker_order_id:
-                return order
-        known = self._log.orders.get(broker_order_id)
-        if known is None:
-            return None
-        ends = [close for close in events.closed if close.id == broker_order_id]
-        return ended(known, ends[0]) if ends else known
-
-    def _store(self, events: SimEvents, now: datetime) -> None:
-        if events != SimEvents():
-            self._log.append(events, now)
+        return f"sim-o-{len(self._log.orders) + len(self._log.new(events)) + 1}"
 
 
 def _close_of(order: SimOrder) -> datetime:

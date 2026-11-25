@@ -1,9 +1,9 @@
-"""The broker's cases, each order sent through `OrderPath` with its gate and its journal.
+"""The simulated broker's cases, each order sent through `OrderPath`, gate and journal included.
 
-Each test's number is the acceptance item of #144 it shows. The cases that need
-neither the relay nor a fault are written against `core.Broker`, for #153 to run on
-Alpaca's adapter. No test here calls a broker's submit. `cancel`, `find_order` and the
-reads are called on the simulator itself, as #144's acceptance 1 says.
+A test's number is the item of #144 it shows: 1 to 8 of its acceptance, and from
+9 on of its contract. No test here calls a broker's submit. `cancel`,
+`find_order` and the reads are called on the simulator itself, as acceptance 1
+says, so no case here runs on another broker as it stands.
 """
 
 from __future__ import annotations
@@ -16,6 +16,9 @@ from decimal import Decimal
 import pytest
 
 from ithildinruntime.core import (
+    DATA_STAGE,
+    SNAPSHOT_OUTPUT,
+    BarStatus,
     BrokerState,
     BrokerUnavailable,
     FillBasis,
@@ -24,6 +27,9 @@ from ithildinruntime.core import (
     OrderType,
     Outcome,
     TimeInForce,
+    output_key,
+    result_key,
+    sha256_of,
 )
 from ithildinruntime.execution.brokers import simulated
 from ithildinruntime.execution.brokers.faults import (
@@ -46,6 +52,7 @@ from tests.support.relay_broker import RelayBroker
 from tests.support.sim_world import (
     ACCOUNT,
     CASH,
+    DEPLOYMENT,
     EARLY,
     FULL,
     GLD,
@@ -113,7 +120,7 @@ def settled(made: SimWorld, day=FULL) -> None:
 # 1. The relay
 
 
-def test_1_a_relay_reaches_a_simulated_broker_alone_and_forwards_one_order_once() -> None:
+def test_1_a_relay_reaches_a_simulated_broker_alone() -> None:
     made, _ = sent(())
     fake = FakeBroker(lambda: made.store.blobs, ACCOUNT, made.clock.at)
     with pytest.raises(TypeError, match="simulated broker alone"):
@@ -211,17 +218,46 @@ def test_2_two_legs_each_fill_at_their_own_close() -> None:
     made.agree()
 
 
-def test_2_cash_and_shares_move_exactly_and_never_round() -> None:
-    made = world()
+@pytest.mark.parametrize("side", [1, -1])
+def test_2_cash_and_shares_move_exactly_and_never_round(side: int) -> None:
+    made = world(share_step=D("1E-9"))
     made.closes[GLD][FULL] = D("12.345678")  # type: ignore[index]
-    at = close_of(FULL)
-    (whole,) = made.decide(at, made.orders(at, [(3, GLD)]))
-    made.send(whole)
+    assert made.day(FULL, [(side * D("1.000000001"), GLD)]) == [OrderState.ACKNOWLEDGED]
     settled(made)
     (fill,) = made.broker().fills(LONG_AGO).fills
     assert (fill.price, fill.excess_places) == (D("12.345678"), ("price",))
-    assert made.broker().account().cash == D("999962.962966")
+    assert made.broker().positions().positions == {GLD: side * D("1.000000001")}
+    # 1,000,000 less, or plus, 1.000000001 at 12.345678.
+    cash = {1: "999987.654321987654322", -1: "1000012.345678012345678"}[side]
+    assert made.broker().account().cash == D(cash)
     made.agree()
+
+
+def test_2_an_order_sent_at_the_close_and_filled_by_the_next_decision_is_signal_close() -> None:
+    """The path test 1 of #4 takes: the next call is the next decision's recover."""
+    made, _ = sent()
+    settled(made)
+    (fill,) = made.broker().fills(LONG_AGO).fills
+    assert fill.basis is FillBasis.SIGNAL_CLOSE
+    assert fill.received_at == close_of(after(FULL))
+
+
+def test_2_a_fill_names_the_snapshot_that_gave_its_price() -> None:
+    """A bar revised between two decisions gives the price the settling one holds."""
+    for polled in (True, False):
+        made, _ = sent()
+        if polled:
+            made.clock.at += MICRO
+            assert len(made.broker().fills(LONG_AGO).fills) == 1
+        made.closes[GLD][FULL] = D(13)  # type: ignore[index]
+        settled(made)
+        (fill,) = made.broker().fills(LONG_AGO).fills
+        (close,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
+        run, at = (FULL, close_of(FULL)) if polled else (after(FULL), close_of(after(FULL)))
+        key = output_key(DEPLOYMENT, run.isoformat(), at, DATA_STAGE, SNAPSHOT_OUTPUT)
+        assert close["priced_from"] == {"key": key, "sha256": sha256_of(made.store.blobs[key])}
+        assert fill.price == (PRICE if polled else 13)
+        assert fill.basis is FillBasis.SIGNAL_CLOSE
 
 
 @pytest.mark.parametrize(
@@ -320,30 +356,29 @@ def test_14_a_working_order_is_cancelled_up_to_the_close_itself(early: timedelta
 
 
 def test_14_a_cancel_and_a_later_rejection_end_at_their_own_time() -> None:
-    faults = Faults({ids(early=20)[0]: OrderFault.REJECT_LATER})
-    for given, call in ((Faults(), 3), (faults, 3)):
-        made, _ = sent(early=20, faults=given)
+    later = Faults({ids(early=20)[0]: OrderFault.REJECT_LATER})
+    for faults, call in ((Faults(), "cancel"), (later, "positions")):
+        made, _ = sent(early=20, faults=faults)
         made.clock.at += timedelta(seconds=5)
-        made.broker().cancel("sim-o-1")
-        (end,) = json.loads(made.blobs()[f"sim/sim-1/{call:012d}.json"])["events"]["closed"]
+        READS[call](made.broker())
+        (end,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
         assert end["at"] == "2026-11-03T20:40:05.000000Z"
 
 
 @pytest.mark.parametrize("which", ["sim-o-1", "sim-o-9"])
-def test_14_a_cancel_that_is_the_first_call_after_the_close_settles_it(which: str) -> None:
+def test_14_a_cancel_after_the_close_is_refused_and_settles_nothing(which: str) -> None:
     made, _ = sent()
     made.clock.at += MICRO
-    made.broker().cancel(which)
-    assert made.log.number == 3
-    (fill,) = made.log.fills
-    assert fill.received_at == made.clock.at
+    assert made.broker().cancel(which).outcome is Outcome.REJECTED
+    assert made.log.number == 2
+    assert made.broker().positions().positions == {GLD: 4}
 
 
-def test_14_a_cancel_stores_what_was_due_with_it() -> None:
+def test_14_a_cancel_does_nothing_but_its_own_part() -> None:
+    """What was due at its call comes at the next one."""
     made, _ = sent(early=20, faults=Faults(events={2: EditCash(D(5)), 3: EditCash(D(7))}))
     assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
-    assert made.log.account_now.cash == CASH + 5
-    # The cancel was call 2, so the next is call 3.
+    assert made.log.account_now.cash == CASH
     assert made.broker().account().cash == CASH + 12
 
 
@@ -368,7 +403,7 @@ def test_14_a_cancel_after_the_close_is_refused_while_no_prices_hold_it() -> Non
 def test_14_a_cancel_of_an_order_that_ended_is_refused(fault, state, filled) -> None:
     made, _ = sent(faults=Faults({ids()[0]: fault} if fault else {}))
     made.clock.at = close_of(FULL) + MICRO
-    # The call that ends the order is the cancel itself.
+    made.broker().positions()
     answer = made.broker().cancel("sim-o-1")
     assert (answer.outcome, answer.order.state) == (Outcome.REJECTED, state)
     assert answer.order.filled == filled
@@ -432,13 +467,18 @@ def test_6_a_read_names_its_bytes_apart_from_its_values() -> None:
     assert broker.fills(close_of(FULL) + MICRO).fills == ()
 
 
-def test_6_a_read_past_the_limit_is_not_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "read", ["positions", "open_orders", "account", "fills", "orders", "activities"]
+)
+def test_6_a_read_past_the_limit_is_not_whole(read: str, monkeypatch) -> None:
     made, _ = sent([(4, GLD)])
-    size = len(made.broker().open_orders().received[0].body)
+    if read in ("positions", "fills"):
+        made.clock.at += MICRO
+    size = len(READS[read](made.broker()).received[0].body)
     monkeypatch.setattr(simulated, "READ_LIMIT", size)
-    assert made.broker().open_orders().whole
+    assert READS[read](made.broker()).whole
     monkeypatch.setattr(simulated, "READ_LIMIT", size - 1)
-    assert not made.broker().open_orders().whole
+    assert not READS[read](made.broker()).whole
 
 
 READS = {
@@ -454,14 +494,119 @@ READS = {
 }
 
 
-@pytest.mark.parametrize("call", READS)
+HALTING = sorted(set(READS) - {"cancel"})
+
+
+@pytest.mark.parametrize("call", HALTING)
 def test_12_a_clock_before_the_newest_call_halts(call: str) -> None:
     made, _ = sent()
     made.clock.at = close_of(FULL) - MICRO
-    with pytest.raises(Halt, match="before the simulated account's newest call"):
+    with pytest.raises(Halt) as raised:
         READS[call](made.broker())
+    assert raised.value.reason == (
+        "the clock reads 2026-11-03T20:59:59.999999Z, before the simulated account sim-1's newest "
+        "call at 2026-11-03T21:00:00.000000Z"
+    )
     made.clock.at = close_of(FULL)
     READS[call](made.broker())
+
+
+@pytest.mark.parametrize("call", HALTING)
+def test_12_a_clock_before_the_decision_of_its_prices_halts(call: str) -> None:
+    made, _ = sent()
+    made.decide(close_of(after(FULL)), recover=False)
+    made.clock.at = close_of(FULL) + MICRO
+    number = made.log.number
+    with pytest.raises(Halt) as raised:
+        READS[call](made.broker())
+    assert raised.value.reason == (
+        "the clock reads 2026-11-03T21:00:00.000001Z, before the simulated account sim-1's "
+        "prices' decision at 2026-11-04T21:00:00.000000Z"
+    )
+    assert made.log.number == number
+
+
+@pytest.mark.parametrize(
+    "clock",
+    [timedelta(hours=-1), -MICRO, None],
+    ids=["an-hour-back", "a-microsecond-back", "no-utc-time"],
+)
+def test_12_no_clock_stops_a_cancel(clock: timedelta | None) -> None:
+    made, _ = sent(early=20)
+    at = made.clock.at
+    made.clock.at = at.replace(tzinfo=None) if clock is None else at + clock
+    answer = made.broker().cancel("sim-o-1")
+    assert answer.outcome is Outcome.ACCEPTED
+    assert answer.order.state is BrokerState.CANCELLED
+    # It is judged and stored at the newest call's time, so the log still goes forward.
+    (end,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
+    assert end["at"] == "2026-11-03T20:40:00.000000Z"
+    blob = json.loads(made.blobs()["sim/sim-1/000000000003.json"])
+    read = None if clock is None else (at + clock).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert (blob["at"], blob["clock"]) == ("2026-11-03T20:40:00.000000Z", read)
+    made.clock.at = at
+    assert made.broker().open_orders().orders == ()
+
+
+def test_12_a_clock_that_cannot_be_read_stops_no_cancel() -> None:
+    made, _ = sent(early=20)
+
+    def broken() -> datetime:
+        raise RuntimeError("the history clock reads a time only once this thread waited")
+
+    made.clock.now = broken  # type: ignore[method-assign]
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    with pytest.raises(RuntimeError):
+        made.broker().positions()
+
+
+def test_12_a_cancel_on_an_account_just_opened_needs_a_clock() -> None:
+    made = world()
+    made.run, made.at = FULL.isoformat(), close_of(FULL)
+    made.clock.at = close_of(FULL)
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
+    made.clock.at = close_of(FULL).replace(tzinfo=None)
+    with pytest.raises(Halt, match="not a UTC time"):
+        made.broker().cancel("sim-o-1")
+
+
+def test_12_a_clock_that_went_back_reopens_no_close() -> None:
+    made, _ = sent(early=20)
+    made.clock.at = close_of(FULL) + MICRO
+    # A call stored after the close, so the newest call's time is past it.
+    made.faults = Faults(events={2: EditCash(D(1))})
+    made.broker().account()
+    made.clock.at = close_of(FULL) - timedelta(minutes=5)
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
+
+
+@pytest.mark.parametrize("why", ["no-result", "stale", "lost"])
+def test_12_no_price_stops_a_cancel_of_another_order(why: str) -> None:
+    made = world()
+    del made.closes[GLD][FULL]  # type: ignore[attr-defined]
+    made.day(FULL, [(4, GLD)], early=20)
+    at = close_of(after(FULL)) - timedelta(minutes=20)
+    (other,) = made.decide(at, made.orders(at, [(5, USO)]))
+    assert made.send(other) is OrderState.ACKNOWLEDGED
+    # The first order is past its close, and its price can no longer be read.
+    key = result_key(DEPLOYMENT, made.run, at, DATA_STAGE)
+    if why == "no-result":
+        made.store.drop(key)
+    elif why == "stale":
+        made.stored(made.snapshot(at, status={GLD: BarStatus.STALE, USO: BarStatus.FRESH}))
+    else:
+        bars = {USO: {"1d": made.bars(USO, at)}}
+        made.stored(made.snapshot(at, bars=bars, status={USO: BarStatus.FRESH}))
+    with pytest.raises(Halt, match="sim-1's order sim-o-1 is past its close and has no price: "):
+        made.broker().positions()
+    made.store.calls.clear()
+    answer = made.broker().cancel("sim-o-2")
+    assert (answer.outcome, answer.order.state) == (Outcome.ACCEPTED, BrokerState.CANCELLED)
+    # It asks for no price at all, so a price store that is slow cannot hold it up.
+    assert all(key.startswith("sim/") for _, key in made.store.calls)
+    assert [o.id for o in made.log.account_now.open_orders] == ["sim-o-1"]
+    # The order past its own close is refused, as no cancel can undo a close.
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
 
 
 def test_12_a_clock_that_reads_no_utc_time_halts() -> None:
@@ -492,8 +637,13 @@ def test_6_an_order_of_another_decision_than_the_prices_halts() -> None:
     at = close_of(FULL) - timedelta(minutes=20)
     (intent,) = made.decide(at, made.orders(at, [(4, GLD)]))
     made.at = at - timedelta(minutes=1)
-    with pytest.raises(Halt, match="is of the decision at .* and the prices are of"):
+    with pytest.raises(Halt) as raised:
         made.send(intent)
+    assert raised.value.reason == (
+        f"the order {intent.client_order_id} is in doubt: the order {intent.client_order_id} is of "
+        "the decision at 2026-11-03T20:40:00.000000Z, and the prices of account sim-1 are of "
+        "2026-11-03T20:39:00.000000Z"
+    )
     made.at = at
     assert made.broker().orders(LONG_AGO).orders == ()
 
@@ -511,6 +661,18 @@ def holds(made: SimWorld, count: int) -> None:
     assert broker.positions().positions == {}
     assert broker.account().cash == CASH
     assert broker.fills(LONG_AGO).fills == ()
+
+
+def bought(made: SimWorld) -> None:
+    """The order for 4 GLD filled whole at 12.50 and nothing else did."""
+    broker = made.broker()
+    assert broker.positions().positions == {GLD: 4}
+    # 1,000,000 less 4 at 12.50.
+    assert broker.account().cash == D("999950")
+    assert broker.open_orders().orders == ()
+    assert [(f.qty, f.price) for f in broker.fills(LONG_AGO).fills] == [(4, PRICE)]
+    (order_,) = broker.orders(LONG_AGO).orders
+    assert (order_.state, order_.filled) == (BrokerState.FILLED, 4)
 
 
 def test_6_reject() -> None:
@@ -554,7 +716,7 @@ def test_6_lose_answer() -> None:
     assert entry.raw is None
     holds(made, 1)
     settled(made)
-    assert made.broker().positions().positions == {GLD: 4}
+    bought(made)
 
 
 def test_6_lose_answer_of_an_order_the_account_refuses() -> None:
@@ -583,8 +745,37 @@ def test_6_late_holds_the_order_from_its_call_on(calls: int) -> None:
     assert (held.submitted_at, held.qty) == (made.clock.at, 4)
     made.decide(close_of(after(FULL)), recover=False)
     (fill,) = made.broker().fills(LONG_AGO).fills
-    assert (fill.qty, fill.price, fill.basis) == (4, PRICE, FillBasis.OFFICIAL_CLOSE)
-    assert made.broker().lookup("sim-o-1").order.state is BrokerState.FILLED
+    assert fill.basis is FillBasis.OFFICIAL_CLOSE
+    bought(made)
+
+
+def test_6_late_sent_at_the_close_is_signal_close_once_it_arrives() -> None:
+    made, _ = sent(faults=Faults({ids()[0]: Late(1)}))
+    assert len(made.broker().open_orders().orders) == 1
+    settled(made)
+    (fill,) = made.broker().fills(LONG_AGO).fills
+    assert fill.basis is FillBasis.SIGNAL_CLOSE
+    bought(made)
+
+
+def test_6_the_id_of_an_order_that_arrived_too_late_is_refused_again() -> None:
+    made, _ = sent(early=20, faults=Faults({ids(early=20)[0]: Late(1)}))
+    made.clock.at = close_of(FULL) + MICRO
+    holds(made, 0)
+    second = world(sim_store=Plain(made.store.blobs), sim_writer="d" * 32)
+    planned = second.decide(
+        close_of(FULL) - timedelta(minutes=20),
+        second.orders(close_of(FULL) - timedelta(minutes=20), [(7, GLD)]),
+        recover=False,
+    )
+    to = second.broker()
+
+    def moves() -> None:
+        second.clock.at = close_of(FULL) + MICRO
+
+    assert second.send(planned[0], RelayBroker(to, moves)) is OrderState.IN_DOUBT
+    (entry,) = journaled(second, InDoubtEntry)
+    assert "already holds an order under the id" in json.loads(entry.raw)["reason"]
 
 
 def test_6_late_past_its_close_is_never_held() -> None:
@@ -666,7 +857,13 @@ def test_6_fill_none_expires_at_the_close() -> None:
     (ended,) = broker.orders(LONG_AGO).orders
     assert (ended.state, ended.filled) == (BrokerState.EXPIRED, 0)
     assert json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"] == [
-        {"at": "2026-11-03T21:00:00.000000Z", "fill": None, "id": "sim-o-1", "state": "expired"}
+        {
+            "at": "2026-11-03T21:00:00.000000Z",
+            "fill": None,
+            "id": "sim-o-1",
+            "priced_from": None,
+            "state": "expired",
+        }
     ]
     made.agree()
 
@@ -691,7 +888,7 @@ def test_6_duplicate_is_refused_by_the_accounts_own_check_and_the_first_held() -
     assert "already holds an order" in json.loads(entry.raw)["reason"]
     holds(made, 1)
     settled(made)
-    assert made.broker().positions().positions == {GLD: 4}
+    bought(made)
 
 
 @pytest.mark.parametrize("fault", [None, Late(9)], ids=["held", "on-its-way"])
@@ -707,7 +904,9 @@ def test_6_an_id_the_account_has_had_is_refused_from_another_journal_too(fault) 
     assert [(o.client_order_id, o.qty) for o in found if o.qty == 7] == []
 
 
-@pytest.mark.parametrize("read", ["positions", "open_orders", "account", "fills", "orders"])
+@pytest.mark.parametrize(
+    "read", ["positions", "open_orders", "account", "fills", "orders", "activities"]
+)
 def test_6_read_fails_at_its_count_alone_and_changes_nothing(read: str) -> None:
     made, _ = sent(faults=Faults(reads={(read, 2): ReadFault.FAILS}))
     made.clock.at += MICRO
@@ -844,7 +1043,18 @@ def test_6_a_foreign_order_carries_no_stamp_and_fills_as_any_other() -> None:
     made.decide(close_of(after(FULL)), recover=False)
     fills = made.broker().fills(LONG_AGO).fills
     assert [(f.client_order_id, f.qty) for f in fills] == [(ids(early=20)[0], 4), (None, -2)]
+    # No decision sent it, so its basis says only whether the decision it came under had the close.
+    assert [f.basis for f in fills] == [FillBasis.OFFICIAL_CLOSE] * 2
     assert made.broker().positions().positions == {GLD: 4, USO: -2}
+    # 1,000,000 less 4 at 12.50, plus 2 at 1,012.50.
+    assert made.broker().account().cash == D("1001975")
+
+
+def test_6_a_foreign_order_under_a_decision_at_the_close_is_signal_close() -> None:
+    made, _ = sent(faults=Faults(events={2: ForeignOrder(USO, D(-2))}))
+    made.broker().positions()
+    settled(made)
+    assert {f.basis for f in made.broker().fills(LONG_AGO).fills} == {FillBasis.SIGNAL_CLOSE}
 
 
 def test_6_a_foreign_order_the_rule_refuses_halts() -> None:
@@ -877,6 +1087,14 @@ def test_13_a_fault_that_means_nothing_is_refused_as_it_is_built() -> None:
         lambda: Faults(reads={("nothing", 1): ReadFault.FAILS}),
         lambda: Faults(reads={("lookup", 1): ReadFault.SHORT}),
         lambda: Faults(events={0: EditCash(D(1))}),
+        lambda: Faults({"a": "reject"}),
+        lambda: Faults({"a": ReadFault.FAILS}),
+        lambda: Faults(reads={("positions", 1): "read_fails"}),
+        lambda: Faults(events={1: "edit"}),
+        lambda: EditCash(D("NaN")),
+        lambda: EditPosition(GLD, D("Infinity")),
+        lambda: EditOrder("sim-o-1", 3.5),
+        lambda: ForeignOrder(GLD, D("NaN")),
     ):
         with pytest.raises(ValueError):
             bad()

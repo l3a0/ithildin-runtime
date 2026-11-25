@@ -15,6 +15,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 ## Prices in Building blocks
 
+- [What fills, and when](05-building-blocks.md#what-fills-and-when)
 - [What each call returns, and what is journaled first](05-building-blocks.md#what-each-call-returns-and-what-is-journaled-first)
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
 - [Where the limits come from](05-building-blocks.md#where-the-limits-come-from)
