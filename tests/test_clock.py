@@ -372,9 +372,9 @@ def test_8_a_redelivery_over_a_capture_that_measured_nothing_follows_the_run(
         assert reason.endswith(BOUND if measured else ONLY)
 
 
-@pytest.mark.parametrize("measured", [True, False])
+@pytest.mark.parametrize("measured", [True, False, None])
 def test_8_the_entry_point_hands_measured_to_the_read_and_to_a_redelivery(
-    lake: Path, tmp_path: Path, measured: bool
+    lake: Path, tmp_path: Path, measured: bool | None
 ) -> None:
     class Unmeasured(Reads):
         def reading(self) -> ClockReading:
@@ -387,7 +387,7 @@ def test_8_the_entry_point_hands_measured_to_the_read_and_to_a_redelivery(
         storage=loop_storage(Folder(tmp_path / "store", tmp_path / "queues").store(), Alarms()),
         clock=Unmeasured(),
         timer=SystemTimer(),
-        measured=measured,
+        measured=measured,  # type: ignore[arg-type]
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
@@ -396,7 +396,8 @@ def test_8_the_entry_point_hands_measured_to_the_read_and_to_a_redelivery(
     first = handler(Item(close(LAST), "data"), Reports())
     again = handler(Item(close(LAST), "data"), Reports())
     assert len(again.outputs) == 2
-    if measured:
+    # An absent one halts as a run that measures does.
+    if measured is not False:
         assert first.halt.reason == "no time server was asked"
         assert again.halt.reason == f"{key()}, which counts: no time server was asked"
     else:

@@ -35,6 +35,10 @@ QUARTER, FIVE_SIXTEENTHS = 0x40000000, 0x50000000
 RECEIVED_AT, SENT_AT = (S, QUARTER), (S, FIVE_SIXTEENTHS)
 
 
+class Odd(Exception):
+    """An error of no class the code names."""
+
+
 def stamp(at: tuple[int, int]) -> bytes:
     seconds, fraction = at
     return ((seconds + FROM_1900) % 2**32).to_bytes(4, "big") + fraction.to_bytes(4, "big")
@@ -468,6 +472,7 @@ def test_2_a_lookup_that_gives_no_ipv4_address_is_a_failed_ask(
         TimeoutError(),
         PermissionError(),
         ValueError("a port past 65535"),
+        Odd(),
     ],
 )
 def test_2_every_error_of_the_lookup_is_a_name_that_does_not_resolve(error: Exception) -> None:
@@ -836,7 +841,7 @@ def test_4_a_thread_outlives_the_asks_that_fail() -> None:
     hands, asks = Hands(), Asks()
     tries: list[str] = []
     # Enough of them that the wait between two asks is as long as it gets.
-    failures = [AskFailed("no reply came in time"), ValueError("a reply")] * 3
+    failures = [AskFailed("no reply came in time"), ValueError("a reply"), Odd()] * 2
 
     def fails_first(server: TimeServer, **clocks) -> Exchange:
         hands.pass_us(64_000_000)
@@ -862,7 +867,7 @@ def test_4_a_hung_ask_holds_neither_the_other_server_nor_start_nor_stop(hung: se
     def hangs(server: TimeServer, **clocks) -> Exchange:
         if server.name in hung:
             hanging[server.name].set()
-            release.wait(10)
+            release.wait(60)
         return asks(server, **clocks)
 
     servers = sampler(hands, hangs, pause=0.005)
@@ -888,7 +893,7 @@ def test_4_a_hung_ask_holds_neither_the_other_server_nor_start_nor_stop(hung: se
         began = time.monotonic()
         servers.stop()
         # Two seconds in all, however many hang.
-        assert time.monotonic() - began < 3.9
+        assert 1.9 < time.monotonic() - began < 3.9
     finally:
         release.set()
     for thread in servers._threads:

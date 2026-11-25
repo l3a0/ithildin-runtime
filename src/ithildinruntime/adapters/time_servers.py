@@ -3,7 +3,8 @@
 NTP, the Network Time Protocol, is how a machine asks a server the time. chrony
 sets the clock. This only measures it.
 
-1. `exchange` sends one packet and reads one reply, or raises `AskFailed`.
+1. `exchange` sends one packet and reads one reply, or raises, and `AskFailed`
+   where it can say why.
 2. `TimeServers` asks each server on its own schedule and its own thread, and
    keeps each one's last answer. `reading` comes from memory, so no handler
    waits on the network.
