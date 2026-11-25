@@ -300,7 +300,7 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
 
 ##### What a blob holds
 

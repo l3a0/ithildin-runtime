@@ -1904,7 +1904,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 ##### What a plan, a journal entry and a lease hold
 
 - `Plan` holds the run's decisions, each with its time and the strategies deciding at it. One function in `core` builds it from the schedules and the trading calendar.
-- `JournalEntry` is the one numbered record, chained to the entry before it.
+- `JournalEntry` is the one numbered record of what the platform did, chained to the entry before it.
 - `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`.
 
 ##### How the storage port rewrites a blob

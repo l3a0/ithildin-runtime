@@ -1302,7 +1302,7 @@ class Plan(_Record):
 
 @dataclass(frozen=True)
 class JournalEntry(_Record):
-    """The one numbered record, chained to the entry before it.
+    """The one numbered record of what the platform did, chained to the entry before it.
 
     `body` holds a `kind` and that kind's fields, as plain JSON values: the
     codec refuses a decimal, a time or a record there, because it could not

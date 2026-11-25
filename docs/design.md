@@ -372,16 +372,18 @@ Nine more things set the shape.
 3. **A stateless VM, with files as blobs in S3.** The VM keeps no state that
    matters. Every file is a blob, an object in storage, and the storage is
    S3, which marketlake already uses.
-4. **Blobs keyed by decision, with the journal the only log.** Pure steps write
+4. **Blobs keyed by decision, with the journal the only log of what the platform did.** Pure steps write
    create-only blobs at decision keys, with headers naming what each was made
    from. Data's first write wins. A halt is a blob at the same kind of key.
    The journal is the only numbered log of what the platform did. No component keeps
    an event log of its own, in SQLite or as numbered blobs, and the journal's entries
-   do not sit in SQLite rows. A simulated account's numbered calls are no such log,
-   because they stand in for a broker's own records
+   do not sit in SQLite rows. The one other numbered log is a simulated account's
+   calls. They stand in for a broker's own records: only the simulated broker's
+   adapter reads them, and no book is replayed from them
    ([The simulated broker's account](architecture/08-crosscutting-concepts.md#the-simulated-brokers-account)).
    This doc's reason for the shape is that only the journal records actions
-   that cannot be repeated, so only the journal needs numbering.
+   that cannot be repeated, so of the platform's own records only the journal
+   needs numbering.
 5. **An in-memory store for backtests.** A backtest swaps S3 for a store in
    memory, through the same port.
 6. **Fetch and sync before changing state, and resolve conflicts first.** As
@@ -4434,8 +4436,8 @@ once rather than re-argued.
 | A single score that grades a system | Tharp rates newsletters on a proprietary measure he does not disclose (TYW L\~8056), so nobody could rerun it. A sample is judged by the results its registration named |
 | Splitting, randomizing or hiding an order so others cannot read it | Harris describes splitting and hiding for large traders and says that showing an order rarely costs a small one (TE L9418), and randomizing is this project's addition. At this size such code is expected to cost more than it would protect, which nothing has measured, and a decision reads only declared inputs and a recorded seed. The share of volume rule 6 of [A fill is measured from the decision](#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) reports is what would reopen this |
 | Switching back to the earlier release on its own after a failed check | The book switches back to the release it read when a check after the switch fails (DT p. 249). Hard limit 6 makes a deploy to live the owner's, so a failed check here halts or serves as rule 5 of [Every change can be undone or switched off](#every-change-can-be-undone-or-switched-off) says, and a person rolls back: the owner on any account, the operator on shadow and paper, under the owner's 2026-10-30 ruling on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
-| A simulated account as one blob per call under its decision, or as a whole account in every blob | A call that reads an account names no decision, so it has no key to write under, and a blob that carried every order would cost the square of the run's length. The owner ruled for numbered calls, as `## Decisions` records for 2026-11-25 |
-| A simulated fill at a provisional close, or at the decision's price | Neither is the price the replication fills at, so acceptance test 1 could not reproduce its pins. The owner ruled for the session's official close, as `## Decisions` records for 2026-11-25 |
+| A simulated account as one blob per call under its decision, or as a whole account in every blob | The broker port's reads and its `cancel` take no decision, so a blob keyed by decision has no key for them, and a blob that carried every order would cost the square of the run's length. The owner ruled for numbered calls, as `## Decisions` records for 2026-11-25 |
+| A simulated fill at a provisional close, or at the decision's price | A provisional close can differ from the close the replication fills at, so acceptance test 1 could not be sure to reproduce its pins. A market-on-close order sent before the close fills at the close, not at the quote it was decided on. The owner ruled for the session's official close, as `## Decisions` records for 2026-11-25 |
 | NautilusTrader as the simulated broker | Its Python surface drives a run loop rather than taking one call at a time, its exchange refuses queries, and its matching engine rejects `AtTheClose`, so a market-on-close order would be the wrapper's own. It is LGPL-3.0, and its 2.x line is still release candidates, by a reading of its source on 2026-11-05 on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | QuantConnect Lean as the simulated broker | Its brokerage takes a running algorithm and the engine drives its fills, it saves no account and orders as one unit, and it is C# on .NET, reached from Python through a bridge. It does have market-on-close and a public fill model, by the same reading on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | Zipline's blotter as the simulated broker | The closest fit, but it brings about 30 dependencies and a native build for under 500 lines of bookkeeping, and a wrapper would still add market-on-close, saved state, the lookups and most faults, by the same reading on [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
