@@ -509,30 +509,75 @@ classDiagram
         QUOTE
     }
     class Ack {
-        +str client_order_id
-        +str broker_order_id
-        +BrokerOrder order
-        +str state
-        +str outcome
+        +Outcome outcome
+        +str or None broker_order_id
+        +BrokerOrder or None order
         +bytes raw
+        +datetime received_at
+    }
+    class Outcome {
+        <<enumeration>>
+        ACCEPTED
+        REJECTED
+        NOT_SENT
+        UNKNOWN
+        NOT_FOUND
+        SEVERAL
     }
     class BrokerOrder {
         +str broker_order_id
-        +str client_order_id
+        +str or None client_order_id
         +InstrumentId instrument
-        +str side
         +Decimal qty
-        +str type
+        +Decimal filled
+        +OrderType or None type
+        +TimeInForce or None time_in_force
+        +BrokerState state
+        +datetime submitted_at
+    }
+    class BrokerState {
+        <<enumeration>>
+        WORKING
+        PENDING_CANCEL
+        FILLED
+        CANCELLED
+        EXPIRED
+        REJECTED
+        UNKNOWN
     }
     class FoundOrder {
-        +str answer
+        +Outcome answer
         +list rows
         +bool whole_list
         +bytes raw
     }
-    class BrokerRead {
-        +bytes raw
-        +object value
+    class PositionsRead {
+        +dict positions
+        +list received
+        +bool whole
+    }
+    class OrdersRead {
+        +list orders
+        +list received
+        +bool whole
+    }
+    class FillsRead {
+        +list fills
+        +list received
+        +bool whole
+    }
+    class CashRead {
+        +Decimal cash
+        +list received
+        +bool whole
+    }
+    class RecordsRead {
+        +list received
+        +bool whole
+    }
+    class ReceivedPage {
+        +bytes body
+        +datetime at
     }
     class JournalAck {
         +int seq
@@ -729,13 +774,25 @@ classDiagram
     Fill --> Instrument
     Fill --> FillBasis
     BrokerOrder --> Instrument
+    BrokerOrder --> OrderType
+    BrokerOrder --> TimeInForce
+    BrokerOrder --> BrokerState
     Ack o-- BrokerOrder
+    Ack --> Outcome
+    PositionsRead o-- ReceivedPage
+    OrdersRead o-- ReceivedPage
+    OrdersRead o-- BrokerOrder
+    FillsRead o-- ReceivedPage
+    FillsRead o-- Fill
+    CashRead o-- ReceivedPage
+    RecordsRead o-- ReceivedPage
     StoredBlob o-- BlobRef
     DecisionResult o-- BlobHeader
     DecisionResult o-- HaltRecord
     HaltRecord o-- BlobRef
     HaltRecord o-- RestartRecord
     FoundOrder o-- BrokerOrder
+    FoundOrder --> Outcome
     CostSchedule o-- CostTerm
     CostTerm --> CostKind
     CostTerm --> CostSide
@@ -922,14 +979,16 @@ classDiagram
     }
     class Broker {
         <<Protocol>>
+        +str alias
         +submit(OrderIntent) Ack
         +find_order(OrderIntent, since, mapped) FoundOrder
-        +orders(since) BrokerRead
+        +orders(since) OrdersRead
         +lookup(broker_order_id) Ack
-        +fills(since) BrokerRead
-        +positions() BrokerRead
-        +open_orders() BrokerRead
-        +activities(since) BrokerRead
+        +fills(since) FillsRead
+        +positions() PositionsRead
+        +open_orders() OrdersRead
+        +account() CashRead
+        +activities(since) RecordsRead
         +cancel(broker_order_id) Ack
         +clock() datetime
     }
@@ -965,6 +1024,7 @@ classDiagram
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
         +exists(key) bool
+        +read_blob(key) bytes
         +read_result(key, decision_at) DecisionResult
         +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
         +announce(key) bool
@@ -1014,19 +1074,31 @@ classDiagram
         +list disputes
         +Book book
     }
-    class OrderPath {
+    class Account {
         -Journal journal
         -RiskGate gate
+        -Controls controls
+        +path(Broker, report) OrderPath
+        +settle(report)
+        +unstored() list
+    }
+    class Controls {
+        -BlobStore store
+        +stopping(where, tries, with_stop) Stopping or None
+        +stop(tries) StopState
+    }
+    class OrderPath {
         -Broker broker
-        +settle_in_doubt() list
-        +journal_fills(since) list
-        +broker_account() BrokerAccount
-        +send(OrderIntent, Snapshot, Constraints) Ack
-        +cancel(broker_order_id) Ack
-        +cancel_resting() list
-        +broker_clock() datetime
-        -submit(JournalAck) Ack
-        -send_cancel(JournalAck) Ack
+        +send(client_order_id) OrderState
+        +hold(client_order_ids) list
+        +abandon(client_order_id, reason) OrderState
+        +loss(deployment, run, decision_at) list
+        +positions() PositionsRead
+        +open_orders() OrdersRead
+        +account() CashRead
+        +fills(since) FillsRead
+        +lookup(broker_order_id) Ack
+        -submit(JournalAck) answer
     }
     class Monitoring {
         -Alerts alerts
@@ -1042,9 +1114,13 @@ classDiagram
     Storage o-- BlobStore
     Storage o-- Alerts
     Monitoring o-- Alerts
-    OrderPath o-- Journal
-    OrderPath o-- RiskGate
+    Account o-- Journal
+    Account o-- RiskGate
+    Account o-- Controls
+    Account ..> OrderPath
+    Controls o-- BlobStore
     OrderPath o-- Broker
+    OrderPath ..> OrderState
     DataSource ..> Snapshot
     Clock ..> Progress
     Clock ..> ClockReading
@@ -1055,7 +1131,12 @@ classDiagram
     RiskGate ..> Verdict
     RiskGate ..> LossReading
     Broker ..> Ack
-    Broker ..> Fill
+    Broker ..> FoundOrder
+    Broker ..> PositionsRead
+    Broker ..> OrdersRead
+    Broker ..> FillsRead
+    Broker ..> CashRead
+    Broker ..> RecordsRead
     Journal ..> View
     Journal ..> JournalAck
     View ..> Book
@@ -1109,13 +1190,13 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `origin` | Whether marketlake captured the bar or imported it |
 | `vintage_id` | The vintage the bar was read from |
 | `first_seen` | When the platform first held the bar |
-| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for split and dividend adjusted, as quantitative-trading's vintage records do |
+| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for numbers its source had already adjusted, where the word does not say for what |
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
 | `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
 | `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series) |
-| `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
+| `volume` | The volume, or `None` where marketlake holds none, as on both Chan vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
 A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. A reader takes a field that holds no word as `unstated` too. The data module copies the four fields into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored.
@@ -1129,7 +1210,7 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
 3. A captured bar's knowable time is marketlake's `fetch_end_ts`, when the answer arrived, because that is the earliest the platform could have held it. A captured bar with none halts the decision, and so does a stamp with no stated zone. `fetch_ts`, when the request left, is kept beside it. A daily bar is fetched the evening before the decision that reads it, so no daily decision turns on which of the two counts.
-4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections.
+4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages and 2026-11-22 for both Yahoo files. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections. USO's Yahoo prices before 2020-04-29 are eight times those that traded and its volume an eighth, as USO's row in `data/price_kinds.csv` states, on a factor in effect only from 2020-04-29. So a backtest there holds an eighth as many shares as the same dollars bought then. A per-share cost reads an eighth of what it was, a share cap binds late, and a share of the volume is unchanged. `adjusted` does not say the scale, because Chan's bars read `adjusted` too.
 
 ##### What a quote and a snapshot's flags carry
 
@@ -1173,14 +1254,31 @@ Every call to the broker goes through `OrderPath`.
 
 ##### Which calls reach the broker
 
-`OrderPath` has one method per kind of call.
+`OrderPath` has one method per kind of call, and [the section on an order's path](#what-an-order-path-takes-and-what-it-answers) says what each takes.
 
-- Settling orders in doubt.
-- Journaling fills.
-- Reading positions and open orders.
-- Sending and cancelling.
+- Sending an order, which is `send`.
+- Asking the gate and journaling its answer with nothing sent, which is `hold`.
+- Journaling that an order was never sent, which is `abandon`.
+- Reading the day's loss with no order, which is `loss`.
+- Reading the positions, the open orders, the cash and the fills, and looking one order up.
 
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) states which read supplies cash. Nothing else in the package is given a broker, and only the execution worker's entry point builds one, which the import rule enforces. The fake broker in test 3, the test that the risk gate refuses an order over each limit and that nothing bypasses it, checks the send path itself, as [Package layout and the import rule](#package-layout-and-the-import-rule) says. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
+
+Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a submit, a cancel or a search for an order, one of six entries only the order path records, a change to the path from outside it in the spellings its tests plant, or an import of an adapter. The sweep reads what is written, so other spellings pass it. The fake broker catches none of those that replace the gate, because the approval is in the journal like any other. The fake broker reads the stored journal itself, and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+
+##### What an order path takes, and what it answers
+
+The worker builds one `Account` for each broker account and keeps it across decisions. It holds the journal, the gate, the controls and each answer the journal has not taken yet. `Account.path` gives the `OrderPath` for one decision's broker.
+
+`send` takes a client order id and nothing else. The order, the deployment, the run, the decision time and the inputs all come from the `decision` entry the journal holds, so no caller can hand it an order that was not planned, or a looser limit. It answers the state the journal then shows the order in. A send that journals the order `Abandoned` and answers it says the order's strategy is off. An order the gate refused, the broker rejected or that is in doubt is an answer too, and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stage ends its plan on each. Anything else that stops an order halts the decision.
+
+Five rules hold whatever a step does.
+
+1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again. Its state is the answer, apart from one left `Intended` or `Approved`, which halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+2. **One acknowledgement sends one order.** The account holds the acknowledgement of each `sending` entry its own journal gave, and the private submit takes it out before it does anything else. So one that was used, belongs to another order or was made up from the journal's bytes sends nothing. The journal could not tell a second use apart, because an order whose answer was not stored is still `Sending`.
+3. **No approval and no `sending` is recorded on a book that moved.** Each is the entry right after the one it was decided on. A number another writer took ends the order `abandoned` and halts the decision. After the `sending`, an entry stops the order where it moves this order, halts the book or is a newer `decision`. Any other does not, because the gate counted every open order at its worst case.
+4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stages call before their first view. Nothing is sent while it still fails. An alarm about a kept entry that could not be sent is tried again at each of those too, until it goes out or the process ends, and one that fails again halts nothing. Any other alarm of the path is tried once, and its own halt says where it could not be sent. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, or the other way round, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. One exception is an answer the journal refused and whose `in_doubt` landed in its place, with its bytes, before the journal moved on. It is done, with an alarm that says both. An order that may have a `sending` stored and was stopped before the call is kept the same way, because only that process knows nothing left. An alert channel that raises anything at all changes none of this, and neither does a clock read after the call. An error the path does not expect, such as `SystemExit` from the store, may be left to replay: an answer already given stays kept, an order not yet called is left in the state its last stored entry gives it, and the worker's own alarm says the error and names no order. Three answers are let go with no entry of their own bytes, each where another writer has since said what became of the order: an accepted order whose `ack` is already journaled under the same id, a rejection of an order already `Rejected`, and one read as a doubt that is already settled, whose alarm names both. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) is the first to write such entries, and it says where those bytes go.
+5. **Every call halts unless the broker's `alias` names the journal's account.** Nothing raises while an account is built, because a worker that fails to start is restarted by the host and read by no person.
 
 ##### How a call names an order
 
@@ -1198,20 +1296,37 @@ A fill that carries a correction identifier is refused as a `fill` until [#151](
 
 ##### What each call returns, and what is journaled first
 
-`Journal.record` returns a `JournalAck` naming the entry's number and hash, beside the view after that entry. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
+`Journal.record` returns a `JournalAck` naming the entry's number and hash, beside the view after that entry. The private call that submits an order takes that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says, and so will the one that sends a cancel ([#149](https://github.com/l3a0/ithildin-runtime/issues/149)).
 
-Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead, also before it uses the value.
+Every `Broker` read and write returns its received bytes apart from the converted value. `OrderPath` journals a submit's bytes in the entry that says what the answer came to. A read's bytes are stored in an output file, whose hash a `read` entry journals before any value is used.
 
-Each call ends in one of these outcomes.
+A call about one order answers an `Ack`, whose `outcome` is one of six.
 
-1. Accepted.
-2. Rejected.
-3. Provably not sent.
-4. Unknown.
-5. Not found.
-6. More than one, an outcome only a `find_order` can reach.
+**Table:** What a broker's answer to a submit comes to
 
-`orders(since)` reads a takeover's whole list, open and closed orders across every page. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form of these outcomes and of that list.
+| Outcome | What it says | The entry |
+| --- | --- | --- |
+| `accepted` | The broker has the order, under the id it gives | `ack` |
+| `rejected` | The broker refused the order | `rejected` |
+| `not_sent` | Proof that nothing left, such as a connection refused before any byte | `abandoned`, and the decision halts |
+| `unknown` | Any answer the adapter cannot classify, and a refusal that says the broker already holds the id | `in_doubt` |
+| `not_found` | A lookup found no order | `in_doubt` |
+| `several` | A search for an order found more than one | `in_doubt` |
+
+Six more things end `in_doubt`, and each alarms at once, naming the account by its alias, the order and when it went out. A broker's order id the journal takes is named too, where the answer is exactly an `Ack`.
+
+1. An error the submit raises, whatever its type. An adapter's own halt does too, and then halts the decision with its reason.
+2. An accepted order with no broker's id, with one another order holds, or with one the journal refuses.
+3. A broker's copy of the order that differs from the order sent in its id, instrument, shares, type or time in force.
+4. An answer that says two things of the order: that nothing was sent, with an id, a copy or bytes of the broker's, that it was rejected, with a copy that is not rejected or has shares filled, or that it was accepted, with a copy that is rejected. An order journaled as never sent leaves the book, so the next one would double it.
+5. An answer of more than 65,536 bytes, whose first part is kept.
+6. An answer that is not exactly an `Ack`, whose id, where it has one, is not exactly a `str`, whose bytes are not exactly `bytes`, or whose time is not exactly a `datetime` in UTC. A subclass is an adapter's own code, which would run wherever its value is used next.
+
+Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `CashRead` and `RecordsRead`, whose records [#151](https://github.com/l3a0/ithildin-runtime/issues/151) types. Each holds the pages as received, with the time each came, and says whether every page came. A read holds at least one page, since an empty answer is one the broker gave, and one past 4 MiB cannot say it is whole. The price of that cap is that a day whose list passes it halts until the cap is raised.
+
+A read that fails raises `BrokerUnavailable`, which takes the error or its type, and carries the call's name and that type's name and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, and an answer that is not exactly the read's own type, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
+
+`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) reads it.
 
 ##### One function lists the differences from the broker
 
@@ -1265,7 +1380,7 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. It is built with the stress records, which its release carries. Every check is handed the rest of what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, does the reading.
+The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. It is built with the stress records, which its release carries. Every check is handed the rest of what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath` does the reading.
 
 The figure below is a C4 component diagram.
 
@@ -1314,7 +1429,7 @@ flowchart LR
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book, the order and a close entry by an earlier entry, so that the verdict can be computed again. The stress records are no argument and no entry holds them, so the verdict carries `stress_move`, the one the check used. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book, the order and a close entry by an earlier entry, so that the verdict can be computed again. The stress records are no argument and no entry holds them, so the verdict carries `stress_move`, the one the check used. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and `OrderPath` journals it. `rebuilt` in `tests/support/order_world.py` works a sent order's answer out again from its `verdict` entry alone, with the second implementation in `tests/support/gate_oracle.py`.
 
 ##### What halts and what refuses
 
@@ -1383,7 +1498,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 ##### Where the limits come from
 
-The caps are first held to the stress records, as [How the caps are held to the stress move's record](#how-the-caps-are-held-to-the-stress-moves-record) says. Each limit then has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
+The caps are first held to the stress records, as [How the caps are held to the stress move's record](#how-the-caps-are-held-to-the-stress-moves-record) says. Each limit then has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath` reads the blob as each order's send begins and again among the checks right before the broker call, and an order for which a limit changed between the two goes no further, so a cap the owner changes binds at the next one.
 
 `core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Nine checks go further.
 
@@ -1487,7 +1602,7 @@ It reads four files, each holding one entry.
 
 It stores `constraints.json`, one `Constraints` per strategy. Each limit there is already the tighter of the strategy's own and the hard cap, through `core.tighten`. So `max_net` is the smaller of the strategy's and the share of V over the stress move the hold leaves, and a target is sized within a net cap no tracked file holds.
 
-The stage never reads the owner's caps blob, which the owner can rewrite between two attempts at one decision. It reads the caps recover stored, so a second attempt writes the same bytes. The gate still reads the blob just before each check. The price is that a cap the owner lowers after recover has run binds at the gate and not in the sizing, so a target sized within the older cap can be refused there.
+The stage never reads the owner's caps blob, which the owner can rewrite between two attempts at one decision. It reads the caps recover stored, so a second attempt writes the same bytes. `OrderPath` still reads the blob as each order's send begins, and hands the gate what it read. The price is that a cap the owner lowers after recover has run binds at the gate and not in the sizing, so a target sized within the older cap can be refused there.
 
 ##### Where a strategy's own limits come from
 
@@ -1531,7 +1646,7 @@ The gate reads two facts from `corrections`: the newest correction's number agai
 
 A view never changes. It copies the positions, the cash and every order that has not ended, which do not grow with the journal. Orders that ended, decisions, reads and fills are kept once, and a view shows none whose entry is past its own.
 
-`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view holds the book and the order the gate was asked on. The entry holds the rest of what the gate was handed, but no entry holds the stress records it was built with, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) rebuilds its answer.
+`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view holds the book and the order the gate was asked on. The entry holds the rest of what the gate was handed, but no entry holds the stress records it was built with, so the verdict's own `stress_move` stands for the caps' where its answer is rebuilt.
 
 ##### Nothing is stored that a replay would refuse
 
@@ -1587,6 +1702,7 @@ Each entry that names an order is checked against the entries before it, at `rec
 5. A `fill` names an earlier `read` entry and the broker's id of an acknowledged or part-filled order, in that order's instrument and on its side, under its client order id where the fill carries one, and takes its filled total no further than its quantity.
 6. An `expired`'s filled total equals the order's fills.
 7. An order moves only as [The life of an order](06-runtime.md#the-life-of-an-order) draws. `journal/orders.py` holds the one table of those moves, and a pair it does not hold halts naming the entry, the order and its state.
+8. An `abandoned` of an order that is `Sending` comes from the writer of its `sending`. No other process can know that nothing left, and after it the order is out of the book.
 
 #### The cost model writes a schedule rather than answering calls
 
@@ -1810,7 +1926,7 @@ An arrow means "may import". The diagram draws four rules.
 
 1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
    1. `core`, which every module may import.
-   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Execution builds the `Journal` that `OrderPath` holds, and monitoring the one `Monitoring` holds, each from the `BlobStore` and the account it is handed. No code outside the four importers constructs one.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Execution's `Account` builds the `Journal` its order paths share, and monitoring the one `Monitoring` holds, each from the `BlobStore` and the account it is handed. No code outside the four importers constructs one.
 
    `adapters`, `execution.brokers` and `runtime.loop` import nothing from `ithildinruntime` but `core`.
 
@@ -1833,7 +1949,7 @@ An arrow means "may import". The diagram draws four rules.
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `moves`, `largest_move` and `stress_vintage`, which measure the stress move and name the bars it read, the tracked stress records and their reader, and `hold_to_record`, which holds the caps to them, because the gate, the risk model and portfolio construction each call it;
-   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, `quote_faults`, `require_quote` and `midpoint`, the one judge of a quote and the price read of one, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, `quote_faults`, `require_quote`, `readable_until` and `midpoint`, the one judge of a quote, the last moment one can be read and the price read of one, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
    - `clock_faults`, the one rule that halts on a reading of the machine's clock, with `CLOCK_BOUND`, which is also added to every quote's age, `SYNC_BOUND`, `ANSWER_BOUND` and `DRIFT_PPM`, because data, execution and monitoring each judge a clock;
    - `reconcile`, the one comparison of a book with the broker's account.
 
@@ -1873,14 +1989,15 @@ An arrow means "may import". The diagram draws four rules.
 
 ### How tests hold the rule
 
-A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A package's `__init__.py` runs whenever a module beneath it is imported, so the test holds it to the rule of every box beneath it too, and `runtime/__init__.py` and `execution/__init__.py` may import only `core`. A second test runs a day under the supervisor against a fake broker that fails on four things.
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A package's `__init__.py` runs whenever a module beneath it is imported, so the test holds it to the rule of every box beneath it too, and `runtime/__init__.py` and `execution/__init__.py` may import only `core`. A second test runs a day under the supervisor against a fake broker that fails on five things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received.
-4. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included.
+4. An order that differs in any field from the one its `decision` entry plans.
+5. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included. [#149](https://github.com/l3a0/ithildin-runtime/issues/149) adds this one with the cancels, and the fake broker refuses the other four today.
 
-The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fourth check. The fake broker applies the fourth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
+The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fifth check. The fake broker applies the fifth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
 
 Together they turn acceptance test 3's claim that no order reaches the broker adapter without passing the gate into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
 

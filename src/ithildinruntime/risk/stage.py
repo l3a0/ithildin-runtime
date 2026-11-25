@@ -5,8 +5,8 @@ account's book. It is deterministic: its bytes come from the blobs its header
 names, the release and the strategies' files, and it reads no clock and no
 mode. It never reads the owner's caps blob, which the owner can rewrite
 between two attempts. It reads the caps as execution's recover stage parsed
-and stored them, so a second attempt writes the same bytes. The gate reads the
-blob itself, fresh, at each check.
+and stored them, so a second attempt writes the same bytes. The order path
+reads the blob itself as each order's send begins, and hands it to the gate.
 
 Its handler does four things, in order.
 

@@ -258,6 +258,11 @@ class Storage:
         self._claimed: list[_Held] = []
         self._lock = threading.Lock()
 
+    @property
+    def owner_step(self) -> str:
+        """The step an outage gives the owner, the broker's interface."""
+        return self._owner_step
+
     # Writing
 
     def put(
@@ -444,6 +449,17 @@ class Storage:
         so an outage never reads as a missing blob.
         """
         return self._read(key) is not None
+
+    def read_blob(self, key: str) -> bytes:
+        """The bytes at `key`, for a blob with a reader of its own, such as the hard caps.
+
+        A missing blob halts, and so does a store that does not answer by the
+        deadline, so neither ever reads as a blob that says nothing.
+        """
+        data = self._read(key)
+        if data is None:
+            raise self._halt(f"{key} is missing")
+        return data
 
     def read_result(self, key: str, decision_at: datetime) -> DecisionResult | None:
         """The decision result at `key`, or `None` while the stage has written none.

@@ -28,6 +28,7 @@ flowchart LR
         loop["The live loop<br/>data, alpha, risk, cost,<br/>portfolio, execution, monitoring"]
     end
     qt[("quantitative-trading<br/>committed vintages")]
+    yahoo[("Yahoo Finance<br/>two downloaded files")]
     vendor[("Vendor download<br/>fetches recent sessions once")]
     lake[("marketlake<br/>bars and quotes")]
     broker["Broker<br/>paper or live account"]
@@ -37,6 +38,7 @@ flowchart LR
     times["AWS's two time servers"]
 
     qt -->|"marketlake imports them once"| lake
+    yahoo -->|"marketlake imports them once"| lake
     vendor -->|"marketlake imports it once"| lake
     lake -->|"bars and quotes, through marketlake's readers"| loop
     loop -->|"orders"| broker
@@ -70,14 +72,15 @@ transformed into marketlake once, stored durably there, and read by every mode
 through one query, so a backtest and a live run never read bars by different
 paths. The runtime runs on a VM of its own and reads a local mirror of the
 partitions it downloads from marketlake's bucket, as [Where it runs](07-deployment.md#where-it-runs) says.
-marketlake holds three kinds of bar.
+marketlake holds four kinds of bar.
 
-**Table:** The three kinds of bar marketlake holds
+**Table:** The four kinds of bar marketlake holds
 
 | Kind of bar | Comes from | Read by |
 | --- | --- | --- |
 | Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow, paper and live trading |
-| Committed vintages | quantitative-trading, imported once | The backtest |
+| Committed vintages | quantitative-trading, imported once | The backtest, and the stress move's measurement |
+| Yahoo's GLD and USO | Yahoo's two downloaded files, 2012-04-10 to 2026-09-03, imported once | The stress move's measurement |
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
 
 The vendor download exists because each decision reads 60 sessions of closes.
@@ -102,7 +105,7 @@ No session ages out for the runtime, and only a day's capture segments go, as
 says. marketlake's VM can delete older partitions
 from its own disk once its backup bucket holds them, but the runtime reads a
 mirror of that bucket, which keeps every session, and never the VM's disk. So
-the 2006 to 2012 history and a lookback of any length stay readable.
+the 2006 to 2026 history and a lookback of any length stay readable.
 
 The figure below is a C4 container diagram.
 
@@ -385,7 +388,10 @@ published bound.
 The age is measured at each read. Data, risk and portfolio construction read no
 clock and pass the decision time, so they answer alike in a backtest and live. The
 risk gate passes its own `now`, so a quote that was good at the decision and has
-aged past its maximum when its order is checked halts that order.
+aged past its maximum when its order is checked halts that order. The gate's answer
+comes before two journal entries and the checks right before the broker call, so the
+order path also ends an order's last moment where a quote the gate marked reaches its
+maximum.
 
 An order has the maximum less the quote's age at the decision and less the clock
 bound. At a made-up maximum of 90 seconds, a quote 59 seconds old at the decision

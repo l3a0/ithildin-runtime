@@ -200,7 +200,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 3.1 bars and quotes | marketlake's account into the VM | Bars or quotes are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
+| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again as each order's send begins. It reads them once more, with the other controls, right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
@@ -434,19 +434,27 @@ sequenceDiagram
     end
     loop each order the order manager plans,<br/>a replacement only if its old order settled
         X->>F: takes the account's lease
-        X->>F: is the kill switch blob absent?
-        X->>X: is it before the cutoff?
+        X->>J: finds the order in its plan
+        X->>F: reads the hard caps
         X->>J: journals the intent
+        X->>F: is the switch absent, no halt stored, its own<br/>send result empty and the strategy not off?
+        X->>F: reads the files the plan was made from
+        X->>X: is it before the order's last moment?
         X->>J: replays the book
+        X->>F: has the loss stop not fired?
         X->>X: runs the risk gate check
         X->>J: journals the approval
+        X->>X: is it before the order's last moment?
         X->>J: journals the sending entry
+        X->>J: replays the book again
+        X->>F: are the hard caps' limits unchanged?
         X->>F: is the switch absent?
-        X->>F: is the strategy not off?
         X->>F: is no run or account halt stored<br/>or on the plan's lease?
         X->>F: is its own send result empty?
         X->>F: is the lease tag unchanged?
-        X->>X: is it before the cutoff?
+        X->>F: has the loss stop not fired?
+        X->>F: is the strategy not off,<br/>and no halt of its stored?
+        X->>X: is it before the order's last moment?
         X->>B: sends the order, with its client order id
         B-->>X: answers
         X->>J: journals the broker's answer
@@ -544,7 +552,7 @@ flowchart TB
     end
     subgraph each["Send, once per order"]
         direction LR
-        b1["Steps 1 and 2<br/>take the lease, check the switch and cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, ask the risk gate"] --> b3["Step 8<br/>make the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal the answer, release the lease"]
+        b1["Steps 1 and 2<br/>take the lease, find the order in its plan"] --> b2["Steps 3 to 8<br/>journal, check, ask the risk gate"] --> b3["Step 9<br/>make the eight checks"] --> b4["Step 10<br/>send"] --> b5["Steps 11 and 12<br/>journal the answer, release the lease"]
     end
     subgraph finish["Finish, once per decision"]
         direction LR
@@ -588,32 +596,37 @@ The steps run in this order.
 
 #### Send, once per order
 
-Each order goes through the order path alone, and the journal gains a line before the broker hears anything.
+Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
-1. Take the account's lease.
-2. Check the kill switch and the cutoff again.
-3. Journal the intent.
-4. Replay the book from the journal, so the risk gate sees every order already approved.
-5. Ask the risk gate.
-6. Journal the approval.
-7. Journal that it is sending.
-8. Make the six checks in the table below.
-9. Send, with the order's client order id.
-10. Journal the broker's answer: the ack, the rejection, or the order's doubt.
-11. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
+1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
+2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+3. Journal the intent. A number another writer took starts the order over, at most five times.
+4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
+5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
+6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
+7. Ask the risk gate, and journal its answer. A quote it marked ends the order's last moment sooner, where the quote reaches its maximum age first. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
+8. Check the order's last moment again, and journal that it is sending.
+9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
+10. Send, with the order's client order id.
+11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
+12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-**Table:** The six checks made right before the broker call
+A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an order another writer has moved, which is left as it is, an `Abandoned` that loses its number six times, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `sending` and a check at the submit ends by the order's last moment, and each try of the `verdict` by its cutoff or close, and the order is stopped there however long another read took.
+
+**Table:** The eight checks made right before the broker call
 
 | Check | What it reads | Passes when |
 | --- | --- | --- |
 | 1 | The kill switch | It is absent |
-| 2 | The order's strategy | It is not switched off |
-| 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running |
-| 4 | This instance's own send result | It is still empty |
-| 5 | The account's lease | It still carries this instance's tag |
-| 6 | The market-on-close cutoff | It has not passed |
+| 2 | The order's strategy | It is not switched off, and no halt of its is stored |
+| 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running, once [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it |
+| 4 | The decision's own send result | It is still empty |
+| 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
+| 6 | The loss stop | None has fired, and its state can be read |
+| 7 | The hard caps | Their limits are the ones the gate was handed |
+| 8 | The order's last moment: its market-on-close cutoff or its session's close, or the moment a quote the gate marked reaches its written maximum age where that is sooner | It has not passed |
 
-Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
 A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
 
@@ -848,8 +861,7 @@ refusal. So a refusal never hides such an input, apart from a stop whose state
 could not be read, as
 [What halts and what refuses](05-building-blocks.md#what-halts-and-what-refuses)
 says. Execution then journals the
-order `Abandoned` with the reason and halts the decision, as
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+order `Abandoned` with the reason and halts the decision.
 
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
@@ -886,7 +898,7 @@ The stop has a stated limit: no decision tests the price move from close−20 to
 
 #### What happens when the stop fires
 
-A fired stop latches, which means it stays fired whatever the price does next. It takes four steps, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+A fired stop latches, which means it stays fired whatever the price does next. It takes four steps. `OrderPath` takes the second and the gate the third, and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) builds the first. Until it does, a loss past its stop halts its own decision and the next one trades again once the price recovers, so no mode but a backtest may run.
 
 1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. The record is a journal entry and a blob at `accounts/<account>/stop.json`, created with a create-only write as the kill switch is, and a firing that reached either one stands. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
 2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate.
@@ -1105,21 +1117,22 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>or a restart
+    Intended --> Abandoned: a check before the gate fails, another writer<br/>takes the number of the verdict entry, the store<br/>does not take it, or a restart
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
-    Approved --> Abandoned: a restart before the sending entry
+    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, the store does not take it,<br/>its last moment passes, or a restart comes before it
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
-    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
-    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
+    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read, that was cut short, that differs<br/>from the order or that says two things of it
+    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first, or the process<br/>that sent it journals the answer it kept
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails
+    Sending --> Abandoned: a check before the broker call fails,<br/>or the adapter proves nothing was sent
     note left of Abandoned
         A failed check on the switch, a run or account halt,
-        its own result key, the lease tag or the cutoff also halts.
+        its own result key, the lease tag, the loss stop, the hard caps
+        or the order's last moment also halts.
         A switched-off strategy abandons without halting.
         A close reads the checks as design.md's
         checks before a broker call say.
@@ -1130,6 +1143,7 @@ stateDiagram-v2
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: execution journals the cancel, for the kill switch,<br/>a failed pair leg, a later plan or a sort
     PartlyFilled --> CancelSent: execution journals a cancel of the rest,<br/>for the same reasons
+    InDoubt --> InDoubt: execution journals the bytes of a later answer<br/>that does not settle it
     InDoubt --> InDoubt: execution journals a cancel on a row a list returned,<br/>and the order stays blocked and counted<br/>until a lookup settles it
     CancelSent --> CancelSent: execution journals a new cancel, under the rule<br/>for a cancel whose answer is lost
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled
@@ -1156,7 +1170,7 @@ saying no.
 
 `InDoubt` is the state a crash between sending and the ack lands in. It lets the journal say "the platform does not know whether the broker has this order", rather than leaving the next decision to guess.
 
-The only way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out.
+The way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. The process that sent the order may also still hold the broker's answer, where the journal did not take it at the time, and journals it when it can. Sending the order again is never a way out.
 
 A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, when it becomes `Lost`. It stays because a request sent just before a crash can still arrive after that read.
 
@@ -1237,7 +1251,7 @@ stateDiagram-v2
         the kill switch is set,
         the run or account halts,
         the lease is lost,
-        the cutoff passes,
+        an order's last moment passes,
         clocks disagree,
         a loss cannot be computed with positions held,
         an order is in doubt,

@@ -40,8 +40,9 @@ __all__ = [
     "Book",
     "BrokerAccount",
     "BrokerOrder",
-    "BrokerRead",
+    "BrokerState",
     "BucketObject",
+    "CashRead",
     "ClockReading",
     "Constraints",
     "Correction",
@@ -52,6 +53,7 @@ __all__ = [
     "DecisionResult",
     "Fill",
     "FillBasis",
+    "FillsRead",
     "Forecast",
     "ForecastSet",
     "FoundOrder",
@@ -73,13 +75,19 @@ __all__ = [
     "OrderRecord",
     "OrderState",
     "OrderType",
+    "OrdersRead",
+    "Outcome",
     "PastLimit",
     "Plan",
     "PlanDecision",
+    "PositionsRead",
     "Price",
     "Quantity",
     "Quote",
+    "READ_LIMIT",
     "Rate",
+    "ReceivedPage",
+    "RecordsRead",
     "RestartRecord",
     "Segment",
     "SendOutcome",
@@ -170,10 +178,10 @@ class Bar(_Record):
     each price field whose received value carries more places than `Price`
     declares, which is kept rather than rounded.
 
-    - `volume` is `None` where the source stated none, as on an imported vintage.
+    - `volume` is `None` where marketlake holds none, as on both Chan vintages.
     - `fetched` and `fetched_end` are marketlake's `fetch_ts` and `fetch_end_ts`
       as received, each beside its UTC instant, and `None` where marketlake
-      holds none, as on the Chan vintages.
+      holds none, as on the Chan vintages and the Yahoo files.
     - `knowable_at` is the time the bar could first have been known. For a
       captured bar it is `fetched_end_at`, when the response landed, the
       earliest moment the platform could have held it. For an imported bar it
@@ -224,7 +232,7 @@ class SpikeFlag(_Record):
 
     The price stays in its bar or its quote as received. `rule` names the check that
     flagged it, and `note` says what the check could not weigh, such as a
-    volume the source never stated.
+    volume the bar does not carry.
     """
 
     session: date
@@ -760,48 +768,169 @@ class Fill(_Record):
     basis: FillBasis | None
 
 
+class Outcome(StrEnum):
+    """What a broker's answer comes to, in one closed set.
+
+    `not_sent` is for a proof that nothing left, such as a connection refused
+    before any byte. `unknown` is for every answer an adapter cannot classify,
+    and for a refusal that says the broker already holds the id. Only a lookup
+    answers `not_found`, and only a search for an order answers `several`.
+    """
+
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    NOT_SENT = "not_sent"
+    UNKNOWN = "unknown"
+    NOT_FOUND = "not_found"
+    SEVERAL = "several"
+
+
+class BrokerState(StrEnum):
+    """Where a broker says an order stands, in the platform's words."""
+
+    WORKING = "working"
+    PENDING_CANCEL = "pending_cancel"
+    FILLED = "filled"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class BrokerOrder(_Record):
+    """One order as the broker holds it, in the platform's types.
+
+    `qty` and `filled` are signed, negative for a sale. `type` and
+    `time_in_force` are `None` where the broker names one the platform does
+    not send.
+    """
+
     broker_order_id: str
     client_order_id: str | None
     instrument: InstrumentId
-    side: str
     qty: Quantity
-    type: str
+    filled: Quantity
+    type: OrderType | None
+    time_in_force: TimeInForce | None
+    state: BrokerState
+    submitted_at: datetime
+
+
+def _received_at(at: object) -> None:
+    if not isinstance(at, datetime) or at.utcoffset() != timedelta(0):
+        raise ValueError("an answer's time of receipt is not a UTC time")
 
 
 @dataclass(frozen=True)
 class Ack(_Record):
-    """A broker's answer, with the bytes it sent beside the converted value."""
+    """A broker's answer about one order, with the bytes it sent beside the converted value.
 
-    client_order_id: str | None
+    `raw` is a body and never a header. An `accepted` with no broker's order
+    id, and a time that is not UTC, raise. A submit's answer is
+    taken only where it is exactly an `Ack`, its id none or exactly a `str`,
+    `raw` exactly `bytes` and `received_at` exactly a `datetime`. Any other is
+    in doubt.
+    """
+
+    outcome: Outcome
     broker_order_id: str | None
     order: BrokerOrder | None
-    state: str
-    outcome: str
-    raw: bytes
+    raw: bytes = dataclasses.field(repr=False)
+    received_at: datetime
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _received_at(self.received_at)
+        if self.outcome == Outcome.ACCEPTED and not self.broker_order_id:
+            raise ValueError("an accepted order carries no broker's order id")
 
 
 @dataclass(frozen=True)
 class FoundOrder(_Record):
-    answer: str
+    answer: Outcome
     rows: tuple[BrokerOrder, ...]
     whole_list: bool
-    raw: bytes
+    raw: bytes = dataclasses.field(repr=False)
+
+
+# The most bytes a broker read holds in all its pages. Alpaca's order list gives at most 500
+# orders a page, and an order is about a kilobyte, so this is several thousand orders.
+READ_LIMIT = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)
-class BrokerRead(_Record):
-    """A broker read's received bytes, kept apart from the value converted from them.
+class ReceivedPage(_Record):
+    """One page of a broker read as it came: its body, never a header, and when it came."""
 
-    `value` is typed `object` until #10 gives each call's converted value a
-    type. Until then the codec writes only plain JSON values there, so a read
-    whose converted value is a record or a decimal is stored by its `raw`
-    bytes alone.
+    body: bytes = dataclasses.field(repr=False)
+    at: datetime
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _received_at(self.at)
+
+
+class _BrokerRead(_Record):
+    """What every broker read checks of its pages.
+
+    - A read holds at least one page, because an empty answer is one the
+      broker gave, and a read that failed raises instead.
+    - One whose pages are past `READ_LIMIT` is not `whole`.
     """
 
-    raw: bytes
-    value: object
+    received: tuple[ReceivedPage, ...]
+    whole: bool
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not self.received:
+            raise ValueError("a broker read holds no page the broker sent")
+        size = sum(len(page.body) for page in self.received)
+        if self.whole and size > READ_LIMIT:
+            raise ValueError(f"a read of {size} bytes, past {READ_LIMIT}, is not whole")
+
+
+@dataclass(frozen=True)
+class PositionsRead(_BrokerRead):
+    """The positions the broker holds. `whole` says that every page came."""
+
+    positions: Mapping[InstrumentId, Quantity]
+    received: tuple[ReceivedPage, ...]
+    whole: bool
+
+
+@dataclass(frozen=True)
+class OrdersRead(_BrokerRead):
+    """The broker's orders, the open ones or every one since a time."""
+
+    orders: tuple[BrokerOrder, ...]
+    received: tuple[ReceivedPage, ...]
+    whole: bool
+
+
+@dataclass(frozen=True)
+class FillsRead(_BrokerRead):
+    fills: tuple[Fill, ...]
+    received: tuple[ReceivedPage, ...]
+    whole: bool
+
+
+@dataclass(frozen=True)
+class CashRead(_BrokerRead):
+    """The account's cash, which `Broker.account` gives."""
+
+    cash: Money
+    received: tuple[ReceivedPage, ...]
+    whole: bool
+
+
+@dataclass(frozen=True)
+class RecordsRead(_BrokerRead):
+    """The broker's records, whose own type #151 adds."""
+
+    received: tuple[ReceivedPage, ...]
+    whole: bool
 
 
 @dataclass(frozen=True)
@@ -1082,7 +1211,7 @@ class StopState(StrEnum):
 class GateInputs(_Record):
     """What the order path reads for one check, beside the book, the snapshot and the limits.
 
-    `caps` are the hard caps as they read just before the check, `valuation`
+    `caps` are the hard caps as they read as the order's send began, `valuation`
     the session's V or `None` where none was found, and `close_entry` the
     journal's entry of a close after a broker's trade.
     """

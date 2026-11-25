@@ -19,6 +19,16 @@ from ithildinruntime.core import CodecError, InstrumentId, decode, encode
 from tests.core_samples import RECORDS, sample
 
 FIXTURES = Path(__file__).parent / "fixtures" / "codec"
+
+
+@dataclasses.dataclass(frozen=True)
+class Body:
+    """A received body beside a field of no type, which no record in `core` holds side by side."""
+
+    raw: bytes
+    value: object
+
+
 AT = datetime(2026, 11, 2, 20, 40, tzinfo=UTC)
 
 
@@ -56,12 +66,11 @@ def _fixture_values() -> dict[str, object]:
             },
         ),
         "ack": core.Ack(
-            client_order_id="bollinger-20261102T204000Z-1",
+            outcome=core.Outcome.UNKNOWN,
             broker_order_id=None,
             order=None,
-            state="unknown",
-            outcome="unknown",
             raw=b"\xff\xfe not utf-8",
+            received_at=AT,
         ),
         "fill": core.Fill(
             fill_id="f1",
@@ -188,21 +197,21 @@ def test_decode_refuses_a_time_in_another_form(at: str) -> None:
 
 
 def test_a_received_body_is_kept_as_text_or_as_base64() -> None:
-    text = core.BrokerRead(raw=b'{"qty": "1.10"}\r\n\x00', value=None)
-    binary = core.BrokerRead(raw=b"\xff\xfe\x00", value=None)
+    text = Body(raw=b'{"qty": "1.10"}\r\n\x00', value=None)
+    binary = Body(raw=b"\xff\xfe\x00", value=None)
     assert json.loads(encode(text))["raw"] == {
         "data": '{"qty": "1.10"}\r\n\x00',
         "encoding": "utf-8",
     }
     assert json.loads(encode(binary))["raw"] == {"data": "//4A", "encoding": "base64"}
     for value in (text, binary):
-        assert decode(encode(value), core.BrokerRead).raw == value.raw
+        assert decode(encode(value), Body).raw == value.raw
 
 
 def test_a_utf8_body_written_as_base64_is_not_canonical() -> None:
     data = b'{"raw":{"data":"YQ==","encoding":"base64"},"value":null}'
     with pytest.raises(CodecError):
-        decode(data, core.BrokerRead)
+        decode(data, Body)
 
 
 @pytest.mark.parametrize(
@@ -321,7 +330,7 @@ def test_a_field_typed_object_takes_only_what_reads_back_unchanged(value: object
     with pytest.raises(CodecError):
         encode(entry)
     with pytest.raises(CodecError):
-        encode(core.BrokerRead(raw=b"", value=[value]))
+        encode(Body(raw=b"", value=[value]))
 
 
 @pytest.mark.parametrize(
@@ -404,16 +413,16 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
             core.Heartbeat,
             "a time no clock holds",
         ),
-        (b'{"raw":{"data":"YQ"},"value":null}', core.BrokerRead, "a body with no encoding"),
-        (b'{"raw":{"data":1,"encoding":"utf-8"},"value":null}', core.BrokerRead, "no text"),
+        (b'{"raw":{"data":"YQ"},"value":null}', Body, "a body with no encoding"),
+        (b'{"raw":{"data":1,"encoding":"utf-8"},"value":null}', Body, "no text"),
         (
             b'{"raw":{"data":"*","encoding":"base64"},"value":null}',
-            core.BrokerRead,
+            Body,
             "invalid base64",
         ),
         (
             b'{"raw":{"data":"a","encoding":"latin-1"},"value":null}',
-            core.BrokerRead,
+            Body,
             "an encoding the codec does not know",
         ),
         (
@@ -473,7 +482,7 @@ def test_text_that_is_no_unicode_is_refused_both_ways(escaped: str) -> None:
     for value in (half, {half: 1}, [half], core.JournalAck(1, half)):
         with pytest.raises(core.CodecError, match="text that is no Unicode"):
             core.encode(value)
-    kind = core.BrokerRead
+    kind = Body
     data = b'{"raw":{"data":"%s","encoding":"utf-8"},"value":null}' % escaped.encode()
     with pytest.raises(core.CodecError, match="raw holds text that is no Unicode"):
         core.decode(data, kind)
@@ -483,4 +492,4 @@ def test_text_that_is_no_unicode_is_refused_both_ways(escaped: str) -> None:
 def test_a_body_that_is_no_base64_is_refused(data: str) -> None:
     body = json.dumps({"raw": {"data": data, "encoding": "base64"}, "value": None}).encode()
     with pytest.raises(core.CodecError, match="raw is not base64"):
-        core.decode(body, core.BrokerRead)
+        core.decode(body, Body)

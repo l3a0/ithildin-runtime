@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -24,6 +24,7 @@ from ithildinruntime.core import (
     maximum_faults,
     midpoint,
     quote_faults,
+    readable_until,
     require_quote,
     value_book,
 )
@@ -529,3 +530,27 @@ def test_16_a_snapshot_says_when_its_quotes_were_read_exactly_where_it_read_them
 def test_16_a_provisional_snapshot_reads_back_with_every_field() -> None:
     made = quoted(BOTH, faults=("a reason",), rows={GLD: ({"bid": "1.5", "extra": None},)})
     assert decode(encode(made), Snapshot) == made
+
+
+# When a quote can last be read, which the order path ends an order's last moment at.
+
+
+@pytest.mark.parametrize("older", ["bid_at", "ask_at"])
+@pytest.mark.parametrize("age", [10, MAX_AGE, 3600])
+def test_the_last_moment_a_quote_can_be_read_is_the_judges_own(older: str, age: int) -> None:
+    made = replace(GOOD, max_age=age, **{older: DECISION - timedelta(seconds=5)})
+    newer = {"bid_at": "ask_at", "ask_at": "bid_at"}[older]
+    made = replace(made, captured_at=DECISION, **{newer: DECISION - timedelta(seconds=4)})
+    until = readable_until(made)
+    assert until >= DECISION and not quote_faults(made, DECISION, until)
+    assert quote_faults(made, DECISION, until + TICK)
+
+
+def test_a_stamp_too_old_to_bound_is_no_moment_at_all() -> None:
+    with pytest.raises(OverflowError):
+        readable_until(replace(GOOD, bid_at=datetime.min.replace(tzinfo=UTC)))
+
+
+def test_a_maximum_age_past_any_date_is_readable_to_the_last_one() -> None:
+    until = readable_until(replace(GOOD, max_age=INT_LIMIT - 1))
+    assert until == datetime.max.replace(tzinfo=UTC)

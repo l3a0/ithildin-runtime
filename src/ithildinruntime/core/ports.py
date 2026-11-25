@@ -21,17 +21,21 @@ from .queue import Event
 from .records import (
     Ack,
     Book,
-    BrokerRead,
     BucketObject,
+    CashRead,
     ClockReading,
     Constraints,
     CostSchedule,
+    FillsRead,
     ForecastSet,
     FoundOrder,
     GateInputs,
     HardCaps,
     LossReading,
     OrderIntent,
+    OrdersRead,
+    PositionsRead,
+    RecordsRead,
     Snapshot,
     StoredBlob,
     Valuation,
@@ -150,23 +154,37 @@ class Queue(Protocol):
 
 
 class Broker(Protocol):
-    """Every read and write returns its received bytes apart from the converted value."""
+    """A broker's account, which only `OrderPath` calls.
+
+    `alias` names the account it trades, by the platform's alias and never by
+    the broker's number. Every read and write returns its received bytes apart
+    from the converted value. A read that fails raises `BrokerUnavailable`, and
+    an empty answer is returned only where the broker said none. A `Halt` an
+    adapter raises reaches a person, so its reason holds no word of the broker's.
+    """
+
+    @property
+    def alias(self) -> str: ...
 
     def submit(self, intent: OrderIntent) -> Ack: ...
 
     def find_order(self, intent: OrderIntent, since: datetime, mapped: object) -> FoundOrder: ...
 
-    def orders(self, since: datetime) -> BrokerRead: ...
+    def orders(self, since: datetime) -> OrdersRead: ...
 
     def lookup(self, broker_order_id: str) -> Ack: ...
 
-    def fills(self, since: datetime) -> BrokerRead: ...
+    def fills(self, since: datetime) -> FillsRead: ...
 
-    def positions(self) -> BrokerRead: ...
+    def positions(self) -> PositionsRead: ...
 
-    def open_orders(self) -> BrokerRead: ...
+    def open_orders(self) -> OrdersRead: ...
 
-    def activities(self, since: datetime) -> BrokerRead: ...
+    def account(self) -> CashRead:
+        """The account's cash."""
+        ...
+
+    def activities(self, since: datetime) -> RecordsRead: ...
 
     def cancel(self, broker_order_id: str) -> Ack: ...
 

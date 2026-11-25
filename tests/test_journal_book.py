@@ -131,6 +131,7 @@ ALLOWED = {
     ("rejected", "Sending"): "Rejected",
     ("rejected", "Acknowledged"): "Rejected",
     ("in_doubt", "Sending"): "InDoubt",
+    ("in_doubt", "InDoubt"): "InDoubt",
     ("part", "Acknowledged"): "PartlyFilled",
     ("part", "PartlyFilled"): "PartlyFilled",
     ("whole", "Acknowledged"): "Filled",
@@ -1436,3 +1437,72 @@ def test_7_a_record_costs_the_same_at_entry_17000_as_at_entry_1000() -> None:
     for kind in {kind for kind, _ in early}:
         was, now = (max(p for k, p in found if k == kind) for found in (early, late))
         assert now <= 2 * was, (kind, was, now)
+
+
+OTHER_WRITER = "f" * 32
+
+
+@pytest.mark.parametrize("state", ["Intended", "Approved"])
+def test_an_order_that_was_never_sending_is_abandoned_by_any_writer(state: str) -> None:
+    order = planned(1, 4)
+    journal = started(order)
+    for record in route(state, order):
+        add(journal, record)
+    other = Journal(journal._store, ACCOUNT, OTHER_WRITER)
+    _, view = other.record(other.view(), abandoned(order.client_order_id), AT)
+    assert view.orders[order.client_order_id].state is OrderState.ABANDONED
+
+
+def test_an_order_that_is_sending_is_abandoned_by_the_writer_of_its_sending_alone() -> None:
+    """Nobody else can know that nothing left, and the order would be out of the book."""
+    order, after = planned(1, 4), planned(2, 4)
+    name = order.client_order_id
+    journal = started(order, after)
+    for record in route("Sending", order):
+        add(journal, record)
+    other = Journal(journal._store, ACCOUNT, OTHER_WRITER)
+    stored = len(journal._store.blobs)
+    with pytest.raises(Halt, match=f"abandons {name}, whose sending another writer stored"):
+        other.record(other.view(), abandoned(name), AT)
+    assert len(journal._store.blobs) == stored
+    # Another writer's entry on another order changes nothing of whose `sending` it was.
+    other.record(other.view(), IntentEntry(3, after), AT)
+    with pytest.raises(Halt, match="another writer"):
+        other.record(other.view(), abandoned(name), AT)
+    _, view = journal.record(journal.view(), abandoned(name), AT)
+    assert view.orders[name].state is OrderState.ABANDONED
+    # A journal read from its first entry gives the same answer, on the stored bytes alone.
+    assert Journal(journal._store, ACCOUNT).view().orders[name].state is OrderState.ABANDONED
+
+
+def test_the_writer_of_each_sending_is_kept_apart() -> None:
+    one, two = planned(1, 4), planned(2, 4, USO)
+    journal = started(one, two)
+    for order in (one, two):
+        for record in route("Sending", order):
+            add(journal, record)
+    for order in (one, two):
+        _, view = journal.record(journal.view(), abandoned(order.client_order_id), AT)
+        assert view.orders[order.client_order_id].state is OrderState.ABANDONED
+
+
+def test_an_order_in_doubt_takes_another_answers_bytes_and_stays_in_doubt() -> None:
+    order = planned(1, 4)
+    journal = started(order)
+    for record in route("InDoubt", order):
+        add(journal, record)
+    _, view = journal.record(journal.view(), in_doubt(order.client_order_id, b"late"), AT)
+    found = view.orders[order.client_order_id]
+    assert found.state is OrderState.IN_DOUBT and found.entries[-1].kind == "in_doubt"
+    assert view.book.in_doubt == (GLD,)
+
+
+def test_a_stored_abandonment_by_another_writer_halts_the_replay() -> None:
+    order = planned(1, 4)
+    journal = started(order)
+    for record in route("Sending", order):
+        add(journal, record)
+    body = body_of(abandoned(order.client_order_id), OTHER_WRITER)
+    journal._append(journal._build(body, AT))
+    with pytest.raises(Halt, match="another writer stored"):
+        Journal(journal._store, ACCOUNT).view()

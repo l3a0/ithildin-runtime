@@ -695,6 +695,21 @@ def test_a_reader_has_no_result_to_read_before_the_stage_writes_one(spec: StoreS
     assert storage.read_result(core.result_key("ci", RUN, AT, "alpha"), AT) is None
 
 
+def test_a_blob_with_a_reader_of_its_own_is_read_or_halts(spec: StoreSpec) -> None:
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    key = core.caps_key("paper1")
+    with pytest.raises(Halt, match="caps.json is missing"):
+        storage.read_blob(key)
+    assert alarms.reasons == []
+    flaky.create(key, b"{ }", sha256_of(b"{ }"))
+    assert storage.read_blob(key) == b"{ }"
+    flaky.down = True
+    with pytest.raises(Halt, match="S3 did not answer a read of accounts/paper1/caps.json"):
+        storage.read_blob(key)
+    assert len(alarms.reasons) == 1
+
+
 def test_a_reader_halts_when_s3_does_not_answer_a_read(spec: StoreSpec) -> None:
     flaky = Flaky(spec.open())
     storage, _, alarms = _storage(flaky)
