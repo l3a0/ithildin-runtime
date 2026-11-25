@@ -111,10 +111,9 @@ def _the_gate_reads(view: View) -> None:
     assert abs(Fraction(world.loss().loss) - (50_000 - worth)) <= Fraction(1, 20_000)
 
 
-def _checked_again(journal: Journal, checked: Checked) -> None:
-    """Both gates give a verdict again from its entry and the view its `book` names."""
+def _checked_again(book: Book, checked: Checked) -> None:
+    """Both gates give a verdict again from its entry and the book its `book` names."""
     entry = checked.entry
-    book = journal.view(through=entry.book).book
     assert book.replayed_through == entry.book
     snapshot, constraints, valuation = (
         decode(checked.blobs[ref.sha256], kind)
@@ -161,6 +160,7 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
         reader = Journal(made.store, ACCOUNT)
         rows: list[dict] = []
         was: dict = {}
+        books: dict[int, Book] = {}
         for _, view in made.walk():
             key = made.store.list(f"journal/{ACCOUNT}/", None)[-1]
             rows.append(row(made.store.blobs[key]))
@@ -169,6 +169,7 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
             assert flattened(read) == now, (seed, len(rows))
             assert shown(read) == shown(view), (seed, len(rows))
             _the_gate_reads(read)
+            books[len(rows)] = read.book
             seen.update(_marks(was, now, rows[-1]["body"]))
             was = now
         assert len(rows) == 60
@@ -176,7 +177,12 @@ def test_5_and_6_both_implementations_agree_and_the_gate_reads_each_book() -> No
         assert shown(made.journal.view()) == shown(Journal(made.store, ACCOUNT).view())
         seen.update(order["state"] for order in was["orders"].values())
         for checked in made.checks:
-            _checked_again(reader, checked)
+            # `view(through=...)` folds from the first entry each time, so one seed in four
+            # shows it gives the book the reader had there, and the rest start from that book.
+            number = checked.entry.book
+            book = reader.view(through=number).book if seed % 4 == 0 else books[number]
+            assert book == books[number]
+            _checked_again(book, checked)
             seen["a verdict given again"] += 1
     for what in (
         *ENDS,
