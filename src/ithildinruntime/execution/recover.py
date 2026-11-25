@@ -202,7 +202,7 @@ class RecoverStage:
         # The capture that counts, which is an earlier attempt's where there was one.
         read = capture.entry
         if read != made and (moved := _moved(read, made)):
-            # The account moved since the first attempt read it, so its files would be stale.
+            # The two reads differ, so the account may have moved and its files would be stale.
             raise Halt(
                 f"{capture.ref.key} and this attempt's read of the broker differ in "
                 f"{', '.join(moved)}, so the account may have moved between two attempts at "
@@ -427,7 +427,7 @@ _UNMOVED = frozenset({"the time the fills were asked from", "the pages' bytes"})
 
 
 def _moved(first: AccountRead, later: AccountRead) -> list[str]:
-    """What the account did between two reads.
+    """What differs between two reads in a way that may be a move.
 
     A fill only the first holds counts as no move where the later read asked from a
     later time than that fill's, as a bound moved by the first attempt's own fills

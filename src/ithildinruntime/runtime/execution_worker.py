@@ -109,8 +109,8 @@ class ExecutionWorker:
         if stage != RECOVER_ROW:
             # Recover would read the broker before the last send went out.
             self._brokers = Halt(
-                f"the table's row of {RECOVER_STAGE} is not the one it declares, so the "
-                "deployment's stage table gives recover its row, RECOVER_ROW"
+                f"the table's row of {RECOVER_STAGE} is not the one it declares, so set "
+                "recover's row in the deployment's stage table to RECOVER_ROW"
             )
         (data_stage,) = stage.inputs
         self.recover = RecoverStage(
@@ -178,8 +178,11 @@ class ExecutionWorker:
         lost += [f"the alarm '{one}' was not sent" for one in unsent]
         reason = f"the process ends and {'; '.join(lost) or 'its last settle failed'}{said}"
         if failed and not owed:
+            # A settle that failed cannot vouch for its own count of what it owes,
+            # so the owner checks the broker's site as where something was lost.
             reason = f"{reason}. {step}"
-            account.alarm(reason, lambda: None)
+            if account.alarm(reason, lambda: None):
+                reason = f"{reason}. The alarm that says so was not sent"
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)
 
