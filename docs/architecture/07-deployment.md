@@ -552,10 +552,12 @@ digest that fails.
   the capture host installs. A row read before the seal equals the sealed row
   only while the two match, so the two pins move in one pull request and
   Dependabot proposes no version update of pyarrow.
-- Dependabot alerts and security updates are on, so a hole published in any
-  pinned dependency raises an alert, and a pull request where a fixed version
-  exists. The price is a pull request the pins can refuse, which for pyarrow
-  waits for marketlake.
+- Dependabot alerts and security updates are on, so a hole GitHub has reviewed
+  in a package `uv.lock` pins from PyPI raises an alert, and Dependabot tries a
+  pull request where a fixed version exists. GitHub raises
+  [no alert](https://docs.github.com/en/code-security/concepts/supply-chain-security/about-dependabot-alerts)
+  for an action pinned by commit hash. The price is a pull request the pins can
+  refuse, which for pyarrow waits for marketlake.
 
 #### What says the marketlake pin is due a raise
 
