@@ -80,14 +80,16 @@ marketlake holds four kinds of bar.
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
 
 The vendor download exists because each decision reads 60 sessions of closes.
-The newest z-score needs 39 of them: 20 to fit the hedge ratio of the oldest
+The newest z-score needs 39 prices: 20 to fit the hedge ratio of the oldest
 spread in its 20-day window, and one more for each of the 19 spreads after that.
-The other 21 reach the earlier sessions whose z-scores settle
+At the close they are 39 bars, and before it 38 bars and [the decision
+price](01-introduction-and-goals.md#which-price-a-decision-reads). The other 21
+bars at the close, and 22 before it, reach the earlier sessions whose z-scores settle
 [which unit is held](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds).
 So the download and capture together have to hold 60 sessions. A lookback that
 holds both [crosses a change of
 series](../design.md#a-lookback-that-crosses-a-change-of-series) and halts, unless
-[#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt.
+[#175](https://github.com/l3a0/ithildin-runtime/issues/175) lifts that halt.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported
@@ -336,11 +338,10 @@ The data worker runs its own minimum checks before anything decides. Nine checks
 
 #### How a quote is judged
 
-`core.quote_faults` is the one judge of a quote. Data, the mark that values a
-position and, once [#114](https://github.com/l3a0/ithildin-runtime/issues/114)
-builds it, the alpha model's read of a decision's quote call it through
-`core.require_quote`. It gives every reason at once, and a quote is read only
-where it gives none.
+`core.quote_faults` is the one judge of a quote. Data and `core.mark` call it
+through `core.require_quote`. `core.mark` gives the price the alpha model's signal
+reads, and the one a position is sized and valued at. The judge gives every reason
+at once, and a quote is read only where it gives none.
 
 **Table:** What makes a quote unreadable
 
@@ -379,10 +380,11 @@ quote as fresh. Schwab's clock and the capture host's have no published bound.
 
 ##### When the age is measured
 
-The age is measured at each read. Data, risk and portfolio construction read no
-clock and pass the decision time, so they answer alike in a backtest and live. The
-risk gate passes its own `now`, so a quote that was good at the decision and has
-aged past its maximum when its order is checked halts that order. The gate's answer
+The age is measured at each read. Data, the alpha model, risk and portfolio
+construction read no clock and pass the decision time, so they answer alike in a
+backtest and live. The risk gate passes its own `now`, so a quote that was good at
+the decision and has aged past its maximum when its order is checked halts that
+order. The gate's answer
 comes before two journal entries and the checks right before the broker call, so the
 order path also ends an order's last moment where a quote the gate marked reaches its
 maximum.
@@ -521,9 +523,9 @@ official close the same way. That bar
 is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
-closes, and the close−20 quote stands where the backtest uses the session's
-close. That is the timing gap [How the four acceptance
-tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it) names, which shadow running
+closes, and the close−20 quote's midpoint stands where the backtest uses the session's
+close. That is the gap [How the four acceptance tests exercise
+it](10-quality.md#how-the-four-acceptance-tests-exercise-it) names first, which shadow running
 measures.
 
 ### Orders and the two outside switches

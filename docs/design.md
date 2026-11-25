@@ -2488,8 +2488,11 @@ The price is six things.
    last two, a decision on them at close−20 halts on this from 2026-09-08 to
    2027-01-28. On 2027-01-29 a lookback first holds captured bars alone, which this
    halt passes, and other halts stand, such as data's on their unstated price kind
-   and the alpha model's on their `raw` basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
-   window is read, and may lift this halt for a change it can show keeps the scale.
+   and the alpha model's on their `raw` basis.
+   [#174](https://github.com/l3a0/ithildin-runtime/issues/174) says how a window of
+   captured bars alone is read. [#175](https://github.com/l3a0/ithildin-runtime/issues/175)
+   says how a mixed one is, and may lift this halt for a change it can show keeps
+   the scale.
 2. A position held when a later change arrives is held through those decisions.
    No strategy exit goes out, and the day's loss is not tested, because the send
    stage tests it only on a decision that reaches it. Worst loss covers only the

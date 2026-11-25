@@ -798,6 +798,29 @@ def basis(instrument, n: int) -> Snapshot:
     return leg(HAND_SNAPSHOT, instrument, bars)
 
 
+NEWEST_OF = {
+    "known-after-the-decision": (
+        {"knowable_at": CLOSE + timedelta(seconds=1)},
+        "{leg}'s bar for 2011-11-28 was knowable at 2011-11-28T21:00:01+00:00, after the decision "
+        "at 2011-11-28T21:00:00+00:00",
+    ),
+    "with-an-unstated-kind": (
+        {"price_kind": "unstated"},
+        "{leg}'s bar for 2011-11-28 has unstated price kind",
+    ),
+    "with-a-close-of-zero": (
+        {"close": d(0)},
+        "{leg}'s close for 2011-11-28 is 0, not above zero",
+    ),
+}
+
+
+def newest_of(instrument, **changes: object) -> Snapshot:
+    *earlier, newest = HAND_SNAPSHOT.bars[instrument]["1d"]
+    return leg(HAND_SNAPSHOT, instrument, [*earlier, replace(newest, **changes)])
+
+
+NO_PRICE = "strategy chan has no price for 2011-11-28: "
 HALTS = {
     "a-leg-missing": (
         replace(HAND_SNAPSHOT, bars={USO: HAND_SNAPSHOT.bars[USO]}, status={USO: BarStatus.FRESH}),
@@ -878,18 +901,53 @@ HALTS = {
         replace(
             HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 29)).close - timedelta(hours=1)
         ),
-        "strategy chan decides on the session 2011-11-29, and the newest bar of USO and GLD is "
+        "strategy chan has no price for 2011-11-29: USO has no mark: its newest bar is for "
+        "2011-11-28, not later than 2011-11-28",
+    ),
+    "a-newest-bar-two-sessions-back": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 30)).close),
+        "strategy chan decides on the session 2011-11-30, and the newest bar of USO and GLD is "
         "2011-11-28's",
+    ),
+    "a-newest-bar-that-ends-after-the-open": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 28)).open),
+        "strategy chan has no price for 2011-11-28: USO's bar for 2011-11-28 ends at "
+        "2011-11-28T21:00:00+00:00, after the decision at 2011-11-28T14:30:00+00:00",
+    ),
+    "a-newest-bar-that-ends-a-second-after-the-decision": (
+        replace(HAND_SNAPSHOT, decision_at=CLOSE - timedelta(seconds=1)),
+        "strategy chan has no price for 2011-11-28: USO's bar for 2011-11-28 ends at "
+        "2011-11-28T21:00:00+00:00, after the decision at 2011-11-28T20:59:59+00:00",
     ),
     "a-newest-bar-after-the-decision": (
         replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 25)).close),
         "strategy chan decides on the session 2011-11-25, and the newest bar of USO and GLD is "
         "2011-11-28's",
     ),
+    **{
+        f"a-newest-bar-of-{instrument}-{what}": (
+            newest_of(instrument, **changes),
+            NO_PRICE + reason.format(leg=instrument),
+        )
+        for instrument in (USO, GLD)
+        for what, (changes, reason) in NEWEST_OF.items()
+    },
+    "two-newest-bars-of-one-session": (
+        replace(
+            HAND_SNAPSHOT,
+            bars={i: {"1d": (*by["1d"], by["1d"][-1])} for i, by in HAND_SNAPSHOT.bars.items()},
+        ),
+        f"{NO_PRICE}USO has 2 daily bars for 2011-11-28, not one",
+    ),
     "a-decision-past-the-calendar": (
         replace(HAND_SNAPSHOT, decision_at=datetime(2050, 1, 3, 21, 0, tzinfo=UTC)),
         "strategy chan cannot place its decision on a session: 2050-01-03T21:00:00+00:00 is "
         "outside the session table's range, 2006-01-01 to 2027-12-31",
+    ),
+    "a-decision-on-the-calendars-first-session": (
+        replace(HAND_SNAPSHOT, decision_at=TABLE.session(DAYS[0]).close),
+        "strategy chan cannot place its decision on a session: the session table holds no "
+        "session before 2006-01-03",
     ),
     "too-few-sessions": (
         HAND.at(NEWEST, 4),
@@ -897,7 +955,7 @@ HALTS = {
     ),
     "a-hedging-leg-that-does-not-move": (
         with_closes((10, 11, 12, 13, 14, 14, 14), OIL),
-        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 closes are all 14",
+        "strategy chan cannot fit a hedge ratio on 2011-11-28: GLD's last 3 prices are all 14",
     ),
     "a-band-that-does-not-move": (
         # USO is 3 + GLD / 2 throughout, so each spread is 3.
@@ -939,9 +997,8 @@ def test_a_section_the_model_refuses_halts_with_its_inputs_and_no_cause(tmp_path
 @pytest.mark.parametrize(
     "at",
     [
-        # From the session's own open, through its close, to just before the next one opens.
-        TABLE.session(date(2011, 11, 28)).open,
-        CLOSE - timedelta(minutes=20),
+        # From the session's close, where its bar ends, to just before the next one opens.
+        CLOSE,
         CLOSE + timedelta(hours=2),
         TABLE.session(date(2011, 11, 29)).open - timedelta(microseconds=1),
     ],
