@@ -297,6 +297,11 @@ def cases_of(leg: InstrumentId) -> dict[str, tuple[Snapshot, str]]:
             raw(leg, -1),
             f"strategy chan reads adjusted prices, and {leg}'s bar of {BEFORE} has the basis raw",
         ),
+        f"a-middle-bar-of-{leg}-as-traded-under-good-quotes": (
+            raw(leg, 30),
+            f"strategy chan reads adjusted prices, and {leg}'s bar of "
+            f"{SERIES.gld[NOW - LOOKBACK + 30].session} has the basis raw",
+        ),
         f"the-oldest-bar-of-{leg}-as-traded-under-good-quotes": (
             raw(leg, 0),
             f"strategy chan reads adjusted prices, and {leg}'s bar of "
@@ -354,6 +359,7 @@ def test_3_a_price_the_model_cannot_use_halts_with_its_inputs_and_no_cause(tmp_p
 @pytest.mark.parametrize("leg", LEGS)
 def test_3_what_sits_at_each_bound_of_a_quote_forecasts(leg) -> None:
     whole = answer(CHAN, GOOD)
+    assert isinstance(whole, ForecastSet)
     oldest = requoted(GOOD, leg, bid_at=OLDEST, ask_at=OLDEST)
     after = requoted(GOOD, leg, bid_at=LAST_CLOSE + TICK, max_age=TWO_DAYS)
     assert answer(CHAN, oldest) == answer(CHAN, after) == whole

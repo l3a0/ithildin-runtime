@@ -217,8 +217,8 @@ comparisons are strict.
 A settled unit equals the rule run forward over every session to the decision's
 own, on the closes today's snapshot knows and the decision price, whatever the
 window's length, and a day that halted leaves no gap in
-it. `tests/test_alpha_replication.py` holds it to the replication's unit on
-each of test 1's 1,461 decisions. The longest walk among them reads 55
+it. `tests/test_alpha_replication.py` holds it, at the close, to the replication's
+unit on each of test 1's 1,461 decisions. The longest walk among them reads 55
 sessions. At a lookback of 60 sessions none of them halts, and at 40 sessions
 513 halt and none is wrong. The lookback was chosen after the z-scores of
 2006 to 2012 and of 2012 to 2026 were both read, so "none halts" is exploratory,
@@ -257,13 +257,11 @@ The newest bar is of the decision's own session or of the one before it, on both
 legs, and any other halts. Nothing asks which environment or time it is, so test
 1 at the close, shadow, paper, live and a replay run the same lines.
 
-Two other prices were left out. The last sale can sit at either side of the
-market, and nothing judges its stamp or its kind, so the signal would read one
-price and the size another. Which of the bid and the ask applies depends on the
-side of the trade, which is what the model is deciding. The price of the midpoint
-is that no order fills at it. Half the spread is a cost, which the cost schedule
-and a fill at the bid or the ask
-([#155](https://github.com/l3a0/ithildin-runtime/issues/155)) carry.
+The bid or the ask would need the side of the trade, which is what the model is
+deciding, and [design.md's register](../design.md#considered-and-rejected) says
+why the last sale is no mark. The price of the midpoint is that no order fills at
+it. This strategy sends market-on-close orders, and its cost terms are written
+zeros, so nothing charges the gap from the midpoint to the fill.
 
 [A decision that reads two kinds of price says
 so](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control),
@@ -273,14 +271,22 @@ and a decision before the close reads two.
 
 | Price | Kind | Venues | Delay |
 | --- | --- | --- | --- |
-| The vintages it is tested on | Official close | Consolidated | None |
-| The bars behind a paper decision, which marketlake captures | What `data/price_kinds.csv` states of capture. It states nothing until [#174](https://github.com/l3a0/ithildin-runtime/issues/174) | What the same row states | What the same row states |
-| The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag, which has to say it is real time, and a written maximum age |
+| The vintages it is tested on | Official close, as `data/price_kinds.csv` states of both files | Consolidated | None |
+| The recent vendor download of [Where bars come from](03-context-and-scope.md#where-bars-come-from) | What `data/price_kinds.csv` states of it. It states nothing until [#175](https://github.com/l3a0/ithildin-runtime/issues/175) | What the same row states | What the same row states |
+| The bars marketlake captures | What `data/price_kinds.csv` states of capture. It states nothing until [#174](https://github.com/l3a0/ithildin-runtime/issues/174) | What the same row states | What the same row states |
+| The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag has to say real time. The newest capture by the decision is read, about a minute before it at most while capture runs, and its stamps are held to a maximum age nobody writes until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) |
 
-So at close−20 the newest hedge ratio and z-score mix one midpoint with closes,
-and every earlier one reads closes alone. What the mix does to the unit is
-unmeasured, and [#176](https://github.com/l3a0/ithildin-runtime/issues/176) holds
-the measure.
+So at close−20 the newest hedge ratio and z-score mix one midpoint of each leg
+with closes, and every earlier one reads closes alone. What that mix and the
+twenty minutes before the close do to the unit is unmeasured on real quotes.
+[#176](https://github.com/l3a0/ithildin-runtime/issues/176) counts the sessions on
+which the two together change it.
+
+A midpoint is as traded, and nothing that halts compares its scale with the bars'.
+A split on the decision's own day therefore reads as a move, which only data's flag
+on a midpoint sees, as [A lookback that crosses a change of
+series](../design.md#a-lookback-that-crosses-a-change-of-series) says of a quote.
+[#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds the record of splits.
 
 ### What ends a position
 

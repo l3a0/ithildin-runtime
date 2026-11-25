@@ -71,9 +71,9 @@ class Exposure(NamedTuple):
 
 
 def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetime) -> Decimal:
-    """The one price an instrument is read at: its quote's midpoint, or its newest bar's close.
+    """An instrument's one price at a decision: its quote's midpoint, or its newest bar's close.
 
-    A signal is worked out from it, and a position is sized and valued at it.
+    It is a signal's newest price, and what a position is sized and valued at.
 
     It is the midpoint where the snapshot holds a quote for the instrument,
     which `core.require_quote` judges as of `now`, and the close where it holds

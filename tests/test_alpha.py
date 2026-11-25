@@ -798,6 +798,17 @@ def basis(instrument, n: int) -> Snapshot:
     return leg(HAND_SNAPSHOT, instrument, bars)
 
 
+def newest_bars(*changes: dict[str, object]) -> Snapshot:
+    """The newest bar of each leg written once for each of `changes`, with those fields changed."""
+    held = HAND_SNAPSHOT
+    for instrument in (USO, GLD):
+        *earlier, newest = held.bars[instrument]["1d"]
+        bars = [*earlier, *(replace(newest, **one) for one in changes)]
+        held = leg(held, instrument, bars)
+    return held
+
+
+NO_PRICE = "strategy chan has no price for 2011-11-28: USO"
 HALTS = {
     "a-leg-missing": (
         replace(HAND_SNAPSHOT, bars={USO: HAND_SNAPSHOT.bars[USO]}, status={USO: BarStatus.FRESH}),
@@ -900,6 +911,23 @@ HALTS = {
         replace(HAND_SNAPSHOT, decision_at=TABLE.session(date(2011, 11, 25)).close),
         "strategy chan decides on the session 2011-11-25, and the newest bar of USO and GLD is "
         "2011-11-28's",
+    ),
+    "a-newest-bar-known-after-the-decision": (
+        newest_bars({"knowable_at": CLOSE + timedelta(seconds=1)}),
+        f"{NO_PRICE}'s bar for 2011-11-28 was knowable at 2011-11-28T21:00:01+00:00, after the "
+        "decision at 2011-11-28T21:00:00+00:00",
+    ),
+    "a-newest-bar-of-unstated-kind": (
+        newest_bars({"price_kind": "unstated"}),
+        f"{NO_PRICE}'s bar for 2011-11-28 has unstated price kind",
+    ),
+    "a-newest-bar-whose-close-is-zero": (
+        newest_bars({"close": d(0)}),
+        f"{NO_PRICE}'s close for 2011-11-28 is 0, not above zero",
+    ),
+    "two-newest-bars-of-one-session": (
+        newest_bars({}, {}),
+        f"{NO_PRICE} has 2 daily bars for 2011-11-28, not one",
     ),
     "a-decision-past-the-calendar": (
         replace(HAND_SNAPSHOT, decision_at=datetime(2050, 1, 3, 21, 0, tzinfo=UTC)),
