@@ -121,6 +121,7 @@ def test_instrument_id_is_a_new_type_over_str() -> None:
         (core.Verdict, "value", 9),
         (core.Verdict, "bound", 9),
         (core.Verdict, "worst_loss", 4),
+        (core.Verdict, "stress_move", 8),
         (core.LossReading, "loss", 4),
         (core.Constraints, "max_position", 9),
         (core.Constraints, "max_net", 4),

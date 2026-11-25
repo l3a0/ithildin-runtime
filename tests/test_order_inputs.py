@@ -327,7 +327,7 @@ def test_5_a_gate_that_raises_ends_the_order_abandoned_and_raises() -> None:
         def check(self, *given):  # type: ignore[no-untyped-def]
             raise ZeroDivisionError("a fault")
 
-    world = World(gate=Broken())
+    world = World(gate=Broken)
     with pytest.raises(ZeroDivisionError):
         world.send()
     assert world.state() is OrderState.ABANDONED and world.submits == 0
@@ -429,7 +429,7 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
         world.store.list = listed  # type: ignore[method-assign]
     shown = {"None": "NoneType", "StoreUnavailable": "StoreUnavailable 403 AccessDenied"}
     reason = halted(world, f"{name} unreadable: {shown.get(error, error)}")
-    assert "own text" not in reason + str(world.records()) + str(world.alarms.sent)
+    assert "own text" not in reason + str(world.entries()) + str(world.alarms.sent)
     late = read == 1
     assert ("sending" in world.kinds()) == late
     refused = name == "loss stop" and not late
@@ -557,7 +557,7 @@ def test_9_a_loss_past_its_bound_halts_there_and_on_a_verdict() -> None:
 def test_9_a_refusal_for_another_limit_that_read_a_loss_past_its_bound_halts_too() -> None:
     world = losing(101 * Decimal(1), caps=gates.caps(max_gross=gates.d(1)))
     halted(world, "the day's loss of 101")
-    (entry,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
+    (entry,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
     assert entry.verdict.limit.value == "max_gross"
 
 
@@ -569,7 +569,7 @@ def test_9_an_approval_that_read_a_loss_past_its_bound_is_never_sent() -> None:
             said = super().check(*given)
             return replace(said, approved=True, limit=None, value=None, bound=None)
 
-    world = losing(101 * Decimal(1), gate=Yes())
+    world = losing(101 * Decimal(1), gate=Yes)
     halted(world, "the day's loss of 101")
     assert world.state() is OrderState.ABANDONED
 
@@ -595,7 +595,7 @@ def test_9_a_stop_that_stands_or_cannot_be_read_halts_at_each_read() -> None:
         spoil(world)
         halted(world, why, lambda world=world: world.path().loss(DEPLOYMENT, RUN, AT))
         halted(world, why)
-        (entry,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
+        (entry,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
         assert entry.verdict.limit.value == "stop"
         assert entry.stop is (StopState.FIRED if "stands" in why else StopState.UNREADABLE)
 
@@ -666,11 +666,28 @@ def test_10_the_gates_answer_rebuilds_after_the_caps_are_rewritten_and_deleted()
     assert world.rebuilt() == 2
 
 
+def test_10_the_gates_answer_rebuilds_under_a_larger_stress_record() -> None:
+    """The verdict's own m stands for the caps', since no entry holds the records."""
+    (fits,) = gates.fitting(gates.constraints(), gates.caps())
+    larger = replace(fits, vintage="c" * 64, stress_move=gates.d("0.25"))
+    world = World(records=(fits, larger))
+    assert world.send() is OrderState.ACKNOWLEDGED
+    (entry,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
+    assert entry.verdict.stress_move == gates.d("0.25")
+    assert entry.verdict.worst_loss == gates.d("0.5")
+    assert world.rebuilt() == 1
+
+
+def test_10_a_stress_record_that_holds_the_caps_to_more_halts_the_order() -> None:
+    """The records are the gate's, so what the path hands it meets the same halt."""
+    halted(World(records=()), "stress")
+
+
 class AsksAnother(Gate):
     """A gate asked about another size than the order planned."""
 
-    def __init__(self, qty: int, *given: object) -> None:
-        super().__init__(*given)
+    def __init__(self, records, qty: int) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(records)
         self.qty = Decimal(qty)
 
     def check(self, intent, *rest):  # type: ignore[no-untyped-def]
@@ -678,7 +695,7 @@ class AsksAnother(Gate):
 
 
 def test_10_an_order_asked_about_at_another_size_does_not_rebuild() -> None:
-    adding = World(gate=AsksAnother(1))
+    adding = World(gate=lambda records: AsksAnother(records, 1))
     assert adding.send() is OrderState.ACKNOWLEDGED
     with pytest.raises(AssertionError):
         adding.rebuilt()
@@ -688,7 +705,7 @@ def test_10_an_order_asked_about_at_another_size_does_not_rebuild() -> None:
     held: dict = {"orders": (order(1, -4),), "position": Decimal(5), "constraints": tight}
     right = World(**held)
     assert right.send() is OrderState.REFUSED
-    wrong = World(**held, gate=AsksAnother(-1))
+    wrong = World(**held, gate=lambda records: AsksAnother(records, -1))
     assert wrong.send() is OrderState.ACKNOWLEDGED
     with pytest.raises(AssertionError):
         wrong.rebuilt()
@@ -697,7 +714,7 @@ def test_10_an_order_asked_about_at_another_size_does_not_rebuild() -> None:
 def test_10_an_order_that_only_reduces_rebuilds() -> None:
     world = World(orders=(order(1, -4),), position=Decimal(5))
     assert world.send() is OrderState.ACKNOWLEDGED
-    verdict = [r for r in world.records() if isinstance(r, VerdictEntry)][-1]
+    verdict = [r for r in world.entries() if isinstance(r, VerdictEntry)][-1]
     assert not verdict.verdict.adding
     assert world.rebuilt() == 1
 

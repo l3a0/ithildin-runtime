@@ -149,7 +149,7 @@ def decision(
 
 def verdict(name: str, approved: bool = True, book: int | None = None) -> VerdictEntry:
     limit = None if approved else Limit.IN_DOUBT
-    answer = Verdict(approved, limit, None, None, None, True, Decimal(1), LOSS, ())
+    answer = Verdict(approved, limit, None, None, None, True, Decimal(1), Decimal("0.2"), LOSS, ())
     return VerdictEntry(
         client_order_id=name,
         verdict=answer,
@@ -316,11 +316,12 @@ _STEP = Decimal("1E-9")
 
 @dataclass(frozen=True)
 class Checked:
-    """One verdict entry, with the blobs its check was handed, by SHA-256."""
+    """One verdict entry, the blobs its check was handed, by SHA-256, and the m it was held to."""
 
     entry: VerdictEntry
     intent: OrderIntent
     blobs: Mapping[str, bytes]
+    stress_move: Decimal
 
 
 class Seeded:
@@ -331,6 +332,7 @@ class Seeded:
     """
 
     def __init__(self, seed: int, entries: int = 60) -> None:
+        self.seed = seed
         self.rng = random.Random(seed)
         self.store = Memory()
         self.journal = Journal(self.store, ACCOUNT, WRITER)
@@ -420,7 +422,11 @@ class Seeded:
                     yield expired(name, order.qty - left)
 
     def _check(self, order: OrderIntent, *, refuse: bool) -> Checked:
-        """The gate's answer on the newest view, which a small order limit refuses where asked."""
+        """The gate's answer on the newest view, which a small order limit refuses where asked.
+
+        Some checks hold a larger stress record than the caps name, which shows in the
+        verdict's m and its worst loss, since every other limit but the small one is loose.
+        """
         none = dict.fromkeys(NAMES, Decimal(0))
         small = {"max_order_qty": none, "max_position": none} if refuse else {}
         constraints = gates.constraints(strategy=order.strategy, **LIMITS | small)
@@ -432,7 +438,12 @@ class Seeded:
             return BlobRef("runs/d/x.json", sha256_of(data))
 
         view = self._view
-        answer = Gate().check(order, view.book, SNAPSHOT, constraints, inputs, gates.DECISION)
+        named = gates.fitting(constraints, inputs.caps)
+        # A draw of its own, so the rest of each journal is what it was without it.
+        raised = random.Random(f"{self.seed} {order.client_order_id}").random() < 0.5
+        more = replace(named[0], vintage="c" * 64, stress_move=Decimal("0.25"))
+        gate = Gate((*named, more) if raised else named)
+        answer = gate.check(order, view.book, SNAPSHOT, constraints, inputs, gates.DECISION)
         assert refuse <= (not answer.approved)
         entry = VerdictEntry(
             client_order_id=order.client_order_id,
@@ -447,6 +458,6 @@ class Seeded:
             constraints=stored(encode(constraints)),
             valuation=stored(encode(VALUATION)),
         )
-        made = Checked(entry, order, blobs)
+        made = Checked(entry, order, blobs, more.stress_move if raised else CAPS.stress_move)
         self.checks.append(made)
         return made

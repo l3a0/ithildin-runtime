@@ -193,7 +193,10 @@ class RiskModel(Protocol):
     def constraints(
         self, book: Book, snapshot: Snapshot, caps: HardCaps, valuation: Valuation
     ) -> Constraints:
-        """One strategy's limits for a decision, each the tighter of its own and the hard caps'."""
+        """One strategy's limits for a decision, each the tighter of its own and the hard caps'.
+
+        The caps are first held to the stress records.
+        """
         ...
 
 
@@ -222,7 +225,11 @@ class RiskGate(Protocol):
         inputs: GateInputs,
         now: datetime,
     ) -> LossReading:
-        """The day's loss, with `check`'s halts on its inputs and no order needed."""
+        """The day's loss, with no order needed.
+
+        It has `check`'s halts on its inputs but one, the hold of the caps to the
+        stress records, because the day's loss reads no stress move.
+        """
         ...
 
 

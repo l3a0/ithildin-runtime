@@ -1,0 +1,44 @@
+# Two made-up records of one vintage, which `tests.support.gates.caps` names. The risk and
+# portfolio stages' tests read them. A real vintage's lines name its legs, so no one vintage is
+# of two strategies that trade different instruments.
+[[record]]
+strategy = "chan"
+instruments = ["GLD", "USO"]
+vintage = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+through = 2026-10-30
+stress_move = "0.00000001"
+leg = "USO"
+moved_from = 2008-12-30
+moved_to = 2009-01-02
+one_session = "0.00000001"
+one_session_leg = "GLD"
+one_session_on = 2008-09-17
+series = [
+    { instrument = "GLD", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", source = "made-up", source_as_of = 2026-11-22 },
+    { instrument = "USO", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", source = "made-up", source_as_of = 2026-11-22 },
+]
+left_out = []
+flagged = []
+manifest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+measured_on = 2026-11-24
+
+[[record]]
+strategy = "reversal"
+instruments = ["SPY", "USO"]
+vintage = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+through = 2026-10-30
+stress_move = "0.00000001"
+leg = "USO"
+moved_from = 2008-12-30
+moved_to = 2009-01-02
+one_session = "0.00000001"
+one_session_leg = "SPY"
+one_session_on = 2008-09-17
+series = [
+    { instrument = "SPY", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", source = "made-up", source_as_of = 2026-11-22 },
+    { instrument = "USO", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", source = "made-up", source_as_of = 2026-11-22 },
+]
+left_out = []
+flagged = []
+manifest = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+measured_on = 2026-11-24

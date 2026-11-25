@@ -109,7 +109,7 @@ def test_1_an_order_sends_once_with_every_entry_in_order() -> None:
     assert world.rebuilt() == 1
     ack = last(world)
     assert ack == AckEntry(ID, "b-1", b'{"id": "b-1"}', False, NOW)
-    (entry,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
+    (entry,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
     assert entry.snapshot == world.refs["snapshot"]
     assert entry.constraints == world.refs["constraints"]
     assert entry.valuation == world.refs["valuation"]
@@ -1546,7 +1546,7 @@ def test_8_the_clock_is_the_gates_now_and_the_answers_time() -> None:
 
     world.broker.answer = answer
     assert world.send() is OrderState.IN_DOUBT
-    (verdict,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
+    (verdict,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
     assert verdict.now == AT + timedelta(minutes=3)
     found = last(world)
     assert isinstance(found, InDoubtEntry) and found.received_at == late

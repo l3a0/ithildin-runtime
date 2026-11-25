@@ -19,7 +19,8 @@ its tests show it works.
 - [docs/architecture/](docs/architecture/00-README.md) draws how slice 1's modules
   fit together, as diagrams, one page per section of the arc42 template.
 - [docs/what-a-person-runs.md](docs/what-a-person-runs.md) holds the command line
-  tool the owner and the operator run, and how an alarm leads to a command.
+  tool the owner and the operator run, how an alarm leads to a command, and the
+  command that measures a stress move.
 - [docs/halts-and-drills.md](docs/halts-and-drills.md) holds the steps of a sort
   and every drill.
 - [infra/](infra/) holds the test environment's OpenTofu configuration, which

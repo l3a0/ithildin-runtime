@@ -43,6 +43,7 @@ from ithildinruntime.core import (
     Storage,
     StoredBlob,
     StoreUnavailable,
+    StressRecord,
     TargetPortfolio,
     TimeInForce,
     Valuation,
@@ -228,7 +229,9 @@ class World:
     valuation: Valuation = field(default_factory=lambda: gates.valuation(CASH, replayed_through=1))
     store: Wired = field(default_factory=Wired)
     retry: Retry = field(default_factory=lambda: Retry(timedelta(seconds=10), 1.0, 4.0))
-    gate: object = field(default_factory=Gate)
+    # Builds the gate from the stress records the world's caps are held to.
+    gate: Callable[[tuple[StressRecord, ...]], object] = Gate
+    records: tuple[StressRecord, ...] | None = None
     # What the `decision` entry's inputs name instead, where `None` leaves a name out.
     inputs: Mapping[str, BlobRef | None] = field(default_factory=dict)
     plan: bool = True
@@ -241,6 +244,10 @@ class World:
         self.reports = 0
         self.report_error: BaseException | None = None
         self.store.quiet = True
+        if self.records is None:
+            # A strategy's two constraints, which halt, are held to one record.
+            fitted = [r for c in self.constraints for r in gates.fitting(c, self.caps)]
+            self.records = tuple({r.strategy: r for r in fitted}.values())
         self.refs = {
             "snapshot": self.file(DATA_STAGE, SNAPSHOT_OUTPUT, Snapshot, (self.snapshot,)),
             "constraints": self.file(RISK_STAGE, CONSTRAINTS_OUTPUT, Constraints, self.constraints),
@@ -367,7 +374,7 @@ class World:
     def every_kind(self) -> list[str]:
         return [entry.body["kind"] for entry in self.reader().read()]
 
-    def records(self) -> list:
+    def entries(self) -> list:
         return [record_of(entry) for entry in self.reader().read()]
 
     def state(self, place: int = 1) -> OrderState | None:
@@ -382,7 +389,7 @@ class World:
             "storage": self.storage(),
             "account": ACCOUNT,
             "writer": writer,
-            "gate": self.gate,
+            "gate": self.gate(self.records or ()),
             "clock": self.clock,
             "alerts": self.alarms,
             "retry": self.retry,
@@ -422,7 +429,8 @@ class World:
         """Rebuild the gate's answer for every `sending`, from the `verdict` entry alone.
 
         It reads the caps from the entry, so a blob rewritten or gone since
-        changes nothing. Returns how many it rebuilt.
+        changes nothing, and the stress move from the verdict, since no entry
+        holds the stress records. Returns how many it rebuilt.
         """
         reader, count = self.reader(), 0
         entries = [(entry.seq, record_of(entry)) for entry in reader.read()]
@@ -446,8 +454,9 @@ class World:
                 if c.strategy == order_.strategy
             ]
             valuation = self._blob(verdict.valuation, Valuation)[0]
+            caps = decode(verdict.caps, HardCaps)
             inputs = GateInputs(
-                caps=decode(verdict.caps, HardCaps),
+                caps=replace(caps, stress_move=verdict.verdict.stress_move),
                 valuation=valuation,
                 stop=StopState(verdict.stop),
                 close_entry=None,
@@ -463,11 +472,13 @@ class World:
                 inputs,
                 verdict.now,
                 gates.CLOSE,
+                (),
             )
             said = verdict.verdict
             assert again.approved and said.approved, name
             assert again.adding == said.adding, name
             assert again.worst_loss == Fraction(said.worst_loss), name
+            assert again.stress_move == Fraction(said.stress_move), name
             assert again.loss == Fraction(said.loss.loss), name
             assert again.past == tuple(
                 (p.limit.value, Fraction(p.value), Fraction(p.bound)) for p in said.past
@@ -490,7 +501,7 @@ def halted(world: World, match: str = "", call: Callable[[], object] | None = No
 
 
 def last(world: World) -> object:
-    return world.records()[-1]
+    return world.entries()[-1]
 
 
 __all__ = [

@@ -73,6 +73,8 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
         {"Shared", "Unstored", "_shared", "_held", "cleared", "record_of"}
     ),
     (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored", "_shared"}),
+    # The measurement a person runs, which reads the bars and holds no broker and no account.
+    ("src/ithildinruntime/runtime/stress_move.py", "reach"): frozenset({"getattr", "vars"}),
 }
 
 
