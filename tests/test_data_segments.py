@@ -32,6 +32,7 @@ from ithildinruntime.core import (
     ChecksumMismatch,
     Quote,
     Segment,
+    Stopped,
     StoreUnavailable,
     quote_faults,
 )
@@ -804,14 +805,14 @@ def test_2_a_listed_key_no_bucket_call_takes_is_a_fault_and_never_an_error(
         reader.live.bucket, "list", lambda p: [*real(p), *([odd] if p == PREFIX[GLD] else [])]
     )
     (reason,) = reader.read().faults
-    assert reason.startswith(f"{odd} could not be downloaded: ValueError: ")
+    assert reason == f"{odd} could not be downloaded: ValueError"
 
 
-@pytest.mark.parametrize("error", [RuntimeError, FileNotFoundError, AttributeError])
+@pytest.mark.parametrize("error", [RuntimeError, ValueError, AttributeError])
 def test_2_an_error_that_is_no_answer_of_the_buckets_keeps_the_rows_and_hides_its_words(
     reader: Reader, error: type[Exception], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Such as credentials the client could not refresh partway through a read."""
+    """Such as refreshed credentials that are still expired, partway through a read."""
     reader.capture("GLD", [1])
     (key,) = reader.capture("USO", [1])
     reader.live.plant[key] = [error("/a/path/of/the/machine")]
@@ -823,8 +824,20 @@ def test_2_an_error_that_is_no_answer_of_the_buckets_keeps_the_rows_and_hides_it
     (reason,) = reader.read().faults
     assert "failed twice. First it could not be downloaded: StoreUnavailable: " in reason
     assert reason.endswith(f"and then it could not be downloaded: {error.__name__}")
+    caplog.clear()
     reader.live.plant[PREFIX[USO]] = [error("/a/path/of/the/machine")]
     assert reader.read().faults == (f"{PREFIX[USO]} could not be listed: {error.__name__}",)
+    assert "/a/path/of/the/machine" in caplog.text
+    assert PREFIX[USO] in caplog.messages[-1]
+
+
+def test_2_a_stop_is_no_fault_and_leaves_the_read(reader: Reader) -> None:
+    reader.capture("GLD", [1])
+    (key,) = reader.capture("USO", [1])
+    for where in (PREFIX[USO], key):
+        reader.live.plant[where] = [Stopped("a stop")]
+        with pytest.raises(Stopped, match="a stop"):
+            reader.read()
 
 
 def test_2_an_error_opening_a_segment_is_a_fault_with_no_path_of_the_machine(
@@ -998,7 +1011,7 @@ def test_2_a_ticker_no_prefix_can_hold_is_a_fault_naming_the_instrument(reader: 
 def test_2_a_prefix_no_bucket_call_takes_is_a_fault_and_never_an_error(reader: Reader) -> None:
     master = SecurityMaster((MasterRow(DAY, GLD, "G\\D", DAY, None),))
     (reason,) = reader.read({GLD: LIMITS[GLD]}, master=master).faults
-    assert "could not be listed: ValueError: " in reason
+    assert reason.endswith("could not be listed: ValueError")
 
 
 def test_2_a_stamp_the_reader_passes_and_no_clock_holds_is_a_fault(reader: Reader) -> None:

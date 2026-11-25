@@ -81,7 +81,7 @@ class Live:
         self.events: list[str] = []
         # Answers a test plants for a key or a prefix, each used once, in order. An
         # exception is raised, and a function is handed the bucket's own answer.
-        self.plant: dict[str, list[Exception | Callable[[BucketObject], BucketObject]]] = {}
+        self.plant: dict[str, list[BaseException | Callable[[BucketObject], BucketObject]]] = {}
 
     def list(self, prefix: str) -> list[str]:
         self.lists.append(prefix)
@@ -96,7 +96,7 @@ class Live:
         got = self.bucket.read(key, version)
         if planted := self.plant.get(key):
             answer = planted.pop(0)
-            if isinstance(answer, Exception):
+            if isinstance(answer, BaseException):
                 raise answer
             return answer(got)
         return got

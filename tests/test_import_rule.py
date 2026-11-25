@@ -316,6 +316,7 @@ def test_a_worker_from_the_loop_or_the_supervisor_fails(tmp_path: Path, importer
     [
         ("import boto3\n", "adapters", "data.reader"),
         ("from botocore.exceptions import ClientError\n", "adapters", "runtime.workers"),
+        ("from urllib3.exceptions import HTTPError\n", "adapters", "data.reader"),
         ("import lake.read\n", "data", "alpha.model"),
         ("from alpaca.trading.client import TradingClient\n", "brokers", "execution.order_path"),
         ("import alpaca_trade_api\n", "brokers", "runtime.ithildin.main"),

@@ -7,8 +7,8 @@ sealed` says why the read is the shape it is. How it goes, in order.
 
 1. **Each instrument's segments are listed once**, under the prefix
    `lake.unsealed.segment_prefix` gives for its ticker on the session's day. A
-   listing the bucket does not answer is tried once more. Where an instrument
-   lists nothing, nothing is opened.
+   listing the bucket refuses or does not answer is tried once more. Where an
+   instrument lists nothing, nothing is opened.
 2. **The newest five of each are opened, and five more at a time**, until some
    instant is found at which every instrument has a row. An instrument has no
    more to open once its listing ends, or once five of its own returned at least
@@ -23,7 +23,8 @@ sealed` says why the read is the shape it is. How it goes, in order.
    rows of one cycle share one `fetch_end_ts`, the instant the response landed.
    An older cycle they all have is taken over a newer one only some have.
 
-Nothing here raises for what the bucket, marketlake's reader or a row holds.
+Nothing here raises for what a call to the bucket meets, or marketlake's reader
+or a row holds.
 Each fault becomes a reason beside what was read, so the snapshot that is
 stored before the halt holds every row a call to the reader returned. A fault
 ends the read once every instrument's turn in that round is done, so one
@@ -260,8 +261,6 @@ class _Walk:
                 if last:
                     raise _Fault(f"{prefix} could not be listed: {_said(error)}") from None
                 log.warning("data lists %s once more, because: %s", prefix, _said(error))
-            except ValueError as error:
-                raise _Fault(f"{prefix} could not be listed: {_said(error)}") from None
             except Exception as error:
                 raise _Fault(f"{prefix} could not be listed: {_named(prefix, error)}") from None
             finally:
@@ -343,8 +342,6 @@ class _Walk:
                 raise self._fault(key, said) from None
             except StoreError as error:
                 self._once_more(key, f"could not be downloaded: {_said(error)}")
-            except ValueError as error:
-                raise _Fault(f"{key} could not be downloaded: {_said(error)}") from None
             except Exception as error:
                 raise self._fault(key, f"could not be downloaded: {_named(key, error)}") from None
             finally:
@@ -469,8 +466,8 @@ def _said(error: Exception) -> str:
 def _named(where: str, error: Exception) -> str:
     """An error that is no answer of the bucket's, by its type, with its words in the log alone.
 
-    Such an error can be the client's, such as credentials it could not refresh,
-    and its words can hold a path of the machine's.
+    Such an error can be the client's, such as refreshed credentials that are
+    still expired, and its words can hold a path of the machine's.
     """
     log.error("data's call to the bucket for %s failed", where, exc_info=error)
     return type(error).__name__

@@ -284,7 +284,7 @@ the segments opened it is not seen.
 ##### What the read does with each answer
 
 A fault in the read of the quotes never takes the snapshot's place, and nothing
-in that read raises for what the bucket, marketlake's reader or a row holds. Each fault becomes a reason in the snapshot's `faults`, and
+in that read raises for what a call to the bucket meets, or marketlake's reader or a row holds. Each fault becomes a reason in the snapshot's `faults`, and
 the snapshot is stored before the halt with the bars, each segment opened and
 every row marketlake's reader returned. A fault ends the read once every
 instrument's turn in that round of five is done, so one instrument's refusal
@@ -296,7 +296,7 @@ loses none of another's rows.
 | --- | --- | --- |
 | A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer or is refused | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it and what each try met, with both hashes where there are two. The first try's reason is logged whichever way the second goes | The next decision, or the grant |
 | A listed key the bucket does not hold, or one no bucket call takes | A halt naming the key | The next decision, or marketlake, whose prefix it is |
-| Any other error of a listing or a download, such as credentials the client could not refresh | A halt naming the prefix or the segment, and the error's type. The log holds its words | The next decision, or the machine's operator |
+| Any other error of a listing or a download, such as refreshed credentials that are still expired | A halt naming the prefix or the segment, and the error's type. The log holds its words | The next decision, the machine's operator, or a release where the error is a mistake in the code |
 | A segment with no version or no stored SHA-256 | A halt naming it | The next decision, or marketlake's upload |
 | A listing with no answer or refused, twice | A halt naming the prefix and the answer | The next decision, or the grant |
 | A row of a schema version the pinned marketlake does not read | A halt naming the segment, the versions, and that the marketlake pin is raised | A release |
