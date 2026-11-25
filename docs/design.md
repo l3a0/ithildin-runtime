@@ -2468,7 +2468,7 @@ The price is six things.
 4. A backtest that holds a position across a change values it on the new scale
    once the decisions resume, so V jumps between two decisions. The halts make
    such a run visible and do not make it right, and it is not quoted.
-5. This halt does not see a split inside one series, such as captured bars. The
+5. This halt does not see a split inside one `raw` series, such as captured bars. The
    rule that [a split reads as neither a gain nor a
    loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
    holds that case, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46)
