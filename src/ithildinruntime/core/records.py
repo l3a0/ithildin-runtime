@@ -76,6 +76,7 @@ __all__ = [
     "RestartRecord",
     "SendOutcome",
     "Signal",
+    "Sizing",
     "Snapshot",
     "SpikeFlag",
     "Statistic",
@@ -405,9 +406,12 @@ class Constraints(_Record):
 
 @dataclass(frozen=True)
 class HardCaps(_Record):
-    """The limits only the owner writes, by hand, as `core.parse_caps` reads them.
+    """What only the owner writes, by hand, as `core.parse_caps` reads it.
 
-    The net cap is computed from `share`, V and `stress_move` rather than
+    Every field but the last is a limit of the risk gate or a part of one. The
+    last, `share_step`, is the broker account's rule rather than a limit: the
+    step a share count moves in, which portfolio construction rounds a target
+    to. The net cap is computed from `share`, V and `stress_move` rather than
     written. `stress_low` and `stress_high` are the sane range of the stress
     move, both ends allowed, `stress_vintage` the SHA-256 of the vintage it was
     measured over, `stress_through` that vintage's last session and
@@ -427,6 +431,7 @@ class HardCaps(_Record):
     stress_vintage: str
     stress_through: date
     stress_max_age_days: int
+    share_step: Quantity
 
 
 @dataclass(frozen=True)
@@ -434,6 +439,29 @@ class TargetPortfolio(_Record):
     decision_at: datetime
     strategy: str
     shares: Mapping[InstrumentId, Quantity]
+
+
+@dataclass(frozen=True)
+class Sizing(_Record):
+    """How one strategy's target was sized.
+
+    - `wanted` is each leg's shares before any limit, toward zero at the
+      places a quantity declares.
+    - `cut` names each limit that alone would make the target smaller before
+      its rounding, in the order the gate reads them.
+    """
+
+    strategy: str
+    wanted: Mapping[InstrumentId, Quantity]
+    cut: tuple[Limit, ...]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if list(self.cut) != [limit for limit in _PASSABLE if limit in self.cut]:
+            raise ValueError(
+                f"cut names {', '.join(self.cut)}, which is out of order, twice, or not "
+                "max_position, max_gross or max_net"
+            )
 
 
 class OrderType(StrEnum):
@@ -574,7 +602,8 @@ class Limit(StrEnum):
 
 # The four states carry no figure, because nothing was measured against a bound.
 _STATES = frozenset({Limit.STOP, Limit.CLOSE_ENTRY, Limit.IN_DOUBT, Limit.POSITION})
-# The three limits an order that only reduces may go out past, in the order the gate reads them.
+# The three limits an order that only reduces may go out past, in the order the gate reads
+# them. They are the three a target is sized within, too.
 _PASSABLE = (Limit.MAX_POSITION, Limit.MAX_GROSS, Limit.MAX_NET)
 
 

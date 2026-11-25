@@ -109,7 +109,8 @@ class OutputFile[T]:
     On the wire it is one object with two members, `header` and `body`, and
     `body` holds `entries` and `trade_nothing`. The mark means hold every
     position and send no order, never a target of zero, so a file that carries
-    it holds no entries.
+    it holds no entries. Portfolio construction halts on one, because a target
+    portfolio has no form for it.
     """
 
     header: BlobHeader

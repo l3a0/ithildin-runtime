@@ -33,6 +33,7 @@ from datetime import datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
+    SCHEDULE_OUTPUT,
     CostModel,
     CostSchedule,
     DecisionResult,
@@ -42,10 +43,8 @@ from ithildinruntime.core import (
     Storage,
 )
 
-__all__ = ["COMPONENT", "SCHEDULE", "CostStage"]
+__all__ = ["CostStage"]
 
-COMPONENT = "cost"
-SCHEDULE = "schedule"
 # The format of the schedule's file and the stage's result header.
 _FORMAT = 1
 
@@ -90,7 +89,7 @@ class CostStage:
         try:
             snapshot = decision.snapshot(self._data_stage)
             schedule = self._model.schedule(snapshot)
-            stored = decision.put(SCHEDULE, CostSchedule, (schedule,))
+            stored = decision.put(SCHEDULE_OUTPUT, CostSchedule, (schedule,))
         except Halt as halt:
             return decision.halted(halt)
         return decision.done(stored)

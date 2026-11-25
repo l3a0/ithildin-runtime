@@ -14,6 +14,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [Where the limits come from](05-building-blocks.md#where-the-limits-come-from)
 - [What the risk stage reads and stores](05-building-blocks.md#what-the-risk-stage-reads-and-stores)
 - [Where the figures come from](05-building-blocks.md#where-the-figures-come-from)
+- [How a target is sized](05-building-blocks.md#how-a-target-is-sized)
 
 ## Prices in Runtime
 

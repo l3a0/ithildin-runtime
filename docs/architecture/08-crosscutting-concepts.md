@@ -364,7 +364,7 @@ The price is a third-party library on the path that writes the journal, where a 
 
 1. UTF-8, with no whitespace outside strings, as RFC 8785 requires.
 2. Object keys sorted by their UTF-16 code units, as RFC 8785 sorts them.
-3. No JSON floats. RFC 8785 prints a number in its shortest double form, which cannot hold most decimal prices exactly, and it recommends a string for a number that needs more precision than a double holds. So every decimal quantity, such as a price, a share count, a dollar amount, a hedge ratio or a z-score, is a JSON string in plain decimal notation, such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a bar's volume, are JSON integers. Share counts are decimals, because the GLD leg is fractional.
+3. No JSON floats. RFC 8785 prints a number in its shortest double form, which cannot hold most decimal prices exactly, and it recommends a string for a number that needs more precision than a double holds. So every decimal quantity, such as a price, a share count, a dollar amount, a hedge ratio or a z-score, is a JSON string in plain decimal notation, such as `"123.4500"`. Integers below 2⁵³, such as a sequence number or a bar's volume, are JSON integers. Share counts are decimals, because a forecast's basket holds a fraction of a share of GLD, and test 1's account holds fractions too.
 4. Every time the platform writes is UTC, in RFC 3339 with a `Z` and six fractional digits, truncated, such as `"2026-11-02T20:40:01.123456Z"`. A decision's time is UTC too, such as the 15:40 decision on 2026-11-02 at `"2026-11-02T20:40:00.000000Z"`. A session date is the exchange's trading date, such as `"2026-11-02"`, because it names a session rather than an instant.
 5. A field with no value is `null`, never left out, so a reader can tell an empty field from a format that lacks it. A list keeps its order when the order means something, such as a plan's decisions, and is sorted by its key when it does not, such as a header's inputs, which is this doc's rule rather than RFC 8785's.
 
@@ -424,6 +424,7 @@ The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it 
 **A value the platform computes is rounded once, in one place.** The types in `core` hold `Decimal`.
 
 - A statistic is converted once, at the stage's output, by `core.to_decimal`, which rounds it half to even to the field's declared places. One computed in floats is taken in the float's shortest form first. The alpha model computes its hedge ratio and z-score in `Decimal` at 28 digits, inside a context of its own, and decides on the unrounded values.
+- Portfolio construction rounds each leg's shares toward zero, to the account's `share_step` for a target and to nine places for what was wanted. It is one division of exact products, so a target exactly on a step is kept, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
 - The risk gate, the order manager, `Journal.replay` and reconciliation compute in `Decimal` throughout, and the quantity journaled for an order is the exact string the broker adapter sends and the gate checks.
 
 A `dict` field's values take the declared places of their value type, such as a share count in `TargetPortfolio.shares`. A field's declared places never shrink in a later release.
@@ -432,7 +433,7 @@ The price is that a value computed in floats that falls exactly on a rounding bo
 
 #### What an output file holds
 
-**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The body holds two fields: `entries`, a list of the stage's own kind of record, and `trade_nothing`, the mark that means hold every position and send no order. A body that carries the mark holds no entries, and the codec refuses one that holds both. A reader halts on a body with no entries and no mark, as [An absent, stale or empty input halts](../design.md#rule-6-an-absent-stale-or-empty-input-halts) says. The header's `format` is a number per kind, raised when that kind's fields change. Of the types in `core`, a plan, a lease, a heartbeat, a restart record and a journal entry are each stored at a key of their own rather than as a stage's output file, and each carries a `format` field of its own instead. A `HaltRecord` travels inside a `DecisionResult`, whose header names its format. Any other blob stored at a key of its own, such as a book snapshot, a halt held in a folder, an override or a release, gets a format from the issue that defines it, because the data engineer in [the charter](../team-charter.md#data-engineer) vetoes a recorded format with no schema identifier. [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
+**Every output file has a header and a body.** Each output file is one object with two members, `header`, the `BlobHeader`, and `body`. The body holds two fields: `entries`, a list of the stage's own kind of record, and `trade_nothing`, the mark that means hold every position and send no order. Portfolio construction halts on an input that carries it, because a target portfolio has no form for that. A body that carries the mark holds no entries, and the codec refuses one that holds both. A reader halts on a body with no entries and no mark, as [An absent, stale or empty input halts](../design.md#rule-6-an-absent-stale-or-empty-input-halts) says. The header's `format` is a number per kind, raised when that kind's fields change. Of the types in `core`, a plan, a lease, a heartbeat, a restart record and a journal entry are each stored at a key of their own rather than as a stage's output file, and each carries a `format` field of its own instead. A `HaltRecord` travels inside a `DecisionResult`, whose header names its format. Any other blob stored at a key of its own, such as a book snapshot, a halt held in a folder, an override or a release, gets a format from the issue that defines it, because the data engineer in [the charter](../team-charter.md#data-engineer) vetoes a recorded format with no schema identifier. [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) requires that each release writes only formats the release before it can read. Each hash is lowercase hex SHA-256, and each writer sends it as the upload's SHA-256 checksum, so S3 checks it before it stores the blob.
 
 #### The hard caps blob
 
@@ -442,7 +443,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 {"format": 1, "account": "paper", "limits": {"max_order_qty": {"GLD": "10"}, "max_position": {"GLD": "5"},
   "max_gross": "1000", "max_open_orders": 4, "loss_stop": "50", "moc_cutoff": 15,
   "share": "0.02", "stress_move": "0.2", "stress_low": "0.1", "stress_high": "0.6",
-  "stress_vintage": "<64 hex digits>", "stress_through": "2026-11-20", "stress_max_age_days": 365}}
+  "stress_vintage": "<64 hex digits>", "stress_through": "2026-11-20", "stress_max_age_days": 365, "share_step": "1"}}
 ```
 
 **Table:** Each field of `limits`, its form and what it holds
@@ -459,6 +460,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over |
 | `stress_through` | `YYYY-MM-DD` | That vintage's last session |
 | `stress_max_age_days` | A JSON integer from 1 to 365 | How many days past that session a decision may still use it |
+| `share_step` | One of the ten decimal strings `1`, `0.1` and so on to `0.000000001` | The step a share count moves in on the account, which is the broker's rule and no limit. Portfolio construction rounds each target to it |
 
 A decimal string is plain digits with an optional minus and fraction, with no exponent. An integer is below 2**53 in size. The blob is at most 65,536 bytes. Any other section may sit beside `limits`, and this reader reads none of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads `holds`, the causes that hold the account, and nothing reads `reasons`, why each value sits where it does.
 
@@ -525,7 +527,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
-| A stage's output file, including data's snapshot, alpha's forecast and its signal records, risk's constraints, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
+| A stage's output file, including data's snapshot, alpha's forecast and its signal records, risk's constraints, portfolio construction's target and the record of how it was sized, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | The account's `Valuation`, an output of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
 | The reconciled `Book`, and the `HardCaps` as recover parsed them, which the risk stage reads, two outputs of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/book.json`, `runs/<deployment>/<run>/<decision>/execution/recover/caps.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |

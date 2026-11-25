@@ -31,17 +31,19 @@ decides at close−20, because no live decision can read a close that has not
 happened. Test 1 checks the engine against Chan's timing. A backtest of the
 deployed close−20 schedule needs minute history at that minute that the imported
 vintages lack, so it waits for marketlake's captured minutes to cover a long
-enough span, and shadow running measures the gap until then. A paper order also needs whole shares, or a fractional order the
-broker accepts, while the backtest holds fractional dollar positions. So the
+enough span, and shadow running measures the gap until then. A paper order also
+needs whole shares, while test 1's account holds billionths of a share. So the
 two runs differ in two ways.
 
 1. **Timing of the signal.** The paper decision computes its signal on the
    price at close−20, twenty minutes before the close the backtest's signal
    uses, and a price that moves in those minutes can flip the unit.
-2. **Rounding.** Rounding each leg to whole shares moves it by at most half a
-   share. Whether portfolio construction or the order manager rounds, and
-   whether the broker allows a fractional short sale for the GLD leg, is open
-   on [#9](https://github.com/l3a0/ithildin-runtime/issues/9).
+2. **Rounding.** Portfolio construction rounds each leg toward zero to the
+   account's share step, so a whole-share leg is off by less than one share.
+   Whole shares miss the replication's pins, by 1.56e-3 on the APR and 4.99e-3
+   on the Sharpe ratio at a G of $10,000, which is exploratory. So test 1's
+   account alone has a step of a billionth, as
+   [The step a share count moves in](05-building-blocks.md#the-step-a-share-count-moves-in) says.
 
 Shadow running measures both gaps rather than leaving them to argument.
 
@@ -73,7 +75,7 @@ package.
 | The stress move's measurement and the check that holds the caps to it | [#116](https://github.com/l3a0/ithildin-runtime/issues/116) |
 | The gate's reading of a close after a broker's trade | [#117](https://github.com/l3a0/ithildin-runtime/issues/117) |
 | The flat and linear cost model, `CostSchedule` and `CostTerm`, the form of each strategy's cost section | [#8](https://github.com/l3a0/ithildin-runtime/issues/8) |
-| Equal-risk-weight portfolio construction, any field [#9](https://github.com/l3a0/ithildin-runtime/issues/9) adds to `TargetPortfolio`, which names every instrument | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
+| Equal-risk-weight portfolio construction and its stage, the `[portfolio]` section of a strategy's file, `Sizing`, the record of how a target was sized, `share_step` in the hard caps, and a stage's reads of a file of several entries and of an input's configuration hashes | [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | Order manager, `OrderPath`, a plan's cancels and replacements, the journal's entries for orders and fills, `Journal.in_doubt` and `Journal.replay`, fills keyed by the broker's fill id, the broker id mapped on each ack, the simulator and the Alpaca adapter around its SDK, the simulated account's blob, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, the third level of CI and its second required check, the journal entry for a capture lost when a worker's process dies, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
@@ -81,8 +83,10 @@ Each module issue also writes its own worker's entry point under `runtime`,
 the code that picks that worker's adapters for a mode.
 
 Equal risk weight sizes each forecast's basket so they all carry the same
-risk. With one basket in slice 1, it reduces to sizing that basket, so the
-gross position is a fixed dollar amount the owner sets, recorded in the strategy's tracked configuration, in the section whose form [#9](https://github.com/l3a0/ithildin-runtime/issues/9) sets.
+risk. With one basket in slice 1, it reduces to sizing that basket, so its
+gross is G, a fixed dollar amount the owner sets as `gross` in the `[portfolio]`
+section of the strategy's tracked file. A limit can make the position smaller, as
+[How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
 
 Five pieces belong to no single module. Each is written on a sub-issue of
 [#4](https://github.com/l3a0/ithildin-runtime/issues/4).

@@ -385,8 +385,8 @@ sequenceDiagram
         F-->>K: sends events for data's and<br/>execution's recover results
         K->>F: stores the constraints and risk's result
     end
-    F-->>P: sends events for alpha's, risk's, cost's<br/>and execution's recover results
-    P->>F: stores the target portfolio and<br/>portfolio construction's result
+    F-->>P: sends events for data's, alpha's, risk's, cost's<br/>and execution's recover results
+    P->>F: stores the target portfolio, how it was sized<br/>and portfolio construction's result
     Note over X,J: Phase 3, send, in whichever execution instance<br/>receives the event
     F-->>X: sends an event for portfolio construction's result
     X->>F: writes a create-only claim on the send stage,<br/>naming its handler
@@ -502,7 +502,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap. Portfolio construction builds the target portfolio within them.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap. Portfolio construction builds the target portfolio within them, at the snapshot's prices, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
 
 The figure below is a C4 dynamic diagram.
 
@@ -511,7 +511,8 @@ flowchart TB
     data["Data's result"] --> alpha["Alpha model<br/>writes the forecast and<br/>the signals behind it"]
     data -->|"the snapshot"| risk["Risk model<br/>writes the constraints,<br/>each limit the tighter of<br/>the strategy's and the owner's"]
     data --> cost["Cost model<br/>writes each strategy's cost schedule"]
-    alpha --> pc["Portfolio construction<br/>writes the target portfolio"]
+    data -->|"the snapshot"| pc["Portfolio construction<br/>writes the target portfolio<br/>and how it was sized"]
+    alpha --> pc
     risk --> pc
     cost --> pc
     recover["Execution's<br/>recover result"] -->|"the book,<br/>the hard caps as read<br/>and the session's valuation"| risk
@@ -564,7 +565,7 @@ The steps run in this order.
      5. The instance running the send stage.
      6. Each strategy that is off.
      7. Each strategy whose late forecast reads as no change.
-   - **What the target must name.** A target portfolio names every instrument the book holds or the forecast names, with a flat leg as an explicit zero. Execution halts on one that leaves an instrument out.
+   - **What the target must name.** A target portfolio names every leg of its strategy's forecast, with a flat leg as an explicit zero. By this doc's proposal for [#9](https://github.com/l3a0/ithildin-runtime/issues/9), portfolio construction halts on an instrument the strategy holds that the forecast does not name, so a target names everything its strategy's book holds. Execution halts on one that leaves an instrument out, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
    - **What a strategy that is off gets.** A strategy that is off when this step reads it gets no planned orders, cancels or replacements. So its resting orders are left to the sort, and the entry names it as off. A strategy is off when either of two things holds, the same two things the check before each send reads.
      1. Its off switch is set.
      2. By this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased.
@@ -736,7 +737,9 @@ is a session that should be there and is not. Data applies that rule, and
 
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
-than reading the silence as a target of zero. A flat position is a forecast
+than reading the silence as a target of zero. It halts on the mark too, because
+a target portfolio has no form for holding every position, and no alpha model
+writes the mark in slice 1. A flat position is a forecast
 with direction 0, never a missing forecast. The one exception is a forecast late at portfolio construction's deadline, under hard limit 3's written age, which the owner sets and which starts at 0, as the [2026-11-06](../design.md#2026-11-06) entries in design.md record.
 
 ### A restart before the data is ready

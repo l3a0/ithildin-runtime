@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from ithildinruntime.alpha import COMPONENT, AlphaStage
-from ithildinruntime.core import Storage, StrategyConfig
+from ithildinruntime.alpha import AlphaStage
+from ithildinruntime.core import ALPHA_COMPONENT, Storage, StrategyConfig
 
 from .loop import Stage, Table
 from .rows import strategy_rows
@@ -22,7 +22,7 @@ __all__ = ["alpha_handlers", "alpha_rows"]
 
 def alpha_rows(strategies: Iterable[StrategyConfig]) -> tuple[Stage, ...]:
     """One deterministic row per strategy, each reading data's stage."""
-    return strategy_rows(COMPONENT, strategies)
+    return strategy_rows(ALPHA_COMPONENT, strategies)
 
 
 def alpha_handlers(
@@ -34,7 +34,7 @@ def alpha_handlers(
     and input, from `table`.
     """
     made = {}
-    for stage in table.stages_of(COMPONENT):
+    for stage in table.stages_of(ALPHA_COMPONENT):
         (data_stage,) = stage.inputs
         made[stage.name] = AlphaStage(
             table.strategy(stage.strategy),

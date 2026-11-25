@@ -2,7 +2,9 @@
 
 Each store test runs once against the folder and once against S3 on moto. Each
 data test reads its own copy of one marketlake lake, built once per session
-from quantitative-trading's vintages, as tests/support/lake.py says.
+from quantitative-trading's vintages, as tests/support/lake.py says. The alpha
+stage's and portfolio construction's replication tests share one run of the
+alpha stage, which tests/support/replication.py builds.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests.support import lake as lakes
+from tests.support.replication import every_session, replicated  # noqa: F401
 from tests.support.stores import StoreSpec
 
 _buckets = itertools.count()

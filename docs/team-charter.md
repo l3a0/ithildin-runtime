@@ -153,7 +153,7 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Alpha model | Forecast return or direction (L1033, L2029), for a basket of instruments held in a fixed ratio | The decision's snapshot and the strategy's alpha settings | A forecast of the basket, with horizon and confidence, and the signals behind it | Quant researcher |
 | Risk model | Limit or remove exposures nobody chose (L928, L2089) | The decision's snapshot, the book, the hard caps, the session's valuation and the strategy's `[risk]` section | The decision's constraints | Risk engineer |
 | Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | The decision's snapshot, the strategy's cost terms, and own real fills once they calibrate it | A cost schedule per strategy and decision | Trading systems engineer |
-| Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above | Target positions | Trading systems engineer |
+| Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above, the decision's snapshot, the book, the hard caps, the session's valuation and the strategy's `[portfolio]` section | Target positions, and the record of how each was sized | Trading systems engineer |
 | Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current | Orders, then fills | Trading systems engineer |
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
 | Monitoring | Watch exposure, P&L, execution and systems (L4973) | Everything above | Alerts, a halt | Operator |
@@ -341,7 +341,8 @@ time is the scarce resource, so work reaches the owner already reviewed.
 - **Does:** writes portfolio construction, the cost model, the order manager,
   the broker adapters and reconciliation. Journals each order before sending
   it, and makes resubmission idempotent. Applies the design doc's rules that
-  every fact has one writer: sizing that counts every order already sent, a
+  every fact has one writer: orders sized by counting every order already sent,
+  by the order manager and the gate, against a target that is absolute, a
   client order id fixed before the send, one holder of the account's lease
   sending at a time, and an order in doubt that blocks the next. Builds the
   lease, with its tag

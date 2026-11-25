@@ -140,15 +140,16 @@ def classify(book: Book, intent: OrderIntent) -> Effect:
     return Effect.REDUCES
 
 
-def held(book: Book) -> tuple[InstrumentId, ...]:
-    """Each instrument any strategy holds or has an open order in."""
+def held(book: Book, strategy: str | None = None) -> tuple[InstrumentId, ...]:
+    """Each instrument the account, or one strategy, holds or has an open order in."""
     found = {
         instrument
-        for positions in book.positions_by_strategy.values()
+        for name, positions in book.positions_by_strategy.items()
+        if strategy in (None, name)
         for instrument, qty in positions.items()
         if qty != 0
     }
-    found.update(order.instrument for order in _open(book, None))
+    found.update(order.instrument for order in _open(book, strategy))
     return tuple(sorted(found))
 
 

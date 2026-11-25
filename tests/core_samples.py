@@ -35,6 +35,7 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.HardCaps,
     core.PastLimit,
     core.LossReading,
+    core.Sizing,
 ]
 
 
@@ -104,6 +105,9 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
         if hint is core.PastLimit:
             # A past limit is one of three, at or over its bound.
             fields["limit"] = core.Limit.MAX_NET
+        if hint is core.Sizing and not empty:
+            # A target is cut by one or more of three limits, in the gate's order.
+            fields["cut"] = (core.Limit.MAX_POSITION, core.Limit.MAX_NET)
         if hint is core.LossReading:
             # A loss past its bound is at or over it.
             fields["past"] = True

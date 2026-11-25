@@ -12,7 +12,7 @@ This page is section 5 of [the architecture](00-README.md), in the order of the 
 - [Types and interfaces](#types-and-interfaces)
   - [The data the workers pass](#the-data-the-workers-pass)
   - [The interfaces](#the-interfaces)
-  - [Nine choices for a reviewer to check](#nine-choices-for-a-reviewer-to-check)
+  - [Ten choices for a reviewer to check](#ten-choices-for-a-reviewer-to-check)
 - [Package layout and the import rule](#package-layout-and-the-import-rule)
   - [Which module may import which](#which-module-may-import-which)
   - [How tests hold the rule](#how-tests-hold-the-rule)
@@ -79,7 +79,7 @@ flowchart TB
     fc[("forecast and the<br/>signals behind it")]
     cons[("constraints")]
     sched[("cost schedule")]
-    target[("target portfolio")]
+    target[("target portfolio and<br/>how it was sized")]
     outcome[("send outcome")]
 
     plan --> data
@@ -92,6 +92,7 @@ flowchart TB
     snap --> risk
     book --> risk --> cons
     snap --> cost --> sched
+    snap --> pc
     fc --> pc
     cons --> pc
     sched --> pc
@@ -383,11 +384,17 @@ classDiagram
         +str stress_vintage
         +date stress_through
         +int stress_max_age_days
+        +Decimal share_step
     }
     class TargetPortfolio {
         +datetime decision_at
         +str strategy
         +dict shares
+    }
+    class Sizing {
+        +str strategy
+        +dict wanted
+        +list cut
     }
     class Book {
         +dict positions_by_strategy
@@ -633,6 +640,8 @@ classDiagram
     ForecastSet o-- Forecast
     ForecastSet o-- Signal
     TargetPortfolio --> Instrument
+    Sizing --> Instrument
+    Sizing --> Limit
     OrderIntent --> Instrument
     BrokerOrder --> Instrument
     Ack o-- BrokerOrder
@@ -854,9 +863,9 @@ classDiagram
     Monitoring ..> core
 ```
 
-### Nine choices for a reviewer to check
+### Ten choices for a reviewer to check
 
-The two diagrams above make nine choices for a reviewer to check. Several are proposals for the issue that owns the piece, and each says so where it is one.
+The two diagrams above make ten choices for a reviewer to check. Several are proposals for the issue that owns the piece, and each says so where it is one.
 
 1. [A forecast is about a basket, not an instrument](#a-forecast-is-about-a-basket-not-an-instrument).
 2. [A bar carries where it came from](#a-bar-carries-where-it-came-from).
@@ -1145,7 +1154,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
-`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Seven checks go further.
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Eight checks go further.
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
@@ -1154,6 +1163,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 5. `max_order_qty` is at or above `max_position` for each instrument, since a lower one would refuse that position's only exit.
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
 7. Each count, `max_open_orders` and `moc_cutoff`, is below 2**53, the largest a record can hold.
+8. The share step is written as one of ten forms, 1, 0.1 and so on to 0.000000001. One written 1.0 halts, because a count rounded to its places would hold a tenth of a share.
 
 **Table:** Which value of each pair applies
 
@@ -1210,7 +1220,7 @@ The stage does not hold V against the book's corrections or the entry it was rep
 
 #### The cost model writes a schedule rather than answering calls
 
-Portfolio construction needs the cost of each trade it considers. Each module is a process of its own, so a call to the cost model per candidate trade would cross a process boundary every time. Instead each strategy's cost stage, `cost/<strategy>`, writes one `CostSchedule` per decision, and portfolio construction works out each trade's cost from it by calling `estimate` in its own process.
+Portfolio construction needs the cost of each trade it considers. Each module is a process of its own, so a call to the cost model per candidate trade would cross a process boundary every time. Instead each strategy's cost stage, `cost/<strategy>`, writes one `CostSchedule` per decision, and portfolio construction can work out each trade's cost from it by calling `estimate` in its own process. No rule weighs a cost in slice 1, so portfolio construction reads the schedule and calls no `estimate` yet.
 
 ##### What a schedule holds
 
@@ -1238,6 +1248,91 @@ Each strategy's terms are the `[cost]` section of its tracked file, so they are 
 A cost nobody wrote never reads as free. The cost stage halts, naming the strategy and the instrument, on a missing section, an instrument with no terms, one with no term of a kind that covers both sides, a term with a field missing, a negative figure, and a kind, a side or a source it cannot use. `cost/model.py` holds the whole list. A cost of zero is written as a term whose figures are zero. `estimate` halts too, on a trade in an instrument with no term of the kind asked for, or with either kind's term missing where none is named, on a price that is not above zero and on a quantity that is not finite. A test reads every tracked file's section, so a bad one fails CI before any run.
 
 The price is that each strategy states the broker's fees in its own file, so a changed fee is an edit to every strategy's file and nothing alerts when a published fee lapses. A term also carries one figure for every date, so a backtest over dates with another fee charges today's.
+
+#### How a target is sized
+
+Portfolio construction turns each strategy's forecast into a target portfolio, the shares the strategy should hold after the decision. With one basket per strategy, equal risk weight comes down to one number, how many baskets to hold. One stage named `portfolio` does this for the whole deployment, and it sizes each strategy's target as if the account held nothing else. So the target reads no position, open order, cash, profit or account value, except through the limits. It is absolute, and the order manager and the gate count what is held and sent.
+
+##### What the portfolio stage reads and stores
+
+It reads the result of every stage below before it opens any file, in this order.
+
+**Table:** Each file the portfolio stage reads
+
+| File | Stored by | What portfolio construction takes from it |
+| --- | --- | --- |
+| `snapshot.json` | Data | Each leg's price |
+| `book.json`, `valuation.json` and `caps.json` | Execution's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | Which instruments each strategy holds or has an order in, the session V was valued at, and the stress move and the share step |
+| `constraints.json` | Risk | Each strategy's limits, one `Constraints` per strategy |
+| `forecast.json` | Each strategy's alpha stage | The basket and its direction |
+| `schedule.json` | Each strategy's cost stage | Nothing yet. A strategy with no readable schedule halts, and no estimate is weighed, because every one is zero in slice 1 |
+
+Each result must carry the configuration hashes the stage table gives its stage. Storage compares a file only with the result that lists it. So without that check a backtest rerun into one folder after G moved would size an older file's forecast with the newer G.
+
+The stage stores two files, each with one entry per strategy, and computes both before it stores either.
+
+1. `target.json` holds the `TargetPortfolio`. A flat forecast gives an explicit zero for each leg.
+2. `sizing.json` holds the `Sizing`, the record of how the target came out that size. `wanted` is each leg's shares before any limit. `cut` names each limit that alone would make the target smaller, before rounding.
+
+##### How many baskets are held
+
+The gross dollars a unit of the strategy is sized to is G, the one key of the `[portfolio]` section of the strategy's tracked file, `gross`. A basket's gross is the sum of its legs' dollars, each leg's shares times its mark, as a size. The mark is the price `core.mark` gives, the one the gate reads.
+
+1. **G asks for a number of baskets**, G over one basket's gross.
+2. **Three limits each bound that number.** `max_position` bounds each leg's shares. `max_gross` bounds the legs' dollars. `max_net` bounds the larger of the long legs' dollars and the short legs' dollars, because the gate counts each leg with the other unfilled.
+3. **The smallest of the four is taken**, so every leg shrinks together and the hedge between them holds.
+4. **Each leg is rounded toward zero** to the account's share step. Each share count is one division of exact products, so a target that sits exactly on a limit or a step is kept.
+5. **A held direction that comes to zero shares in every leg halts**, naming G and each limit that cut it. A zero there would sell the book because G is smaller than a share, a price is wrong or V reads low.
+
+The figure below is a C4 code diagram.
+
+```mermaid
+flowchart TB
+    g["G over one basket's gross"] --> least["Take the smallest<br/>number of baskets"]
+    pos["max_position over<br/>each leg's shares<br/>in one basket"] --> least
+    gross["max_gross less room<br/>over one basket's gross"] --> least
+    net["max_net less room<br/>over the larger of one<br/>basket's long dollars<br/>and its short dollars"] --> least
+    least --> round["Round each leg's shares<br/>toward zero to the<br/>account's share step"]
+    round --> any{"Does any leg have shares?"}
+    any -- "Yes" --> store["Store the target,<br/>what G asked for and<br/>each limit that cut it"]
+    any -- "No" --> halt["Halt, naming G and<br/>each limit that cut it"]
+```
+
+Take a basket of one share of USO against 0.4 of GLD short, with USO at $50, GLD at $100 and a G of $900. These figures are made up. One basket's gross is 50 + 40 = 90 dollars, so G asks for 10 baskets, which is 10 USO long and 4 GLD short. At a stress move of 0.25 a `max_net` of $500 is read as $400. USO's side is the larger at 50 dollars a basket, so that limit allows 8 baskets, and the target is 8 USO and, with 3.2 rounded toward zero, 3 GLD short.
+
+One leg can round to zero beside one that does not, and that target stands. The hedge is then off by less than one share of that leg. The price is a hedge that is off by less than one share of each leg at every decision, and a cap lowered below one share sells nothing, because step 5 halts first and the owner closes by hand.
+
+##### Why a dollar limit is read less room for one stress move
+
+This doc proposes, for [#9](https://github.com/l3a0/ithildin-runtime/issues/9), that a dollar limit is read as the limit over one plus the stress move, with the stress move from the hard caps. Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so both legs can leave.
+
+Room covers no more than that. The net cap falls with V, so a full stress move against a lone leg can still leave the pair a little over it. A position the gate stops from resizing drifts for longer than two sessions. `max_position` counts shares and needs no room. The price is a target about a quarter under the limit, at the exploratory stress move of 34.7%, wherever a dollar limit binds.
+
+The gate refuses and nothing here predicts it. A refused flip, straight from one side to the other, keeps the opposite position and is asked again at each decision until the forecast goes flat or the limit moves.
+
+##### The step a share count moves in
+
+`share_step` in the hard caps blob is the step a share count moves in on that account. It is the broker's rule for the account rather than a limit. Alpaca takes a fractional order only for the day, never at the closing auction, and takes no fractional short sale ([fractional trading](https://docs.alpaca.markets/docs/fractional-trading), [orders](https://docs.alpaca.markets/docs/orders-at-alpaca), read 2026-11-24). So paper's market-on-close legs are whole shares and its step is 1.
+
+Test 1's account alone is written 0.000000001, because whole shares miss the replication's pinned return at every G tried. Every other account, a backtest's and test 2's included, is written the step of the account it stands for, so nothing else sizes in a way paper never runs. The price is that one backtest account moves in a step no broker account does.
+
+##### What halts the portfolio stage
+
+A halt in any input is passed on, the first in the order the stage reads them. Every other halt the handler meets is the stage's own result, whose header names each result and file it had read and storage had accepted. The stage halts on each of these, the first it meets deciding, and all but the tenth hold for a flat forecast too.
+
+1. An input with no result, one storage refuses, or one that carries another configuration than the stage table's.
+2. A result that lists a file other than once, a file storage refuses, a file with another number of entries than one, or for `constraints.json` other than one per strategy, and a snapshot of another decision. A file that carries the "trade nothing" mark has no entries, so it halts here: `TargetPortfolio` has no form for holding every position.
+3. A `[portfolio]` section that is absent or holds anything but a `gross` above zero at four places or fewer.
+4. A book that holds shares or an open order under a name the deployment does not run. Sized alone, two strategies' legs can net on the account, and then be let in and not out.
+5. A forecast of another strategy, or a basket whose instruments are not exactly the strategy's.
+6. An instrument the strategy holds shares of, or has an open order in, that the forecast does not name. This doc proposes that for [#9](https://github.com/l3a0/ithildin-runtime/issues/9), because a target of zero there would sell a position nobody forecast.
+7. A leg that is not a finite number, or a basket whose legs are all zero.
+8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, a share step of another form than the ten, and a leg no limit names.
+9. A leg `core.mark` cannot price. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision here, where the book is flat, and at the risk stage where it holds anything.
+10. A held direction sized to zero shares in every leg.
+11. A write storage refuses, such as a target already stored with other bytes.
+
+Risk's stage halts on two strategies in one deployment, so a target for each of two shows the files' form alone. [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says what lifts that halt.
 
 #### Every type that crosses between workers has a file form
 
@@ -1363,9 +1458,9 @@ An arrow means "may import". The diagram draws four rules.
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - `require_utc`, the check that a time is UTC;
-   - the names of data's stage and its snapshot, of alpha's two output files, of the risk stage and its constraints, of execution's recover stage and the three files risk reads, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
-   - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result and the files it lists, write its own files under one header, and turn a halt into its result;
-   - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
+   - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage and the three files risk reads, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
+   - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
+   - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `mark`, `exposure`, `classify` and `value_book`, the one price, range, adding-or-reducing and valuation that the gate, portfolio construction and execution each read, with the price alone read by the risk model too, and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 

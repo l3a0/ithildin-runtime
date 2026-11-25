@@ -12,6 +12,6 @@ reasoning lives in docs/design.md. It imports only `core`.
 
 from .bollinger import SECTION, BollingerSpread
 from .models import MODELS, build_model
-from .stage import COMPONENT, AlphaStage
+from .stage import AlphaStage
 
-__all__ = ["COMPONENT", "MODELS", "SECTION", "AlphaStage", "BollingerSpread", "build_model"]
+__all__ = ["MODELS", "SECTION", "AlphaStage", "BollingerSpread", "build_model"]

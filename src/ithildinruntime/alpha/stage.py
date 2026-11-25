@@ -48,9 +48,8 @@ from ithildinruntime.core import (
 
 from .models import build_model
 
-__all__ = ["COMPONENT", "AlphaStage"]
+__all__ = ["AlphaStage"]
 
-COMPONENT = "alpha"
 # The format of both files and of the stage's result header.
 _FORMAT = 1
 
