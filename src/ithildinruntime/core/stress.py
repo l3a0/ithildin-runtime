@@ -274,7 +274,10 @@ def stress_vintage(bars: Mapping[InstrumentId, Sequence[Bar]]) -> str:
 
 
 def load_records(path: Path) -> tuple[StressRecord, ...]:
-    """The records in `path`, or a halt naming the file, and the record and key where one is wrong."""
+    """The records in `path`, or a halt naming the file.
+
+    It names the record and the key too, where the fault is in one.
+    """
     try:
         data = path.read_bytes()
     except FileNotFoundError:
