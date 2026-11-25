@@ -106,8 +106,11 @@ jobs:
       # The pin covers uv too. The action installs the newest uv by default, and checks one
       # newer than its own checksums against a list it fetches at run time. `latest-known`
       # installs the newest uv the pinned commit holds a checksum for, and
-      # `require-checksums` fails the step rather than fall back to that list. So uv moves
-      # here only when the pin moves, and can be older than the one the `test` job installs.
+      # `require-checksums` fails the step rather than take a checksum from that list.
+      # setup-uv before 10.4.0 ignores `require-checksums`. The list still gives the
+      # download address, so it can fail the step and cannot choose the bytes. So uv, and
+      # the CPython its own table names, move here only when the pin moves, and can be
+      # older than those the `test` job installs.
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: latest-known
