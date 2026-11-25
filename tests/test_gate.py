@@ -19,6 +19,8 @@ from ithildinruntime import core
 from ithildinruntime.core import (
     Bar,
     BarStatus,
+    Book,
+    Correction,
     Halt,
     InstrumentId,
     JournalEntry,
@@ -594,6 +596,18 @@ def _quoted(snap: Snapshot) -> Snapshot:
     return replace(snap, quotes={USO: replace(sample(core.Quote), instrument=USO)})
 
 
+def _unfrozen(made: Book, corrections: object) -> Book:
+    """The book with `corrections` as they are, where building one makes a list a tuple."""
+    object.__setattr__(made, "corrections", corrections)
+    return made
+
+
+def corrected(
+    seq: object, at: datetime = DECISION - timedelta(days=30), repositions: object = False
+) -> Correction:
+    return Correction(seq, at, repositions)  # type: ignore[arg-type]
+
+
 HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     "now-before-the-decision": (
         lambda w: w.at(now=DECISION - TICK),
@@ -713,29 +727,61 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         "stress_through is 2026-10-30, 4 days before the decision",
     ),
     "a-correction-after-v": (
-        lambda w: w.at(book=book(corrected_through=8, replayed_through=9)),
+        lambda w: w.at(book=book(corrections=(corrected(8),), replayed_through=9)),
         "entry 8 corrected the book after the valuation",
     ),
-    "a-reposition-with-no-correction": (
-        lambda w: w.at(book=book(repositioned_at=TABLE.session(PRIOR).close)),
-        "the book's repositioned_at is set with no correction behind it",
+    "corrections-that-are-no-list": (
+        lambda w: w.at(book=replace(book(), corrections=None)),
+        "the book's corrections are None, not a list of corrections",
+    ),
+    "corrections-in-a-list-that-can-change": (
+        lambda w: w.at(book=_unfrozen(book(), [corrected(1)])),
+        "the book's corrections are .*, not a list of corrections",
+    ),
+    "a-correction-that-is-none": (
+        lambda w: w.at(book=book(corrections=(None,))),
+        "the book's corrections are .*, not a list of corrections",
+    ),
+    "a-correction-past-the-book": (
+        lambda w: w.at(book=book(corrections=(corrected(9),), replayed_through=8)),
+        "a correction's seq is 9, past the book's 8",
+    ),
+    "a-correction-that-repositions-0": (
+        lambda w: w.at(book=book(corrections=(corrected(1, repositions=0),))),
+        "the correction at entry 1 repositions 0, no bool",
+    ),
+    "a-correction-that-says-no-reposition": (
+        lambda w: w.at(book=book(corrections=(corrected(1, repositions=None),))),
+        "the correction at entry 1 repositions None, no bool",
+    ),
+    # The newest entry moved cash alone, and the one behind it moved a position.
+    "two-corrections-where-only-the-older-repositions": (
+        lambda w: w.at(
+            book=book(
+                corrections=(
+                    corrected(6, TABLE.session(PRIOR).close + TICK, True),
+                    corrected(7, TABLE.session(PRIOR).close + 2 * TICK),
+                )
+            )
+        ),
+        "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     "a-reposition-after-vs-session": (
         lambda w: w.at(
-            book=book(corrected_through=7, repositioned_at=TABLE.session(PRIOR).close + TICK)
+            book=book(corrections=(corrected(7, TABLE.session(PRIOR).close + TICK, True),))
         ),
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     # A split's restatement, or a broker's trade, journaled before V was built.
     "a-reposition-v-was-replayed-past": (
         lambda w: w.at(
-            book=book(corrected_through=6, repositioned_at=TABLE.session(PRIOR).close + TICK)
+            book=book(corrections=(corrected(6, TABLE.session(PRIOR).close + TICK, True),))
         ),
         "a position was corrected at 2026-11-02T21:00:00.000001",
     ),
     "a-reposition-with-no-zone": (
-        lambda w: w.at(book=book(corrected_through=1, repositioned_at=datetime(2026, 1, 1))),
-        "the book's repositioned_at is .*, not a UTC time",
+        lambda w: w.at(book=book(corrections=(corrected(1, datetime(2026, 1, 1), True),))),
+        "when entry 1 corrected the book is .*, not a UTC time",
     ),
     "cash-not-finite": (lambda w: w.at(book=book(cash="NaN")), "the book's cash is"),
     "a-position-not-finite": (
@@ -756,8 +802,8 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         for name, shown, change in (
             (
                 "corrected-through",
-                "the book's corrected_through",
-                lambda w, n=number: w.at(book=book(corrected_through=n)),
+                "a correction's seq",
+                lambda w, n=number: w.at(book=book(corrections=(corrected(n),))),
             ),
             (
                 "a-book-replayed-through",
@@ -772,8 +818,8 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         )
     },
     "corrected-through-no-entry": (
-        lambda w: w.at(book=book(corrected_through=0)),
-        "the book's corrected_through is 0, not an entry's number",
+        lambda w: w.at(book=book(corrections=(corrected(0),))),
+        "a correction's seq is 0, not an entry's number",
     ),
     "a-book-replayed-through-nothing": (
         lambda w: w.at(book=book(replayed_through=None)),
@@ -975,7 +1021,7 @@ def test_5_a_halt_comes_before_a_refusal_it_collides_with() -> None:
     large = World(intent=order(LOOSE + 1))
     assert large.check().limit is Limit.MAX_ORDER_QTY
     with pytest.raises(Halt, match="entry 8 corrected the book"):
-        large.at(book=book(corrected_through=8, replayed_through=9)).check()
+        large.at(book=book(corrections=(corrected(8),), replayed_through=9)).check()
 
 
 def test_5_a_journal_with_no_entry_is_replayed_through_0() -> None:
@@ -984,9 +1030,12 @@ def test_5_a_journal_with_no_entry_is_replayed_through_0() -> None:
 
 
 def test_5_a_correction_at_vs_own_entry_and_a_reposition_at_its_close_pass() -> None:
-    world = World(book=book(corrected_through=7, repositioned_at=TABLE.session(PRIOR).close))
+    world = World(book=book(corrections=(corrected(7, TABLE.session(PRIOR).close, True),)))
     assert world.check().approved
-    earlier = book(corrected_through=1, repositioned_at=utc(2026, 10, 1, 12))
+    late = TABLE.session(PRIOR).close + TICK
+    cash_alone = book(corrections=(corrected(6, utc(2026, 10, 1, 12), True), corrected(7, late)))
+    assert world.at(book=cash_alone).check().approved
+    earlier = book(corrections=(corrected(1, utc(2026, 10, 1, 12), True),))
     assert world.at(book=earlier).check().approved
 
 

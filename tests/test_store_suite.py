@@ -218,6 +218,84 @@ def test_keys_are_listed_in_order_after_a_key_under_a_prefix(spec: StoreSpec) ->
     assert store.list(at("accounts/"), None) == []
 
 
+def test_keys_in_nested_folders_are_listed_by_their_bytes(spec: StoreSpec) -> None:
+    """`b-2` sorts before `b/x`, since `-` is the lower byte, and a walk gives `b/x` first."""
+    store, at = spec.open(), spec.key
+    keys = [
+        "runs/ci/b-2.json",
+        "runs/ci/b/c/y.json",
+        "runs/ci/b/x.json",
+        "runs/ci/b/z.json",
+        "runs/ci/b0.json",
+    ]
+    for key in reversed(keys):
+        _create(store, at(key), key.encode())
+    made = [at(key) for key in keys]
+    assert store.list(at("runs/ci/b"), None) == made
+    assert store.list(at("runs/ci/b/"), None) == made[1:4]
+    assert store.list(at("runs/ci/b/c/"), None) == made[1:2]
+    for n, key in enumerate(made):
+        assert store.list(at("runs/ci/b"), key) == made[n + 1 :]
+    # A key that is not stored, inside a nested folder, still says where to start.
+    assert store.list(at("runs/ci/b"), at("runs/ci/b/c/z.json")) == made[2:]
+
+
+def test_a_folder_lists_no_key_in_a_hidden_folder(spec: StoreSpec) -> None:
+    if spec.kind != "folder":
+        pytest.skip("S3 has no hidden folder")
+    store, key = spec.open(), spec.key(CASE_KEY)
+    _create(store, key, b"bytes")
+    folder = os.path.join(spec.root, key.rpartition("/")[0])
+    for hidden in (os.path.join(folder, ".hidden"), os.path.join(spec.root, ".other")):
+        os.makedirs(os.path.join(hidden, "below"))
+        for name in ("x.json", os.path.join("below", "y.json")):
+            with open(os.path.join(hidden, name), "wb") as file:
+                file.write(b"x")
+    assert store.list(key.rpartition("/")[0] + "/", None) == [key]
+    assert store.list("r", None) == store.list("runs/", None) == [key]
+
+
+def test_a_folder_at_a_relative_root_lists_the_same_keys(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ithildinruntime.adapters import FolderStore
+
+    monkeypatch.chdir(tmp_path)
+    made = FolderStore(".")
+    for key in ("a.json", "runs/b.json", "runs/c/d.json"):
+        _create(made, key, b"bytes")
+    for root in (".", tmp_path, f"{tmp_path}/", "./", f"../{tmp_path.name}"):
+        store = FolderStore(root)
+        assert store.list("runs/", None) == ["runs/b.json", "runs/c/d.json"]
+        assert store.list("runs/c/", None) == ["runs/c/d.json"]
+        assert store.list("a", None) == ["a.json"]
+
+
+def test_17000_keys_with_nothing_after_the_last_are_listed_in_under_100_ms(
+    tmp_path, capsys: pytest.CaptureFixture
+) -> None:
+    """A replay before every gate check lists the journal, and test 1 of #4 makes 17,000 entries."""
+    from ithildinruntime.adapters import FolderStore
+
+    store = FolderStore(tmp_path)
+    folder = tmp_path / "journal" / "paper-1"
+    folder.mkdir(parents=True)
+    for n in range(1, 17_001):
+        (folder / f"{n:012d}.json").touch()
+    took = []
+    for _ in range(5):
+        began = time.perf_counter()
+        found = store.list("journal/paper-1/", f"journal/paper-1/{17_000:012d}.json")
+        took.append(time.perf_counter() - began)
+        assert found == []
+    with capsys.disabled():
+        print(f"\n17,000 keys, nothing new: {min(took) * 1000:.1f} ms, the best of 5")
+    assert min(took) < 0.1
+    assert store.list("journal/paper-1/", f"journal/paper-1/{16_998:012d}.json") == [
+        f"journal/paper-1/{n:012d}.json" for n in (16_999, 17_000)
+    ]
+
+
 def test_a_missing_key_answers_the_same_way_everywhere(spec: StoreSpec) -> None:
     store, key = spec.open(), spec.key(CASE_KEY)
     for call in (lambda: store.get(key), lambda: store.head(key)):

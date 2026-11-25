@@ -11,14 +11,15 @@ journal entry is hashed and checked` says how an entry is hashed. In short:
   function that computes it, and it equals the SHA-256 of the stored bytes
   only because `core.decode` refuses bytes that are not canonical.
 - S3's refusal of an existing key keeps two writers from taking one number,
-  and `append` never renumbers an entry itself. What the refused writer does
-  next is design.md's Rule 8 and #10's to build.
+  and `record`, the one way an entry is added, never renumbers one itself. It
+  adds the entry after the view it was handed or raises `NumberTaken`, and the
+  refused writer views the journal again and decides again.
 - A reader halts on bytes that are not canonical, a key whose number differs
   from the `seq` inside it, a `format` it does not know, a link that does not
   chain and a gap in the numbers.
 
-What an entry's body holds, `in_doubt()` and `replay()` belong to #10, which
-defines the bodies they read.
+What an entry's body holds is in `entries.py`, the moves of an order in
+`orders.py`, and the book the entries replay to in `book.py`.
 """
 
 from __future__ import annotations
@@ -32,15 +33,21 @@ from datetime import datetime
 from ithildinruntime.core import (
     BlobMissing,
     BlobStore,
+    Book,
     CodecError,
     Halt,
     JournalAck,
     JournalEntry,
     KeyExists,
+    OrderRecord,
     decode,
     encode,
     journal_entry_key,
 )
+
+from .book import Step, View, after, empty
+from .entries import Record, body_of, is_writer
+from .orders import DOUBTFUL
 
 __all__ = [
     "FIRST_PREV_HASH",
@@ -65,50 +72,70 @@ _CHECKPOINTS = "checkpoints/"
 
 
 class NumberTaken(Exception):
-    """Another writer's entry already holds this number.
+    """Another writer, or another call of this one, already holds this number.
 
     The refused writer decides its step again on what it reads, as design.md's
-    `### Rule 8: the journal is the one numbered log` says, and #10 builds
-    that. Resending the refused entry under another number would record a step
-    decided on a book that has since moved.
+    `### Rule 8: the journal is the one numbered log` says. Resending the
+    refused entry under another number would record a step decided on a book
+    that has since moved.
     """
 
     def __init__(self, account: str, seq: int) -> None:
-        super().__init__(f"journal {account}: entry {seq} is another writer's")
+        super().__init__(f"journal {account}: entry {seq} is already taken")
         self.account = account
         self.seq = seq
 
 
 class Journal:
-    """One account's journal, read and appended through a `BlobStore`.
+    """One account's journal, read and added to through a `BlobStore`.
 
     Execution builds the one `OrderPath` holds and monitoring the one
     `Monitoring` holds, each from the store and the account handed to it. No
     code outside execution, monitoring, the supervisor and the `ithildin` tool
     may import this package, which tests/test_import_rule.py holds.
 
-    The `Journal` remembers the newest entry it has checked or stored, and
-    builds the next entry on it, as Rule 8 has a writer take the last number
-    it knows. A memory behind the store costs a refused create and a read
-    forward, never a wrong entry, because the store's create-only rule decides
-    who holds each number. The memory is trusted for the link to the entry
-    before, so a store that lost entries after this `Journal` checked them is
-    not caught here. The next full read halts on such a gap, and a lost newest
-    entry is caught only by the bucket's refusal of deletes, its Object Lock,
-    its alarm on a delete and the head comparison design.md proposes for #10.
+    `view` reads the journal and `record` adds an entry on a view, and no
+    writer in any worker adds one another way. An entry that halts a replay
+    ends the account, because no entry can be deleted, so `record` applies each
+    entry to its view in memory and stores nothing the fold would refuse.
 
-    One `Journal` may be shared between threads. Two that build from the same
-    memory take the same number, and the second gets `NumberTaken`.
+    The `Journal` remembers the newest entry it has checked or stored, and the
+    fold through it. A memory behind the store costs a refused create and a
+    read forward, never a wrong entry, because the store's create-only rule
+    decides who holds each number. The memory is trusted for the link to the
+    entry before, so a store that lost entries after this `Journal` checked
+    them is not caught here. The next full read halts on such a gap, and a lost
+    newest entry is caught only by the bucket's refusal of deletes, its Object
+    Lock, its alarm on a delete and the head comparison design.md proposes for
+    #154.
+
+    One `Journal` may be shared between threads. Of two that record on the same
+    view, one is acknowledged and the other gets `NumberTaken`, even where both
+    built the same bytes.
     """
 
-    def __init__(self, store: BlobStore, account: str) -> None:
+    def __init__(self, store: BlobStore, account: str, writer: str | None = None) -> None:
+        """`writer` is unique to each process start, and a reader needs none.
+
+        It is 32 lower case hex characters that name no host, path, user or
+        account. Two processes that share one build the same bytes under one
+        clock, and both hold the entry's acknowledgement.
+        """
         self._store = store
         self._account = account
+        self._writer = writer
         # The prefix every entry key of this account starts with, built by the
         # one key builder so the two cannot disagree.
         self._prefix = journal_entry_key(account, FIRST_SEQ).rpartition("/")[0] + "/"
         self._head: JournalAck | None = None
+        # The newest view, and the numbers `record` has acknowledged. One
+        # number is acknowledged once, so two calls never both hold it.
+        self._view = empty(account, self, FIRST_PREV_HASH)
+        self._acknowledged: set[int] = set()
         self._lock = threading.Lock()
+        # Held across the storage reads a view needs, so `_lock`, which an
+        # append takes, never is.
+        self._reading = threading.Lock()
 
     def head(self) -> JournalAck | None:
         """The newest entry's number and hash, or `None` for a journal with no entry.
@@ -121,17 +148,98 @@ class Journal:
             pass
         return self._known()
 
-    def build(self, body: Mapping[str, object], built_at: datetime) -> JournalEntry:
-        """The next entry for `body`, chained to the newest entry this `Journal` knows.
+    def view(self, through: int | None = None) -> View:
+        """One consistent reading of the journal, through its newest entry.
 
-        It reads the journal only when it knows no entry yet, and otherwise
-        lists nothing, so a step journals with one write. `built_at` is the
-        writer's own clock read. The entry is built once and resent unchanged
-        on a retry, so a live writer recognises its own earlier attempt by its
-        bytes. The codec refuses a body that is not
+        It reads forward from what this `Journal` has folded, to the end,
+        before it returns, so nothing is acted on ahead of a later entry's
+        check. An entry that halts stays unfolded and halts the next view too.
+        A call with nothing new costs one listing.
+
+        `through` gives the reading at an earlier entry, folded from the first
+        with nothing read past it, which is how a verdict is run again. It
+        halts past the end.
+        """
+        if through is not None:
+            return self._view_at(through)
+        with self._reading:
+            with self._lock:
+                found = self._view
+            for entry, digest in self._read_on(found.through):
+                found = self._keep(after(found, entry), digest)
+            return found
+
+    def replay(self) -> Book:
+        """The book through the newest entry."""
+        return self.view().book
+
+    def in_doubt(self) -> tuple[OrderRecord, ...]:
+        """Each order that may or may not be with the broker, in the order they were planned."""
+        return tuple(o for o in self.view().live.values() if o.state in DOUBTFUL)
+
+    def record(self, view: View, record: Record, at: datetime) -> tuple[JournalAck, View]:
+        """Add one record on `view`, and return its acknowledgement and the view after it.
+
+        The entry is the one after `view` and no other, so a step is stored
+        only on the reading it was decided on. `at` is the writer's own clock
+        read. It halts, storing nothing, where the fold would refuse the entry,
+        and where this `Journal` has no writer or did not give the view.
+        Another writer's entry at that number, or another call's, raises
+        `NumberTaken`, for the caller to view again and decide again. A store
+        that does not answer raises `StoreUnavailable`, and the same call is
+        then safe to repeat, because it builds the same bytes. Only an append
+        the store acknowledged moves the fold.
+        """
+        if not is_writer(self._writer):
+            raise Halt(f"journal {self._account}: its writer is {self._writer!r}, no writer")
+        if not isinstance(view, View) or view._owner is not self:
+            raise Halt(f"journal {self._account}: the view is not one this journal gave")
+        try:
+            entry = self._build(body_of(record, self._writer), at, view.through)
+        except CodecError as error:
+            raise Halt(
+                f"journal {self._account}: entry {view.through.seq + 1} cannot be written: {error}"
+            ) from None
+        step = after(view, entry)
+        ack = self._append(entry)
+        with self._lock:
+            if ack.seq in self._acknowledged:
+                raise NumberTaken(self._account, ack.seq)
+            self._acknowledged.add(ack.seq)
+        return ack, self._keep(step, ack.entry_hash)
+
+    def _view_at(self, through: int) -> View:
+        if isinstance(through, bool) or not isinstance(through, int) or through < 0:
+            raise ValueError(f"through {through!r} is not an entry number or 0")
+        found = empty(self._account, self, FIRST_PREV_HASH)
+        if through == 0:
+            return found
+        for entry, digest in self._read_on(found.through):
+            found = after(found, entry).keep(digest)
+            if entry.seq == through:
+                return found
+        raise Halt(f"journal {self._account}: entry {through} is missing")
+
+    def _keep(self, step: Step, entry_hash: str) -> View:
+        """The view after a stored entry, which becomes the newest where it is."""
+        made = step.keep(entry_hash)
+        with self._lock:
+            if made.through.seq > self._view.through.seq:
+                self._view = made
+        return made
+
+    def _build(
+        self, body: Mapping[str, object], built_at: datetime, on: JournalAck | None = None
+    ) -> JournalEntry:
+        """The next entry for `body`, chained to the entry `on`.
+
+        With no `on` it is the newest entry this `Journal` knows, which reads
+        the journal only when it knows no entry yet. The entry is built once
+        and resent unchanged on a retry, so a live writer recognises its own
+        earlier attempt by its bytes. The codec refuses a body that is not
         plain JSON values, here rather than at the write.
         """
-        head = self._known() or self.head()
+        head = on or self._known() or self.head()
         entry = JournalEntry(
             seq=head.seq + 1 if head else FIRST_SEQ,
             format=JOURNAL_FORMAT,
@@ -142,7 +250,7 @@ class Journal:
         encode(entry)
         return entry
 
-    def append(self, entry: JournalEntry) -> JournalAck:
+    def _append(self, entry: JournalEntry) -> JournalAck:
         """Store `entry` at its number's key, and return its number and hash.
 
         It halts, storing nothing, on an entry that does not chain to the entry
@@ -151,7 +259,7 @@ class Journal:
         existing key holding these same bytes is this writer's own earlier
         attempt whose answer was lost, so the append is done. One holding other
         bytes raises `NumberTaken`, once this `Journal` has read forward past
-        it, so its next `build` takes the next free number. A key refused as
+        it, so its next entry takes the next free number. A key refused as
         existing and then missing halts, because the bucket refuses deletes. A
         store that does not answer raises `StoreUnavailable`, and resending the
         same entry is then safe.
@@ -191,13 +299,17 @@ class Journal:
         It halts on bytes that are not canonical, a key whose number differs
         from the `seq` inside it, a format it does not know, a link that does
         not chain, a gap in the numbers and a key that is not an entry's.
-        Checkpoints, which #10 writes under the same prefix, are skipped.
+        Checkpoints, which #154 writes under the same prefix, are skipped.
         """
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:
             raise ValueError(f"after {after!r} is not an entry number or 0")
-        expected = self._hash_of(after)
-        start = journal_entry_key(self._account, after) if after else None
-        seq = after
+        for entry, _ in self._read_on(JournalAck(after, self._hash_of(after))):
+            yield entry
+
+    def _read_on(self, on: JournalAck) -> Iterator[tuple[JournalEntry, str]]:
+        """Every entry after `on` with its hash. `on`'s is trusted as the first one's link."""
+        seq, expected = on.seq, on.entry_hash
+        start = journal_entry_key(self._account, seq) if seq else None
         for key in self._store.list(self._prefix, start):
             if not key.startswith(self._prefix):
                 raise Halt(f"journal {self._account}: the listing returned {key}")
@@ -222,7 +334,7 @@ class Journal:
             seq = number
             expected = entry.hash()
             self._advance(JournalAck(seq=seq, entry_hash=expected))
-            yield entry
+            yield entry, expected
 
     def _check_link(self, entry: JournalEntry) -> None:
         if isinstance(entry.seq, bool) or not isinstance(entry.seq, int) or entry.seq < FIRST_SEQ:

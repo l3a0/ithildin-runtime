@@ -6,6 +6,7 @@ docs/architecture/05-building-blocks.md's `## Package layout and the import
 rule` draws that, and tests/test_import_rule.py holds it.
 """
 
+from .book import Dispute, View
 from .chain import (
     FIRST_PREV_HASH,
     FIRST_SEQ,
@@ -14,12 +15,17 @@ from .chain import (
     Journal,
     NumberTaken,
 )
+from .entries import *  # noqa: F403
+from .entries import __all__ as _entries
 
 __all__ = [
     "FIRST_PREV_HASH",
     "FIRST_SEQ",
     "FORMATS",
     "JOURNAL_FORMAT",
+    "Dispute",
     "Journal",
     "NumberTaken",
+    "View",
+    *_entries,
 ]

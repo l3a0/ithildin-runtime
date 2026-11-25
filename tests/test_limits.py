@@ -270,9 +270,18 @@ SHARED: dict[str, tuple[dict[str, object], str]] = {
             ("infinite", d("Infinity"), ".*not a finite decimal"),
             ("an-int", 5, "5, not a finite decimal"),
             ("a-float", 5.0, "5.0, not a finite decimal"),
-            ("negative", d("-0.0001"), "-0.0001, below zero"),
+            (
+                "negative",
+                d("-0.0001"),
+                f"-0.0001, {'below' if name == 'max_gross' else 'not above'} zero",
+            ),
         )
     },
+    "loss_stop-zero": ({"loss_stop": d(0)}, "loss_stop is 0, not above zero"),
+    "loss_stop-a-zero-of-four-places": (
+        {"loss_stop": d("0.0000")},
+        "loss_stop is 0.0000, not above zero",
+    ),
     **{
         f"{name}-{kind}": ({name: {GLD: value, USO: LOOSE}}, f"{name} of GLD is {shown}")
         for name in ("max_order_qty", "max_position")
@@ -406,7 +415,8 @@ PARSED: dict[str, tuple[dict[str, object], str]] = {
         )
     },
     "max_gross": ({"max_gross": "-1"}, "max_gross is -1, below zero"),
-    "loss_stop": ({"loss_stop": "-1"}, "loss_stop is -1, below zero"),
+    "loss_stop": ({"loss_stop": "-1"}, "loss_stop is -1, not above zero"),
+    "loss_stop-zero": ({"loss_stop": "0"}, "loss_stop is 0, not above zero"),
     "max_open_orders": ({"max_open_orders": -1}, "max_open_orders is -1, below zero"),
     "moc_cutoff": ({"moc_cutoff": -1}, "moc_cutoff is -1, below zero"),
     "max_order_qty": ({"max_order_qty": {"GLD": "4"}}, "max_order_qty of GLD is 4, below its"),
@@ -424,7 +434,12 @@ def test_a_blob_whose_value_is_out_of_range_halts_as_it_is_read(name: str) -> No
 
 
 def test_5_each_end_of_each_range_is_allowed() -> None:
-    zero = {"max_gross": d(0), "loss_stop": d(0), "max_open_orders": 0, "moc_cutoff": 0}
+    zero = {
+        "max_gross": d(0),
+        "loss_stop": d("0.0001"),
+        "max_open_orders": 0,
+        "moc_cutoff": 0,
+    }
     none = {name: {GLD: d(0), USO: d(0)} for name in ("max_order_qty", "max_position")}
     tightened = tighten(
         constraints(**zero, **none, max_net=d(0)), caps(**zero, **none), valuation()

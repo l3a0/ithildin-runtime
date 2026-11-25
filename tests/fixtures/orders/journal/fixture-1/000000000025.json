@@ -1,0 +1,1 @@
+{"body":{"decision":3,"kind":"intent","order":{"client_order_id":"ith-other-one.2-20261001T194000Z-06","instrument":"GLD","qty":"-3","strategy":"other-one.2","time_in_force":"day","type":"market"},"writer":"0123456789abcdef0123456789abcdef"},"built_at":"2026-10-01T19:40:25.000000Z","format":1,"prev_hash":"4e002b0386d6511b850134f0028c607344e72bed5413d64ae60af43bc5d12a46","seq":25}

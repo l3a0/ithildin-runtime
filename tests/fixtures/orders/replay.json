@@ -1,0 +1,86 @@
+{
+  "through": 44,
+  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 USO at 70.123456 on the order o-9, filled 2026-10-01T19:40:25+00:00, and entry 45 holds 8 USO at 70.124 on the order o-9, filled 2026-10-01T19:40:25+00:00",
+  "cash": "97440.887352",
+  "positions": {
+    "chan_bollinger": {"GLD": "10", "USO": "6.5"}
+  },
+  "open": {
+    "ith-chan_bollinger-20261001T194000Z-09": "0.000000001",
+    "ith-chan_bollinger-20261001T194000Z-11": "9",
+    "ith-other-one.2-20261001T194000Z-06": "-3",
+    "ith-other-one.2-20261001T194000Z-07": "5",
+    "ith-other-one.2-20261001T194000Z-10": "-2"
+  },
+  "in_doubt": ["GLD", "SPY"],
+  "orders": {
+    "ith-chan_bollinger-20261001T194000Z-01": {
+      "state": "Filled",
+      "filled": "10",
+      "broker": "sim-o-1",
+      "entries": "4:intent 5:verdict 6:sending 7:ack 8:fill 9:fill"
+    },
+    "ith-chan_bollinger-20261001T194000Z-02": {
+      "state": "Expired",
+      "filled": "-1.5",
+      "broker": "o-2",
+      "entries": "10:intent 11:verdict 12:sending 13:in_doubt 14:ack 15:fill 16:expired"
+    },
+    "ith-chan_bollinger-20261001T194000Z-04": {
+      "state": "Abandoned",
+      "filled": "0",
+      "broker": null,
+      "entries": "19:intent 20:abandoned"
+    },
+    "ith-chan_bollinger-20261001T194000Z-08": {
+      "state": "Intended",
+      "filled": "0",
+      "broker": null,
+      "entries": "30:intent"
+    },
+    "ith-chan_bollinger-20261001T194000Z-09": {
+      "state": "PartlyFilled",
+      "filled": "8",
+      "broker": "o-9",
+      "entries": "31:intent 32:verdict 33:sending 34:ack 35:fill"
+    },
+    "ith-chan_bollinger-20261001T194000Z-11": {
+      "state": "Acknowledged",
+      "filled": "0",
+      "broker": "o-11",
+      "entries": "40:intent 41:verdict 42:sending 43:ack"
+    },
+    "ith-other-one.2-20261001T194000Z-03": {
+      "state": "Refused",
+      "filled": "0",
+      "broker": null,
+      "entries": "17:intent 18:verdict"
+    },
+    "ith-other-one.2-20261001T194000Z-05": {
+      "state": "Rejected",
+      "filled": "0",
+      "broker": null,
+      "entries": "21:intent 22:verdict 23:sending 24:rejected"
+    },
+    "ith-other-one.2-20261001T194000Z-06": {
+      "state": "Sending",
+      "filled": "0",
+      "broker": null,
+      "entries": "25:intent 26:verdict 27:sending"
+    },
+    "ith-other-one.2-20261001T194000Z-07": {
+      "state": "Approved",
+      "filled": "0",
+      "broker": null,
+      "entries": "28:intent 29:verdict"
+    },
+    "ith-other-one.2-20261001T194000Z-10": {
+      "state": "InDoubt",
+      "filled": "0",
+      "broker": null,
+      "entries": "36:intent 37:verdict 38:sending 39:in_doubt"
+    }
+  },
+  "fills": ["sim-f-1", "sim-f-2", "f::2", "f9"],
+  "newest_sent_at": "2026-10-01T19:40:42+00:00"
+}

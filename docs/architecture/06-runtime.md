@@ -1136,6 +1136,8 @@ stateDiagram-v2
 `Refused` is the platform's own risk gate saying no. `Rejected` is the broker
 saying no.
 
+`journal/orders.py` holds the moves built so far as one table, and an entry that asks for a move it does not hold halts, naming the entry, the order and its state. The moves into and out of `Lost` arrive with [#147](https://github.com/l3a0/ithildin-runtime/issues/147), and those of `CancelSent` and `Cancelled` with [#149](https://github.com/l3a0/ithildin-runtime/issues/149).
+
 ### How an order leaves `InDoubt`
 
 `InDoubt` is the state a crash between sending and the ack lands in. It lets the journal say "the platform does not know whether the broker has this order", rather than leaving the next decision to guess.

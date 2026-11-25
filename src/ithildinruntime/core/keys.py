@@ -11,8 +11,9 @@ an order in doubt, have no builder here yet.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
+from .halt import Halt
 from .names import RECOVER_STAGE, VALUATION_OUTPUT, is_name, is_sha256
 from .records import Mode
 
@@ -36,12 +37,14 @@ __all__ = [
     "load_sent_key",
     "loss_stop_key",
     "off_switch_key",
+    "order_id",
     "output_key",
     "override_key",
     "pin_change_key",
     "plan_key",
     "plan_lease_key",
     "promotion_record_key",
+    "read_order_id",
     "release_key",
     "release_pin_key",
     "restart_key",
@@ -65,6 +68,11 @@ _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._]*")
 _OUTPUT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _RESERVED = re.compile(r"result|claim|broker-read-[0-9]+")
 _DIGEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]*")
+_ORDER_ID = re.compile(r"ith-(.+)-([0-9]{8}T[0-9]{6}Z)-([0-9]{2})")
+# Alpaca's create order page says a client order id has at most this many characters
+# (https://docs.alpaca.markets/reference/postorder, read 2026-11-25).
+_ORDER_ID_LIMIT = 128
+_ORDER_PLACES = 99
 _RUN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{4}-[0-9]{2}-[0-9]{2})?")
 
 
@@ -149,6 +157,44 @@ def decision_part(at: datetime) -> str:
     if at.microsecond:
         raise ValueError(f"a decision time {at.isoformat()} carries a fraction of a second")
     return at.strftime("%Y%m%dT%H%M%SZ")
+
+
+def order_id(strategy: str, decision_at: datetime, place: int) -> str:
+    """The platform's stamp: an order's strategy, its decision and its place in the plan.
+
+    docs/design.md's `### Each account has its own journal, and the broker sees
+    which strategy sent an order` says what it is for.
+    """
+    if not is_name(strategy):
+        raise Halt(f"strategy {strategy!r} cannot be part of an order id")
+    if type(place) is not int or not 1 <= place <= _ORDER_PLACES:
+        raise Halt(f"an order's place is {place!r}, not a whole number from 1 to {_ORDER_PLACES}")
+    try:
+        decision = decision_part(decision_at)
+    except ValueError as error:
+        raise Halt(f"an order id names no decision: {error}") from None
+    made = f"ith-{strategy}-{decision}-{place:02d}"
+    if len(made) > _ORDER_ID_LIMIT:
+        raise Halt(f"the order id {made} has {len(made)} characters, past {_ORDER_ID_LIMIT}")
+    return made
+
+
+def read_order_id(value: str) -> tuple[str, datetime, int]:
+    """The strategy, the decision time and the place a stamp names.
+
+    It is read from the right, since a strategy's name may hold `-`, and
+    written again to show it is a stamp `order_id` could have written.
+    """
+    found = _ORDER_ID.fullmatch(value) if isinstance(value, str) else None
+    if found is not None:
+        strategy, decision, place = found.groups()
+        try:
+            at = datetime.strptime(decision, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+            if order_id(strategy, at, int(place)) == value:
+                return strategy, at, int(place)
+        except (ValueError, Halt):
+            pass
+    raise Halt(f"{value!r} is not an order id the platform writes")
 
 
 def timestamp_part(at: datetime) -> str:

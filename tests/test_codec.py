@@ -68,10 +68,14 @@ def _fixture_values() -> dict[str, object]:
             correction_id=None,
             broker_order_id="b1",
             client_order_id="c1",
+            instrument=InstrumentId("USO"),
             qty=core.from_received("1.10"),
             price=core.from_received(123.45678),
+            at_text="2026-11-02T20:40:00Z",
             at=AT,
             received_at=AT + timedelta(microseconds=7),
+            excess_places=("price",),
+            basis=None,
         ),
     }
 

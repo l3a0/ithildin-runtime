@@ -1,0 +1,1 @@
+{"body":{"decision":3,"kind":"intent","order":{"client_order_id":"ith-other-one.2-20261001T194000Z-05","instrument":"SPY","qty":"1","strategy":"other-one.2","time_in_force":"day","type":"market"},"writer":"0123456789abcdef0123456789abcdef"},"built_at":"2026-10-01T19:40:21.000000Z","format":1,"prev_hash":"306c8a4465e70f40abff4fe8a6080995770d48abbe22f6dc28826e12930402e7","seq":21}

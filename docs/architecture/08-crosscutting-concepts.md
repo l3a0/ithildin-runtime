@@ -274,7 +274,9 @@ Six writers can append.
 
 Only execution, monitoring, the supervisor and the `ithildin` tool may import the `journal` package, so the rollback's credential and the approved drill role may write their entries only by running one of them. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) settles which, and how the drill's pull carries its run id and its clear stays bound to the tag of its own pull, as [Rule 10](../design.md#rule-10-the-kill-switch-is-a-blob) requires.
 
-S3's refusal of an existing key is what keeps two of them from taking one number. `Journal.append` halts, storing nothing, on an entry that does not chain to the stored entry before it, and it never renumbers an entry. Where the key holds the same bytes, the append is the writer's own earlier attempt and is done, and where it holds other bytes, the append raises `NumberTaken`. That refusal is two writers racing for a number, so it raises none of the alarms on a create-only write whose stored bytes differ. As this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), the writer that is refused then reads the new entries, decides its step again, and takes the next number.
+`Journal.record` is the one way any of them adds an entry, as [Nothing is stored that a replay would refuse](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) says. S3's refusal of an existing key is what keeps two of them from taking one number. `record` halts, storing nothing, on an entry the fold refuses or one that does not chain to the stored entry before it, and it never renumbers an entry. Where the key holds the same bytes, the append is the writer's own earlier attempt and is done, and where it holds other bytes, `record` raises `NumberTaken`. That refusal is two writers racing for a number, so it raises none of the alarms on a create-only write whose stored bytes differ. The writer that is refused then views the journal again, decides its step again, and takes the next number, which [#143](https://github.com/l3a0/ithildin-runtime/issues/143) builds for an order.
+
+Who may write which kind is held by two things, and neither is the bucket's grant, which admits a key under `journal/<account>/` whatever the body says. Only `record` adds an entry in this code, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) adds the test that only its order path names the kinds an order moves by. [What a journal entry's body holds](#what-a-journal-entrys-body-holds-and-how-a-retry-is-recognised) names each kind's writer. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds the question of what a prefix grant cannot limit.
 
 Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
@@ -451,7 +453,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | Field | Form | Holds |
 | --- | --- | --- |
 | `max_order_qty`, `max_position` | An object of one decimal string per instrument, the same instruments in both, each named in at most 80 printable characters | Shares, the first at or above the second |
-| `max_gross`, `loss_stop` | A decimal string | Dollars |
+| `max_gross`, `loss_stop` | A decimal string | Dollars. The second is above zero |
 | `max_open_orders` | A JSON integer | Orders |
 | `moc_cutoff` | A JSON integer | Minutes before the close |
 | `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
@@ -492,7 +494,43 @@ Every journal format ever written stays readable by every later release, because
 
 #### What a journal entry's body holds, and how a retry is recognised
 
-The `body` holds a `kind`, such as `intent`, `sending`, `fill`, `outside_order`, `outside_fill`, `unmatched_order`, `unmatched_fill`, `cancel`, `sort`, `sort_done`, `override`, `clear` or `switch_pull`, and that kind's fields.
+The `body` holds a `kind`, the `writer` that built the entry, and that kind's fields. It is the record's own canonical JSON object with `kind` and `writer` added, so each decimal, time and byte string has the codec's one form.
+
+##### The kinds of entry
+
+**Table:** The kinds built so far, who writes each, and what it records
+
+| Kind | Fields | Written by | What it records |
+| --- | --- | --- | --- |
+| `opening` | `account`, `cash` | Execution for a backtest, by [#146](https://github.com/l3a0/ithildin-runtime/issues/146). A person elsewhere, by this doc's proposal for [#142](https://github.com/l3a0/ithildin-runtime/issues/142) | The account's opening cash, flat. An account's entry 1 and no other |
+| `read` | `stage`, `decision_at`, `ref`, `at` | Execution | The stored file that holds a broker read, named before any value in it is used, and when the read was made |
+| `decision` | `deployment`, `run`, `decision_at`, `targets`, `orders`, `off`, `inputs`, `read`, `synced` | Execution | Every strategy's whole target, the planned orders in order, each strategy that was off, each input by name, and the entries it was planned on and synced through |
+| `intent` | `decision`, `order` | Execution's order path | One planned order, under its `decision` entry's number |
+| `verdict` | `client_order_id`, `verdict`, `now`, `stop`, `close_entry`, `book`, `caps`, `caps_sha256`, `snapshot`, `constraints`, `valuation` | Execution's order path | The gate's answer and all it was handed, so the check can be run again |
+| `abandoned` | `client_order_id`, `reason` | Execution's order path | Nothing was sent, and why |
+| `sending` | `client_order_id` | Execution's order path | The order may leave now |
+| `ack` | `client_order_id`, `broker_order_id`, `raw`, `cut`, `received_at` | Execution's order path | The broker has the order, with the bytes it sent |
+| `rejected` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution | The broker refused the order |
+| `in_doubt` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution's order path | No answer that settles the order, or one this release does not read. `raw` is null where none came |
+| `fill` | `fill`, `read` | Execution | One fill, and the number of the `read` entry whose file holds it |
+| `disputed_fill` | `fill`, `read` | Execution | A repeat of a fill whose content differs, kept beside the first |
+| `expired` | `client_order_id`, `filled`, `raw`, `cut`, `received_at` | Execution | The broker says the order ended with a part unfilled |
+
+A `verdict` keeps the caps as the canonical bytes of the parsed `HardCaps`, with the SHA-256 of the blob they came from, because the owner rewrites that blob. The fold never decodes them, so a cap added later leaves old entries readable, and the blob's other sections stay out of entries nobody can delete.
+
+The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull` and the outside and unmatched entries, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format.
+
+##### What holds a kind still
+
+1. **A kind's fields never change**, and neither do those of a `core` type inside it, an enumeration's members or a check its constructor makes, because any of them can make every old entry unreadable. A changed shape is a new kind under a new name, and every kind ever written stays readable. Until the first journal outside a test is opened, a change rewrites that kind's committed entry instead. `tests/fixtures/orders` holds a committed journal of every kind.
+2. **A body of an unknown kind, or whose fields are not its kind's, halts** with the entry's number and the kind. Skipping one would build a book on part of the record.
+3. **Three bounds hold what came from a broker.** `raw` has at most 65,536 bytes, and a longer answer keeps its first part with `cut` true. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A fill's price is above zero and its shares are not zero, and neither are a planned order's.
+
+##### What the writer is for
+
+The `writer` is 32 lower case hex characters, drawn afresh at each process start in every mode, which name no host, path, user or account. So two processes never build the same bytes. Without it, two under the history clock did, and both held one `sending` entry's acknowledgement and called the broker. Test 1 alone passes a fixed one, because it compares bytes. The test that compares two instances byte for byte leaves the `writer` out and computes the hashes again around it, as [How a component learns of a change](../design.md#how-a-component-learns-of-a-change) says.
+
+##### How a retry is recognised
 
 A writer builds an entry once and resends the same bytes on a retry, so a live process recognises its own earlier attempt by hash. A process that restarted builds new bytes, so before it appends it checks the field that names the step against the journal instead.
 
@@ -502,7 +540,8 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | --- | --- |
 | `intent` and `sending` | The client order id |
 | `cancel` | The broker's order id and what tells this cancel from an earlier one on the same order, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names that key. A `cancel` entry with no journaled answer is a cancel whose answer is lost, so a restarted writer looks it up before any new cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
-| `fill` and `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
+| `fill` | The broker's fill id, with a repeat of the same content skipped and a differing one journaled as `disputed_fill`, after which the book halts |
+| `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id |
 | An outside entry with no order or fill | The broker's own record id |

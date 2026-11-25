@@ -1,0 +1,342 @@
+"""What a journal entry holds: one frozen dataclass per kind, and the way to a body and back.
+
+docs/architecture/08-crosscutting-concepts.md's `#### What a journal entry's
+body holds, and how a retry is recognised` lists the kinds and who writes
+each. In short:
+
+- A body is the record's canonical JSON object with two more members, `kind`
+  and `writer`, so each decimal, time and byte string has the codec's one form
+  and `JournalEntry.body` stays plain JSON values.
+- A kind's fields never change, and neither do those of a `core` type inside
+  one, an enum's members or a check its constructor makes, because any of them
+  can make every old entry undecodable. A changed shape is a new kind under a
+  new name, and every kind ever written stays readable. tests/fixtures/orders
+  holds one committed entry per kind.
+- A body that names no kind this release knows, or whose fields are not that
+  kind's, halts. A skipped entry would be a book built on part of the record.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from types import MappingProxyType
+
+from ithildinruntime.core import (
+    BlobRef,
+    CodecError,
+    Fill,
+    Halt,
+    JournalEntry,
+    Money,
+    OrderIntent,
+    Quantity,
+    StopState,
+    TargetPortfolio,
+    Verdict,
+    decode,
+    encode,
+)
+
+__all__ = [
+    "KINDS",
+    "RAW_LIMIT",
+    "AbandonedEntry",
+    "AckEntry",
+    "DecisionEntry",
+    "DisputedFillEntry",
+    "ExpiredEntry",
+    "FillEntry",
+    "InDoubtEntry",
+    "IntentEntry",
+    "OpeningEntry",
+    "ReadEntry",
+    "Record",
+    "RejectedEntry",
+    "SendingEntry",
+    "VerdictEntry",
+    "body_of",
+    "is_writer",
+    "kind_of",
+    "record_of",
+]
+
+# The most bytes of a broker's answer an entry keeps. A longer one keeps its first part, with
+# `cut` true.
+RAW_LIMIT = 65_536
+_WRITER = re.compile(r"[0-9a-f]{32}")
+_BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
+# How much of a refused id a halt shows, since its reason is stored and sent.
+_SHOWN = 80
+
+
+@dataclass(frozen=True)
+class OpeningEntry:
+    """The account's opening cash, flat. An account's entry 1 and no other."""
+
+    account: str
+    cash: Money
+
+
+@dataclass(frozen=True)
+class ReadEntry:
+    """The stored file that holds a broker read, named before any value in it is used.
+
+    `at` is when the read was made.
+    """
+
+    stage: str
+    decision_at: datetime
+    ref: BlobRef
+    at: datetime
+
+
+@dataclass(frozen=True)
+class DecisionEntry:
+    """The whole target of every strategy and the orders planned from it, in order.
+
+    - `off` names each strategy that was off.
+    - `inputs` maps `snapshot`, `constraints`, `valuation`, `targets` and each
+      strategy's `forecast/<strategy>` and `schedule/<strategy>` to its file.
+    - `read` is the number of the `read` entry it was planned on, and `synced`
+      that of the entry it was synced through.
+    """
+
+    deployment: str
+    run: str
+    decision_at: datetime
+    targets: tuple[TargetPortfolio, ...]
+    orders: tuple[OrderIntent, ...]
+    off: tuple[str, ...]
+    inputs: Mapping[str, BlobRef]
+    read: int
+    synced: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
+
+
+@dataclass(frozen=True)
+class IntentEntry:
+    """One planned order, under its `decision` entry's number."""
+
+    decision: int
+    order: OrderIntent
+
+
+@dataclass(frozen=True)
+class VerdictEntry:
+    """The gate's answer, and all it was handed, so the check can be run again.
+
+    - `now` is the clock reading, `stop` the loss stop's state and
+      `close_entry` the number of the entry of a close after a broker's trade,
+      or `None`.
+    - `book` is the number of the entry before this one, whose view holds the
+      book the gate was handed.
+    - `caps` is the canonical bytes of the parsed `HardCaps`, and
+      `caps_sha256` the SHA-256 of the blob it was parsed from. The owner
+      rewrites that blob, so its values are kept here. They are bytes the fold
+      never decodes, so a cap added later leaves old entries readable.
+    """
+
+    client_order_id: str
+    verdict: Verdict
+    now: datetime
+    stop: StopState
+    close_entry: int | None
+    book: int
+    caps: bytes
+    caps_sha256: str
+    snapshot: BlobRef
+    constraints: BlobRef
+    valuation: BlobRef
+
+
+@dataclass(frozen=True)
+class AbandonedEntry:
+    """Nothing was sent, and why."""
+
+    client_order_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class SendingEntry:
+    """The order may leave now."""
+
+    client_order_id: str
+
+
+@dataclass(frozen=True)
+class AckEntry:
+    """The broker has the order, with the bytes it sent."""
+
+    client_order_id: str
+    broker_order_id: str
+    raw: bytes
+    cut: bool
+    received_at: datetime
+
+
+@dataclass(frozen=True)
+class RejectedEntry:
+    """The broker refused the order."""
+
+    client_order_id: str
+    reason: str
+    raw: bytes
+    cut: bool
+    received_at: datetime
+
+
+@dataclass(frozen=True)
+class InDoubtEntry:
+    """No answer that settles the order, or one this release does not read.
+
+    `raw` is `None` where no answer came.
+    """
+
+    client_order_id: str
+    reason: str
+    raw: bytes | None
+    cut: bool
+    received_at: datetime
+
+
+@dataclass(frozen=True)
+class FillEntry:
+    """One fill, and the number of the `read` entry whose file holds it."""
+
+    fill: Fill
+    read: int
+
+
+@dataclass(frozen=True)
+class DisputedFillEntry:
+    """A repeat of a fill whose content differs, kept beside the first."""
+
+    fill: Fill
+    read: int
+
+
+@dataclass(frozen=True)
+class ExpiredEntry:
+    """The broker says the order ended with a part unfilled. `filled` is signed as fills are."""
+
+    client_order_id: str
+    filled: Quantity
+    raw: bytes
+    cut: bool
+    received_at: datetime
+
+
+Record = (
+    OpeningEntry
+    | ReadEntry
+    | DecisionEntry
+    | IntentEntry
+    | VerdictEntry
+    | AbandonedEntry
+    | SendingEntry
+    | AckEntry
+    | RejectedEntry
+    | InDoubtEntry
+    | FillEntry
+    | DisputedFillEntry
+    | ExpiredEntry
+)
+
+KINDS: Mapping[str, type] = MappingProxyType(
+    {
+        "opening": OpeningEntry,
+        "read": ReadEntry,
+        "decision": DecisionEntry,
+        "intent": IntentEntry,
+        "verdict": VerdictEntry,
+        "abandoned": AbandonedEntry,
+        "sending": SendingEntry,
+        "ack": AckEntry,
+        "rejected": RejectedEntry,
+        "in_doubt": InDoubtEntry,
+        "fill": FillEntry,
+        "disputed_fill": DisputedFillEntry,
+        "expired": ExpiredEntry,
+    }
+)
+_NAMES: Mapping[type, str] = MappingProxyType({kind: name for name, kind in KINDS.items()})
+
+
+def kind_of(record: object) -> str:
+    """The name a record's kind is written under."""
+    name = _NAMES.get(type(record))
+    if name is None:
+        raise TypeError(f"a {type(record).__name__} is no journal entry's record")
+    return name
+
+
+def is_writer(value: object) -> bool:
+    """Whether `value` names a writer: 32 lower case hex characters, which say nothing else."""
+    return isinstance(value, str) and _WRITER.fullmatch(value) is not None
+
+
+def body_of(record: Record, writer: str) -> dict[str, object]:
+    """A record as an entry's body: its canonical JSON object, its kind's name and its writer."""
+    name = kind_of(record)
+    return {**json.loads(encode(record)), "kind": name, "writer": writer}
+
+
+def record_of(entry: JournalEntry) -> Record:
+    """The record an entry's body holds, or a halt naming the entry and its kind."""
+    body = dict(entry.body)
+    name, writer = body.pop("kind", None), body.pop("writer", None)
+    kind = KINDS.get(name) if isinstance(name, str) else None
+    if kind is None:
+        raise Halt(f"entry {entry.seq} is of the kind {name!r}, which this release does not read")
+    if not is_writer(writer):
+        raise Halt(f"entry {entry.seq}, of the kind {name}, has the writer {writer!r}, no writer")
+    try:
+        record = decode(encode(body), kind)
+    except CodecError as error:
+        raise Halt(f"entry {entry.seq} is not of its kind {name}: {error}") from None
+    for past in _past_bounds(record):
+        raise Halt(f"entry {entry.seq} is past a bound of its kind {name}: {past}")
+    return record
+
+
+def _past_bounds(record: Record) -> Iterator[str]:
+    """Each bound of a kind's fields that this record is past."""
+    raw = getattr(record, "raw", None)
+    if raw is not None and len(raw) > RAW_LIMIT:
+        yield f"raw has {len(raw)} bytes, more than {RAW_LIMIT}"
+    match record:
+        case AckEntry():
+            yield from _broker_ids(record.broker_order_id)
+        case FillEntry(fill) | DisputedFillEntry(fill):
+            yield from _broker_ids(fill.fill_id, fill.broker_order_id)
+            if fill.price <= 0:
+                yield f"the fill {fill.fill_id} has a price of {fill.price}, not above zero"
+            if fill.qty == 0:
+                yield f"the fill {fill.fill_id} is for zero shares"
+            if isinstance(record, FillEntry) and fill.correction_id is not None:
+                yield f"the fill {fill.fill_id} is the correction {fill.correction_id!r}"
+        case DecisionEntry():
+            yield from _shares(*record.orders)
+        case IntentEntry():
+            yield from _shares(record.order)
+        case _:
+            pass
+
+
+def _broker_ids(*values: str) -> Iterator[str]:
+    for value in values:
+        if not _BROKER_ID.fullmatch(value):
+            yield f"{value[:_SHOWN]!r} is not a broker's id"
+
+
+def _shares(*orders: OrderIntent) -> Iterator[str]:
+    for order in orders:
+        if order.qty == 0:
+            yield f"the order {order.client_order_id} is for zero shares"
