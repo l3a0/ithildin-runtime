@@ -200,6 +200,20 @@ def test_1_two_changes_give_two_reasons(one_lake: Path, tmp_path: Path) -> None:
     )
 
 
+def test_1_a_change_across_a_missing_session_halts_beside_it(tmp_path: Path) -> None:
+    """The bars either side of a gap are consecutive bars, so the missing session and the
+    change are each a reason."""
+    gap = DAYS[AT - 1 : AT + 1]
+    cut = [
+        m._replace(closes={d: c for d, c in m.closes.items() if d not in gap}) for m in TWO_SERIES
+    ]
+    reading = source(made.build(tmp_path / "lake", cut), tmp_path).read(close(DAYS[AT + 2]))
+    stored = decode(encode(reading.snapshot), Snapshot)
+    for reasons in (reading.halts, judge(stored, (GLD, USO))):
+        assert [r for r in reasons if "two series" in r] == list(crossing(AT - 2, AT + 1))
+        assert len([r for r in reasons if " missing " in r]) == 2
+
+
 def test_1_a_change_comes_after_a_contradiction_and_an_unstated_kind(
     two_lake: Path, tmp_path: Path
 ) -> None:
@@ -263,11 +277,12 @@ def test_2_captured_bars_throughout_add_no_halt(tmp_path: Path) -> None:
 # 3. The decisions a lookback crosses the change on.
 
 
-def crossing() -> tuple[str, ...]:
+def crossing(before: int = AT - 1, after: int = AT) -> tuple[str, ...]:
+    """The reasons of both legs where these sessions' bars are either side of the change."""
     return tuple(
         reason(
-            DAYS[AT - 1],
-            SEAM,
+            DAYS[before],
+            DAYS[after],
             f"adjusted from {made.ONE.format(t)} as of 2012-04-10",
             f"adjusted from {made.TWO.format(t)} as of 2026-11-22",
             t,

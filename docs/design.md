@@ -2450,11 +2450,11 @@ The price is six things.
 1. Every decision whose lookback crosses a change halts, which is 59 sessions of
    decisions at a lookback of 60, and a change whose scales agree is no exception.
    With that import, GLD and USO change at 2012-04-10, at 2026-09-04, where an
-   import from Schwab takes over, and at 2026-11-02, where capture begins. So a
-   decision on them at close−20 halts on this from 2026-09-08 to 2027-01-28. On
-   2027-01-29 a lookback first holds captured bars alone, which this halt passes.
-   Two others then stop the decision, data's on their unstated price kind and the
-   alpha model's on their `raw` basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
+   import from Schwab takes over, and at 2026-11-02, where capture begins. For the
+   last two, a decision on them at close−20 halts on this from 2026-09-08 to
+   2027-01-28. On 2027-01-29 a lookback first holds captured bars alone, which this
+   halt passes, and other halts stand, such as data's on their unstated price kind
+   and the alpha model's on their `raw` basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
    window is read, and may lift this halt for a change it can show keeps the scale.
 2. A position held when a later change arrives is held through those decisions.
    No strategy exit goes out, and the day's loss is not tested, because the send
@@ -2468,7 +2468,7 @@ The price is six things.
 4. A backtest that holds a position across a change values it on the new scale
    once the decisions resume, so V jumps between two decisions. The halts make
    such a run visible and do not make it right, and it is not quoted.
-5. This halt does not see a split among captured bars, which are one series. The
+5. This halt does not see a split inside one series, such as captured bars. The
    rule that [a split reads as neither a gain nor a
    loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
    holds that case, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46)
