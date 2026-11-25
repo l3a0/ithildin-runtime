@@ -9,15 +9,18 @@ and the strategy's file, and it reads no clock and no mode.
 Its handler does three things, in order.
 
 1. **It reads data's result and the snapshot it lists**, through
-   `core.read_snapshot`. A result that holds a halt is passed on, as
+   `core.StageDecision`. A result that holds a halt is passed on, as
    docs/design.md's `### Rule 7: a halt is passed on` says: the stage's own
    result is a halt naming data's result as its cause, and no schedule is
    stored.
 2. **It asks the model for the schedule.** A configuration the model refuses
-   becomes the stage's own halt, whose header names data's result and the
-   snapshot, and whose `cause` is empty because nothing upstream halted.
+   becomes the stage's own halt, whose `cause` is empty because nothing
+   upstream halted.
 3. **It stores the schedule, then returns the result**, which the loop stores
    last.
+
+A halt at any of the three becomes the stage's result, whose header names
+each blob read and accepted by then.
 
 The entry point hands in the stage's name, its kind and the stage it reads, as
 the stage table declares them.
@@ -30,19 +33,13 @@ from datetime import datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
-    BlobHeader,
-    BlobRef,
     CostModel,
     CostSchedule,
     DecisionResult,
     Halt,
-    HaltRecord,
-    OutputFile,
     StageKind,
+    StageRun,
     Storage,
-    encode_output,
-    output_key,
-    read_snapshot,
 )
 
 __all__ = ["COMPONENT", "SCHEDULE", "CostStage"]
@@ -76,50 +73,24 @@ class CostStage:
         config_hashes: Mapping[str, str],
     ) -> None:
         self._model = model
-        self._storage = storage
-        self._stage = stage
-        self._kind = StageKind(kind)
         self._data_stage = data_stage
-        self._deployment = deployment
-        self._run = run
-        self._release = release
-        self._config_hashes = dict(config_hashes)
+        self._run = StageRun(
+            storage,
+            format=_FORMAT,
+            stage=stage,
+            kind=kind,
+            deployment=deployment,
+            run=run,
+            release=release,
+            config_hashes=config_hashes,
+        )
 
     def __call__(self, item: _Item, report: Callable[[], None]) -> DecisionResult:
-        at = item.decision_at
-        read = read_snapshot(
-            self._storage,
-            deployment=self._deployment,
-            run=self._run,
-            decision_at=at,
-            stage=self._stage,
-            data_stage=self._data_stage,
-        )
-        if isinstance(read, HaltRecord):
-            return DecisionResult(header=self._header(at, read.cause), outputs=(), halt=read)
-        report()
-        header = self._header(at, read.result, read.file)
+        decision = self._run.decision(item.decision_at, report)
         try:
-            schedule = self._model.schedule(read.snapshot)
+            snapshot = decision.snapshot(self._data_stage)
+            schedule = self._model.schedule(snapshot)
+            stored = decision.put(SCHEDULE, CostSchedule, (schedule,))
         except Halt as halt:
-            return DecisionResult(header=header, outputs=(), halt=self._storage.halt_record(halt))
-        stored = self._storage.put(
-            self._kind,
-            output_key(self._deployment, self._run, at, self._stage, SCHEDULE),
-            encode_output(CostSchedule, OutputFile(header, (schedule,), False)),
-        )
-        report()
-        return DecisionResult(header=header, outputs=(stored.ref,), halt=None)
-
-    def _header(self, at: datetime, *read: BlobRef) -> BlobHeader:
-        return BlobHeader(
-            format=_FORMAT,
-            deployment=self._deployment,
-            run=self._run,
-            stage=self._stage,
-            kind=str(self._kind),
-            decision_at=at,
-            inputs={ref.key: ref.sha256 for ref in read},
-            release=self._release,
-            config_hashes=self._config_hashes,
-        )
+            return decision.halted(halt)
+        return decision.done(stored)

@@ -647,11 +647,13 @@ def test_a_second_run_that_writes_other_bytes_halts_as_not_deterministic(tmp_pat
     write_data(storage)
     key = output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule")
     storage.put(StageKind.DETERMINISTIC, key, b"{}")
-    with pytest.raises(Halt, match="so the step is not deterministic"):
-        run(handler(storage))
+    halted = run(handler(storage))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert "so the step is not deterministic" in halted.halt.reason
+    assert set(halted.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
 
 
-def test_the_stage_reports_after_its_read_and_after_its_write(tmp_path) -> None:
+def test_the_stage_reports_after_each_read_and_after_its_write(tmp_path) -> None:
     storage = store(tmp_path)
     write_data(storage)
     stored: list[bool] = []
@@ -659,7 +661,8 @@ def test_the_stage_reports_after_its_read_and_after_its_write(tmp_path) -> None:
     handler(storage)(
         Item(AT, "cost/chan"), lambda: stored.append((tmp_path / schedule_key).exists())
     )
-    assert stored == [False, True]
+    # Data's result, the snapshot, then the schedule.
+    assert stored == [False, False, True]
 
 
 def test_a_halt_in_datas_result_is_passed_on_naming_it(tmp_path) -> None:
@@ -708,9 +711,10 @@ def test_a_section_the_model_refuses_halts_in_the_stage_and_stores_no_schedule(t
 
 
 def test_a_decision_with_no_data_result_halts(tmp_path) -> None:
-    storage = store(tmp_path)
-    with pytest.raises(Halt, match="data/result.json is not stored, and stage cost/chan reads it"):
-        run(handler(storage))
+    halted = run(handler(store(tmp_path)))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert halted.halt.reason == f"{DATA_RESULT} is not stored, and stage cost/chan reads it"
+    assert dict(halted.header.inputs) == {}
 
 
 def test_the_stage_reads_the_capture_that_counts_and_not_a_later_one(tmp_path) -> None:
@@ -726,9 +730,12 @@ def test_a_data_result_that_lists_the_snapshot_other_than_once_halts(tmp_path, t
     storage = store(tmp_path)
     file = encode_output(Snapshot, OutputFile(data_header(), (SNAPSHOT,), False))
     ref = storage.put(StageKind.CAPTURING, SNAPSHOT_KEY, file).ref
-    storage.put_result(DATA_RESULT, DecisionResult(data_header(), (ref,) * times, None))
-    with pytest.raises(Halt, match=f"lists .*snapshot.json {times} times, not once"):
-        run(handler(storage))
+    data = DecisionResult(data_header(), (ref,) * times, None)
+    storage.put_result(DATA_RESULT, data)
+    halted = run(handler(storage))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert halted.halt.reason == f"{DATA_RESULT} lists {SNAPSHOT_KEY} {times} times, not once"
+    assert dict(halted.header.inputs) == {DATA_RESULT: sha256_of(encode(data))}
 
 
 @pytest.mark.parametrize(
@@ -741,11 +748,12 @@ def test_a_snapshot_of_another_decision_halts(tmp_path, apart) -> None:
     other = AT + apart
     # The file's own header names this decision, so storage's check passes.
     write_data(storage, entries=(replace(SNAPSHOT, decision_at=other),))
-    with pytest.raises(Halt) as caught:
-        run(handler(storage))
-    assert caught.value.reason == (
+    halted = run(handler(storage))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert halted.halt.reason == (
         f"{SNAPSHOT_KEY} holds a snapshot of {other.isoformat()}, not of {AT.isoformat()}"
     )
+    assert set(halted.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
 
 
 @pytest.mark.parametrize(
@@ -756,8 +764,21 @@ def test_a_snapshot_file_that_holds_other_than_one_snapshot_halts(
 ) -> None:
     storage = store(tmp_path)
     write_data(storage, entries=entries, trade_nothing=trade_nothing)
-    with pytest.raises(Halt, match=f"holds {len(entries)} snapshots, not one"):
-        run(handler(storage))
+    halted = run(handler(storage))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert halted.halt.reason == f"{SNAPSHOT_KEY} holds {len(entries)} entries, not one"
+    assert set(halted.header.inputs) == {DATA_RESULT, SNAPSHOT_KEY}
+
+
+def test_a_snapshot_storage_refuses_halts_naming_datas_result_alone(tmp_path) -> None:
+    storage = store(tmp_path)
+    data = write_data(storage)
+    (tmp_path / SNAPSHOT_KEY).write_bytes(b"{}")
+    halted = run(handler(storage))
+    assert halted.halt is not None and halted.halt.cause is None
+    assert f"output file {SNAPSHOT_KEY} has SHA-256" in halted.halt.reason
+    # The stage read no snapshot, so it names none.
+    assert dict(halted.header.inputs) == {data.key: data.sha256}
 
 
 # The entry point
@@ -777,8 +798,7 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     feed = Stage("feed", StageKind.CAPTURING)
     row = Stage("cost/chan", StageKind.CAPTURING, inputs=("feed",), strategy="chan")
     stage = handler(store(tmp_path), table=Table(stages=(feed, row), strategies=(CHAN,)))
-    with pytest.raises(Halt, match="/feed/result.json is not stored"):
-        run(stage)
+    assert "/feed/result.json is not stored" in run(stage).halt.reason
     header = BlobHeader(
         **{f: getattr(data_header(), f) for f in BlobHeader.__dataclass_fields__}
         | {"stage": "feed", "config_hashes": {"chan": CHAN.config_hash}}
@@ -798,8 +818,12 @@ def test_the_handler_takes_its_kind_and_its_input_from_the_table(tmp_path) -> No
     storage.put(
         StageKind.CAPTURING, output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule"), b"{}"
     )
-    with pytest.raises(Halt, match="has no other key to go to"):
-        run(handler(storage, table=Table(stages=(feed, row), strategies=(CHAN,))))
+    halted = run(handler(storage, table=Table(stages=(feed, row), strategies=(CHAN,))))
+    assert "has no other key to go to" in halted.halt.reason
+    # A capture storage has not stored is named by the halt.
+    assert [ref.key for ref in halted.halt.unstored] == [
+        output_key(DEPLOYMENT, RUN, AT, "cost/chan", "schedule")
+    ]
 
 
 def test_the_cost_worker_loads_neither_marketlake_nor_pandas() -> None:

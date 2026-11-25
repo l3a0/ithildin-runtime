@@ -99,7 +99,7 @@ flowchart TB
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
 ```
 
-In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists.
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. That execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model, in flows 7.4 and 7.5, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 
@@ -149,9 +149,11 @@ flowchart LR
     secret -->|"5 broker key"| exec
     brokerx -->|"6 order states, fills, positions, cash, records"| exec
     exec -->|"7.1 journal entries"| d3
-    exec -->|"7.2 account file, book"| d1
-    d3 -->|"7.3 replay"| exec
-    d1 -->|"8.1 snapshot, book"| models
+    d3 -->|"7.2 replay"| exec
+    exec -->|"7.3 account file"| d1
+    d5 -->|"7.4 hard caps"| exec
+    exec -->|"7.5 book, caps as read,<br/>valuation"| d1
+    d1 -->|"8.1 snapshot, book,<br/>caps as read, valuation"| models
     models -->|"8.2 forecast, signals,<br/>constraints, costs, target"| d1
     d1 -->|"9.1 target, constraints, snapshot"| exec
     d5 -->|"9.2 switches, caps, lease, halts, releases"| exec
@@ -181,14 +183,14 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | Flow | Crosses | What could go wrong | What protects it |
 | --- | --- | --- | --- |
 | 0 image | GitHub into the VM | A forged or altered release runs | The VM checks the pinned digest and its attestation, and refuses otherwise |
-| 1, 4, 7.1, 7.2, 8.2, 9.3, 12, 14.1 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
+| 1, 4, 7.1, 7.3, 7.5, 8.2, 9.3, 12, 14.1 writes | The VM into storage | A component overwrites or forges a record | Each component has its own role, every write is create-only with its SHA-256, and the journal chains by hash |
 | 9.4 lease | The VM into storage | A holder that lost the lease rewrites it | Among the runtime's roles, only execution's rewrites an account's lease, a take on the tag it read and a renewal or a release on the tag its own last write returned, so a stale holder's write is refused. Execution creates one only where an absent lease allows it, and the bucket refuses every delete there |
-| 7.3, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
+| 7.2, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
 | 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
 | 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 9.2 controls | Storage into execution | A switch or a halt is missed | Execution reads them right before each broker call, and an unreadable control halts |
+| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again before each check of an order. It reads the other controls right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
@@ -202,7 +204,7 @@ The security master is the table that maps each ticker to the platform's own ins
 | Rule | What it prevents | Flows |
 | --- | --- | --- |
 | Only execution talks to the broker | An order sent around the gate, or a fill nobody journaled entering the book | 6, 10, 11 |
-| The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 7.3, 9.3 |
+| The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 7.2, 9.3 |
 | Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
 
 #### Only execution talks to the broker
@@ -323,6 +325,8 @@ Alpaca [rejects a market-on-close order](https://docs.alpaca.markets/docs/orders
 also checks the cutoff again just before each broker call, and keeps a pair
 whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening. Monitoring then reports how far the decision's price and the fills sat from it.
 
+That the recover stage reads the hard caps, and stores the book, the hard caps as read and the session's valuation for the risk model, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
@@ -366,7 +370,8 @@ sequenceDiagram
     X->>J: journals each record as an outside entry
     X->>F: stores the account file, naming<br/>the journal entry it replayed through
     X->>X: does the book from the journal<br/>agree with the broker?
-    X->>F: stores the reconciled book<br/>and execution's recover result
+    X->>F: reads the hard caps blob
+    X->>F: stores the reconciled book, the hard caps as read,<br/>the session's valuation and execution's recover result
     F-->>M: sends an event for execution's recover result
     M->>F: stores monitoring's reconcile result,<br/>which no decision waits on
     Note over V,P: Phase 2, decide
@@ -492,23 +497,24 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
 4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
 5. **Execution compares them,** position by position, order by order and cash against cash, and each stamped order's filled quantity against the journal's. A cash difference a listed record explains in full passes, and any other difference halts.
-6. **Monitoring repeats the same check** for its report, and nothing waits on it.
+6. **Execution stores what the risk model reads,** by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). It reads the hard caps blob, then stores the book, the hard caps as it read them and the session's valuation.
+7. **Monitoring repeats the same check** for its report, and nothing waits on it.
 
 ### Phase 2: decide
 
-The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model sets the constraints, meaning the limits for this decision. Portfolio construction builds the target portfolio within them.
+The alpha, risk and cost models run at once, each on the blobs it needs. The alpha model writes two files, the forecast and the signals behind it, which are the values it fitted, such as the hedge ratio and the z-score. The risk model writes the constraints, meaning the limits for this decision, each the tighter of the strategy's own and the owner's hard cap. Portfolio construction builds the target portfolio within them.
 
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
 flowchart TB
     data["Data's result"] --> alpha["Alpha model<br/>writes the forecast and<br/>the signals behind it"]
-    data --> risk["Risk model<br/>writes the constraints"]
+    data -->|"the snapshot"| risk["Risk model<br/>writes the constraints,<br/>each limit the tighter of<br/>the strategy's and the owner's"]
     data --> cost["Cost model<br/>writes each strategy's cost schedule"]
     alpha --> pc["Portfolio construction<br/>writes the target portfolio"]
     risk --> pc
     cost --> pc
-    recover["Execution's<br/>recover result"] --> risk
+    recover["Execution's<br/>recover result"] -->|"the book,<br/>the hard caps as read<br/>and the session's valuation"| risk
     recover --> pc
 ```
 

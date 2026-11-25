@@ -239,8 +239,8 @@ Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OU
 
 | Blobs | Can they be regenerated? |
 | --- | --- |
-| A deterministic component's blobs | Yes, from marketlake, the journal and the code |
-| Data's snapshots, execution's account files, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
+| A deterministic component's blobs | Yes, from marketlake, the journal, the hard caps as recover stored them, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and the code |
+| Data's snapshots, execution's account files, the hard caps as recover read them, by the same proposal, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
 | The restart records the host's stop handler writes | No, but they are diagnostics rather than recorded data. They are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it |
 | A backtest's blobs | Yes. They sit in a memory-backed folder and vanish when it ends, because a backtest can be regenerated |
 
@@ -525,8 +525,9 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
-| A stage's output file, including data's snapshot, alpha's forecast and its signal records, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
+| A stage's output file, including data's snapshot, alpha's forecast and its signal records, risk's constraints, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | The account's `Valuation`, an output of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
+| The reconciled `Book`, and the `HardCaps` as recover parsed them, which the risk stage reads, two outputs of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/book.json`, `runs/<deployment>/<run>/<decision>/execution/recover/caps.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A takeover's broker order list, a capture named by the journaled takeover entry, whose form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json` |
@@ -543,7 +544,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A halt that names the account and outlives a session, such as the one [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) holds on an unsettled cancel | `accounts/<account>/halts/<component>-<cause>-<timestamp>-<count>.json` |
 | A strategy's off switch | `accounts/<account>/strategies/<strategy>/off.json` |
 | A strategy halt the platform raises, by this doc's proposal for [#33](https://github.com/l3a0/ithildin-runtime/issues/33) | `accounts/<account>/strategies/<strategy>/halts/<component>-<cause>-<timestamp>-<count>.json` |
-| The hard caps | `accounts/<account>/caps.json` |
+| The hard caps, as the owner writes them | `accounts/<account>/caps.json` |
 | An override | `accounts/<account>/overrides/<sha256>.json` |
 | A live release | `accounts/<account>/releases/<sha256>.json` |
 | An owner's record confirming a broker's trade, under a prefix [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds the key |

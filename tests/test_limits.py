@@ -281,6 +281,7 @@ SHARED: dict[str, tuple[dict[str, object], str]] = {
             ("a-bool", True, "True, not a whole number"),
             ("a-decimal", d(4), ".*not a whole number"),
             ("negative", -1, "-1, below zero"),
+            ("past-a-record", 2**53, "a huge int, past what a record can hold"),
         )
     },
 }
@@ -393,6 +394,8 @@ def test_5_each_end_of_each_range_is_allowed() -> None:
     assert tighten(constraints(), narrow, valuation())
     assert tighten(constraints(), caps(share=d("0.00000001")), valuation())
     assert tighten(constraints(), caps(share=d("0.99999999")), valuation())
+    for name in ("max_open_orders", "moc_cutoff"):
+        assert tighten(constraints(**{name: 2**53 - 1}), caps(), valuation())
     for age in (1, 2, 364, 365):
         assert tighten(constraints(), caps(stress_max_age_days=age), valuation())
 

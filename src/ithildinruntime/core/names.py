@@ -9,7 +9,9 @@ Data's stage and its snapshot are named here because the stages that read
 them import no `data`. A worker that imported it for two names would load
 marketlake's reader and pandas with it. The alpha stage's two output files are
 named here too, because portfolio construction reads the forecast and no
-worker module imports another. So are the daily interval a bar is filed under
+worker module imports another. So are the risk stage and its constraints,
+which portfolio construction and execution read, and execution's recover stage
+and the three of its files risk reads. So are the daily interval a bar is filed under
 and the word a price-kind field holds where its source states nothing, which
 data writes and the gate reads.
 """
@@ -19,12 +21,18 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "BOOK_OUTPUT",
+    "CAPS_OUTPUT",
+    "CONSTRAINTS_OUTPUT",
     "DAILY",
     "DATA_STAGE",
     "FORECAST_OUTPUT",
+    "RECOVER_STAGE",
+    "RISK_STAGE",
     "SIGNALS_OUTPUT",
     "SNAPSHOT_OUTPUT",
     "UNSTATED",
+    "VALUATION_OUTPUT",
     "is_name",
     "is_sha256",
 ]
@@ -33,6 +41,12 @@ DATA_STAGE = "data"
 SNAPSHOT_OUTPUT = "snapshot"
 FORECAST_OUTPUT = "forecast"
 SIGNALS_OUTPUT = "signals"
+RISK_STAGE = "risk"
+CONSTRAINTS_OUTPUT = "constraints"
+RECOVER_STAGE = "execution/recover"
+BOOK_OUTPUT = "book"
+VALUATION_OUTPUT = "valuation"
+CAPS_OUTPUT = "caps"
 
 DAILY = "1d"
 UNSTATED = "unstated"

@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_DOWN, Decimal
 
 from .codec import INT_LIMIT, CodecError, from_received
@@ -23,8 +23,9 @@ from .exact import exact_product, finite, quotient
 from .halt import Halt
 from .names import is_name, is_sha256
 from .records import Constraints, HardCaps, InstrumentId, Valuation
+from .sessions import load_sessions, require_utc
 
-__all__ = ["parse_caps", "tighten"]
+__all__ = ["check_constraints", "parse_caps", "require_current", "tighten"]
 
 _FORMAT = 1
 # A caps blob is written by hand and read before every order, so one far past
@@ -106,7 +107,7 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
         raise Halt("the constraints are missing")
     if not isinstance(caps, HardCaps):
         raise Halt("the hard caps are missing")
-    _check_constraints(constraints)
+    check_constraints(constraints)
     _check_caps(caps)
     if extra := sorted(set(constraints.max_position) - set(caps.max_position)):
         raise Halt(f"the constraints limit {extra[0]}, which the hard caps do not")
@@ -134,13 +135,39 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
     )
 
 
+def require_current(caps: HardCaps, valuation: Valuation, decision_at: datetime) -> None:
+    """Halt unless V and the stress move are the ones a decision may use.
+
+    V is of the session before the decision's, since an older one measures
+    another day's loss and net cap. The stress move's vintage ends no longer
+    before the decision than the caps allow.
+    """
+    if type(valuation.session) is not date:
+        raise Halt(f"the valuation's session is {valuation.session!r}, not a date")
+    table = load_sessions()
+    today = table.opened_by(require_utc("the decision", decision_at)).day
+    prior = table.before(today).day
+    if valuation.session != prior:
+        raise Halt(
+            f"the valuation is of {valuation.session.isoformat()}, not of {prior.isoformat()}, "
+            "the session before the decision's"
+        )
+    age = (today - caps.stress_through).days
+    if age > caps.stress_max_age_days:
+        raise Halt(
+            f"the hard caps' stress_through is {caps.stress_through.isoformat()}, {age} "
+            f"days before the decision and past the {caps.stress_max_age_days} allowed"
+        )
+
+
 def _smaller(
     one: Mapping[InstrumentId, Decimal], other: Mapping[InstrumentId, Decimal]
 ) -> dict[InstrumentId, Decimal]:
     return {i: min(limit, other[i]) for i, limit in one.items()}
 
 
-def _check_constraints(constraints: Constraints) -> None:
+def check_constraints(constraints: Constraints) -> None:
+    """Halt naming the first field of `constraints` that no limit could be read from."""
     where = "the constraints'"
     if not isinstance(constraints.strategy, str) or not constraints.strategy:
         raise Halt(f"{where} strategy is {constraints.strategy!r}, which names none")
@@ -197,8 +224,11 @@ def _check_shared(source: Constraints | HardCaps, where: str) -> None:
     for name in _MAXIMA:
         _not_negative(f"{where} {name}", getattr(source, name))
     for name in _COUNTS:
-        if _integer(f"{where} {name}", getattr(source, name)) < 0:
-            raise Halt(f"{where} {name} is {getattr(source, name)}, below zero")
+        count = _integer(f"{where} {name}", getattr(source, name))
+        if count < 0:
+            raise Halt(f"{where} {name} is {count}, below zero")
+        if count >= INT_LIMIT:
+            raise Halt(f"{where} {name} is {_shown(count)}, past what a record can hold")
 
 
 def _not_negative(what: str, value: object) -> None:

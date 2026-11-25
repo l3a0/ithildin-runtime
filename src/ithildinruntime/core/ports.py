@@ -28,10 +28,12 @@ from .records import (
     ForecastSet,
     FoundOrder,
     GateInputs,
+    HardCaps,
     LossReading,
     OrderIntent,
     Snapshot,
     StoredBlob,
+    Valuation,
     Verdict,
 )
 
@@ -171,7 +173,11 @@ class AlphaModel(Protocol):
 
 
 class RiskModel(Protocol):
-    def constraints(self, book: Book, snapshot: Snapshot) -> Constraints: ...
+    def constraints(
+        self, book: Book, snapshot: Snapshot, caps: HardCaps, valuation: Valuation
+    ) -> Constraints:
+        """One strategy's limits for a decision, each the tighter of its own and the hard caps'."""
+        ...
 
 
 class CostModel(Protocol):

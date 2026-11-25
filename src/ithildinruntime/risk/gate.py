@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
 from typing import NamedTuple
 
@@ -58,6 +58,7 @@ from ithildinruntime.core import (
     places,
     position,
     quotient,
+    require_current,
     require_utc,
     rounded,
     tighten,
@@ -168,8 +169,6 @@ def _read(
     valuation = inputs.valuation
     if not isinstance(valuation, Valuation):
         raise Halt("the valuation is missing")
-    if type(valuation.session) is not date:
-        raise Halt(f"the valuation's session is {valuation.session!r}, not a date")
     limits = tighten(constraints, inputs.caps, valuation)
     if not isinstance(inputs.stop, StopState):
         raise Halt(f"the loss stop's state is {inputs.stop!r}, which names none")
@@ -182,19 +181,8 @@ def _read(
             f"session's close at {session.close.isoformat()}"
         )
     cutoff = to_utc(session.day, BeforeClose(limits.moc_cutoff))
-    prior = table.before(session.day)
-    if valuation.session != prior.day:
-        raise Halt(
-            f"the valuation is of {valuation.session.isoformat()}, not of {prior.day.isoformat()}, "
-            "the session before the decision's"
-        )
-    _check_book(book, valuation, prior)
-    age = (session.day - inputs.caps.stress_through).days
-    if age > inputs.caps.stress_max_age_days:
-        raise Halt(
-            f"the hard caps' stress_through is {inputs.caps.stress_through.isoformat()}, {age} "
-            f"days before the decision and past the {inputs.caps.stress_max_age_days} allowed"
-        )
+    require_current(inputs.caps, valuation, decision)
+    _check_book(book, valuation, table.before(session.day))
     if intent is not None:
         _check_intent(intent, book, limits)
     instruments = {*held(book), *([intent.instrument] if intent is not None else [])}
