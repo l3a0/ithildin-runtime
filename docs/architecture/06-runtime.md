@@ -255,9 +255,9 @@ flowchart LR
 
 A disagreement at an execution step halts trading rather than quietly replacing the platform's record, and one at monitoring's check alarms.
 
-#### Bars reach the models only after they are recorded
+#### Bars and quotes reach the models only after they are recorded
 
-A number nobody can read back cannot be checked later. So a model never reads a feed directly, and the data worker records which bars it read first. Every number a model acted on can then be read back, from the snapshot for what the decision read, and from marketlake for the bars. Captured market data is the first of the three things [design.md](../design.md#premise) says cannot be recovered, and marketlake is where it is kept.
+A number nobody can read back cannot be checked later. So a model never reads a feed directly, and the data worker records which bars and quotes it read first. Every number a model acted on can then be read back, from the snapshot for what the decision read, and from marketlake for the bars. Captured market data is the first of the three things [design.md](../design.md#premise) says cannot be recovered, and marketlake is where it is kept.
 
 The figure below is a C4 dynamic diagram.
 
@@ -360,7 +360,7 @@ sequenceDiagram
     F-->>P: sends an event for the plan
     X->>F: each instance runs its Startup checks, read only,<br/>before it plans or sends
     Note over V,M: Phase 1, read the data, then recover
-    D->>F: stores the snapshot, naming each bar read,<br/>and data's decision result
+    D->>F: stores the snapshot, naming each bar and quote read,<br/>and data's decision result
     F-->>X: sends an event for data's result
     X->>B: asks about orders in doubt,<br/>reads fills since the last decision
     B-->>X: returns each lookup's answer<br/>and fills since the last decision
@@ -1270,7 +1270,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and the two halts [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) keeps until a person clears them, a price of unstated kind and a quote that fails its age and status check, which [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build. So on shadow and paper a price the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and the two halts [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) keeps until a person clears them, a price of unstated kind and a quote that fails its age and status check, which [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build. So on shadow and paper a bar the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### When the run stops
 

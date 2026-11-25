@@ -16,6 +16,8 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from lake import journal
+from lake.battery import build_entry
+from lake.manifest import append_quarantine
 
 from ithildinruntime.adapters import FolderBucket, FolderStore, HistoryClock
 from ithildinruntime.core import (
@@ -44,6 +46,7 @@ from ithildinruntime.data.reference import QUOTE_KINDS, QuoteKinds, load_quote_k
 from ithildinruntime.data.source import _session_read, judge
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
+from tests.support import lake as lakes
 from tests.support.segments import (
     AT,
     DAY,
@@ -415,8 +418,22 @@ def _twice(bucket: Live, live: Path) -> str:
     return "USO has 2 rows captured at "
 
 
+def _withheld(bucket: Live, live: Path) -> str:
+    lake = live.with_name(live.name.removesuffix("-live"))
+    entry = build_entry(
+        partition=f"quotes/ticker=USO/date={DAY}.parquet",
+        verdict="quarantined",
+        check="planted",
+        observed_at=AT,
+    )
+    append_quarantine(lake, entry)
+    lakes.record(lake, "quarantine.jsonl")
+    return "the quarantine ledger withholds"
+
+
 ANSWERS = (
     _no_listing,
+    _withheld,
     _one_leg_stopped,
     _all_gaps,
     _refused_listing,
@@ -448,8 +465,7 @@ def test_8_each_answer_stores_the_snapshot_and_then_halts(
     )
     assert snap.provisional is True and snap.quotes == {}
     assert len(snap.bars[GLD]["1d"]) == 40
-    opened = bool(bucket.reads)
-    assert (GLD in snap.rows) is opened
+    assert len(snap.rows.get(GLD, ())) == (2 if bucket.reads else 0)
 
 
 def test_8_a_quote_the_judge_refuses_halts_beside_every_row(
@@ -480,8 +496,6 @@ def test_8_no_fault_of_the_bucket_leaves_the_read_as_an_error(
 
 
 def test_the_bars_halts_come_before_the_quotes(lake: Path, live: Path, tmp_path: Path) -> None:
-    from tests.support import lake as lakes
-
     lakes.with_row(lake, "GLD", LAST, high=150.0, low=149.0)
     capture(live, "USO", 1, realtime=False)
     halts = source(lake, tmp_path).read(AT).halts
@@ -557,8 +571,6 @@ def test_8_a_spiked_midpoint_is_flagged_beside_its_unchanged_price_and_halts_not
 def test_30_a_quotes_flag_stands_beside_its_bars_flags(
     lake: Path, live: Path, tmp_path: Path
 ) -> None:
-    from tests.support import lake as lakes
-
     lakes.with_row(lake, "GLD", LAST, close=150.0)
     capture(live, "GLD", 1, bid=1600.0, ask=1600.5)
     reading = source(lake, tmp_path, spike_multiple=Decimal(10)).read(AT)
@@ -725,8 +737,7 @@ def test_31_what_a_later_listing_does_and_does_not_explain(
     # A longer listing moves the newest five on, and reads as a segment that left does.
     moved = replace(snap, segments=(*snap.segments[1:], added))
     assert two(snap, moved) == (
-        "These differ: segments. The later capture names 1 segments the first does not and lacks 1 "
-        "that it does, and every segment both captures name kept its version and SHA-256"
+        "These differ: segments. Every segment both captures name kept its version and SHA-256"
     )
     assert two(snap, replace(snap, segments=snap.segments[1:])) == "These differ: segments"
     later = replace(snap, quotes_read_at=snap.quotes_read_at + MINUTE)

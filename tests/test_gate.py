@@ -1570,6 +1570,20 @@ def test_4_a_quote_captured_after_the_decision_halts_however_late_the_gate_reads
             read()
 
 
+@pytest.mark.parametrize("name", ORDERS)
+def test_4_a_quote_stamped_at_or_before_the_close_v_was_valued_at_halts(name: str) -> None:
+    """A book marked there would read no loss, however far the market has moved since."""
+    closed = TABLE.session(PRIOR).close
+    old = legs(bid_at=closed, ask_at=closed, max_age=86_400)
+    world = World(book=book({CHAN: {GLD: 10}}), snapshot=old, intent=ORDERS[name])
+    for read in (world.check, world.loss):
+        with pytest.raises(Halt, match="GLD has no mark: its quote's older stamp is 2026-11-02T21"):
+            read()
+    after = closed + TICK
+    later = world.at(snapshot=legs(bid_at=after, ask_at=after, max_age=86_400))
+    assert later.loss().loss is not None and later.check() is not None
+
+
 def test_4_from_flat_one_aged_leg_halts_its_own_order_and_not_its_partners() -> None:
     made = legs()
     old = replace(made.quotes[USO], bid_at=made.quotes[USO].bid_at - TICK)

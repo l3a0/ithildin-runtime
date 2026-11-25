@@ -27,7 +27,7 @@ things, in order.
    reads, or that only the read time differs, as on a redelivery after a crash.
    Where only the segments and their rows differ, the later capture names one
    the first lacks, and every segment both name kept its version and SHA-256,
-   it says a later listing adds them, or how many of them each capture lacks.
+   it says so, and that a later listing adds them where it names all the first does.
    It names no cause beyond that, because the same difference can come from a
    restatement by marketlake, a nightly upload or a redeploy.
 4. **It judges the snapshot that counts.** That is the read just made, unless
@@ -273,13 +273,8 @@ def _listings(a: Snapshot, b: Snapshot) -> str:
     added, gone = two.keys() - one.keys(), one.keys() - two.keys()
     if not added or any(one[key] != two[key] for key in one.keys() & two.keys()):
         return ""
-    kept = "every segment both captures name kept its version and SHA-256"
-    if not gone:
-        return f". A later listing adds them, and {kept}"
-    return (
-        f". The later capture names {len(added)} segments the first does not and lacks {len(gone)} "
-        f"that it does, and {kept}"
-    )
+    kept = "very segment both captures name kept its version and SHA-256"
+    return f". E{kept}" if gone else f". A later listing adds them, and e{kept}"
 
 
 def _without_read_time(bars: object) -> object:

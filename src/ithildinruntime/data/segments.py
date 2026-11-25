@@ -365,7 +365,7 @@ class _Walk:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
         except (OSError, ValueError) as error:
-            raise _Fault(f"{key} could not be written: {type(error).__name__}") from None
+            raise self._fault(key, f"could not be written: {type(error).__name__}") from None
 
     def _door(self, leg: _Leg, keys: Sequence[str]) -> pa.Table:
         """marketlake's reader over these segments, with a second download of one it refuses."""
@@ -380,10 +380,10 @@ class _Walk:
                     lake_root=self._root,
                 )
             except SchemaVersionUnknown as error:
-                raise _Fault(
-                    f"{error.segment} holds rows at schema version "
-                    f"{', '.join(map(str, error.versions))}, which the pinned marketlake does not "
-                    "read, so the marketlake pin is raised"
+                raise self._fault(
+                    error.segment,
+                    f"holds rows at schema version {', '.join(map(str, error.versions))}, which "
+                    "the pinned marketlake does not read, so the marketlake pin is raised",
                 ) from None
             except SegmentMismatch as error:
                 key = error.segment

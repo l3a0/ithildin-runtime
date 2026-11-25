@@ -35,7 +35,6 @@ from botocore.exceptions import (
     FlexibleChecksumError,
     ParamValidationError,
 )
-from urllib3.exceptions import HTTPError
 
 from ithildinruntime.core import (
     BlobMissing,
@@ -67,7 +66,7 @@ class FolderBucket:
                 at = Path(here).relative_to(self._root).as_posix()
                 found.extend(name if at == "." else f"{at}/{name}" for name in names)
         except OSError as error:
-            raise StoreUnavailable(prefix, _answer(error)) from None
+            raise StoreUnavailable(prefix, f"{type(error).__name__}: {error}") from None
         return sorted((key for key in found if key.startswith(prefix)), key=os.fsencode)
 
     def read(self, key: str, version: str | None = None) -> BucketObject:
@@ -77,7 +76,7 @@ class FolderBucket:
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             raise BlobMissing(key, "no such file in the folder") from None
         except OSError as error:
-            raise StoreUnavailable(key, _answer(error)) from None
+            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
         sha = sha256_of(data)
         if version not in (None, sha):
             raise BlobMissing(key, f"the folder holds version {sha}, not {version}")
@@ -119,18 +118,19 @@ class S3Bucket:
             reply = self._client.get_object(
                 Bucket=self._bucket, Key=self._root + key, ChecksumMode="ENABLED", **named
             )
+            data = reply["Body"].read()
         except ParamValidationError as error:
             raise TypeError(f"botocore refused the call before sending it: {error}") from None
-        except (ClientError, BotoCoreError) as error:
-            # The S3 store's own mapping, so a missing key reads the same here.
-            raise _refusal(key, error, None, BlobMissing) from None
-        try:
-            data = reply["Body"].read()
         except FlexibleChecksumError as error:
             raise ChecksumMismatch(key, str(error)) from None
-        except (BotoCoreError, HTTPError) as error:
-            # botocore wraps urllib3's timeout and protocol errors as a body is read, and
-            # none of its others, such as a TLS failure partway through.
+        except ClientError as error:
+            # The S3 store's own mapping, so a missing key reads the same here.
+            raise _refusal(key, error, None, BlobMissing) from None
+        except MemoryError:
+            raise
+        except Exception as error:
+            # botocore leaves some of urllib3's errors as they are, such as a TLS failure in a
+            # body or an error answer cut short, and none of them is an answer of S3's.
             raise StoreUnavailable(key, f"no answer: {type(error).__name__}: {error}") from None
         checksum = reply.get("ChecksumSHA256")
         sha = None
@@ -148,11 +148,6 @@ def _parts(key: str) -> tuple[str, ...]:
     if not key or key.startswith("/") or any(p in ("..", ".") for p in parts) or "\\" in key:
         raise ValueError(f"{key!r} is not a key in the bucket")
     return parts
-
-
-def _answer(error: OSError) -> str:
-    """The file system's answer, without the path, which a stored reason would carry."""
-    return f"{type(error).__name__}: {error.strerror}"
 
 
 def _raise(error: OSError) -> None:

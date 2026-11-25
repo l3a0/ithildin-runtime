@@ -384,6 +384,8 @@ def test_1_two_rows_of_one_instrument_at_the_cycle_are_a_fault(
     assert {str(i): len(rows) for i, rows in read.rows.items()} == {"GLD": 2, "USO": 2} | {
         ticker: 3
     }
+    # The capture was found, whatever refused its rows.
+    assert read.cycle_age == AT - landed(1)
 
 
 @pytest.mark.parametrize("after", [timedelta(microseconds=1), 30 * SECOND])
@@ -660,20 +662,36 @@ def test_2_a_segment_with_no_version_or_no_stored_sha256_is_a_fault(
     assert [s.key for s in read.segments] == [key_of("GLD", 1)]
 
 
-def test_2_a_first_failure_is_kept_beside_whatever_ends_the_second_try(reader: Reader) -> None:
+def test_2_a_first_failure_is_kept_beside_whatever_ends_the_second_try(
+    reader: Reader, monkeypatch: pytest.MonkeyPatch
+) -> None:
     key = key_of("USO", 1)
     quiet = StoreUnavailable(key, "no answer")
     torn = (
         (BlobMissing(key, "404 NoSuchVersion"), "is listed and the bucket holds none: 404 NoSuch"),
         (lambda got: replace(got, sha256=None), "has no stored SHA-256 in the bucket"),
         (None, "was refused by marketlake's reader: UnsealedRefused"),
+        ("newer", "holds rows at schema version "),
+        ("full", "could not be written: OSError"),
     )
+    real = Path.write_bytes
+
+    def full(self: Path, data: bytes) -> int:
+        if self == reader.root / key:
+            raise OSError(28, "No space left on device", str(self))
+        return real(self, data)
+
     for answer, said in torn:
         for ticker in ("GLD", "USO"):
             reader.capture(ticker, [1])
         for seen in (reader.live.reads, reader.live.events, reader.live.lists):
             seen.clear()
-        reader.live.plant[key] = [quiet] + ([answer] if answer else [])
+        planted = answer is not None and not isinstance(answer, str)
+        reader.live.plant[key] = [quiet, answer] if planted else [quiet]
+        if answer == "newer":
+            capture(reader.live_root, "USO", 1, schema_version=journal.SCHEMA_VERSION + 1)
+        if answer == "full":
+            monkeypatch.setattr(Path, "write_bytes", full)
         if answer is None:
             path = reader.live_root / key
             path.write_bytes(path.read_bytes()[:-8])

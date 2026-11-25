@@ -295,7 +295,7 @@ loses none of another's rows.
 | Answer | What happens | Ended by |
 | --- | --- | --- |
 | A segment's bytes differ from the SHA-256 the bucket stored, a segment is not under the lake root, a download fails its checksum, or a download has no answer | That segment is downloaded once more, at the same version where the first answer named one, and the reader is asked again. A second fault of one segment halts naming it and what each try met, with both hashes where there are two. The first try's reason is logged whichever way the second goes | The next decision |
-| A listed key the bucket does not hold, or one no bucket call takes | A halt naming the key | The next decision, or a person who removes a key that does not belong under the prefix |
+| A listed key the bucket does not hold, or one no bucket call takes | A halt naming the key | The next decision, or marketlake, whose prefix it is |
 | A segment with no version or no stored SHA-256 | A halt naming it | The next decision, or marketlake's upload |
 | A listing with no answer, twice | A halt naming the prefix and the answer | The next decision, or the grant |
 | A row of a schema version the pinned marketlake does not read | A halt naming the segment, the versions, and that the marketlake pin is raised | A release |
@@ -313,12 +313,8 @@ says which halts hold an account until a person clears them, and
 [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build
 that hold.
 
-A reason says what the bucket held, and not why. A missing grant shows S3's 403. A
-quote refused on its age shows its capture time beside its stamp, so a stamp that
-froze while capture went on reads apart from rows that stopped. The rest looks the
-same from here: capture that stopped, capture that wrote only gap markers and an
-upload that stopped leave the same objects, and marketlake's own capture host says
-which it was.
+A reason says what the bucket held, and not why it held no more. marketlake's own
+capture host says why. A missing grant is the one cause a reason shows, as S3's 403.
 
 #### What is checked before deciding
 
@@ -356,7 +352,7 @@ where it gives none.
 | The kind of the bid and the ask is unstated | The instrument |
 | The bid's or the ask's stamp is absent, or later than the capture by more than the clock bound | The stamp as received |
 | The capture is before the session's open, or after the decision | Each time |
-| The older of the two stamps is older than the written maximum age, with the clock bound added | The stamp, the age, the bound and the maximum |
+| The older of the two stamps is older than the written maximum age, with the clock bound added | The stamp, the age, the bound, the maximum and the capture time |
 
 ##### Which stamp dates a quote
 
@@ -386,10 +382,9 @@ aged past its maximum when its order is checked halts that order.
 
 An order has the maximum less the quote's age at the decision and less the clock
 bound. At a made-up maximum of 90 seconds, a quote 59 seconds old at the decision
-halts every order from 30 seconds after it, so a written maximum has to hold the
-order path's seconds too. Any other fault halts them at once. One that only reduces
-is no exception.
-[What halts every order on a quote](../halts-and-drills.md#what-halts-every-order-on-a-quote)
+halts any order that reads it more than 30 seconds after the decision, so a written
+maximum has to hold the order path's seconds too.
+[What a quote that fails its check stops](../halts-and-drills.md#what-a-quote-that-fails-its-check-stops)
 says what a person can do then.
 
 A plan's orders are checked one at a time, so one leg can pass while its partner, a

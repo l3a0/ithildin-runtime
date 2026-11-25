@@ -199,8 +199,8 @@ class Reading:
 
     The rest is the load of the read and how far capture lagged it.
     `quote_seconds` and `cycle_age` are `None` where the decision read no quote,
-    and the second one where the instruments share no capture. It is the age of the
-    newest capture they share, so one instrument that lags shows in it.
+    and the second one where the read found no capture its instruments share. It is
+    the age of the newest such capture, so one instrument that lags shows in it.
     """
 
     snapshot: Snapshot
