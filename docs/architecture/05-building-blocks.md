@@ -1493,7 +1493,7 @@ An arrow means "may import". The diagram draws four rules.
    | Library | The only module that imports it |
    | --- | --- |
    | boto3 | `adapters` |
-   | marketlake's package, of which `data` imports only `lake.loader`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
+   | marketlake's package, of which `data` imports only `lake.loader`, `lake.unsealed`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
    | Alpaca's SDK | `execution.brokers` |
    | rfc8785, the one codec's canonical JSON | `core` |
 

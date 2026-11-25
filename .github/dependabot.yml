@@ -13,6 +13,19 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(deps)
+    # pyarrow's version is the one marketlake's capture host runs, so it moves
+    # with the marketlake commit in pyproject.toml and never on its own. The
+    # weekly group would move it with no word of marketlake in its title. Every
+    # version update is listed rather than the name alone, because GitHub's
+    # docs say update types leave security updates alone, and a fix for a
+    # published hole is still worth a pull request, which the contract test of
+    # the version turns red.
+    ignore:
+      - dependency-name: pyarrow
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
       # Minor and patch bumps ride one pull request. Majors stay separate,
       # since they are the ones that need reading.

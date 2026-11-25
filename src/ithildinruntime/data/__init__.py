@@ -17,7 +17,9 @@ imports no adapter and every mode runs the same code.
 - `stage` is data's stage, which stores each decision's snapshot.
 
 It imports only the marketlake submodules the import rule names:
-`lake.loader`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`.
+`lake.loader`, `lake.unsealed`, `lake.paths`, `lake.manifest`, `lake.actions`
+and `lake.config`. Nothing imports `lake.unsealed`, the reader of a day before
+its seal, until #100 builds the read.
 """
 
 from .mirror import Mirror

@@ -1,0 +1,46 @@
+# Says when the marketlake commit pyproject.toml pins is due a raise.
+#
+# scripts/check_lake_pin.py compares marketlake's main with the pin and fails the run
+# where one of three things moved, naming it and which of the two rules of marketlake's
+# contract applies. A red run is not always a raise to make now: a change to the join or
+# to pyarrow alone waits until marketlake's deploy is known, and the run stays red until
+# then.
+#
+# It is no pull request check, because marketlake moving must not turn an unrelated pull
+# request red, and the ruleset on main does not require it. Nothing pages when no run
+# starts. GitHub delays or drops a scheduled run, and board.yml measured about 11% of its
+# slots firing, so this is a best effort until #11 builds the check whose missing result
+# alarms. A raise that is missed halts every decision inside a session, with the reason,
+# until a release raises the pin.
+#
+# It holds no credential. The token reads this repository and checkout does not keep it,
+# and marketlake is a public repository the script fetches with no token. Nothing fetched
+# from marketlake is run.
+name: Lake pin
+
+on:
+  push:
+    branches: [main]
+  # Fourteen slots each weekday, ahead of the session's open, which is 13:30 UTC at the
+  # earliest. Several, because most are dropped, and off the hour, when GitHub is busiest.
+  # A weekday with no session runs the same check.
+  schedule:
+    - cron: "17,47 6-12 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lake-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # `shell: bash` adds pipefail, so the check's own exit code fails the step.
+      - name: Compare marketlake's main with the pin
+        shell: bash
+        run: python3 scripts/check_lake_pin.py | tee -a "$GITHUB_STEP_SUMMARY"

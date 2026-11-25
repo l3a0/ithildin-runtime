@@ -547,6 +547,36 @@ digest that fails.
   rest. Its dependencies enter the image with it, schwab-py among them, which
   nothing here imports. [l3a0/marketlake#1024](https://github.com/l3a0/marketlake/issues/1024)
   asks for an install that carries only the reader.
+- pyarrow, the library that reads and writes marketlake's files, is pinned
+  beside that commit to the version marketlake's `uv.lock` holds at it, which
+  the capture host installs. A row read before the seal equals the sealed row
+  only while the two match, so the two pins move in one pull request and
+  Dependabot leaves pyarrow's version alone.
+
+#### What says the marketlake pin is due a raise
+
+marketlake's contract, [How a consumer pins it](https://github.com/l3a0/marketlake/blob/2d41793ab92028cf3b746a681394bb3df6db4ee0/README.md#how-a-consumer-pins-it),
+has a consumer watch marketlake's `main`, because every commit the capture host
+runs is on `main` first. `.github/workflows/lake-pin.yml` compares `main` with
+the pin after each merge here, by hand, and on GitHub's schedule ahead of each
+weekday's open. It reads marketlake's public repository with no credential. A
+difference fails its run, which names what moved and which of the contract's two
+rules applies.
+
+**Table:** What moved on marketlake's `main`, and what it asks for
+
+| What moved | What it asks for |
+| --- | --- |
+| `SCHEMA_VERSION` is higher | Raise the pin now, before the first session captured under that version, because the pinned reader refuses every row written under it |
+| The bytes of `src/lake/segment_join.py`, or pyarrow's version in `uv.lock` | Wait until marketlake's deploy of the change is known, then raise. Until that deploy the pin matches the capture host, and afterwards it does not |
+| Both at once | Raise now, and take the rows read before a seal as possibly unequal to the sealed rows until the deploy |
+
+The check is no pull request check, because marketlake moving must not turn an
+unrelated pull request red. Nothing pages when no run starts, and GitHub drops
+or delays most scheduled runs, so [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
+holds the check whose missing result alarms, before paper. The price of a raise
+that is missed is every decision inside a session until a release raises the
+pin, each halting with the reason.
 
 #### How the image reaches each environment
 
