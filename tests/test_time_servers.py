@@ -841,7 +841,8 @@ def test_4_each_server_is_polled_again_and_none_after_a_stop() -> None:
 def test_4_a_thread_outlives_the_asks_that_fail() -> None:
     hands, asks = Hands(), Asks()
     tries: list[str] = []
-    failures = [AskFailed("no reply came in time"), ValueError("a reply"), AskFailed("again")]
+    # Enough of them that the wait between two asks is as long as it gets.
+    failures = [AskFailed("no reply came in time"), ValueError("a reply")] * 3
 
     def fails_first(server: TimeServer, **clocks) -> Exchange:
         hands.pass_us(64_000_000)
@@ -853,7 +854,7 @@ def test_4_a_thread_outlives_the_asks_that_fail() -> None:
     servers = sampler(hands, fails_first, pause=0.005)
     servers.start()
     try:
-        assert servers.wait(10) and len(tries) == 3
+        assert servers.wait(10) and len(tries) == 6
     finally:
         servers.stop()
 
