@@ -230,7 +230,7 @@ def read_as_a_move(
 ) -> None:
     """The stored bars and the forecast read the planted closes, with no split undone."""
     assert [b.close for b in found.snapshot.bars[leg]["1d"]] == [planted[d] for d in WINDOW]
-    # Every mark of a captured bar is taken off, so a model that undid a split by one would differ.
+    # The marks a model would read are taken off: basis, origin, source, volume counting and flags.
     adjusted = {
         i: {
             "1d": tuple(

@@ -35,7 +35,7 @@ TABLE = load_sessions()
 DAYS = sorted(TABLE.sessions)
 ONE, TWO = "made-up:one-{}.csv", "made-up:two-{}.csv"
 STATED = Kind("official close", "consolidated", "none", "consolidated in shares")
-# When marketlake fetches a session's daily bar, which is after its close.
+# When marketlake's sweep fetches a session's daily bar, after its close. A late fetch lands later.
 SWEEP = time(18, 30)
 # A Friday, so that the first session a capture span covers is 2026-11-02.
 ONBOARD = datetime(2026, 10, 30, 17, 30, tzinfo=MARKET_TZ)
