@@ -834,7 +834,7 @@ def test_every_bar_data_reads_is_one_the_gate_will_value(lake: Path, tmp_path: P
 
 
 def _holding() -> Book:
-    return Book({"s": {GLD: Decimal(1)}}, {}, Decimal(0), Decimal(0), 0, (), None, None)
+    return Book({"s": {GLD: Decimal(1)}}, {}, Decimal(0), 0, (), ())
 
 
 # 6. A stale series.

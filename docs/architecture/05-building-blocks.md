@@ -1397,7 +1397,7 @@ The journal's entries, applied in order from the first, give the account's `Book
 | `in_doubt` | Each instrument with an order that may or may not be with the broker. A `sending` entry with nothing after it is one |
 | `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, so it is empty until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) |
 
-This doc proposes, for [#142](https://github.com/l3a0/ithildin-runtime/issues/142), that `corrections` is a list, where two fields once named the newest one alone, and that the book carries no realised profit. The gate reads the same two facts from the list: the newest correction's number against the valuation's, and the newest one that moved a position against the close of the valuation's session. The newest alone could not tell a deposit from a broker's trade behind it, so [#117](https://github.com/l3a0/ithildin-runtime/issues/117) could not have excused the trade without excusing the deposit. Nothing read the profit, and no document said how it is computed. The price is a small change to the gate.
+The gate reads two facts from `corrections`: the newest correction's number against the valuation's, and the newest one that moved a position against the close of the valuation's session. The list tells a deposit from a broker's trade behind it, so [#117](https://github.com/l3a0/ithildin-runtime/issues/117) can excuse the trade without excusing the deposit. The book carries no realised profit, because nothing reads one.
 
 ##### A view is one reading of the journal
 
@@ -1448,7 +1448,7 @@ sequenceDiagram
 
 ##### An empty journal is never a flat book
 
-A journal with no entry halts when its book is read, because it looks the same as a wrong account or a lost store. Entry 1 is an `opening`, which names the account and its cash, and a journal whose first entry is another kind, or which holds a second `opening`, halts at the view. This doc proposes, for [#142](https://github.com/l3a0/ithildin-runtime/issues/142), that a person writes it on shadow and paper. The only other way to know an account is new is to ask the broker, whose empty answer looks like a lost one. The price is one command a person runs per account, and that a wrong one leaves that account alias unusable until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), since no entry is ever deleted. [#146](https://github.com/l3a0/ithildin-runtime/issues/146) writes a backtest's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the command.
+A journal with no entry halts when its book is read, because it looks the same as a wrong account or a lost store. Entry 1 is an `opening`, which names the account and its cash, and a journal whose first entry is another kind, or which holds a second `opening`, halts at the view. A person writes it on shadow and paper. The only other way to know an account is new is to ask the broker, whose empty answer looks like a lost one. The price is one command a person runs per account, and that a wrong one leaves that account alias unusable until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), since no entry is ever deleted. [#146](https://github.com/l3a0/ithildin-runtime/issues/146) writes a backtest's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the command.
 
 ##### What the checks on an entry hold
 

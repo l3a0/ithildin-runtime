@@ -839,6 +839,22 @@ def test_11_only_an_append_the_store_acknowledged_moves_the_fold(fail: str, look
         journal.record(view, SendingEntry(name), AT)
 
 
+def test_11_a_late_answer_moves_the_fold_no_way_back() -> None:
+    made, name = at("Approved")
+    store = Failing(made._store.blobs)
+    journal = Journal(store, ACCOUNT, WRITER)
+    view = journal.view()
+    store.fail = "landed"
+    with pytest.raises(StoreUnavailable):
+        journal.record(view, SendingEntry(name), AT)
+    _, newest = journal.record(journal.view(), read(AT + DAY), AT)
+    _, late = journal.record(view, SendingEntry(name), AT)
+    assert (late.through.seq, newest.through.seq) == (6, 7)
+    store.gets = 0
+    assert journal.view() is newest
+    assert store.gets == 0
+
+
 def test_11_an_own_entry_is_never_read_back() -> None:
     journal, name = at("Approved")
     view = journal.view()

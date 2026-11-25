@@ -730,6 +730,10 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
         lambda w: w.at(book=book(corrections=(corrected(8),), replayed_through=9)),
         "entry 8 corrected the book after the valuation",
     ),
+    "an-older-correction-before-v-and-a-newer-after-it": (
+        lambda w: w.at(book=book(corrections=(corrected(3), corrected(8)), replayed_through=9)),
+        "entry 8 corrected the book after the valuation",
+    ),
     "corrections-that-are-no-list": (
         lambda w: w.at(book=replace(book(), corrections=None)),
         "the book's corrections are None, not a list of corrections",

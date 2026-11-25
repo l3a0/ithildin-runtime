@@ -502,7 +502,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 
 | Kind | Fields | Written by | What it records |
 | --- | --- | --- | --- |
-| `opening` | `account`, `cash` | Execution for a backtest, by [#146](https://github.com/l3a0/ithildin-runtime/issues/146). A person elsewhere, by this doc's proposal for [#142](https://github.com/l3a0/ithildin-runtime/issues/142) | The account's opening cash, flat. An account's entry 1 and no other |
+| `opening` | `account`, `cash` | Execution for a backtest, by [#146](https://github.com/l3a0/ithildin-runtime/issues/146). A person on shadow and paper | The account's opening cash, flat. An account's entry 1 and no other |
 | `read` | `stage`, `decision_at`, `ref`, `at` | Execution | The stored file that holds a broker read, named before any value in it is used, and when the read was made |
 | `decision` | `deployment`, `run`, `decision_at`, `targets`, `orders`, `off`, `inputs`, `read`, `synced` | Execution | Every strategy's whole target, the planned orders in order, each strategy that was off, each input by name, and the entries it was planned on and synced through |
 | `intent` | `decision`, `order` | Execution's order path | One planned order, under its `decision` entry's number |

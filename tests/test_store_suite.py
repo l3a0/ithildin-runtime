@@ -762,6 +762,9 @@ def test_a_folder_reports_a_file_system_fault_as_no_answer(spec: StoreSpec) -> N
             store.get(key)
         with pytest.raises(StoreUnavailable):
             store.list(spec.key("runs/"), None)
+        # A folder nobody can look inside is never read as one that holds nothing.
+        with pytest.raises(StoreUnavailable):
+            store.list(f"{key.rpartition('/')[0]}/below/", None)
         with pytest.raises(StoreUnavailable):
             store.replace_if_match(lease, b"lease two", sha256_of(b"lease two"), tag)
     finally:
