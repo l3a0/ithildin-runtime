@@ -12,13 +12,11 @@ It reads source with `ast` and reports two reaches.
 
 `ALLOWED` names each exemption, and one nothing uses fails the test.
 
-It reads what is written, so three ways are out of its reach: a name put
-together at run time, such as from two halves of a string or held in a variable,
-in a test, a script or a package of `src/` outside `execution/` and `runtime/`, a
-journal entry's key spelled out as a path, and an old entry recorded again with
-one field replaced. Nothing in the package imports by a string, which
-tests/test_import_rule.py holds. In a test handed a fake broker, the fake
-broker's refusals catch what the sweep does not.
+It catches the spellings tests/test_order_sweep.py plants, and others pass. It
+reads what is written, so no list of spellings is whole, such as a name put
+together at run time or a class bound to another name first. In a test handed a
+fake broker, the fake broker's refusals catch an order that reached it wrongly
+by any of them, apart from one whose gate or controls were replaced.
 """
 
 from __future__ import annotations
@@ -48,7 +46,8 @@ BY_TEXT = frozenset({"getattr", "methodcaller", "attrgetter", "getattr_static"})
 BY_TEXT |= {"getmembers", "__getattribute__"}
 IN_WORKERS = BY_TEXT | {"vars", "dir", "__dict__", "setattr"}
 # What only `account.py` and `order_path.py` may name, since each changes what the path does.
-INSIDE = frozenset({"Shared", "Unstored", "cleared", "record_of", "KINDS"})
+INSIDE = frozenset({"Shared", "Unstored", "_shared", "_held", "record_of", "KINDS"})
+_SHARED = frozenset({"shared", "_shared"})
 # The classes whose methods nothing outside them replaces.
 WHOLE = frozenset({"OrderPath", "Account", "Controls", "Gate", "Unstored", "Journal"})
 
@@ -70,8 +69,10 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     ),
     (_PATH, "entry"): None,
     (_JOURNAL, "entry"): None,
-    (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "record_of"}),
-    (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored"}),
+    (_PATH, "inside"): frozenset(
+        {"Shared", "Unstored", "_shared", "_held", "cleared", "record_of"}
+    ),
+    (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored", "_shared"}),
 }
 
 
@@ -129,6 +130,8 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
             match node:
                 case ast.Name(id=name) | ast.Attribute(attr=name) if name in INSIDE:
                     yield Hit(where, line, "inside", name)
+                case ast.Attribute(value=held, attr="cleared") if _last(held) in _SHARED:
+                    yield Hit(where, line, "inside", "cleared")
                 case ast.ImportFrom():
                     for named in _imported(node):
                         if named.rpartition(".")[2] in INSIDE:

@@ -428,9 +428,9 @@ sequenceDiagram
         X->>J: journals the intent
         X->>F: is the switch absent, no halt stored, its own<br/>send result empty and the strategy not off?
         X->>F: reads the files the plan was made from
-        X->>X: is it before the cutoff?
+        X->>X: is it before the order's last moment?
         X->>J: replays the book
-        X->>F: has the loss stop not fired?
+        X->>F: has the loss stop not fired,<br/>and are the hard caps unchanged?
         X->>X: runs the risk gate check
         X->>J: journals the approval
         X->>J: journals the sending entry
@@ -441,7 +441,7 @@ sequenceDiagram
         X->>F: is the lease tag unchanged?
         X->>F: has the loss stop not fired?
         X->>F: is the strategy not off,<br/>and no halt of its stored?
-        X->>X: is it before the cutoff?
+        X->>X: is it before the order's last moment?
         X->>B: sends the order, with its client order id
         B-->>X: answers
         X->>J: journals the broker's answer
@@ -590,10 +590,10 @@ Each order goes through the order path alone, and the journal gains a line befor
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
-6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
+6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop, and the hard caps again. A caps blob rewritten since step 2 halts.
 7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
 8. Journal that it is sending.
-9. Make the checks in the table below, on a third view. A pass in which any read had to wait is made again whole.
+9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
 10. Send, with the order's client order id.
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
@@ -1102,13 +1102,13 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: a check before the gate fails,<br/>or a restart
+    Intended --> Abandoned: a check before the gate fails, another writer<br/>takes the number of the verdict entry, or a restart
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
-    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, or a restart comes before it
+    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, the store does not take it,<br/>or a restart comes before it
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
-    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
-    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
+    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read, that was cut short, that differs<br/>from the order or that says two things of it
+    InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first, or the process<br/>that sent it journals the answer it kept
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
@@ -1155,7 +1155,7 @@ saying no.
 
 `InDoubt` is the state a crash between sending and the ack lands in. It lets the journal say "the platform does not know whether the broker has this order", rather than leaving the next decision to guess.
 
-The only way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. Sending the order again is never a way out.
+The way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. The process that sent the order may also still hold the broker's answer, where the journal did not take it at the time, and journals it when it can. Sending the order again is never a way out.
 
 A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, when it becomes `Lost`. It stays because a request sent just before a crash can still arrive after that read.
 
@@ -1235,7 +1235,7 @@ stateDiagram-v2
         the kill switch is set,
         the run or account halts,
         the lease is lost,
-        the cutoff passes,
+        an order's last moment passes,
         clocks disagree,
         a loss cannot be computed with positions held,
         an order is in doubt,

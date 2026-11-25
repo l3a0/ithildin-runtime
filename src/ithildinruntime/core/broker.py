@@ -26,7 +26,9 @@ class BrokerUnavailable(Exception):
 
     def __init__(self, call: str, error: BaseException | type) -> None:
         self.call = _word(call)
-        self.error = error.error if isinstance(error, BrokerUnavailable) else error_name(error)
+        named = isinstance(error, BrokerUnavailable)
+        # A subclass may hold any word there, or none.
+        self.error = _word(getattr(error, "error", None)) if named else error_name(error)
         super().__init__(f"the broker's {self.call} failed with {self.error}")
 
 

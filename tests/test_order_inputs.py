@@ -23,6 +23,7 @@ from ithildinruntime.core import (
     RISK_STAGE,
     SNAPSHOT_OUTPUT,
     VALUATION_OUTPUT,
+    Ack,
     BlobMissing,
     BlobRef,
     BrokerUnavailable,
@@ -51,6 +52,7 @@ from ithildinruntime.journal import (
     Journal,
     OpeningEntry,
     ReadEntry,
+    RejectedEntry,
     VerdictEntry,
 )
 from ithildinruntime.risk import Gate
@@ -411,7 +413,7 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
             if error == "PermissionError":
                 raise PermissionError("the store's own text")
             if error == "StoreUnavailable":
-                raise StoreUnavailable(k, "the store's own text")
+                raise StoreUnavailable(k, "403 AccessDenied: the store's own text")
 
     world.store.before = before
     if error in ("None", "BlobMissing"):
@@ -425,8 +427,8 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
             return None
 
         world.store.list = listed  # type: ignore[method-assign]
-    shown = "NoneType" if error == "None" else error
-    reason = halted(world, f"{name} unreadable: {shown}")
+    shown = {"None": "NoneType", "StoreUnavailable": "StoreUnavailable 403 AccessDenied"}
+    reason = halted(world, f"{name} unreadable: {shown.get(error, error)}")
     assert "own text" not in reason + str(world.records()) + str(world.alarms.sent)
     late = read == 1
     assert ("sending" in world.kinds()) == late
@@ -631,6 +633,15 @@ def test_9_the_loss_halts_on_hard_caps_it_cannot_use(fault: str) -> None:
     halted(world, why, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
 
 
+def test_9_the_loss_is_read_at_the_clocks_time() -> None:
+    """The gate halts on a reading after its session's close, and the decision is before it."""
+    world = World()
+    world.clock.at = gates.CLOSE
+    world.path().loss(DEPLOYMENT, RUN, AT)
+    world.clock.at = gates.CLOSE + timedelta(microseconds=1)
+    halted(world, "to its session's close", lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+
+
 def test_9_a_wrong_run_or_deployment_halts() -> None:
     for named in (("other", RUN, AT), (DEPLOYMENT, "2026-11-02", AT), (DEPLOYMENT, RUN, AT - DAY)):
         world = World()
@@ -799,7 +810,9 @@ def test_11_an_answer_of_no_kind_is_never_printed(capfd, caplog) -> None:
 BAD_ID = f"acct {NUMBER} {KEY}"
 
 
-@pytest.mark.parametrize("store", ["answers", "lost answer", "down", "another writer"])
+@pytest.mark.parametrize(
+    "store", ["answers", "lost answer", "down", "another writer", "another writer's end"]
+)
 def test_11_an_id_the_journal_refuses_is_in_no_alarm_and_no_halt(store: str) -> None:
     world = World()
     account = world.account()
@@ -807,6 +820,8 @@ def test_11_an_id_the_journal_refuses_is_in_no_alarm_and_no_halt(store: str) -> 
     def answer(intent: object, number: int) -> object:
         if store == "another writer":
             world.record(InDoubtEntry(ID, "taken over", None, False, AT), other)
+        if store == "another writer's end":
+            world.record(RejectedEntry(ID, "no", b"", False, AT), other)
         return says(Outcome.ACCEPTED, BAD_ID)(intent, number)  # type: ignore[arg-type]
 
     def after(number: int, op: str, key: str) -> None:
@@ -818,16 +833,17 @@ def test_11_an_id_the_journal_refuses_is_in_no_alarm_and_no_halt(store: str) -> 
     world.broker.answer, world.store.after = answer, after
     if store == "down":
         world.store.refuse(("create", entry_key(ACCOUNT, 7)))
+    ended = OrderState.REJECTED if store == "another writer's end" else OrderState.IN_DOUBT
     raised = None
     try:
-        assert world.send(account=account) is OrderState.IN_DOUBT
+        assert world.send(account=account) is ended
     except Halt as halt:
         raised = halt
     assert (raised is not None) == (store == "down")
     world.store.before = lambda n, op, key: None
     account.settle(world.report)
-    assert account.unstored() == () and world.state() is OrderState.IN_DOUBT
-    assert last(world).raw == b"{}"
+    assert account.unstored() == () and world.state() is ended
+    assert last(world).raw == (b"" if ended is OrderState.REJECTED else b"{}")
     assert not leaks(*everything_said(world), *told(raised))
 
 
@@ -847,6 +863,51 @@ def test_11_a_key_shaped_word_is_no_type_of_error() -> None:
     assert not leaks(*everything_said(world))
 
 
+class Set(BrokerUnavailable):
+    """An adapter's own kind, which holds words where the platform's holds a type."""
+
+    def __init__(self) -> None:
+        Exception.__init__(self, f"account {NUMBER}")
+        self.call, self.error = "positions", f"401: key {KEY}"
+
+
+class Bare(BrokerUnavailable):
+    def __init__(self) -> None:
+        Exception.__init__(self, f"key {KEY}")
+
+
+@pytest.mark.parametrize("error", [Set(), Bare()])
+def test_11_a_kind_of_unavailable_of_an_adapters_own_names_no_word_of_it(error: Exception) -> None:
+    world = World()
+
+    def raises() -> object:
+        raise error
+
+    world.broker.reads["positions"] = raises
+    with pytest.raises(BrokerUnavailable) as raised:
+        world.path().positions()
+    assert str(raised.value) == "the broker's positions failed with Unnamed"
+    assert not leaks(*told(raised.value))
+
+
+def test_11_an_answer_that_raises_as_it_is_read_names_no_word_of_it() -> None:
+    kind = type(f"E {NUMBER}", (Exception,), {})
+
+    class Raises(Ack):
+        @property
+        def outcome(self) -> object:  # type: ignore[override]
+            raise kind(f"key {KEY}")
+
+    world = World()
+    made = object.__new__(Raises)
+    for name, value in (("broker_order_id", None), ("order", None), ("raw", b"{}")):
+        object.__setattr__(made, name, value)
+    object.__setattr__(made, "received_at", AT)
+    world.broker.answer = lambda intent, number: made
+    assert world.send() is OrderState.IN_DOUBT
+    assert last(world).raw == b"{}" and not leaks(*everything_said(world))
+
+
 def test_11_a_brokers_error_reaches_no_failure_of_the_receive_loop() -> None:
     """What a handler raises is what the loop alarms on, stores and prints as its worker ends."""
     world = World()
@@ -855,10 +916,9 @@ def test_11_a_brokers_error_reaches_no_failure_of_the_receive_loop() -> None:
         raise vendor()
 
     world.broker.reads["positions"] = raises
-    try:
+    with pytest.raises(BrokerUnavailable) as raised:
         world.path().positions()
-    except BrokerUnavailable as error:
-        assert not leaks(_loop_said(error))
+    assert not leaks(_loop_said(raised.value))
 
 
 READS: dict[str, Callable] = {
@@ -931,17 +991,25 @@ def test_5_a_read_answers_with_its_own_type_or_raises(name: str) -> None:
     assert READS[name](world.path()) == found
 
 
-def test_11_an_alias_that_cannot_be_read_says_nothing_of_the_vendors() -> None:
+@pytest.mark.parametrize(
+    "kind", [RuntimeError, SystemExit, CancelledError, GeneratorExit, KeyboardInterrupt]
+)
+def test_11_an_alias_that_cannot_be_read_says_nothing_of_the_vendors(
+    kind: type[BaseException],
+) -> None:
     class NoAlias:
         @property
         def alias(self) -> str:
-            raise vendor()
+            raise vendor(kind)
 
     world = World()
-    for name, read in READS.items():
-        with pytest.raises(Halt, match="alias could not be read: RuntimeError") as raised:
-            read(world.path(broker=NoAlias()))
+    ends = KeyboardInterrupt if kind is KeyboardInterrupt else Halt
+    for name, call in EVERY_CALL.items():
+        with pytest.raises(ends) as raised:
+            call(world.path(broker=NoAlias()))
         assert not leaks(*told(raised.value)), name
+        if ends is Halt:
+            assert raised.value.reason == f"the broker's alias could not be read: {kind.__name__}"
 
 
 EVERY_CALL: dict[str, Callable] = {

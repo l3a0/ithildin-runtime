@@ -78,7 +78,10 @@ class Account:
         return OrderPath(self._shared, broker, report)
 
     def settle(self, report: Callable[[], None]) -> None:
-        """Store each answer the journal has not taken, or halt naming what is still owed.
+        """Store each entry the journal has not taken, or halt naming each still owed.
+
+        An alarm about one that could not be sent is tried again here too, and
+        never halts.
 
         Each stage's handler calls it before its first view of the journal. An
         order in doubt halts recover, so an answer held back until the next

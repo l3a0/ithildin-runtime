@@ -57,6 +57,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [One runtime](../design.md#one-runtime)
 - [Rule 2: two kinds of stage, declared in one place](../design.md#rule-2-two-kinds-of-stage-declared-in-one-place)
 - [Rule 7: how a run stops](../design.md#rule-7-how-a-run-stops)
+- [Rule 9, fourth item: what is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call)
 - [Rule 9: what may go out while a limit is past](../design.md#rule-9-what-may-go-out-while-a-limit-is-past)
 - [Rule 9: what a lease is and when it is held](../design.md#rule-9-what-a-lease-is-and-when-it-is-held)
 - [Rule 9: who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease)

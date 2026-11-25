@@ -492,7 +492,7 @@ apply it.
    decides again, and appends after it, as [The journal is the one numbered log](#rule-8-the-journal-is-the-one-numbered-log) says.
 3. **Every order** waits on a fetch of the broker's positions, open orders, cash and
    fills made at the start of execution's send stage, as [How a rerun never doubles anything](#rule-9-how-a-rerun-never-doubles-anything) says, and,
-   just before the broker call, on the kill switch, the strategy's off switch and halts, the run's and the account's halts, its own send-stage result key, the account's lease's tag, the loss stop and the cutoff, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+   just before the broker call, on the kill switch, the strategy's off switch and halts, the run's and the account's halts, its own send-stage result key, the account's lease's tag, the loss stop and the order's last moment, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 4. **Every lease** is fetched before it is taken, and one another process
    holds, on this VM or another, is taken over only once it has gone
    unrenewed past its expiry and the margin for clock skew, as [Who takes over a lease](#rule-9-who-takes-over-a-lease) says.
@@ -1122,7 +1122,7 @@ rerun from doubling anything. The first three follow, and the last two each have
 ### Rule 9, fourth item: what is checked right before a broker call
 
 **Right before every submit**, after the order's `sending` entry
-is stored, execution checks seven things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop, whose state the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent. A control that stands stops the order, and so does one that could not be read, with the error's code in the reason. A read that has to be tried again waits, and a switch pulled in the meantime must stop the order. So a pass in which any read waited is made again whole, from a new view of the journal, until one waits on nothing or their shared deadline ends the order. The numbers below name the checks. The two on the strategy are read after every other blob, so a switch never hides a halt.
+is stored, execution checks seven things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop, whose state the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent. A control that stands stops the order, and so does one that could not be read, with the error's code in the reason. A read that has to be tried again, or that answers slowly, leaves the ones before it behind, and a switch pulled in the meantime must stop the order. So a pass counts only where no read was tried again and it took at most 5 seconds. Any other is made again whole, from a new view of the journal, until one counts or their shared deadline ends the order. The price is that a store whose reads come to more than 5 seconds a pass stops every order, where a pass on S3 is under a second. The numbers below name the checks. The two on the strategy are read after every other blob, so a switch never hides a halt.
 
 1. The kill switch is absent.
 2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with [the kill
@@ -2088,7 +2088,7 @@ Five rules keep a day of decisions safe.
    cutoff and never a later one. The cutoff applies to market-on-close orders
    only, so a market order, such as the shadow run on
    [#16](https://github.com/l3a0/ithildin-runtime/issues/16) sends at close−20,
-   meets no cutoff. It applies to new orders only, and never stops a cancel.
+   meets no cutoff. Its last moment is its session's close. It applies to new orders only, and never stops a cancel.
    1. **Before every send, twice.** Execution reads the clock before it
       starts the order loop, before each order, and again after the order's
       `sending` entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker

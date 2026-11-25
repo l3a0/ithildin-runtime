@@ -58,12 +58,23 @@ WAYS: dict[str, tuple[str, str]] = {
     "a gate that always approves": (IN_RUNTIME, "class Yes(risk.Gate):\n    pass"),
     "a path with its check replaced": (IN_EXECUTION, "OrderPath._asked = mine"),
     "a control replaced": (IN_MONITORING, "Controls.stopping = lambda *given: None"),
+    "an account of another kind": (IN_RUNTIME, "class Mine(Account):\n    pass"),
+    "a keeper of another kind": (IN_MONITORING, "class Mine(Unstored):\n    pass"),
+    "a journal of another kind": (IN_MONITORING, "class Mine(Journal):\n    pass"),
+    "a check replaced with its type": (IN_MONITORING, "OrderPath._asked: object = mine"),
+    "a check added to": (IN_MONITORING, "Gate.checks += 1"),
     "a path's parts rebuilt": (IN_EXECUTION, "OrderPath(replace(Shared(), gate=g), b, r)"),
     "a path's parts imported": (
         IN_RUNTIME,
         "from ithildinruntime.execution.order_path import Shared",
     ),
     "a path's gate replaced": (IN_RUNTIME, "path._shared.gate = yes"),
+    "a path's parts rebuilt from its own": (
+        IN_EXECUTION,
+        "OrderPath(replace(path._shared, gate=yes), broker, report)",
+    ),
+    "a path's parts replaced": (IN_RUNTIME, "path._held = other"),
+    "an account's parts replaced": (IN_RUNTIME, "account._shared = other"),
     "an acknowledgement set by hand": (IN_EXECUTION, "shared.cleared[6] = ack"),
     "an entry's class by its kind": (IN_EXECUTION, "KINDS['sending'](name)"),
     "an entry read back to be recorded": (IN_EXECUTION, "journal.record(v, record_of(e), at)"),
@@ -109,6 +120,12 @@ def test_3_each_way_around_is_caught(way: str) -> None:
     assert hits, f"{way} passes the sweep"
 
 
+def test_3_an_ordinary_word_is_no_hit() -> None:
+    """#156's clear of the loss stop, and a local of that name, are no part of the path."""
+    for source in ("cleared = read_stop(store)", "state.cleared = True", "stop.cleared()"):
+        assert not list(found_in(source, IN_EXECUTION)), source
+
+
 def test_3_the_receive_loops_tasks_are_exempt_by_name_and_no_other_is() -> None:
     loop = "src/ithildinruntime/runtime/loop/receive.py"
     for task in ("ticker", "receiver", "beater"):
@@ -128,12 +145,15 @@ def test_3_the_order_path_holds_one_call_of_a_brokers_submit_and_one_of_its_own(
 
 
 def test_3_what_is_out_of_the_sweeps_reach() -> None:
-    """The three ways the sweep's docstring names, each still out of it."""
+    """Some of the spellings that pass, so nobody reads the sweep as whole."""
     for where, source in (
         (IN_TESTS, "getattr(broker, 'sub' + 'mit')(intent)"),
         (IN_TESTS, "N = 'submit'\ngetattr(broker, N)(intent)"),
         (IN_MONITORING, "getattr(broker, 'sub' + 'mit')(intent)"),
         (IN_MONITORING, "store.create(f'journal/{a}/{n:012d}.json', data, sha)"),
         (IN_MONITORING, "journal.record(view, replace(old, client_order_id=n), at)"),
+        (IN_EXECUTION, "path._asked = mine"),
+        (IN_EXECUTION, "P = OrderPath\nP._asked = mine"),
+        (IN_TESTS, "vars(path).get('_broker')"),
     ):
         assert not list(found_in(source, where)), source
