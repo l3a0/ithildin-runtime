@@ -303,7 +303,7 @@ class Unstored:
             ):
                 # An append whose answer was lost landed all the same.
                 if own is not doubt:
-                    self._in_doubt(kept, report)
+                    self._in_doubt(kept, report, f", and the journal shows it {_now(order)}")
                 return self._done(kept, order.state)
             if isinstance(own, RejectedEntry) and order.broker_order_id is not None:
                 # The fold would take it, and the order another writer saw taken leaves the book.
@@ -332,11 +332,11 @@ class Unstored:
                 raise Halt(refused[0])
         raise Halt(f"other writers took {_NUMBERS} numbers in a row")
 
-    def _in_doubt(self, kept: _Kept, report: Callable[[], None]) -> None:
+    def _in_doubt(self, kept: _Kept, report: Callable[[], None], shows: str = "") -> None:
         self._say(
             kept,
             f"the order {kept.name} is in doubt, {kept.sent}: the journal refused its "
-            f"{kind_of(kept.record)}",
+            f"{kind_of(kept.record)}{shows}",
             report,
         )
 

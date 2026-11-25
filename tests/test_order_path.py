@@ -2286,22 +2286,27 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
         assert any("which was not sent" in alarm for alarm in world.alarms.sent)
 
 
-def test_7_a_clock_that_fails_after_the_sending_still_journals_what_was_not_sent() -> None:
+@pytest.mark.parametrize("error", [RuntimeError("no time"), SystemExit("no time")])
+def test_7_a_clock_that_fails_after_the_sending(error: BaseException) -> None:
+    """An ordinary error still journals what was not sent, and any other is left to replay."""
     world = World()
+    account = world.account()
     plain = world.clock.now
 
     def broken() -> datetime:
-        raise RuntimeError("no time")
+        world.clock.now = plain  # type: ignore[method-assign]
+        raise error
 
     def after(number: int, op: str, key: str) -> None:
         if number == BEFORE_SUBMIT:
             world.clock.now = broken  # type: ignore[method-assign]
 
     world.store.after = after
-    with pytest.raises(RuntimeError, match="no time"):
-        world.send()
-    world.clock.now = plain  # type: ignore[method-assign]
-    assert world.state() is OrderState.ABANDONED and world.submits == 0
+    with pytest.raises(type(error), match="no time"):
+        world.send(account=account)
+    left = OrderState.ABANDONED if isinstance(error, Exception) else OrderState.SENDING
+    assert world.state() is left and world.submits == 0
+    assert account.unstored() == ()
 
 
 @pytest.mark.parametrize("create", range(4))
@@ -2643,7 +2648,9 @@ def test_2_a_stand_in_that_landed_is_done_whatever_another_writer_then_says() ->
     world.record(AckEntry(ID, "b-9", b"", False, AT))
     account.settle(world.report)
     assert account.unstored() == () and world.state() is OrderState.ACKNOWLEDGED
-    assert f"the order {ID} is in doubt" in world.alarms.sent[-1]
+    alarm = world.alarms.sent[-1]
+    assert f"the order {ID} is in doubt" in alarm
+    assert alarm.endswith("and the journal shows it Acknowledged, as the broker's b-9")
     assert world.kinds()[-2:] == ["in_doubt", "ack"]
 
 
@@ -2668,3 +2675,28 @@ def test_2_a_store_call_that_ends_in_more_than_an_exception_is_left_to_replay(
     assert bool(account.unstored()) == answered
     account.settle(world.report)
     assert world.state() is (OrderState.ACKNOWLEDGED if answered else OrderState.SENDING)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "broker", "said"),
+    [
+        (Outcome.UNKNOWN, None, "perhaps sent at {at}"),
+        (Outcome.UNKNOWN, "b-1", "sent at {at}, as the broker's b-1"),
+        (Outcome.REJECTED, None, "sent at {at}, and rejected"),
+    ],
+)
+def test_6_an_alarm_says_when_the_order_went_out_and_not_when_its_answer_came(
+    outcome: Outcome, broker: str | None, said: str
+) -> None:
+    world = World()
+
+    def answer(intent: OrderIntent, number: int) -> Ack:
+        world.clock.at += timedelta(minutes=1)
+        return Ack(outcome, broker, None, b"{}", AT)
+
+    world.broker.answer = answer
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    went = world.clock.now().isoformat()
+    with pytest.raises(Halt):
+        world.send()
+    assert all(said.format(at=went) in alarm for alarm in world.alarms.sent)

@@ -1142,11 +1142,20 @@ EVERY_CALL: dict[str, Callable] = {
 }
 
 
+class Everything(str):
+    """An alias that says it equals any other."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    __hash__ = str.__hash__
+
+
 @pytest.mark.parametrize("name", EVERY_CALL)
 def test_5_every_call_halts_unless_the_broker_trades_the_journals_account(name: str) -> None:
     world = World()
     stored = dict(world.store.blobs)
-    for alias in (NUMBER, "", None, "paper-2"):
+    for alias in (NUMBER, "", None, "paper-2", Everything("paper-2")):
         world.broker.alias = alias  # type: ignore[assignment]
         with pytest.raises(Halt, match="the broker trades another account than 'paper-1'") as no:
             EVERY_CALL[name](world.path())

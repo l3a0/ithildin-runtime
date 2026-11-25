@@ -599,7 +599,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
+A fault in steps 4 to 9 journals the order `Abandoned`. Three exceptions are an order another writer has moved, which is left as it is, a store that takes no entry, where the halt names what the journal last showed, and an error of the clock's or the store's that the path does not expect, which leaves the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
 
 **Table:** The eight checks made right before the broker call
 
