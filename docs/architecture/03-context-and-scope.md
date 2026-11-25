@@ -81,7 +81,11 @@ The newest z-score needs 39 of them: 20 to fit the hedge ratio of the oldest
 spread in its 20-day window, and one more for each of the 19 spreads after that.
 The other 21 reach the earlier sessions whose z-scores settle
 [which unit is held](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds).
-So the download and capture together have to hold 60 sessions.
+So the download and capture together have to hold 60 sessions. A lookback that
+holds both [crosses a change of
+series](../design.md#a-lookback-that-crosses-a-change-of-series) and halts, unless
+[#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt, so
+until then no decision is made until capture alone holds the lookback.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported
@@ -224,14 +228,15 @@ bucket, is a published input, and shadow measures the lag.
 
 #### What is checked before deciding
 
-The data worker runs its own minimum checks before anything decides. Six checks halt or flag a decision.
+The data worker runs its own minimum checks before anything decides. Seven checks halt or flag a decision.
 
 1. A missing or stale quote at the decision time halts the decision.
 2. A segment whose SHA-256 does not match its manifest entry halts it too.
 3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
 4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
-6. Two consecutive bars of one instrument that are of two series, meaning two recordings by different sources, as of different dates or of different prices, halt the decision, as [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) says.
+6. Two consecutive bars of one instrument that are of two series, meaning two recordings by different sources, as of different dates, or one of the price as traded and one adjusted, halt the decision, as [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) says.
+7. A bar whose price kind its source does not state halts the decision.
 
 #### Which read a decision uses
 

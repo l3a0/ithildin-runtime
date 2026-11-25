@@ -174,7 +174,7 @@ moment, not against a blob.
 | Live | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
-which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. Shadow
+which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless [#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt. Shadow
 reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.

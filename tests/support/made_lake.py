@@ -153,8 +153,9 @@ def of_series(
     basis: str | None = None,
     source: str | None = None,
     as_of: str | None = None,
+    undated: bool = False,
 ) -> None:
-    """Rewrite one imported partition with part of its series changed, and record it."""
+    """Rewrite one imported partition with part of its series changed or undated, and record it."""
     key = lakes.partition_key(ticker, day)
     table = pq.read_table(root / key)
     written = dict(table.schema.metadata)
@@ -162,6 +163,8 @@ def of_series(
         if value is not None:
             assert written[name] != value.encode()
             written[name] = value.encode()
+    if undated:
+        del written[SOURCE_AS_OF_KEY]
     sink = pa.BufferOutputStream()
     pq.write_table(table.replace_schema_metadata(written), sink)
     lakes.rewrite(root, key, sink.getvalue().to_pybytes())

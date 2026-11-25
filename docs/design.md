@@ -2417,18 +2417,23 @@ The price is paid when marketlake later imports days before the written start.
 From that start on, each decision whose lookback the date still cuts halts, which
 is 59 sessions of decisions at a lookback of 60. A backtest's decisions before
 the start halt too. Moving the date, which moves the hash, ends this only where
-the lake also lists every session in between. Otherwise the decisions halt as
-missing until the lookback passes the gap.
+the lake also lists every session in between, all of [one
+series](#a-lookback-that-crosses-a-change-of-series). Otherwise the decisions halt
+as missing, or on the change of series, until the lookback passes the gap or the
+change.
 
 #### A lookback that crosses a change of series
 
-A bar's series is its `basis`, its `source` and its `source_as_of`: which price
+A bar's **series** is its `basis`, its `source` and its `source_as_of`: which price
 it carries, who recorded it and on what date. A captured bar's is `raw` with no
-source and no date. Two series of one instrument can be on two scales.
-[l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) imports USO from Yahoo from 2012-04-10 at eight
-times the price that traded, because Yahoo's history is adjusted for the
-one-for-eight reverse split of 2020-04-29 and the series that ends on 2012-04-09
-is not. Both read `adjusted`, so a check of the basis alone sees no change.
+source and no date, so captured bars are one series. [Where each series
+starts](#where-each-series-starts) uses the word for all of an instrument's bars
+in the lake, whichever series they are of. Two series of one instrument can be on
+two scales. [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025)
+imports USO from Yahoo from 2012-04-10. Until the one-for-eight reverse split of
+2020-04-29 its prices are eight times those that traded, because Yahoo's history is
+adjusted for that split and the series that ends on 2012-04-09 is not. Both read
+`adjusted`, so a check of the basis alone sees no change.
 
 So a decision halts where two consecutive bars of one instrument in its lookback
 are of two series, whether or not their scales agree. Each such pair gives one
@@ -2440,24 +2445,34 @@ Portfolio construction sizes on them, and V, the account's value, and the day's
 loss are worked out from them, so each would take the step between two scales for
 a move of the market.
 
-The price is five things.
+The price is six things.
 
-1. One session fewer than the lookback's count of decisions halt after each
-   change, which is 59 at a lookback of 60, though the scales agree. Capture
-   begins on 2026-11-02, so a paper run on GLD and USO, which decides at
-   close−20, halts on this from 2026-11-03 to 2027-01-28 and first passes it on
-   2027-01-29. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how a lookback of imported and captured bars is
-   read, and may lift the halt for a change it can show keeps the scale.
-2. A position held when a later change arrives, such as a correction under a new
-   source, is held through those decisions. No exit goes out, and the day's loss
-   is not tested, because the send stage tests it only on a decision that reaches
-   it. The owner closes such a position by hand.
-3. An import stopped part-way and rerun on a later day leaves two dates with no
-   split between them. A lookback over both halts though it is right.
+1. Every decision whose lookback crosses a change halts, which is 59 sessions of
+   decisions at a lookback of 60, and a change whose scales agree is no exception.
+   With that import, GLD and USO change at 2026-09-04, where an import from Schwab
+   takes over, and at 2026-11-02, where capture begins. So a paper run on them, which decides at
+   close−20, halts on this from 2026-09-08 to 2027-01-28. On 2027-01-29 a lookback
+   first holds captured bars alone, and the alpha model then halts on their `raw`
+   basis. [#114](https://github.com/l3a0/ithildin-runtime/issues/114) says how either
+   window is read, and may lift this halt for a change it can show keeps the scale.
+2. A position held when a later change arrives is held through those decisions.
+   No exit goes out, and the day's loss is not tested, because the send stage
+   tests it only on a decision that reaches it. Worst loss covers only the stress
+   move's window, so, as [for any position a halt leaves
+   open](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it), only
+   the owner's act bounds it.
+3. Bars one source recorded on two dates with no split between them halt a
+   lookback over both though it is right, as a Schwab import whose sessions were
+   fetched on two days would.
 4. A backtest that holds a position across a change values it on the new scale
    once the decisions resume, so V jumps between two decisions. The halts make
    such a run visible and do not make it right, and it is not quoted.
-5. A lookback of one bar never halts on this, and a quote is not compared with
+5. A change of scale that is not a change of series inside one snapshot's bars
+   halts nothing. A split among captured bars reads as a move, which is [rule 6's
+   gap](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails).
+   In a session of two decisions, the second's mark can come from a later snapshot
+   than V does, and the two are not compared.
+6. A lookback of one bar never halts on this, and a quote is not compared with
    the bar before it. [#100](https://github.com/l3a0/ithildin-runtime/issues/100) and [#114](https://github.com/l3a0/ithildin-runtime/issues/114) read the first quotes.
 
 #### What the spike multiple is measured against

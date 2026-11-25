@@ -53,6 +53,8 @@ SEAM = date(2012, 4, 10)
 AT = DAYS.index(SEAM)
 LOOKBACK = 10
 OLD, NEW = date(2012, 4, 10), date(2026, 11, 22)
+# A day after the made-up price-kind rows were added.
+LATER = date(2026, 11, 26)
 GLD_WALK = made.walk(DAYS, 1, 160.0)
 USO_WALK = made.walk(DAYS, 2, 35.0)
 ONE_SERIES = [
@@ -141,6 +143,40 @@ def test_1_each_field_alone_halts(one_lake: Path, tmp_path: Path, name: str) -> 
     assert both(lake, tmp_path, SEAM) == (reason(DAYS[AT - 1], SEAM, BASE, shown),)
 
 
+RAW = f"raw from {made.ONE.format('USO')} as of 2012-04-10"
+CAPTURED = "raw from no source as of no date"
+
+
+@pytest.mark.parametrize("traded", [False, True], ids=["adjusted", "raw"])
+def test_1_a_captured_bar_between_imported_ones_halts_both_ways(
+    one_lake: Path, tmp_path: Path, traded: bool
+) -> None:
+    """A change is a change whichever bar comes first, and where both bars are `raw`."""
+    lake = copied(one_lake, tmp_path)
+    window = DAYS[AT - LOOKBACK + 1 : AT + 1]
+    if traded:
+        for day in window:
+            made.of_series(lake, "USO", day, basis="raw")
+    lakes.captured(lake, "USO", window[4], fetch_ts=close(window[4]).isoformat())
+    imported = RAW if traded else BASE
+    assert both(lake, tmp_path, window[-1]) == (
+        reason(window[3], window[4], imported, CAPTURED),
+        reason(window[4], window[5], CAPTURED, imported),
+    )
+
+
+def test_1_an_undated_import_is_of_another_series_than_a_dated_one(
+    one_lake: Path, tmp_path: Path
+) -> None:
+    """marketlake refuses an undated import only where its basis is `adjusted`."""
+    lake = copied(one_lake, tmp_path)
+    window = DAYS[AT - LOOKBACK + 1 : AT + 1]
+    for day in window:
+        made.of_series(lake, "USO", day, basis="raw", undated=day < window[4])
+    undated = f"raw from {made.ONE.format('USO')} as of no date"
+    assert both(lake, tmp_path, window[-1]) == (reason(window[3], window[4], undated, RAW),)
+
+
 @pytest.mark.parametrize("at", [1, 5, LOOKBACK - 1], ids=["oldest", "middle", "newest"])
 def test_1_a_change_at_any_pair_of_the_lookback_halts(
     one_lake: Path, tmp_path: Path, at: int
@@ -198,6 +234,19 @@ def test_2_one_series_throughout_adds_no_halt(one_lake: Path, tmp_path: Path) ->
     assert both(one_lake, tmp_path, SEAM) == ()
 
 
+def test_2_two_price_kinds_within_one_series_add_no_halt(one_lake: Path, tmp_path: Path) -> None:
+    """A series is no price kind, and #114 says how a window of two kinds is read."""
+    rows = made.KINDS.rows
+    other = replace(made.STATED, price_kind="last sale")
+    kinds = PriceKinds(
+        (*rows, *(replace(r, first_session=SEAM, kind=other, added=LATER) for r in rows))
+    )
+    reading = source(one_lake, tmp_path, kinds=kinds).read(close(SEAM))
+    held = reading.snapshot.bars[USO]["1d"]
+    assert {bar.price_kind for bar in held} == {"official close", "last sale"}
+    assert reading.halts == judge(reading.snapshot, (GLD, USO)) == ()
+
+
 def test_2_captured_bars_throughout_add_no_halt(tmp_path: Path) -> None:
     captured = made.days(date(2026, 11, 2), date(2026, 11, 20))
     lake = made.build(
@@ -227,11 +276,15 @@ def crossing() -> tuple[str, ...]:
     )
 
 
-def test_3_only_the_decisions_whose_lookback_crosses_halt(two_lake: Path, tmp_path: Path) -> None:
-    src = source(two_lake, tmp_path)
-    halts = {n: src.read(close(DAYS[AT + n])).halts for n in range(-1, LOOKBACK)}
-    assert halts[-1] == halts[LOOKBACK - 1] == ()
-    assert [halts[n] for n in range(LOOKBACK - 1)] == [crossing()] * (LOOKBACK - 1)
+@pytest.mark.parametrize("lookback", [1, 2, LOOKBACK])
+def test_3_only_the_decisions_whose_lookback_crosses_halt(
+    two_lake: Path, tmp_path: Path, lookback: int
+) -> None:
+    """A lookback of one bar never crosses, and one of two crosses on the change alone."""
+    src = source(two_lake, tmp_path, lookback)
+    halts = {n: src.read(close(DAYS[AT + n])).halts for n in range(-1, lookback + 1)}
+    assert halts[-1] == halts[lookback - 1] == halts[lookback] == ()
+    assert [halts[n] for n in range(lookback - 1)] == [crossing()] * (lookback - 1)
 
 
 def test_3_a_decision_before_the_close_crosses_one_session_later(
@@ -245,19 +298,29 @@ def test_3_a_decision_before_the_close_crosses_one_session_later(
     assert halts[1] == halts[LOOKBACK - 1] == crossing()
 
 
-def test_3_the_tracked_strategy_first_passes_the_start_of_capture_on_2027_01_29(
+def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
     tmp_path: Path,
 ) -> None:
-    """Its lookback, read at close−20, as docs/design.md quotes the dates."""
+    """GLD and USO's two changes to come, as docs/design.md quotes the dates."""
     (tracked,) = load_strategies(STRATEGIES, ["chan_bollinger"])
     settings = data_settings([tracked])
-    imported = made.days(date(2026, 7, 1), date(2026, 10, 30))
-    captured = made.days(date(2026, 11, 2), date(2027, 1, 29))
-    walks = {"GLD": made.walk(imported, 5, 300.0), "USO": made.walk(imported, 6, 70.0)}
+    seams = (date(2026, 9, 4), date(2026, 11, 2))
+    imported = made.days(date(2026, 5, 1), date(2026, 10, 30))
+    captured = made.days(seams[1], date(2027, 1, 29))
     lake = made.build(
         tmp_path / "lake",
-        [made.Made(t, made.ONE.format(t), date(2026, 10, 30), w) for t, w in walks.items()],
-        {t: made.walk(captured, n, 100.0) for n, t in enumerate(walks)},
+        [
+            made.Made(t, name.format(t), as_of, {d: c for d, c in walk.items() if pick(d)})
+            for t, walk in (
+                ("GLD", made.walk(imported, 5, 300.0)),
+                ("USO", made.walk(imported, 6, 70.0)),
+            )
+            for name, as_of, pick in (
+                (made.ONE, date(2026, 11, 22), lambda d: d < seams[0]),
+                (made.TWO, date(2026, 10, 31), lambda d: d >= seams[0]),
+            )
+        ],
+        {"GLD": made.walk(captured, 7, 300.0), "USO": made.walk(captured, 8, 70.0)},
     )
     src = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror"),
@@ -267,10 +330,21 @@ def test_3_the_tracked_strategy_first_passes_the_start_of_capture_on_2027_01_29(
         kinds=made.KINDS,
     )
     early = timedelta(minutes=20)
-    halting = [d for d in captured if src.read(close(d) - early).halts]
-    assert (halting[0], halting[-1]) == (date(2026, 11, 3), date(2027, 1, 28))
-    assert len(halting) == settings.lookback - 1 == 59
-    assert captured[-1] not in halting
+    crossed = {
+        seam: [
+            day
+            for day in made.days(date(2026, 9, 1), captured[-1])
+            if any(f"and {seam} are of two series" in r for r in src.read(close(day) - early).halts)
+        ]
+        for seam in seams
+    }
+    spans = [(days[0], days[-1], len(days)) for days in crossed.values()]
+    assert settings.lookback == 60
+    assert spans == [
+        (date(2026, 9, 8), date(2026, 11, 30), 59),
+        (date(2026, 11, 3), date(2027, 1, 28), 59),
+    ]
+    assert src.read(close(captured[-1]) - early).halts == ()
 
 
 # 4. Through the receive loop.
