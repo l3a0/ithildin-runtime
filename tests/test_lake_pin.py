@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 
@@ -50,6 +51,9 @@ PINNED = {
 }
 
 
+# What a commit changes: each file's new text, or `None` where it is removed.
+type Files = Mapping[str, str | bytes | None]
+
 GIT_ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
@@ -77,14 +81,14 @@ class Marketlake:
         _git(root, "init", "--quiet", "--initial-branch=main")
         self.pin = self.commit(PINNED)
 
-    def commit(self, files: dict[str, str | None]) -> str:
+    def commit(self, files: Files) -> str:
         for rel, text in files.items():
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             if text is None:
                 path.unlink()
             else:
-                path.write_text(text, encoding="utf-8")
+                path.write_bytes(text if isinstance(text, bytes) else text.encode())
         _git(self.root, "add", "--all")
         _git(self.root, "commit", "--quiet", "--allow-empty", "--message=x")
         return _git(self.root, "rev-parse", "HEAD")
@@ -215,7 +219,7 @@ def test_each_difference_fails_the_run_and_is_named_with_its_rule(
     lock: Path,
     marketlake: Marketlake,
     capsys: pytest.CaptureFixture[str],
-    files: dict[str, str | None],
+    files: Files,
     said: list[str],
 ) -> None:
     commit = marketlake.commit(files)
@@ -265,6 +269,7 @@ TWO_PYARROWS = PINNED["uv.lock"] + '\n[[package]]\nname = "pyarrow"\nversion = "
         ({JOURNAL: 'SCHEMA_VERSION = "2"\n'}, "assigns no one integer"),
         ({JOURNAL: "SCHEMA_VERSION: int\n"}, "assigns no one integer"),
         ({"uv.lock": None}, "uv.lock is not at"),
+        ({"uv.lock": b"\xff"}, "is not text"),
         ({"uv.lock": "not = toml = at all"}, "is no uv lock"),
         ({"uv.lock": "version = 1\n"}, "is no uv lock"),
         ({"uv.lock": '[[package]]\nname = "duckdb"\n'}, "holds 0 entries for pyarrow"),
@@ -276,7 +281,7 @@ def test_a_side_that_cannot_be_read_is_no_pass(
     lock: Path,
     marketlake: Marketlake,
     capsys: pytest.CaptureFixture[str],
-    files: dict[str, str | None],
+    files: Files,
     said: str,
 ) -> None:
     marketlake.commit(files)
@@ -285,6 +290,15 @@ def test_a_side_that_cannot_be_read_is_no_pass(
     assert said in out
     assert "planted" not in out
     assert "says nothing of the pin" in out
+
+
+def test_a_pin_that_holds_no_join_is_no_pass(
+    marketlake: Marketlake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    marketlake.pin = marketlake.commit({JOIN: None})
+    code, out = _run(marketlake.lock(tmp_path / "uv.lock"), capsys)
+    assert code == 2
+    assert "src/lake/segment_join.py is not at the pin" in out
 
 
 def test_an_annotated_version_reads(
