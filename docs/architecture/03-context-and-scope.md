@@ -569,7 +569,7 @@ A machine's clock drifts, and nothing on the machine can see it. The clock dates
 
 [Both smear a leap second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html), meaning each spreads it over hours rather than jumping, so they agree through one. An ask that fails is asked again after 2 seconds, then 4, doubling up to the server's own interval.
 
-Each process that judges the clock asks for itself, on one thread per server, and keeps each server's last answer in memory. So no handler waits on the network, and a name lookup that hangs holds up neither the other server nor the order path. [Who judges the clock](#who-judges-the-clock-and-who-records-it) names the processes.
+Each process that judges the clock asks for itself, on one thread per server, and keeps each server's last answer in memory. The code that does this is the sampler, `TimeServers` in `adapters/time_servers.py`. So no handler waits on the network, and a name lookup that hangs holds up neither the other server nor the order path. [Who judges the clock](#who-judges-the-clock-and-who-records-it) names the processes.
 
 #### How one answer is read
 

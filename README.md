@@ -6,7 +6,7 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Only `core`, the types and shared code every module imports, the two stores, the two read-only buckets, the two queues and the two clocks in `adapters`, the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to in `journal`, the daily bars and the quotes of `data`, the alpha model of the first strategy in `alpha`, the transaction cost model in `cost`, the risk gate, the risk model and its stage in `risk`, the sizing of a target and its stage in `portfolio`, and in `runtime` the receive loop and the data, alpha, cost, risk and portfolio workers' entry points are built so far. The first milestone is a walking skeleton that runs in
+Only `core`, the types and shared code every module imports, the two stores, the two read-only buckets, the two queues, the two clocks and the sampler that asks the time servers in `adapters`, the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to in `journal`, the daily bars and the quotes of `data`, the alpha model of the first strategy in `alpha`, the transaction cost model in `cost`, the risk gate, the risk model and its stage in `risk`, the sizing of a target and its stage in `portfolio`, and in `runtime` the receive loop and the data, alpha, cost, risk and portfolio workers' entry points are built so far. The first milestone is a walking skeleton that runs in
 shadow mode and trades on Alpaca's paper account, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 
