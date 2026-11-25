@@ -745,7 +745,8 @@ answering. Data reports the gap and never fills it with the last close.
 The charter gives the risk engineer the halt on stale data, and the lag a
 sealed daily bar may have is 0 sessions. A decision at close−20 reads the bar of
 the session before, and one at the close reads that session's own, so any lag
-is a session that should be there and is not. Data applies that rule, and
+is a session that should be there and is not. A captured bar arrives after its
+session's close, so on captured bars a decision at the close halts as stale. Data applies that rule, and
 [How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) says how
 old a quote may be.
 
@@ -818,7 +819,7 @@ start before data, as it does here, but it sends only what a target
 portfolio asks for, and that cannot exist until a snapshot does. The charter
 gives the operator the startup order: execution may send an order only once
 every upstream worker has written a decision result that lists outputs, not a
-halt, for the decision. Above a written age of 0, hard limit 3's exception covers a strategy's late forecast.
+halt, for the decision. Above a written age of 0, hard limit 3's first exception covers a strategy's late forecast.
 The pipeline makes that order something the platform cannot get wrong. "Not ready" is a halt, never an empty forecast.
 
 ### The risk gate refuses an order
@@ -868,7 +869,7 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, at its `/stocks/v1/dividends` endpoint, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
-The mark is the midpoint of the instrument's quote, or its newest daily bar's close where the snapshot holds no quote of it, through `core.mark`, which the alpha model's signal reads and portfolio construction sizes with too. A split on the decision's own day leaves V and the bars before it and the quote after it, and only the flag on a midpoint that moved sees that, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds. Six gaps halt rather than read as no loss.
+The mark is the midpoint of the instrument's quote, or its newest daily bar's close where the snapshot holds no quote of it, through `core.mark`, which the alpha model's signal reads and portfolio construction sizes with too. A split on the decision's own day leaves V and the bars before it and the quote after it, and the signal, the size and the day's loss read that step. The flag on a midpoint that moved is the only check on it, and it halts nothing and misses a step inside the written multiple, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds. Six gaps halt rather than read as no loss.
 
 1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.

@@ -74,7 +74,7 @@ marketlake holds four kinds of bar.
 
 | Kind of bar | Comes from | Read by |
 | --- | --- | --- |
-| Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow, paper and live trading |
+| Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow and paper trading, and live trading once [a split record covers them](../team-charter.md#5-release) |
 | Committed vintages | quantitative-trading, imported once | The backtest, and the stress move's measurement |
 | Yahoo's GLD and USO | Yahoo's two downloaded files, 2012-04-10 to 2026-09-03, imported once | The stress move's measurement |
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
