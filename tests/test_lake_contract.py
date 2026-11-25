@@ -392,15 +392,16 @@ def test_unsealed_a_row_that_cannot_be_cut_is_refused_and_never_dropped(
     ],
     ids=lambda changes: "{} {}".format(*next(iter(changes.items()))),
 )
-def test_unsealed_a_row_of_another_ticker_day_or_version_is_refused_whenever_it_landed(
+def test_unsealed_a_row_of_another_ticker_day_or_version_is_refused(
     tmp_path: Path, changes: dict[str, str | int | None]
 ) -> None:
-    """The planted row sits behind a good one and landed after `at`, and the read refuses."""
-    good = lakes.quote_row("GLD", MINUTES[0])
-    late = {**good, "fetch_end_ts": (MINUTES[0] + 2 * SECOND).isoformat(), **changes}
-    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good, late)
+    """The planted row is second in the second of three segments, and lands after `at`."""
+    good = [lakes.quote_row("GLD", minute) for minute in MINUTES]
+    first, one = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good[0])
+    rel, two = lakes.quotes_segment(tmp_path, "GLD", MINUTES[1], good[1], {**good[1], **changes})
+    last, three = lakes.quotes_segment(tmp_path, "GLD", MINUTES[2], good[2])
     with pytest.raises(UnsealedRefused) as raised:
-        _read(tmp_path, {rel: digest}, MINUTES[0] + SECOND)
+        _read(tmp_path, {first: one, rel: two, last: three}, MINUTES[0] + SECOND)
     assert raised.value.segment == rel
 
 
