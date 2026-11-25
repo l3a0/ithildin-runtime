@@ -1374,8 +1374,8 @@ hold.
    extends it to the taxpayer's IRA.
 2. The platform's account chooses which tax lot each sale closes, called
    specific lot identification, rather than closing the oldest lot first.
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms that
-   Alpaca's live account offers it.
+   The owner confirms at the live gate that Alpaca's live account offers it,
+   as [#153](https://github.com/l3a0/ithildin-runtime/issues/153) lists.
 
 The rest of this subsection is this doc's proposal for
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10), apart from what

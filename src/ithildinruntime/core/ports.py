@@ -227,7 +227,9 @@ class BlobStore(Protocol):
 
     def head(self, key: str) -> StoredBlob: ...
 
-    def list(self, prefix: str, after: str | None) -> Sequence[str]: ...
+    def list(self, prefix: str, after: str | None) -> Sequence[str]:
+        """Every key that starts with `prefix` and sorts after `after`, which is left out."""
+        ...
 
     def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
         """Rewrite a blob only while it carries `etag`, and return the new tag."""

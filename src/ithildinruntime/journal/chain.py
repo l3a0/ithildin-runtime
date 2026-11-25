@@ -298,8 +298,9 @@ class Journal:
         stored bytes of entry `after`, so the chain is checked from there on.
         It halts on bytes that are not canonical, a key whose number differs
         from the `seq` inside it, a format it does not know, a link that does
-        not chain, a gap in the numbers and a key that is not an entry's. A
-        number the listing left out is a gap where its own key holds nothing.
+        not chain, a gap in the numbers, a key listed at or below the entry
+        last read and a key that is not an entry's. A number the listing left
+        out is a gap where its own key holds nothing.
         Checkpoints, which #154 writes under the same prefix, are skipped.
         """
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:
