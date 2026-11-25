@@ -39,8 +39,9 @@ from ithildinruntime.core import (
     Verdict,
     decode,
     encode,
-    is_name,
+    is_broker_id,
     is_sha256,
+    shows_instrument,
 )
 
 __all__ = [
@@ -70,7 +71,6 @@ __all__ = [
 # `cut` true.
 RAW_LIMIT = 65_536
 _WRITER = re.compile(r"[0-9a-f]{32}")
-_BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
 # How much of a value from outside a halt shows, since its reason is stored and sent.
 _SHOWN = 80
 
@@ -318,9 +318,9 @@ def _past_bounds(record: Record) -> Iterator[str]:
         yield f"raw has {len(raw)} bytes, more than {RAW_LIMIT}"
     match record:
         case AckEntry():
-            yield from _broker_ids(record.broker_order_id)
+            yield from _broker_ids(("the broker's order id", record.broker_order_id))
         case FillEntry(fill):
-            yield from _broker_ids(fill.fill_id, fill.broker_order_id)
+            yield from _fill_ids(fill)
             if fill.price <= 0:
                 yield f"the fill {fill.fill_id} has a price of {fill.price}, not above zero"
             if fill.qty == 0:
@@ -331,7 +331,7 @@ def _past_bounds(record: Record) -> Iterator[str]:
         case DisputedFillEntry(fill):
             # A dispute moves nothing, so it keeps what came, such as a fill
             # sent again for zero shares.
-            yield from _broker_ids(fill.fill_id, fill.broker_order_id)
+            yield from _fill_ids(fill)
         case ReadEntry():
             yield from _blobs(record.ref)
         case DecisionEntry():
@@ -347,10 +347,17 @@ def _past_bounds(record: Record) -> Iterator[str]:
             pass
 
 
-def _broker_ids(*values: str) -> Iterator[str]:
-    for value in values:
-        if not _BROKER_ID.fullmatch(value):
-            yield "it names an id that is not a broker's id"
+def _fill_ids(fill: Fill) -> Iterator[str]:
+    yield from _broker_ids(
+        ("the fill's id", fill.fill_id), ("the broker's order id", fill.broker_order_id)
+    )
+
+
+def _broker_ids(*named: tuple[str, str]) -> Iterator[str]:
+    # The id is not shown, since it could be any text of a broker's.
+    for field, value in named:
+        if not is_broker_id(value):
+            yield f"{field} is not a broker's id"
 
 
 def shown(value: str) -> str:
@@ -360,7 +367,7 @@ def shown(value: str) -> str:
 
 def named(instrument: object) -> str:
     """An instrument as a halt shows it, where it is a name and no other text."""
-    if is_name(instrument) and len(str(instrument)) <= _SHOWN:
+    if shows_instrument(instrument):
         return repr(instrument)
     return "an instrument whose name is none"
 

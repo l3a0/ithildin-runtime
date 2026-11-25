@@ -882,6 +882,11 @@ class AccountRead(_Record):
             "fills": self.fills,
         }
 
+    @property
+    def short(self) -> tuple[str, ...]:
+        """The name of each read that did not come whole, which a caller halts on."""
+        return tuple(name for name, part in self.reads.items() if not part.whole)
+
 
 @dataclass(frozen=True)
 class JournalAck(_Record):

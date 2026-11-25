@@ -99,7 +99,7 @@ flowchart TB
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
 ```
 
-In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. That execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. Execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5.
 
 The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 
@@ -360,13 +360,16 @@ sequenceDiagram
     Note over V,M: Phase 1, read the data, then recover
     D->>F: stores the snapshot, naming each bar and quote read,<br/>and data's decision result
     F-->>X: sends an event for data's result
-    X->>B: asks about orders in doubt
+    X->>B: asks about orders in doubt, which #35;147 builds
     B-->>X: returns each lookup's answer
     X->>J: journals each lookup's answer
     X->>B: reads positions, open orders, cash and<br/>the broker's records, then the fills,<br/>from before any not yet journaled
     B-->>X: returns positions, open orders, cash,<br/>the broker's records and the fills
     X->>F: stores the account file as read
-    X->>J: journals the account file's hash, each new fill<br/>and each record as an outside entry
+    X->>J: journals the account file's hash, each new fill<br/>and each record as an outside entry, which #35;151 builds
+    X->>B: looks up each order it no longer lists
+    B-->>X: returns how each one ended
+    X->>J: journals each one that expired or was rejected
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>F: reads the hard caps blob
     X->>F: stores the reconciled book, the hard caps as read,<br/>the session's valuation and execution's recover result
@@ -521,7 +524,7 @@ The stage is `execution/recover.py`. It waits for the decision's time, having wr
 
 A difference that is nothing but a fee, a dividend or a split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms at each decision and halts nothing, because the comparison agrees.
 
-Every halt after step 4 lists the capture in its result, and no halt's reason or alarm holds a word of the broker's but an order or fill id the journal takes.
+Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 
 ##### What a plan a crash left unfinished is
 
@@ -545,10 +548,10 @@ With neither time, it asks since the opening, and a fill at that time itself is 
 
 A crash, or a second instance, can run one decision's recover twice. A second attempt reads the broker again and goes on from what the first stored.
 
-1. A read that differs is stored at the capture's next attempt number, with an alarm that says what differs. The first capture is the one that counts.
+1. A read that differs is stored at the capture's next attempt number, with an alarm that says what differs. The first capture is the one that counts. Where the account moved between the two, in its positions, open orders or cash or by a fill the first lacks, the attempt halts, because files made from the first would be stale. A read whose pages alone came later, or whose fills from a later time leave out one the first held, goes on.
 2. A fill or an end another attempt journaled is seen on a new reading of the journal and not repeated.
 3. `caps.json`, `book.json` and `valuation.json` are each read back where they are stored, and only a missing one is built. So the owner can rewrite the caps and the journal can grow between two attempts, and both attempts end in the same files. The caps' key and SHA-256 come from the stored file's header.
-4. Where `book.json` is stored, the valuation is of that book and never of a new replay.
+4. Where `book.json` is stored, the valuation is of that book and never of a new replay. A stored book that differs from this attempt's in anything but the journal entry it replayed through halts, and so does a stored valuation other than its book's.
 
 A file of another release, format or configuration halts, because this release did not write its fields.
 

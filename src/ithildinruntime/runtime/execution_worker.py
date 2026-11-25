@@ -91,7 +91,7 @@ class ExecutionWorker:
         table: Table,
         stress_moves: Path,
     ) -> None:
-        self._alerts = alerts
+        self._owner_step = storage.owner_step
         self.account = Account(
             store=store,
             storage=storage,
@@ -103,12 +103,15 @@ class ExecutionWorker:
             retry=retry,
             pause=pause,
         )
-        self.brokers = _brokers(mode, store, storage, account, clock, deployment, run)
+        self._brokers = _brokers(mode, store, storage, account, clock, deployment, run)
         stage = table.stage(RECOVER_STAGE)
+        if stage != RECOVER_ROW:
+            # Recover would read the broker before the last send went out.
+            self._brokers = Halt(f"the table's row of {RECOVER_STAGE} is not the one it declares")
         (data_stage,) = stage.inputs
         self.recover = RecoverStage(
             self.account,
-            self.brokers,
+            self._brokers,
             storage,
             clock,
             stage=stage.name,
@@ -140,20 +143,31 @@ class ExecutionWorker:
             self._settle()
 
     def _settle(self) -> None:
-        # The loop has ended, so there is nothing left to report to.
+        # The loop has ended, so there is nothing left to report to, and nothing beats.
+        account, step = self.account, f"The owner's step: {self._owner_step}"
+        if owed := account.unstored():
+            # Paged ahead of the tries, which can outlast the host's stop.
+            account.alarm(
+                f"the process is ending with {'; '.join(owed)} not yet in the journal, and "
+                f"tries once more. {step}",
+                lambda: None,
+            )
         try:
-            self.account.settle(lambda: None)
-            return
+            account.settle(lambda: None)
+            said = ""
         except Halt as halt:
-            said = halt.reason
+            said = f": {halt.reason}"
         except Exception as error:
-            said = type(error).__name__
-        owed = "; ".join(self.account.unstored()) or "nothing it names"
-        reason = f"the process ends and the journal was not given {owed}: {said}"
-        try:
-            self._alerts.alarm(reason)
-        except BaseException as unsent:
-            reason = f"{reason}. The alarm could not be sent: {type(unsent).__name__}"
+            said = f": {type(error).__name__}"
+        owed, unsent = account.unstored(), account.unsent()
+        if not owed and not unsent:
+            # An account that cannot be used holds nothing, so it loses nothing.
+            return
+        lost = [*(f"the journal was not given {one}" for one in owed)]
+        lost += [f"the alarm '{one}' was not sent" for one in unsent]
+        reason = f"the process ends and {'; '.join(lost)}{said}"
+        if owed:
+            account.alarm(f"{reason}. {step}", lambda: None)
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)
 

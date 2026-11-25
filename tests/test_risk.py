@@ -3,7 +3,8 @@
 #115's acceptance names these tests. Every figure is made up, and each hand
 calculation is written out beside the figure it gives. The blobs the stage
 reads come from `write_data` and `write_recover`, which stand in for data's
-stage and for execution's recover stage, which #10 builds.
+stage and for execution's recover stage. tests/test_recover.py's test 1 runs this
+stage on what `execution/recover.py` wrote.
 """
 
 from __future__ import annotations

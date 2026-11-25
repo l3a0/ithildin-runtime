@@ -24,9 +24,12 @@ step` says why each comes where it does.
 A second attempt at one decision reads the broker again, and goes on from the
 first attempt's capture and from each file it stored. So the owner can rewrite the
 caps and the journal can grow between two attempts, and both end in the same files.
+Where the account itself moved between the two reads, the attempt halts.
 
-What a person reads holds none of a broker's text but an order or fill id the
-journal takes. The broker's own words are in `account.json`.
+What a person reads shows a broker's order or fill id where it is one the journal
+takes, an instrument where it is a name, and a client order id where it is a stamp
+of the platform's, and no other text of the broker's. The broker's own words are in
+`account.json`. An alarm goes once in a process, and monitoring pages each halt.
 """
 
 from __future__ import annotations
@@ -74,6 +77,9 @@ from ithildinruntime.core import (
     value_book,
 )
 from ithildinruntime.journal import (
+    DOUBTFUL,
+    ENDED,
+    OPEN,
     RAW_LIMIT,
     DisputedFillEntry,
     ExpiredEntry,
@@ -101,10 +107,10 @@ _LATE = timedelta(days=1)
 _SECOND = "#183"
 _ZERO = Decimal(0)
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
-_UNSETTLED = frozenset(
-    {OrderState.INTENDED, OrderState.APPROVED, OrderState.SENDING, OrderState.IN_DOUBT}
-)
-_AT_THE_BROKER = frozenset({OrderState.ACKNOWLEDGED, OrderState.PARTLY_FILLED})
+# An order the broker has, as the journal's own groups of states give it, and every other
+# state that has not ended, which only a lookup, a person or #147 settles.
+_AT_THE_BROKER = OPEN - DOUBTFUL - {OrderState.APPROVED}
+_UNSETTLED = frozenset(OrderState) - ENDED - _AT_THE_BROKER
 
 
 class _Item(Protocol):
@@ -140,6 +146,9 @@ class RecoverStage:
             raise ValueError("recover names its release, which a second attempt checks")
         self._account = account
         self._brokers = brokers
+        # Each alarm this process has sent, so a cause that stands pages once and not at
+        # every decision. Monitoring pages each halt as its own rule says.
+        self._said: set[str] = set()
         self._clock = clock
         self._data_stage = data_stage
         self._data_hashes = dict(data_hashes)
@@ -186,13 +195,21 @@ class RecoverStage:
         capture = decision.capture(ACCOUNT_OUTPUT, AccountRead, made, differences)
         # The capture that counts, which is an earlier attempt's where there was one.
         read = capture.entry
+        if read != made and (moved := _moved(read, made)):
+            # The account moved since the first attempt read it, so its files would be stale.
+            raise Halt(
+                f"{capture.ref.key} and this attempt's read of the broker differ in "
+                f"{', '.join(moved)}, so the account moved between two attempts at one decision"
+            )
         view = self._record(view, lambda v: self._read_entry(v, capture.ref, read, at), report)
         seq = next(n for n, entry in view.reads.items() if entry.ref == capture.ref)
-        if short := [name for name, part in read.reads.items() if not part.whole]:
+        if short := read.short:
             raise Halt(f"the broker's {', '.join(short)} did not come whole, as {capture.ref.key}")
 
         for fill in read.fills.fills:
             view = self._record(view, lambda v, f=fill: _fill_entry(v, f, seq), report)
+        # A fill in dispute halts here, ahead of any lookup, naming it.
+        _ = view.book
         listed = {order.broker_order_id for order in read.open_orders.orders}
         for name, order in view.live.items():
             if order.state in _AT_THE_BROKER and order.broker_order_id not in listed:
@@ -200,12 +217,11 @@ class RecoverStage:
 
         view = account.view(report)
         book = view.book
-        held = {o.client_order_id for opens in book.open_orders_by_strategy.values() for o in opens}
-        orders = [order for name, order in view.live.items() if name in held]
-        if found := reconcile(book, orders, read):
+        if found := reconcile(book, view.live.values(), read):
             said = "; ".join(str(difference) for difference in found)
             raise Halt(f"the book and the broker differ, as {capture.ref.key} holds it: {said}")
-        self._past_their_session(orders, at, report)
+        held = {o.client_order_id for opens in book.open_orders_by_strategy.values() for o in opens}
+        self._past_their_session([o for n, o in view.live.items() if n in held], at, report)
 
         caps = self._caps(decision)
         return (caps, *self._files(decision, book, view, snapshot, at))
@@ -229,10 +245,17 @@ class RecoverStage:
             added = ""
             for one in stands:
                 why = f"{one}, in {when}, whose orders are not settled"
-                added = self._account.alarm(why, report) or added
+                added = self._alarm(why, report) or added
             said.append(f"{when} is not settled: {'; '.join(stands)}{added}")
         if said:
-            raise Halt(". ".join(said))
+            raise Halt(f"account {self._account.alias}: {'. '.join(said)}")
+
+    def _alarm(self, reason: str, report: Callable[[], None]) -> str:
+        """Send an alarm once in this process, and say what a halt adds where it went nowhere."""
+        if reason in self._said:
+            return ""
+        self._said.add(reason)
+        return self._account.alarm(reason, report)
 
     # Steps 5 to 7
 
@@ -302,7 +325,7 @@ class RecoverStage:
             _, sent_for, _ = read_order_id(name)
             close = load_sessions().opened_by(sent_for).close
             if close < at:
-                self._account.alarm(
+                self._alarm(
                     f"the order {name} is still open after its session's close at "
                     f"{close.isoformat()}",
                     report,
@@ -332,8 +355,13 @@ class RecoverStage:
         made = _value(book, view, snapshot, at)
         kept = decision.keep(BOOK_OUTPUT, Book, book)
         if kept.entry != book:
+            # An earlier attempt's, which the journal may have grown past and nothing else.
+            if replace(kept.entry, replayed_through=book.replayed_through) != book:
+                raise Halt(f"{kept.ref.key} holds another book than the journal's")
             made = _value(kept.entry, view, snapshot, at)
         value = decision.keep(VALUATION_OUTPUT, Valuation, made)
+        if value.entry != made:
+            raise Halt(f"{value.ref.key} holds another valuation than its book's")
         return kept.ref, value.ref
 
 
@@ -383,6 +411,15 @@ def _undated(read: AccountRead) -> dict[str, object]:
         "whether each came whole": [part.whole for part in read.reads.values()],
         "the pages' bytes": [[p.body for p in part.received] for part in read.reads.values()],
     }
+
+
+def _moved(first: AccountRead, later: AccountRead) -> list[str]:
+    """What the account did between two reads, apart from a fill the later bound leaves out."""
+    one, two = _undated(first), _undated(later)
+    named = [name for name in ("positions", "open orders", "cash") if one[name] != two[name]]
+    if set(two["fills"]) - set(one["fills"]):  # type: ignore[arg-type]
+        named.append("fills")
+    return named
 
 
 def _asked[R](call: Callable[[], R]) -> R:

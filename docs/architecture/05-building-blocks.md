@@ -1089,7 +1089,9 @@ classDiagram
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
         +exists(key) bool
+        +keep(key, data) BlobRef
         +read_blob(key) bytes
+        +find_blob(key) bytes or None
         +read_result(key, decision_at) DecisionResult
         +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
         +announce(key) bool
@@ -1178,7 +1180,7 @@ classDiagram
     }
     class core {
         <<module>>
-        +reconcile(Book, orders, AccountRead) list
+        +reconcile(Book, orders, AccountRead) tuple
     }
 
     Journal o-- BlobStore
@@ -1414,7 +1416,7 @@ Every figure is compared exactly, with no tolerance.
 | What | How the two sides are matched | What counts as a difference |
 | --- | --- | --- |
 | Positions | By instrument, the sum of every strategy's book against the broker's. An instrument the book does not hold is zero there | Other shares. An instrument the broker does not list agrees with a sum of zero alone |
-| Open orders | By the broker's order id | Another instrument, signed shares, filled total or client order id, an order on one side alone, and one the broker lists twice. An order the book holds open with no record handed in, or with a record that holds no broker's id, such as one that is `Approved`, is on the book's side alone |
+| Open orders | By the broker's order id | Another instrument, signed shares, filled total, client order id, type or time in force, a broker's state other than working, an order on one side alone, and one the broker lists twice. A record of no order the book holds open is left out, so a caller hands every order that has not ended. An order the book holds open with no record handed in, or with a record that holds no broker's id, such as one that is `Approved`, is on the book's side alone |
 | Cash | One figure each | Any other figure |
 
 What a difference says to a person holds none of the broker's text. It shows an instrument where that is a name, a broker's order id where it is one the journal takes, and a client order id where it is a stamp of the platform's. The broker's own words are in `account.json`.

@@ -2,8 +2,9 @@
 
 Every order goes in through `OrderPath`, gate and journal included. Every figure is
 made up, and the gate's limits are loose, so an order has the one outcome a test
-gives it. `recover` does the part of the recover stage a test needs, which journals
-each new fill and each order that ended.
+gives it. `recover` is a stand-in for the recover stage, which journals each new fill
+and each order that ended and halts on nothing, so a test of the broker can reach a
+state the real stage would halt on. tests/support/recover_world.py runs the real one.
 """
 
 from __future__ import annotations

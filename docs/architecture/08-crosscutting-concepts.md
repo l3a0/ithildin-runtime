@@ -55,11 +55,11 @@ erDiagram
     ACCOUNT_FILE {
         string key
         string sha256
-        datetime read_at
         string positions
         string open_orders
         decimal cash
-        int replayed_through
+        datetime since
+        string fills
     }
     VINTAGE {
         string id
@@ -700,7 +700,7 @@ A switch already pulled makes `switch_pull` say so rather than journal it twice.
 
 Every key below sits in its environment's bucket, as [Four environments](07-deployment.md#four-environments) says. Deployments and accounts appear by the alias the release's table gives them, never by a broker's account number.
 
-A create-only write that S3 refuses, whose stored SHA-256 differs from the writer's, alarms, as [Every alarm and its drill](../halts-and-drills.md#every-alarm-and-its-drill) lists. For a capturing stage, data's snapshot and execution's recover stage, the differing capture is also stored at the next attempt number, by `core`'s key builder for that row, and named in the decision result, so a second read of a source that may not come again is kept rather than discarded.
+A create-only write that S3 refuses, whose stored SHA-256 differs from the writer's, alarms, as [Every alarm and its drill](../halts-and-drills.md#every-alarm-and-its-drill) lists. Recover's caps, book and valuation are the exception: a second attempt goes on from the one that stands, with no alarm, and halts where it differs from what that attempt may differ by, as [What a second attempt goes on from](06-runtime.md#what-a-second-attempt-goes-on-from) says. For a capturing stage, data's snapshot and execution's recover stage, the differing capture is also stored at the next attempt number, by `core`'s key builder for that row, and named in the decision result, so a second read of a source that may not come again is kept rather than discarded.
 
 **Table:** The key each store writes under
 

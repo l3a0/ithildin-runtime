@@ -180,6 +180,16 @@ def test_4_cash_one_step_either_side_of_equal(by: Decimal) -> None:
         ({"filled": D(0)}, "filled"),
         ({"client_order_id": order_id("chan", DECISION, 2)}, "client order id"),
         ({"client_order_id": None}, "client order id"),
+        ({"type": OrderType.MARKET}, "type"),
+        ({"type": None}, "type"),
+        ({"time_in_force": TimeInForce.DAY}, "time in force"),
+        ({"time_in_force": None}, "time in force"),
+        ({"state": BrokerState.CANCELLED}, "state"),
+        ({"state": BrokerState.PENDING_CANCEL}, "state"),
+        ({"state": BrokerState.FILLED}, "state"),
+        ({"state": BrokerState.EXPIRED}, "state"),
+        ({"state": BrokerState.REJECTED}, "state"),
+        ({"state": BrokerState.UNKNOWN}, "state"),
     ],
 )
 def test_4_an_open_order_that_differs_in_one_field(changes: dict, field: str) -> None:
@@ -195,6 +205,12 @@ def test_4_an_open_order_that_differs_in_every_field_names_each() -> None:
     theirs = copy(order, instrument=USO, qty=D(-1), filled=D(-1), client_order_id=None)
     (one,) = reconcile(book({}, (order,)), (order,), read({}, (theirs,)))
     assert one.fields == ("instrument", "shares", "filled", "client order id")
+    odd = copy(order, type=None, state=BrokerState.CANCELLED)
+    (other,) = reconcile(book({}, (order,)), (order,), read({}, (odd,)))
+    assert str(other).endswith(
+        "differs in type (market_on_close in the book and none the platform reads at the "
+        "broker), state (Acknowledged in the book and cancelled at the broker)"
+    )
     assert str(one) == (
         f"the order {order.intent.client_order_id}, the broker's b-1, differs in instrument (GLD "
         "in the book and USO at the broker), shares (10 in the book and -1 at the broker), filled "
@@ -250,6 +266,12 @@ def test_4_an_order_with_no_brokers_id_is_a_difference(state: OrderState) -> Non
     assert str(one) == f"the order {name} is open in the book alone, {state}"
 
 
+def test_4_a_record_of_no_order_the_book_holds_open_is_left_out() -> None:
+    """So a caller hands every order that has not ended, an `Intended` one among them."""
+    held, intended = record(), record(2, None, state=OrderState.INTENDED)
+    assert reconcile(book({}, (held,)), (held, intended), read({}, (copy(held),))) == ()
+
+
 def test_4_an_open_order_of_the_book_with_no_record_handed_in_is_a_difference() -> None:
     """A caller that hands in too few records never reads as agreement."""
     order = record()
@@ -279,6 +301,12 @@ def test_4_every_difference_at_once_sorted() -> None:
     ]
 
 
+def test_10_an_instrument_of_up_to_80_letters_is_shown() -> None:
+    long = InstrumentId("X" * 80)
+    (one,) = reconcile(book({}), (), read({long: 1}))
+    assert str(one) == f"{long} is 0 in the book and 1 at the broker"
+
+
 def test_10_a_difference_holds_no_text_of_the_brokers() -> None:
     order = record()
     odd = copy(order, instrument=InstrumentId(SECRET), client_order_id=SECRET)
@@ -286,7 +314,7 @@ def test_10_a_difference_holds_no_text_of_the_brokers() -> None:
     given = reconcile(
         book({}, (order,)),
         (order,),
-        read({InstrumentId(SECRET): 1, InstrumentId("X" * 41): 1}, (odd, alone)),
+        read({InstrumentId(SECRET): 1, InstrumentId("X" * 81): 1}, (odd, alone)),
     )
     said = [str(x) for x in given]
     assert not [text for text in said if "PKFAKE" in text or "XX" in text]

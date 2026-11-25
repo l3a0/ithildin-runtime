@@ -13,6 +13,7 @@ accepted, so a stored halt says what it was judged from. docs/design.md's
 It serves a deterministic stage, and a capturing one that stores a capture before
 it judges it and, in a later attempt, goes on from what it stored in the first. A
 stage that needs another form extends this class rather than writing beside it.
+Data's stage still stores its capture beside it, until #185 moves it here.
 """
 
 from __future__ import annotations
@@ -232,8 +233,9 @@ class StageDecision:
             attempt=lambda n: attempt_key(run.deployment, run.run, self._at, run.stage, name, n),
             explain=described,
         )
-        both = (stored.counts, stored.ref)
-        self._captures = both[:1] if stored.ref == stored.counts else both
+        made = (stored.counts,) if stored.ref == stored.counts else (stored.counts, stored.ref)
+        # A decision may capture more than one thing, and each stays listed.
+        self._captures = (*self._captures, *(r for r in made if r not in self._captures))
         self._note(stored.counts)
         if stored.ref == stored.counts:
             return Own(stored.counts, self._header(), entry)

@@ -44,9 +44,11 @@ __all__ = [
     "TARGET_OUTPUT",
     "UNSTATED",
     "VALUATION_OUTPUT",
+    "is_broker_id",
     "is_name",
     "is_sha256",
     "is_unstated",
+    "shows_instrument",
 ]
 
 DATA_STAGE = "data"
@@ -72,6 +74,10 @@ DAILY = "1d"
 UNSTATED = "unstated"
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# The form of a broker's order or fill id the journal takes, which a halt may show.
+_BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
+# The longest instrument a halt shows.
+_INSTRUMENT_SHOWN = 80
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -82,6 +88,19 @@ def is_name(value: object) -> bool:
     `_` and `-`, and never holds `..`, so it cannot climb out of a folder.
     """
     return isinstance(value, str) and _NAME.fullmatch(value) is not None and ".." not in value
+
+
+def is_broker_id(value: object) -> bool:
+    """Whether `value` is a broker's order or fill id in a form the journal takes.
+
+    A halt and an alarm show an id of this form and no other text of a broker's.
+    """
+    return isinstance(value, str) and _BROKER_ID.fullmatch(value) is not None
+
+
+def shows_instrument(value: object) -> bool:
+    """Whether a halt may show `value` as an instrument: a name, and no longer than 80."""
+    return is_name(value) and len(str(value)) <= _INSTRUMENT_SHOWN
 
 
 def is_sha256(value: object) -> bool:

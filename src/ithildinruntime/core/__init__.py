@@ -45,8 +45,10 @@ from .names import (
     TARGET_OUTPUT,
     UNSTATED,
     VALUATION_OUTPUT,
+    is_broker_id,
     is_name,
     is_sha256,
+    shows_instrument,
 )
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
@@ -122,6 +124,7 @@ __all__ = [
     "error_name",
     "exceeds_places",
     "from_received",
+    "is_broker_id",
     "is_name",
     "is_sha256",
     "load_sessions",
@@ -130,6 +133,7 @@ __all__ = [
     "parse_strategy",
     "places",
     "require_utc",
+    "shows_instrument",
     "to_decimal",
     "to_utc",
     *_exact,

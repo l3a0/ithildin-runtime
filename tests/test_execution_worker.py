@@ -308,7 +308,7 @@ def test_9_every_other_mode_halts_each_decision_and_builds_no_broker(
     stores = {"a backtest over s3": s3_store, "a backtest over another store": Wired}
     changes = {"store": stores[name]()} if name in stores else {}
     worker = case.worker(mode, **changes)
-    assert isinstance(worker.brokers, Halt) and worker.brokers.reason == reason
+    assert isinstance(worker._brokers, Halt) and worker._brokers.reason == reason
     case.data(0)
     case.data(1)
     with running({"execution": case.loop({**worker.handlers, SEND_STAGE: send})}) as started:
@@ -334,7 +334,7 @@ def test_9_two_starts_of_one_run_draw_two_writers(case: Case) -> None:
     for _ in range(2):
         worker = case.worker()
         journals = worker.account._shared.journal._writer
-        log = worker.brokers(AT[0])._log  # type: ignore[operator]
+        log = worker._brokers(AT[0])._log  # type: ignore[operator]
         writers += [journals, log.writer]
     assert len(set(writers)) == 4
     for writer in writers:
@@ -389,8 +389,11 @@ class Looped:
             raise self.error
 
 
-def owing(case: Case, refuse: bool) -> tuple[ExecutionWorker, Wired]:
-    """A worker that holds an answer its journal has not taken, over a store in memory."""
+def owing(case: Case, refuse: bool) -> tuple[ExecutionWorker, Wired, list[str]]:
+    """A worker that holds an answer its journal has not taken, over a store in memory.
+
+    The third value is the list of what the account's alarms said.
+    """
     store = Wired()
     worker = case.worker(store=store)
     planner = SimWorld({i: dict.fromkeys(DAYS, 100) for i in (gates.GLD, gates.USO)}, store=store)
@@ -404,16 +407,21 @@ def owing(case: Case, refuse: bool) -> tuple[ExecutionWorker, Wired]:
     worker.account = planner.account
     if not refuse:
         store.before = lambda n, op, key: None
-    return worker, store
+    planner.alarms.sent.clear()
+    return worker, store, planner.alarms.sent
 
 
 def planner_rows(store: Wired) -> list[str]:
     return [k for k in store.blobs if k.startswith("journal/")]
 
 
+ACK = "the ack of ith-chan-20261103T210000Z-01, which was sent"
+STEP = "The owner's step: the broker's site"
+
+
 @pytest.mark.parametrize("error", [None, RuntimeError("the loop failed")])
 def test_10_an_answer_still_owed_is_stored_once_the_loop_ends(case: Case, error) -> None:
-    worker, store = owing(case, refuse=False)
+    worker, store, said = owing(case, refuse=False)
     loop = Looped(error)
     if error is None:
         worker.run(loop)  # type: ignore[arg-type]
@@ -423,33 +431,44 @@ def test_10_an_answer_still_owed_is_stored_once_the_loop_ends(case: Case, error)
     assert loop.ran == 1 and worker.account.unstored() == ()
     (held,) = Journal(store, "sim-1").view().live.values()
     assert held.state is OrderState.ACKNOWLEDGED
-    assert case.alarms.reasons == []
+    # It paged ahead of the tries, which can outlast the host's stop, naming what it owed.
+    (first,) = said
+    assert first.startswith(f"account sim-1: the process is ending with {ACK}") and STEP in first
 
 
 @pytest.mark.parametrize("error", [None, RuntimeError("the loop failed")])
 def test_10_an_answer_that_is_lost_with_the_process_alarms_and_ends_it_with_an_error(
     case: Case, error
 ) -> None:
-    worker, _ = owing(case, refuse=True)
+    worker, _, said = owing(case, refuse=True)
     with pytest.raises(Halt, match="the process ends and the journal was not given") as raised:
         worker.run(Looped(error))  # type: ignore[arg-type]
-    assert "the ack of ith-chan-20261103T210000Z-01, which was sent" in raised.value.reason
-    assert case.alarms.reasons == [raised.value.reason]
+    assert ACK in raised.value.reason
+    assert len(said) == 2 and said[1] == f"account sim-1: {raised.value.reason}. {STEP}"
     # What the loop ended with is in the error's context, for the host's restart record.
     assert (raised.value.__context__ is error) if error else True
 
 
-def test_10_an_alarm_that_cannot_be_sent_at_the_end_is_in_the_error(case: Case) -> None:
-    worker, _ = owing(case, refuse=True)
-
-    class Down:
-        def alarm(self, reason: str) -> None:
-            raise RuntimeError("PKFAKEKEY")
-
-    worker._alerts = Down()  # type: ignore[assignment]
-    with pytest.raises(Halt, match="The alarm could not be sent: RuntimeError") as raised:
+def test_10_an_alarm_the_channel_will_not_take_is_named_as_the_process_ends(case: Case) -> None:
+    worker, _, _ = owing(case, refuse=False)
+    worker.account._shared.alerts._alerts.error = RuntimeError("PKFAKEKEY")  # type: ignore[union-attr]
+    with pytest.raises(Halt, match="was not sent") as raised:
         worker.run(Looped())  # type: ignore[arg-type]
+    assert raised.value.reason.startswith("the process ends and the alarm 'the process is ending")
+    assert raised.value.reason.endswith("was not sent")
     assert "PKFAKEKEY" not in raised.value.reason
+
+
+def test_10_an_error_that_is_no_halt_at_the_end_names_its_type_alone(case: Case) -> None:
+    worker, _, said = owing(case, refuse=True)
+
+    def broken(report: Callable[[], None]) -> None:
+        raise RuntimeError("PKFAKEKEY")
+
+    worker.account.settle = broken  # type: ignore[method-assign]
+    with pytest.raises(Halt, match=": RuntimeError$") as raised:
+        worker.run(Looped())  # type: ignore[arg-type]
+    assert "PKFAKEKEY" not in raised.value.reason + str(said)
 
 
 def test_10_an_account_that_owes_nothing_ends_quietly_under_the_history_clock(case: Case) -> None:
@@ -457,6 +476,22 @@ def test_10_an_account_that_owes_nothing_ends_quietly_under_the_history_clock(ca
     worker = case.worker()
     worker.run(Looped())  # type: ignore[arg-type]
     assert case.alarms.reasons == []
+
+
+def test_10_an_account_that_cannot_be_used_loses_nothing_as_the_process_ends(case: Case) -> None:
+    worker = case.worker(account="a/b")
+    worker.run(Looped())  # type: ignore[arg-type]
+    assert case.alarms.reasons == []
+
+
+def test_9_a_table_whose_recover_row_follows_nothing_halts_each_decision(case: Case) -> None:
+    case.opened()
+    rows = (DATA_ROW, replace(RECOVER_ROW, follows=()), SEND_ROW)
+    worker = case.worker(table=Table(stages=rows, strategies=(CHAN,)))
+    case.data(0, case.silent)
+    result = worker.recover(Item(AT[0], RECOVER_STAGE), _Quiet())
+    assert result.halt is not None
+    assert result.halt.reason == "the table's row of execution/recover is not the one it declares"
 
 
 # Acceptance 5: the order of stages

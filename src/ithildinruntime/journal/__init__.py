@@ -20,8 +20,11 @@ from .chain import (
 )
 from .entries import *  # noqa: F403
 from .entries import __all__ as _entries
+from .orders import DOUBTFUL, ENDED, OPEN
 
 __all__ = [
+    "DOUBTFUL",
+    "ENDED",
     "FIRST_PREV_HASH",
     "FIRST_SEQ",
     "FORMATS",
@@ -29,6 +32,7 @@ __all__ = [
     "Dispute",
     "Journal",
     "NumberTaken",
+    "OPEN",
     "Repeat",
     "View",
     *_entries,

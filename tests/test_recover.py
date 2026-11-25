@@ -26,6 +26,7 @@ from ithildinruntime.core import (
     SEND_STAGE,
     SNAPSHOT_OUTPUT,
     VALUATION_OUTPUT,
+    AccountRead,
     Ack,
     BlobRef,
     Book,
@@ -341,7 +342,14 @@ def halts(
 def test_2_the_run_each_halt_stands_beside_stores_a_result() -> None:
     world = ready()
     before = len(world.rows())
-    result = world.attempt()
+    reported: list[int] = []
+    waits = Waits()
+    world.store.after = lambda n, op, key: reported.append(waits.reports) if op == "create" else 0
+    result = world.stage()(Item(world.at, RECOVER_STAGE), waits)
+    world.store.after = lambda n, op, key: None
+    # The loop is told the handler is not hung between every two writes.
+    assert len(reported) == 7
+    assert all(b > a for a, b in zip(reported, reported[1:], strict=False)), reported
     assert result.halt is None
     assert world.kinds(before) == ["read", "fill"]
     assert list(world.stored()) == ["account.json", "book.json", "caps.json", "valuation.json"]
@@ -624,23 +632,74 @@ def page(text: str = "[]") -> tuple[ReceivedPage, ...]:
     return (ReceivedPage(text.encode(), close_of(DAYS[3])),)
 
 
+# A key-shaped name holds no space, so it is a name and is shown where an instrument is.
+KEYLIKE = "PKA1B2C3D4E5F6G7H8"
+
+
 @pytest.mark.parametrize(
-    "reads",
+    ("reads", "said"),
     [
-        {"positions": lambda: PositionsRead({InstrumentId(SECRET): D(1)}, page(SECRET), True)},
-        {"positions": lambda: PositionsRead({InstrumentId(SECRET): Decimal("NaN")}, page(), True)},
-        {"positions": lambda: PositionsRead({InstrumentId("\ud800" + SECRET): D(1)}, page(), True)},
-        {"open_orders": lambda: OrdersRead((foreign_order(),), page(SECRET), True)},
-        {"fills": lambda since: FillsRead((odd_fill(),), page(SECRET), True)},
-        {"fills": lambda since: FillsRead((odd_fill(fill_id="f-9"),), page(), True)},
-        {"fills": lambda since: FillsRead((odd_fill(fill_id="f-9", order="sim-o-2"),), page(), 1)},
+        (
+            {"positions": lambda: PositionsRead({InstrumentId(SECRET): D(1)}, page(SECRET), True)},
+            "an instrument whose name is none is 0 in the book and 1 at the broker",
+        ),
+        (
+            {
+                "positions": lambda: PositionsRead(
+                    {InstrumentId(SECRET): Decimal("NaN")}, page(), True
+                )
+            },
+            "account.json was not stored: what was read is no AccountRead",
+        ),
+        (
+            {
+                "positions": lambda: PositionsRead(
+                    {InstrumentId("\ud800" + SECRET): D(1)}, page(), True
+                )
+            },
+            "account.json was not stored: what was read is no AccountRead",
+        ),
+        (
+            {"open_orders": "beside the one working"},
+            "the broker's order whose id the journal refuses, 1 of an instrument whose name is "
+            "none under a client order id that is no stamp of the platform's",
+        ),
+        (
+            {"fills": lambda since: FillsRead((odd_fill(),), page(SECRET), True)},
+            "the fill whose id the journal refuses is of the broker's order whose id the "
+            "journal refuses",
+        ),
+        (
+            {"fills": lambda since: FillsRead((odd_fill(fill_id="f-9"),), page(), True)},
+            "the fill f-9 is of the broker's order whose id the journal refuses",
+        ),
+        (
+            {
+                "fills": lambda since: FillsRead(
+                    (odd_fill(fill_id="f-9", order="sim-o-2"),), page(), True
+                )
+            },
+            "the fill f-9 carries a correction's id",
+        ),
     ],
 )
-def test_10_no_word_of_the_brokers_is_in_a_halt(reads: dict) -> None:
+def test_10_no_word_of_the_brokers_is_in_a_halt(reads: dict, said: str) -> None:
     world = ready()
+    if reads.get("open_orders") == "beside the one working":
+        listed = (foreign_order(), *world.broker().open_orders().orders)
+        reads = {"open_orders": lambda: OrdersRead(listed, page(SECRET), True)}
     result = world.attempt(world.stage(brokers=doctored(world, **reads)))
-    assert result.halt is not None
+    assert result.halt is not None and said in result.halt.reason, result.halt
     assert SECRET[:9] not in result.halt.reason + str(world.alarms.sent)
+
+
+def test_10_an_instrument_is_shown_where_it_is_a_name_whatever_its_letters() -> None:
+    """What 05 says a difference shows: a name, and no other text."""
+    world = ready()
+    held = PositionsRead({InstrumentId(KEYLIKE): D(1), USO: D(-18)}, page(), True)
+    result = world.attempt(world.stage(brokers=doctored(world, positions=lambda: held)))
+    assert result.halt is not None
+    assert f"{KEYLIKE} is 0 in the book and 1 at the broker" in result.halt.reason
 
 
 def foreign_order() -> BrokerOrder:
@@ -766,15 +825,29 @@ def test_2_a_plan_a_crash_left_halts_with_each_order_and_alarms_for_each(case: s
     steps, *said = STUCK[case]
     world = planned_pair(*steps)
     calls: list[str] = []
-    result = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
+    stage = world.stage(brokers=doctored(world, calls=calls))
+    result = world.attempt(stage)
     reason = halts(world, said[0], [], [], DATA_KEYS, result)
     when = f"the decision at {AT1}"
-    assert reason == f"{when} is not settled: the order {'; the order '.join(bare(said))}"
+    assert reason == (
+        f"account {ACCOUNT}: {when} is not settled: the order {'; the order '.join(bare(said))}"
+    )
     assert world.alarms.sent == [
         f"account {ACCOUNT}: the order {one}, in {when}, whose orders are not settled"
         for one in bare(said)
     ]
     assert calls == []
+    # A cause that stands pages once in a process, and again after a restart.
+    world.prepare(close_of(DAYS[3]))
+    # The worker keeps one stage for its run, and this world keys a run by its session.
+    later = world.stage(brokers=doctored(world, calls=calls))
+    later._said = stage._said
+    again = world.attempt(later)
+    assert again.halt is not None and again.halt.reason.endswith(reason.split(": ", 1)[1])
+    assert len(world.alarms.sent) == len(bare(said))
+    world.restart()
+    world.attempt()
+    assert len(world.alarms.sent) == 2 * len(bare(said))
 
 
 def bare(said: list[str]) -> list[str]:
@@ -784,9 +857,12 @@ def bare(said: list[str]) -> list[str]:
 def test_2_an_alarm_about_a_plan_that_could_not_be_sent_is_in_the_reason() -> None:
     world = planned_pair(*SENT)
     world.alarms.error = RuntimeError(SECRET)
-    halts(world, "The alarm could not be sent: RuntimeError", [], [], DATA_KEYS)
-    # Both alarms were tried.
-    assert len(world.alarms.sent) == 2
+    halts(world, "The alarm could not be sent, and is tried again", [], [], DATA_KEYS)
+    # Both alarms were tried, and each is owed until the channel takes it.
+    assert len(world.alarms.sent) == 2 and len(world.account.unsent()) == 2
+    world.alarms.error = None
+    world.account.settle(lambda: None)
+    assert len(world.alarms.sent) == 4 and world.account.unsent() == ()
 
 
 @pytest.mark.parametrize(
@@ -854,7 +930,7 @@ def broker_fill(world: RecoverWorld, **changes: object) -> Fill:
             "platform's was acknowledged under",
         ),
         ({"broker_order_id": SECRET}, "whose id the journal refuses, which no order of the"),
-        ({"fill_id": SECRET}, "it names an id that is not a broker's id"),
+        ({"fill_id": SECRET}, "the fill's id is not a broker's id"),
         ({"client_order_id": SECRET}, "fill sim-f-2 names another client order id than"),
         ({"instrument": GLD}, "fill sim-f-2 is in 'GLD', and "),
         ({"instrument": InstrumentId(SECRET)}, "is in an instrument whose name is none, and"),
@@ -978,6 +1054,16 @@ def test_2_an_end_whose_bytes_are_too_long_is_journaled_cut() -> None:
     assert result.halt is None
     last = record_of(list(Journal(Memory(world.store.blobs), ACCOUNT).read())[-1])
     assert (len(last.raw), last.cut) == (65_536, True)
+
+
+def test_2_an_end_whose_bytes_are_exactly_the_most_kept_is_not_cut() -> None:
+    def whole(broker: SimulatedBroker, name: str) -> Ack:
+        return replace(says(state=BrokerState.EXPIRED)(broker, name), raw=b"x" * 65_536)
+
+    world, result, _ = unlisted(whole)
+    assert result.halt is None
+    last = record_of(list(Journal(Memory(world.store.blobs), ACCOUNT).read())[-1])
+    assert (len(last.raw), last.cut) == (65_536, False)
 
 
 def not_found(broker: SimulatedBroker, name: str) -> Ack:
@@ -1204,7 +1290,8 @@ def test_3_with_an_entry_appended_between_attempts_the_stored_book_stands() -> N
     assert world.entry(VALUATION_OUTPUT).replayed_through == len(world.rows())
 
 
-def test_3_a_second_read_that_differs_is_stored_at_its_attempt_and_the_first_stands() -> None:
+def test_3_a_second_read_in_which_the_account_moved_is_stored_and_halts() -> None:
+    """The first capture counts, and files made from it now would be stale."""
     world = busy()
     killed(world, 3, False)
     first = world.stored()["account.json"]
@@ -1212,22 +1299,66 @@ def test_3_a_second_read_that_differs_is_stored_at_its_attempt_and_the_first_sta
     world.faults = replace(world.faults, events={1: EditCash(D(7))})
     world.restart()
     result = world.attempt()
-    assert result.halt is None
+    assert result.halt is not None
+    assert result.halt.reason == (
+        f"{world.key(ACCOUNT_OUTPUT)} and this attempt's read of the broker differ in cash, so "
+        "the account moved between two attempts at one decision"
+    )
     stored = world.stored()
     attempt = attempt_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE, ACCOUNT_OUTPUT, 2)
     assert stored["account.json"] == first
-    assert list(stored) == ["account.attempt-2.json", *BUSY_FILES]
-    assert [ref.key for ref in result.outputs][:2] == [world.key(ACCOUNT_OUTPUT), attempt]
+    assert list(stored) == ["account.attempt-2.json", "account.json"]
+    assert [ref.key for ref in result.outputs] == [world.key(ACCOUNT_OUTPUT), attempt]
     assert world.key(ACCOUNT_OUTPUT) in result.header.inputs
     assert attempt not in result.header.inputs
     (said,) = world.alarms.sent
     assert said.endswith("These differ: cash, the pages' bytes")
-    # The book is compared with the first, which agrees. The send stage reads the broker again.
-    assert world.entry(BOOK_OUTPUT).cash == world.entry(ACCOUNT_OUTPUT).cash.cash
 
 
-def test_3_a_second_attempt_takes_its_fills_and_its_open_orders_from_the_first_capture() -> None:
-    """What the broker has done since is the send stage's to read."""
+@pytest.mark.parametrize("what", ["positions", "open orders", "a new fill"])
+def test_3_a_second_read_in_which_the_account_moved_halts_on_each_part(what: str) -> None:
+    world = ready()
+    fills = world.broker().fills(close_of(DAYS[0]))
+    first = {
+        "positions": {"positions": lambda: PositionsRead({USO: D(-19)}, page(), True)},
+        "open orders": {"open_orders": lambda: OrdersRead((), page(), True)},
+        "a new fill": {"fills": lambda since: replace(fills, fills=fills.fills[:1])},
+    }[what]
+
+    def hook(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/"):
+            raise Kill
+
+    world.store.before = hook
+    with pytest.raises(Kill):
+        world.attempt(world.stage(brokers=doctored(world, **first)))
+    world.store.before = lambda n, op, key: None
+    world.restart()
+    result = world.attempt()
+    word = "fills" if what == "a new fill" else what
+    assert result.halt is not None and f"differ in {word}, so the account" in result.halt.reason
+    assert world.kinds(world.before) == []
+
+
+def test_3_a_second_read_whose_pages_alone_came_later_goes_on_from_the_first() -> None:
+    whole = busy()
+    result = whole.attempt()
+    for at in range(2, WRITES + 1):
+        world = busy()
+        killed(world, at, False)
+        world.clock.at += timedelta(seconds=1)
+        again = world.attempt()
+        assert again.halt is None, (at, again.halt)
+        assert world.kinds(12) == BUSY_KINDS
+        if at > 2:
+            # The first capture landed, so every file comes from it as in a run with no kill.
+            held = {k: v for k, v in world.stored().items() if "attempt" not in k}
+            assert held == whole.stored()
+            assert again.header == result.header
+
+
+def test_3_a_fill_the_first_capture_lacks_halts_a_second_attempt_and_is_not_journaled() -> None:
+    """The first capture counts, so the fill it lacks and the order it ended wait."""
     world = ready()
     broker = world.broker()
     fills = broker.fills(close_of(DAYS[0]))
@@ -1254,11 +1385,11 @@ def test_3_a_second_attempt_takes_its_fills_and_its_open_orders_from_the_first_c
     world.restart()
     calls: list[str] = []
     result = world.attempt(world.stage(brokers=doctored(world, calls)))
-    assert result.halt is None, result.halt.reason
-    # The new fill is in the second read alone, and the order it ended is open in the first.
-    assert world.kinds(world.before) == ["read"]
+    assert result.halt is not None
+    assert "differ in positions, open orders, cash, fills, so the account" in result.halt.reason
+    # Nothing of either read is journaled, and nothing is looked up.
+    assert world.kinds(world.before) == []
     assert calls == list(READS)
-    assert dict(world.entry(BOOK_OUTPUT).positions_by_strategy[gates.CHAN]) == {USO: D(-20)}
 
 
 def test_2_an_entry_another_writer_adds_ahead_of_the_second_view_is_compared() -> None:
@@ -1429,6 +1560,40 @@ def test_4_an_order_kept_working_across_decisions_is_filled_once() -> None:
     assert len(world.alarms.sent) == 3
 
 
+def test_4_a_second_attempt_whose_bound_moved_past_a_fill_it_journaled_goes_on() -> None:
+    """The fill ended the oldest order, so the later read asks from later and lacks it."""
+    closes = prices({0: 100, 2: 100, 3: 100, 4: 100}, {n: 50 for n in range(5)})
+    world = RecoverWorld(closes)
+    world.day(DAYS[1], [(10, GLD)], early=20)
+    world.decide(close_of(DAYS[2]))
+    world.decide(close_of(DAYS[3]))
+    at = close_of(DAYS[4])
+    late = world.snapshot(at)
+    bars = {**late.bars, GLD: {"1d": (gates.stated(GLD, DAYS[1], D(99)), *late.bars[GLD]["1d"])}}
+    world.prepare(at, replace(late, bars=bars))
+
+    def hook(number: int, op: str, key: str) -> None:
+        if op == "create" and world.kinds()[-1:] == ["fill"]:
+            raise Kill
+
+    world.store.before = hook
+    with pytest.raises(Kill):
+        world.attempt()
+    world.store.before = lambda n, op, key: None
+    world.restart()
+    result = world.attempt()
+    assert result.halt is None, result.halt.reason
+    assert world.kinds().count("fill") == 1
+    first, later = (
+        decode_output(world.store.blobs[k], AccountRead).entries[0]
+        for k in (
+            world.key(ACCOUNT_OUTPUT),
+            attempt_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE, ACCOUNT_OUTPUT, 2),
+        )
+    )
+    assert len(first.fills.fills) == 1 and later.fills.fills == ()
+
+
 @pytest.mark.parametrize("session", [1, 2])
 @pytest.mark.parametrize(
     ("by", "asked"), [(-MICRO, False), (timedelta(0), True), (MICRO, True)], ids=str
@@ -1526,30 +1691,35 @@ def test_6_the_first_session_of_an_account_values_its_opening_cash() -> None:
     assert world.entry(VALUATION_OUTPUT) == hand_value(HAND[1], 1)
 
 
+@pytest.mark.parametrize("early", [False, True], ids=["a-full-day", "an-early-close"])
 @pytest.mark.parametrize(("late", "first"), [(timedelta(0), True), (MICRO, False)])
 def test_6_an_entry_stamped_at_the_prior_close_and_one_microsecond_after_it(
-    late: timedelta, first: bool
+    late: timedelta, first: bool, early: bool
 ) -> None:
-    world = RecoverWorld(flat_prices())
-    at = close_of(DAYS[1])
+    days = [date(2026, 11, 27), date(2026, 11, 30)] if early else DAYS[1:3]
+    closes = {i: {DAYS[0]: 100, **dict.fromkeys(days, 100)} for i in (GLD, USO)}
+    world = RecoverWorld(closes)
+    at = close_of(days[0])
     world.decide(at, world.orders(at, [(10, GLD)]))
     journaled(world, ("intent", 1), ("verdict", 1))
     world.clock.at = at + late
     journaled(world, ("sending", 1), ("in_doubt", 1), ("ack", 1))
     # Only the stamp is tested, so the order ends with nothing filled.
-    world._record(ExpiredEntry(ONE, D(0), b"{}", False, at))
+    (planned,) = list(world.view().decisions.values())[-1].orders
+    world._record(ExpiredEntry(planned.client_order_id, D(0), b"{}", False, at))
+    assert world.view().orders[planned.client_order_id].sent_at == at + late
     world.clock.at = at
-    world.prepare(close_of(DAYS[2]))
+    world.prepare(close_of(days[1]))
     result = world.attempt()
     if first:
         assert result.halt is None
-        assert world.entry(VALUATION_OUTPUT).session == DAYS[1]
+        assert world.entry(VALUATION_OUTPUT).session == days[0]
         return
     assert result.halt is not None
     sent = (at + MICRO).isoformat()
     assert result.halt.reason == (
-        f"an order was sent at {sent}, after the close of {DAYS[1].isoformat()}, so this is a "
-        f"second decision in the session of {DAYS[2].isoformat()}, whose valuation #183 copies "
+        f"an order was sent at {sent}, after the close of {days[0].isoformat()}, so this is a "
+        f"second decision in the session of {days[1].isoformat()}, whose valuation #183 copies "
         "from the first"
     )
     assert list(world.stored()) == ["account.json", "caps.json"]
@@ -1672,22 +1842,29 @@ def test_7_two_instances_that_both_looked_an_order_up_journal_its_end_once() -> 
     assert world.kinds(12) == BUSY_KINDS
 
 
-def test_7_an_entry_that_loses_every_number_halts() -> None:
+@pytest.mark.parametrize(("lost", "halts"), [(99, False), (100, True)])
+def test_7_an_entry_that_loses_its_number_a_hundred_times_halts(lost: int, halts: bool) -> None:
     world = busy()
+    taken: list[str] = []
 
     def hook(number: int, op: str, key: str) -> None:
-        if op == "create" and key.startswith(f"journal/{ACCOUNT}/"):
+        if op == "create" and key.startswith(f"journal/{ACCOUNT}/") and len(taken) < lost:
             world.store.quiet = True
-            count = len(world.rows())
-            world._record(
-                ReadEntry(SEND_STAGE, world.at, BlobRef(f"r-{count}", "b" * 64), world.at)
-            )
+            ref = BlobRef(f"r-{len(taken)}", "b" * 64)
+            world._record(ReadEntry(SEND_STAGE, world.at, ref, world.at))
+            taken.append(key)
             world.store.quiet = False
 
     world.store.before = hook
     result = world.attempt()
-    assert result.halt is not None
-    assert "other writers took 100 numbers of the journal in a row" in result.halt.reason
+    assert len(taken) == lost
+    if halts:
+        assert result.halt is not None
+        assert "other writers took 100 numbers of the journal in a row" in result.halt.reason
+        assert world.kinds(world.before + lost) == []
+    else:
+        assert result.halt is None
+        assert world.kinds(world.before + lost) == BUSY_KINDS
 
 
 def test_8_the_second_oracle_agrees_wherever_a_recover_ends() -> None:
@@ -1790,8 +1967,12 @@ def test_an_append_the_store_refuses_once_is_resent_unchanged() -> None:
             raise StoreUnavailable(key, "503 SlowDown: again")
 
     world.store.before = hook
+    world.store.calls.clear()
     assert world.attempt().halt is None
     assert len(refused) == 4 and world.kinds(12) == BUSY_KINDS
+    # Each entry went again as the bytes it was first built as, and landed on that try.
+    creates = [k for op, k in world.store.calls if op == "create" and k.startswith("journal/")]
+    assert creates == [k for key in refused for k in (key, key)]
 
 
 def test_a_listing_the_store_refuses_once_is_asked_again() -> None:
@@ -1806,3 +1987,54 @@ def test_a_listing_the_store_refuses_once_is_asked_again() -> None:
     world.store.before = hook
     assert world.attempt().halt is None
     assert refused and world.alarms.sent == []
+
+
+def test_the_groups_of_states_recover_reads_cover_every_state_once() -> None:
+    from ithildinruntime.execution.recover import _AT_THE_BROKER, _UNSETTLED
+    from ithildinruntime.journal import ENDED
+
+    groups = (ENDED, _UNSETTLED, _AT_THE_BROKER)
+    assert sorted(s for g in groups for s in g) == sorted(OrderState)
+    assert _AT_THE_BROKER == {OrderState.ACKNOWLEDGED, OrderState.PARTLY_FILLED}
+
+
+def test_2_a_fill_in_dispute_is_named_ahead_of_any_lookup() -> None:
+    world = ready()
+    (first, second) = world.broker().fills(close_of(DAYS[0])).fills
+    read = FillsRead((replace(first, price=D("50.0001")), second), page(), True)
+    none = OrdersRead((), page(), True)
+    calls: list[str] = []
+    brokers = doctored(world, calls, fills=lambda since: read, open_orders=lambda: none)
+    result = world.attempt(world.stage(brokers=brokers))
+    assert result.halt is not None and "the fill sim-f-1 is in dispute" in result.halt.reason
+    assert "lookup" not in calls
+
+
+def test_3_a_stored_book_other_than_the_journals_halts() -> None:
+    world = busy()
+    killed(world, 9, False)
+    held = world.file(BOOK_OUTPUT)
+    moved = replace(held.entries[0], cash=held.entries[0].cash + 500)
+    world.store.put(
+        world.key(BOOK_OUTPUT), encode_output(Book, OutputFile(held.header, (moved,), False))
+    )
+    result = world.attempt()
+    assert result.halt is not None
+    assert result.halt.reason == f"{world.key(BOOK_OUTPUT)} holds another book than the journal's"
+
+
+def test_3_a_stored_valuation_other_than_its_books_halts() -> None:
+    world = busy()
+    world.attempt()
+    held = world.file(VALUATION_OUTPUT)
+    value = held.entries[0]
+    other = replace(value, value=value.value + 1, cash=value.cash + 1)
+    world.store.put(
+        world.key(VALUATION_OUTPUT),
+        encode_output(Valuation, OutputFile(held.header, (other,), False)),
+    )
+    result = world.attempt()
+    assert result.halt is not None
+    assert result.halt.reason == (
+        f"{world.key(VALUATION_OUTPUT)} holds another valuation than its book's"
+    )

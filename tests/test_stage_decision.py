@@ -159,3 +159,13 @@ def test_a_capture_the_codec_refuses_halts_with_nothing_of_what_it_held() -> Non
         world.decision().capture("account", Instrument, odd, said)
     assert raised.value.reason == f"{KEY} was not stored: what was read is no Instrument"
     assert world.store.blobs == {}
+
+
+def test_a_second_capture_of_another_name_keeps_the_first_listed() -> None:
+    world = World()
+    decision = world.decision()
+    first = decision.capture("account", Instrument, ONE, said)
+    second = decision.capture("records", Instrument, TWO, said)
+    listed = [first.ref, second.ref]
+    assert list(decision.done().outputs) == listed
+    assert list(decision.halted(Halt("no")).outputs) == listed

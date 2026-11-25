@@ -12,10 +12,12 @@ What it compares, exactly and with no tolerance:
    not list is missing, which agrees with a sum of zero alone.
 2. **Open orders**, by the broker's order id, each in its instrument, signed
    shares, filled total and client order id. One on either side alone is a
-   difference, and so is one the broker lists twice. A book's open orders carry
-   no broker's id, so the caller hands the journal's records of them beside it.
-   An open order with no record, or whose record holds no broker's id, such as
-   one that is `Approved`, is on the book's side alone.
+   difference, and so is one the broker lists twice, and one it lists in any state
+   but working or of another type or time in force. A book's open orders carry no
+   broker's id, so the caller hands the journal's records of them beside it, such
+   as every order that has not ended, and a record of no order the book holds
+   open is left out. An open order with no record, or whose record holds no
+   broker's id, such as one that is `Approved`, is on the book's side alone.
 3. **Cash**.
 
 A difference reaches a person, so its words hold none of a broker's text. An
@@ -25,7 +27,6 @@ journal takes, and a client order id only where it is a stamp of the platform's.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -33,16 +34,13 @@ from enum import StrEnum
 
 from .halt import Halt
 from .keys import read_order_id
-from .names import is_name
-from .records import AccountRead, Book, BrokerOrder, OrderRecord
+from .names import is_broker_id, shows_instrument
+from .records import AccountRead, Book, BrokerOrder, BrokerState, OrderRecord
 from .valuing import position
 
 __all__ = ["Compared", "Difference", "broker_id_shown", "reconcile"]
 
 _ZERO = Decimal(0)
-_BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
-# The longest instrument a difference shows.
-_SHOWN = 40
 
 
 class Compared(StrEnum):
@@ -120,7 +118,8 @@ def _positions(book: Book, account: AccountRead) -> list[Difference]:
 def _open_orders(
     book: Book, orders: Iterable[OrderRecord], account: AccountRead
 ) -> list[Difference]:
-    records = {order.intent.client_order_id: order for order in orders}
+    opens = {o.client_order_id for held in book.open_orders_by_strategy.values() for o in held}
+    records = {o.intent.client_order_id: o for o in orders if o.intent.client_order_id in opens}
     found = [
         Difference(Compared.OPEN_ORDER, o.client_order_id, None, None)
         for held in book.open_orders_by_strategy.values()
@@ -165,6 +164,9 @@ def _differing(order: OrderRecord, copy: BrokerOrder) -> tuple[str, ...]:
         ("shares", intent.qty, copy.qty),
         ("filled", order.filled, copy.filled),
         ("client order id", intent.client_order_id, copy.client_order_id),
+        ("type", intent.type, copy.type),
+        ("time in force", intent.time_in_force, copy.time_in_force),
+        ("state", BrokerState.WORKING, copy.state),
     )
     return tuple(name for name, one, other in pairs if one != other)
 
@@ -175,6 +177,9 @@ def _field(name: str, order: OrderRecord, copy: BrokerOrder) -> str:
         "shares": (order.intent.qty, copy.qty),
         "filled": (order.filled, copy.filled),
         "client order id": (order.intent.client_order_id, _client(copy.client_order_id)),
+        "type": (order.intent.type, _word(copy.type)),
+        "time in force": (order.intent.time_in_force, _word(copy.time_in_force)),
+        "state": (order.state, _word(copy.state)),
     }.get(name)
     return "" if said is None else f"({said[0]} in the book and {said[1]} at the broker)"
 
@@ -188,15 +193,20 @@ def _order(name: str, order: OrderRecord) -> str:
 
 def broker_id_shown(value: object) -> str:
     """A broker's order or fill id as a halt shows it, where it is one the journal takes."""
-    if isinstance(value, str) and _BROKER_ID.fullmatch(value):
+    if is_broker_id(value):
         return value
     return "whose id the journal refuses"
 
 
 def _instrument(value: object) -> str:
-    if is_name(value) and len(str(value)) <= _SHOWN:
+    if shows_instrument(value):
         return str(value)
     return "an instrument whose name is none"
+
+
+def _word(value: object) -> str:
+    """A field of the broker's copy that is one of the platform's own words, or none."""
+    return str(value) if isinstance(value, StrEnum) else "none the platform reads"
 
 
 def _client(value: str | None) -> str:
