@@ -275,16 +275,17 @@ never shares the paper account's lease.
    call, or before the decision its prices are of, halts, apart from those of
    item 9.
 8. **A price it needs and cannot read halts the call**, apart from those of item
-   9. An order past its close needs one, and a result or a snapshot that is
-   missing, stale or of another decision gives none.
-9. **No clock and no price stops a cancel, or a read of the orders.** A cancel
-   reads no price, and leaves every close to the next call that is no cancel. It is
-   judged by the clock it reads, or by the log's newest call where the clock gives
-   no UTC time, and its blob keeps that reading beside the account's time.
-   `open_orders`, `orders`, `lookup` and `find_order`, which say what there is to
-   cancel, give the log as it stands where a clock or a price would halt them. The
-   price is that a clock that went back can cancel an order whose close had passed
-   and was not yet settled. A log that cannot be read halts these too.
+   9. An order past its close needs one, and so does an order it is sent. A result
+   or a snapshot that is missing, stale or of another decision gives none.
+9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
+   a price, and both leave a close that needs one to the next call that reads one.
+   A cancel is judged by the clock it reads, or by the log's newest call where the
+   clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
+   which say what there is to cancel, give the log as it stands where the clock
+   would halt them, dated by the log's newest call. The price is that a clock that
+   went back can cancel an order whose close had passed and was not yet settled.
+   Two things stop these calls all the same: a log that cannot be read, and a clock
+   that gives no UTC time on an account that holds no call but its opening.
 
 #### What a simulated fill leaves out
 

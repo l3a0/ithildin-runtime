@@ -388,7 +388,7 @@ Every call first reads the log forward from the newest call it knows, and takes 
 | --- | --- |
 | A blob whose events, applied to the account before it, give the account it holds | Takes it in |
 | A blob of a later format, one that is not canonical, or one that is not the call before it with its events applied, such as a fill that is not of its order | Halts, and so does every later call |
-| A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it meets a gap only through the first call of another |
+| A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it does not see a gap there and can store a call in it, which the next process's first call halts on |
 | Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed. One that lands after the close is an order the account took in time, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) halts on its fill where it had read that order as lost |
 | Its number holding these same bytes | The create is done, since its first answer was lost |
 | Its number holding another call, or a store that says the create raced another and did not land | Starts over on what it then reads, up to 100 times, and then raises with nothing changed |
@@ -399,7 +399,7 @@ The simulated broker's adapter reads and writes it through a `BlobStore` the ent
 
 That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). Its prices are four.
 
-1. Each call costs one read for the next number. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix. To any other role it reads as access denied, and every call fails.
+1. Each call costs one read for the next number, and one more for each close it asks for, since it lets the log go to read one. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix, as `infra/test/bootstrap/roles.tf` says of the test role. To any other role it reads as access denied, and every call fails. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each role's grant.
 2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs can differ, so the clock's bound has to stay below that time.
 3. Nothing here keeps two processes from acting at once. The account's lease does, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
 4. A process that starts reads the whole log, in turn, and reports nothing to the receive loop while it does. Two orders a decision leave three blobs, as `tests/test_simulated_log.py` counts over 100 decisions, so the 1,461 decisions of acceptance test 1 leave at most 4,384. The journal's cold read has the same shape and more entries, and [#154](https://github.com/l3a0/ithildin-runtime/issues/154) holds both.

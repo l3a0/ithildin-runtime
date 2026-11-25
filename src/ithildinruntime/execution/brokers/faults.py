@@ -102,13 +102,15 @@ class EditPosition:
 
 @dataclass(frozen=True)
 class EditOrder:
-    """Someone changes an open order's shares by hand."""
+    """Someone changes an open order's shares by hand, and never to none."""
 
     broker_order_id: str
     qty: Decimal
 
     def __post_init__(self) -> None:
         _finite(self.qty)
+        if self.qty == 0:
+            raise ValueError("an open order is for some shares")
 
 
 @dataclass(frozen=True)

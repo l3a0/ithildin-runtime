@@ -556,7 +556,7 @@ def test_12_no_clock_stops_a_cancel(clock: str) -> None:
     answer = made.broker().cancel("sim-o-1")
     assert answer.outcome is Outcome.ACCEPTED
     assert answer.order.state is BrokerState.CANCELLED
-    # It is judged and stored at the newest call's time, so the log still goes forward.
+    # It is stored at the newest call's time, so the log still goes forward.
     (end,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
     assert end["at"] == "2026-11-03T20:40:00.000000Z"
     blob = json.loads(made.blobs()["sim/sim-1/000000000003.json"])
@@ -577,8 +577,24 @@ def test_12_a_clock_that_cannot_be_read_stops_no_cancel() -> None:
 
     made.clock.now = broken  # type: ignore[method-assign]
     assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Halt, match="the simulated account sim-1's clock raised RuntimeError"):
         made.broker().positions()
+
+
+@pytest.mark.parametrize(
+    ("moved", "outcome"),
+    [
+        (-MICRO, Outcome.ACCEPTED),
+        (timedelta(0), Outcome.ACCEPTED),
+        (MICRO, Outcome.REJECTED),
+    ],
+)
+def test_12_a_cancel_whose_clock_gives_no_time_is_judged_by_the_newest_call(moved, outcome) -> None:
+    made, _ = sent(early=20, faults=Faults(events={2: EditCash(D(1))}))
+    made.clock.at = close_of(FULL) + moved
+    made.broker().account()
+    made.clock.at = made.clock.at.replace(tzinfo=None)
+    assert made.broker().cancel("sim-o-1").outcome is outcome
 
 
 def test_12_a_cancel_on_an_account_just_opened_needs_a_clock() -> None:
@@ -605,7 +621,7 @@ def test_12_a_fast_clock_that_was_set_right_refuses_no_cancel() -> None:
 
 
 @pytest.mark.parametrize("call", OF_ORDERS)
-@pytest.mark.parametrize("why", ["clock", "decision", "price", "no-time"])
+@pytest.mark.parametrize("why", ["clock", "decision", "price", "no-time", "raises"])
 def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str) -> None:
     """A cancel is looked up first, so what stops a lookup stops the cancel."""
     made, _ = sent(early=20)
@@ -614,6 +630,8 @@ def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str
         made.clock.at = at - MICRO
     elif why == "no-time":
         made.clock.at = at.replace(tzinfo=None)
+    elif why == "raises":
+        made.clock.now = lambda: 1 / 0  # type: ignore[assignment,method-assign,return-value]
     else:
         made.decide(close_of(after(FULL)), recover=False)
         if why == "decision":
@@ -631,6 +649,94 @@ def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str
     (one,) = [getattr(o, "order", o) for o in held]
     assert (one.broker_order_id, one.state) == ("sim-o-1", BrokerState.WORKING)
     assert made.log.number == number
+    if hasattr(found, "received") if call != "find_order" else False:
+        # A page the clock did not date carries the newest call's time.
+        assert found.received[0].at == (made.clock.at if why == "price" else at)
+        assert found.whole
+
+
+def test_3_an_order_whose_prices_cannot_be_read_is_in_doubt_and_not_held() -> None:
+    made = world()
+    at = close_of(FULL) - timedelta(minutes=20)
+    (intent,) = made.decide(at, made.orders(at, [(4, GLD)]))
+
+    def lost() -> None:
+        made.store.drop(result_key(DEPLOYMENT, made.run, at, DATA_STAGE))
+
+    why = "in doubt: the simulated account sim-1 cannot read the prices of its order: .* not stored"
+    with pytest.raises(Halt, match=why):
+        made.send(intent, RelayBroker(made.broker(), lost))
+    assert made.broker().orders(LONG_AGO).orders == ()
+
+
+@pytest.mark.parametrize("call", OF_ORDERS)
+def test_12_a_read_of_the_orders_asks_for_no_price(call: str) -> None:
+    made, _ = sent(early=20)
+    made.decide(close_of(after(FULL)), recover=False)
+    made.store.calls.clear()
+    READS[call](made.broker())
+    assert all(key.startswith("sim/") for _, key in made.store.calls)
+    # The close comes at the next call that reads a price.
+    assert made.broker().positions().positions == {GLD: 4}
+    assert made.broker().lookup("sim-o-1").order.state is BrokerState.FILLED
+
+
+def test_12_a_read_of_the_orders_under_a_clock_that_went_back_is_cut_short_as_asked() -> None:
+    made, _ = sent([(4, GLD), (5, USO)], faults=Faults(reads={("orders", 1): ReadFault.SHORT}))
+    made.clock.at -= MICRO
+    found = made.broker().orders(LONG_AGO)
+    assert (len(found.orders), found.whole) == (1, False)
+
+
+@pytest.mark.parametrize("call", OF_ORDERS)
+def test_12_a_fault_that_cannot_happen_halts_a_read_of_the_orders_too(call: str) -> None:
+    made, _ = sent(early=20, faults=Faults(events={2: EditOrder("sim-o-9", D(9))}))
+    with pytest.raises(Halt, match="sim-o-9, which is not open"):
+        READS[call](made.broker())
+
+
+def test_12_a_read_of_the_orders_of_an_account_just_opened_needs_a_clock() -> None:
+    made = world()
+    made.run, made.at = FULL.isoformat(), close_of(FULL)
+    made.clock.at = close_of(FULL).replace(tzinfo=None)
+    with pytest.raises(Halt, match="sim-1's clock reads .*, no UTC time"):
+        made.broker().open_orders()
+
+
+def test_2_two_sessions_settled_in_one_call_each_fill_at_their_own_close() -> None:
+    made = world()
+    made.closes[GLD][after(FULL, 2)] = D(120)  # type: ignore[index]
+    made.closes[USO][after(FULL, 2)] = D(1120)  # type: ignore[index]
+    bars = made.closes[GLD].pop(FULL), made.closes[USO].pop(FULL)  # type: ignore[attr-defined]
+    made.day(FULL, [(4, GLD)], early=20)
+    made.day(after(FULL), [(3, GLD)])
+    # The first session's bar comes late, so one call settles both.
+    made.closes[GLD][FULL], made.closes[USO][FULL] = bars  # type: ignore[index]
+    made.decide(close_of(after(FULL, 2)), recover=False)
+    assert [(f.qty, f.price) for f in made.broker().fills(LONG_AGO).fills] == [
+        (4, PRICE),
+        (3, NEXT),
+    ]
+
+
+def test_2_an_order_sent_before_its_close_after_the_last_one_settled_is_official_close() -> None:
+    """The close of the session before is read first, and says nothing of this session's."""
+    made = world()
+    made.day(FULL, [(4, GLD)], early=20)
+    made.day(after(FULL), [(3, GLD)], early=20)
+    assert [o.read_close for o in made.log.account_now.open_orders] == [False]
+    made.closes[GLD][after(FULL, 2)] = D(120)  # type: ignore[index]
+    made.closes[USO][after(FULL, 2)] = D(1120)  # type: ignore[index]
+    made.decide(close_of(after(FULL, 2)), recover=False)
+    assert made.broker().fills(LONG_AGO).fills[-1].basis is FillBasis.OFFICIAL_CLOSE
+
+
+def test_6_an_order_edited_in_the_call_that_fills_it_fills_at_its_new_size() -> None:
+    made, _ = sent(faults=Faults(events={2: EditOrder("sim-o-1", D(9))}))
+    made.clock.at += MICRO
+    assert made.broker().positions().positions == {GLD: 9}
+    made.restart("d" * 32)
+    assert made.broker().positions().positions == {GLD: 9}
 
 
 @pytest.mark.parametrize("why", ["no-result", "stale", "lost"])
@@ -1147,6 +1253,7 @@ def test_13_a_fault_that_means_nothing_is_refused_as_it_is_built() -> None:
         lambda: EditCash(D("NaN")),
         lambda: EditPosition(GLD, D("Infinity")),
         lambda: EditOrder("sim-o-1", 3.5),
+        lambda: EditOrder("sim-o-1", D(0)),
         lambda: ForeignOrder(GLD, D("NaN")),
     ):
         with pytest.raises(ValueError):

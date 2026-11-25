@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 
 from ithildinruntime.core import (
-    DATA_STAGE,
     BrokerState,
     BrokerUnavailable,
     CodecError,
@@ -31,7 +30,6 @@ from ithildinruntime.core import (
     StoreUnavailable,
     decode,
     encode,
-    result_key,
     sim_account_key,
 )
 from ithildinruntime.execution.brokers.faults import (
@@ -45,14 +43,20 @@ from ithildinruntime.execution.brokers.faults import (
     OrderFault,
     ReadFault,
 )
-from ithildinruntime.execution.brokers.log import SimCall, SimClose, SimState, SimulatedAccount
+from ithildinruntime.execution.brokers.log import (
+    SimCall,
+    SimClose,
+    SimEdit,
+    SimEvents,
+    SimState,
+    SimulatedAccount,
+)
 from ithildinruntime.execution.brokers.log import after as applied
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from tests.support.order_world import Kill, Wired, order
 from tests.support.sim_world import (
     ACCOUNT,
     CASH,
-    DEPLOYMENT,
     FULL,
     GLD,
     MICRO,
@@ -893,6 +897,18 @@ def _expired(end: SimClose, qty: Decimal) -> SimClose:
 FILLS: dict[str, Callable[[SimClose], SimClose]] = {
     "no-snapshot": lambda e: replace(e, priced_from=None),
     "no-fill": lambda e: replace(e, fill=None),
+    "filled-with-no-fill": lambda e: replace(e, fill=None, priced_from=None),
+    **{
+        f"{state}-with-no-fill": lambda e, state=state: replace(
+            e, state=state, fill=None, priced_from=None
+        )
+        for state in (BrokerState.WORKING, BrokerState.PENDING_CANCEL, BrokerState.UNKNOWN)
+    },
+    **{
+        f"{state}-in-part": lambda e, state=state: replace(_expired(e, D(3)), state=state)
+        for state in BrokerState
+        if state is not BrokerState.EXPIRED
+    },
     "another-order": lambda e: replace(e, fill=replace(e.fill, broker_order_id="sim-o-2")),
     "another-name": lambda e: replace(e, fill=replace(e.fill, client_order_id="x")),
     "another-instrument": lambda e: replace(e, fill=replace(e.fill, instrument=USO)),
@@ -903,6 +919,8 @@ FILLS: dict[str, Callable[[SimClose], SimClose]] = {
     "expired-on-another-side": lambda e: _expired(e, D(-1)),
     "expired-with-too-many": lambda e: _expired(e, D(5)),
     "expired-with-none": lambda e: _expired(e, D(0)),
+    "expired-in-part-with-no-snapshot": lambda e: replace(_expired(e, D(3)), priced_from=None),
+    "expired-with-a-snapshot-and-no-fill": lambda e: replace(_expired(e, D(3)), fill=None),
     "expired-whole": lambda e: replace(e, state=BrokerState.EXPIRED),
 }
 
@@ -915,7 +933,7 @@ def test_4_an_end_that_does_not_fit_its_order_halts(bad: str) -> None:
     events = replace(found.events, closed=(wrong, found.events.closed[1]))
     after_ = applied(before, events)
     made.sim.put(key(4), encode(replace(found, events=events, after=after_)))  # type: ignore[attr-defined]
-    halts(made, "call 4 ends sim-o-1 with a fill that is not of it")
+    halts(made, "call 4 ends sim-o-1 in a way it cannot end")
 
 
 def test_4_a_sale_that_ends_with_a_fill_of_nothing_halts() -> None:
@@ -925,7 +943,7 @@ def test_4_a_sale_that_ends_with_a_fill_of_nothing_halts() -> None:
     events = replace(found.events, closed=(found.events.closed[0], wrong))
     after_ = applied(before, events)
     made.sim.put(key(4), encode(replace(found, events=events, after=after_)))  # type: ignore[attr-defined]
-    halts(made, "call 4 ends sim-o-2 with a fill that is not of it")
+    halts(made, "call 4 ends sim-o-2 in a way it cannot end")
 
 
 @pytest.mark.parametrize("bad", BAD)
@@ -954,6 +972,48 @@ def test_4_a_bad_call_stored_under_a_running_process_halts_its_next_call(read: s
     for _ in range(2):
         with pytest.raises(Halt, match="sim-1's call 5 is not a canonical call"):
             CALLS[read](made.broker())
+
+
+def planted(made: SimWorld, number: int, bad: SimCall) -> None:
+    """Plant a call whose account follows from its events, so only a check of them can halt."""
+    before = call(made, number - 1).after
+    made.sim.put(key(number), encode(replace(bad, after=applied(before, bad.events))))  # type: ignore[attr-defined]
+
+
+def test_4_one_id_placed_twice_in_one_call_halts() -> None:
+    made = full()
+    found = call(made, 3)
+    (first,) = found.events.placed
+    for events, reason in (
+        (
+            replace(found.events, placed=(first, replace(first, id="sim-o-3"))),
+            f"places {first.client_order_id} a second time",
+        ),
+        (
+            replace(found.events, delayed=(replace(first, id=None),)),
+            f"places {first.client_order_id} a second time",
+        ),
+        (
+            replace(found.events, placed=(first, replace(first, client_order_id="x"))),
+            "places sim-o-2, which it holds already",
+        ),
+    ):
+        planted(made, 3, replace(found, events=events))
+        made.restart(OTHER)
+        with pytest.raises(Halt, match=reason):
+            made.broker().positions()
+
+
+def test_4_an_edit_of_an_order_that_ended_halts() -> None:
+    made = full()
+    ended_ = made.log.orders["sim-o-1"]
+    again_ = replace(ended_, state=BrokerState.WORKING, filled=D(0))
+    found = call(made, 4)
+    edit = SimEdit(9, None, None, None, again_)
+    planted(made, 5, replace(found, call=5, events=SimEvents(edits=(edit,))))
+    made.restart(OTHER)
+    with pytest.raises(Halt, match="call 5 edits sim-o-1, which is not open"):
+        made.broker().positions()
 
 
 def test_4_an_order_on_its_way_twice_under_one_id_halts() -> None:
@@ -1124,30 +1184,48 @@ def test_4_a_cancel_holds_the_log_while_it_stores() -> None:
     assert early == [False]
 
 
-def test_4_a_price_that_is_slow_holds_no_cancel() -> None:
+@pytest.mark.parametrize("what", ["read", "send"])
+def test_4_a_price_that_is_slow_holds_no_cancel(what: str) -> None:
     made = world()
     made.day(FULL, [(4, GLD)], early=20)
-    at = close_of(after(FULL)) - timedelta(minutes=20)
+    at = close_of(FULL) - timedelta(minutes=10)
     (intent,) = made.decide(at, made.orders(at, [(5, USO)]), recover=False)
-    # A second path over the same log, whose read waits on a price.
-    result = result_key(DEPLOYMENT, made.run, at, DATA_STAGE)
+    broker, path = made.broker(), None
     waits, goes, done = threading.Event(), threading.Event(), threading.Event()
+    if what == "read":
+        # A read waits on the close of an order past it, while another rests.
+        made.clock.at = at = close_of(after(FULL)) - timedelta(minutes=20)
+        made.decide(at, (), recover=False)
+        broker = made.broker()
+    stored = type(broker._prices).close
 
-    def hook(count: int, op: str, found: str) -> None:
-        if found == result and not waits.is_set():
+    class Slow:
+        decision_at = broker._prices.decision_at
+        snapshot = broker._prices.snapshot
+
+        def close(self, instrument, session):
             waits.set()
             assert goes.wait(5)
+            return stored(made.broker()._prices, instrument, session)
 
-    made.store.before = hook
-    threading.Thread(target=lambda: (made.broker().positions(), done.set()), daemon=True).start()
+    broker._prices = Slow()  # type: ignore[assignment]
+    path = made.account.path(broker, lambda: None)
+
+    def work() -> None:
+        path.positions() if what == "read" else path.send(intent.client_order_id)
+        done.set()
+
+    threading.Thread(target=work, daemon=True).start()
     assert waits.wait(5)
-    other = made.broker()
-    assert other.cancel("sim-o-1").outcome is Outcome.REJECTED
-    assert other.cancel("sim-o-9").outcome is Outcome.REJECTED
+    if what == "send":
+        assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    else:
+        assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
     assert not done.is_set()
     goes.set()
     assert done.wait(5)
-    assert made.broker().positions().positions == {GLD: 4}
+    held = {} if what == "send" else {GLD: 4}
+    assert made.broker().positions().positions == held
 
 
 def test_4_two_orders_sent_at_once_take_two_numbers() -> None:

@@ -465,8 +465,8 @@ Four stores sit outside every run, because they outlive any one run.
    is the one numbered log, it has more than one writer, and each entry is
    stored before the step it records happens, which is how hard limit 4, that every order is journaled
    before it is sent, holds through the loss of the VM.
-3. A simulated account's orders and positions, as a log with one blob for each call
-   that changed the account, written before the call returns, which the simulated broker's adapter reads and writes through
+3. A simulated account's orders and positions, written before each call that changed
+   it returns, in the form [#144](https://github.com/l3a0/ithildin-runtime/issues/144) proposes ([The simulated broker's account](architecture/08-crosscutting-concepts.md#the-simulated-brokers-account)), which the simulated broker's adapter reads and writes through
    the storage port, so a shadow order still resting when one run ends is
    there in the next.
 4. The account's own blobs: its leases, kill switch, off switches, halts,
@@ -799,7 +799,7 @@ For the same two issues it proposes three things about a difference the read fin
 2. Execution journals the open halt the holding-halt check reads.
 3. Neither that write nor the page waits on the result or the stop.
 
-In shadow the market-on-close order stays open until a decision's stored snapshot holds the official close, so the read finds it open, which counts as read, and the fill lands at the next recover stage.
+In shadow the market-on-close order stays open past the read, as [What fills, and when](architecture/05-building-blocks.md#what-fills-and-when) says, so the read finds it open, which counts as read, and the fill lands at the next recover stage.
 
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) hold how.
 

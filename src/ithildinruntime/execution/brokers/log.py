@@ -178,7 +178,7 @@ class SimCall:
 
     `at` is the account's time, which never goes back, and `clock` the clock's
     own reading, `None` where that was no UTC time. They differ only on a cancel
-    under a clock that reads before the account's time, or no time.
+    under a clock that reads before the account's time, or no UTC time.
     """
 
     format: int
@@ -301,7 +301,7 @@ class SimulatedAccount:
         """Take in every call stored since the newest one this process knows.
 
         The first time lists the whole log, so a gap is seen. After that it asks
-        for the next number until there is none, which costs one read a call.
+        for the next number until there is none, which costs one read each time.
         """
         if not _WRITER.fullmatch(self.writer):
             raise Halt(f"the simulated account {self.account}'s writer is no writer")
@@ -414,18 +414,29 @@ class SimulatedAccount:
             raise Halt(f"{what} is not the call before it with its events applied")
         if self.at is not None and call.at is not None and call.at < self.at:
             raise Halt(f"{what} is at {call.at.isoformat()}, before the call before it")
-        waiting = {order.client_order_id for order in self.account_now.delayed}
-        for order in (*events.placed, *events.delayed):
-            if order.id in self.orders:
-                raise Halt(f"{what} places {order.id}, which it holds already")
-            if order.client_order_id in self.names - waiting or (
-                order.id is None and order.client_order_id in waiting
+        open_now = {order.id for order in self.account_now.open_orders}
+        for edit in events.edits:
+            if (
+                edit.order is not None
+                and edit.order.id in self.orders
+                and (edit.order.id not in open_now)
             ):
-                raise Halt(f"{what} places {order.client_order_id} a second time")
+                raise Halt(f"{what} edits {edit.order.id}, which is not open")
+        waiting = {order.client_order_id for order in self.account_now.delayed}
+        seen: set[str | None] = set()
+        for order in (*events.placed, *events.delayed):
+            name = order.client_order_id
+            if order.id in self.orders or order.id in seen and order.id is not None:
+                raise Halt(f"{what} places {order.id}, which it holds already")
+            # An order on its way comes once more, as it arrives.
+            arrives = name in waiting and order.id is not None
+            if name in seen or name in self.names and not arrives:
+                raise Halt(f"{what} places {name} a second time")
+            seen |= {name, order.id}
         opened = {order.id: order for order in unended.open_orders}
         for close in events.closed:
-            if not _closes(opened[close.id], close):
-                raise Halt(f"{what} ends {close.id} with a fill that is not of it")
+            if not _fits(opened[close.id], close):
+                raise Halt(f"{what} ends {close.id} in a way it cannot end")
         for at, name in enumerate(self.new(events), start=len(self.orders) + 1):
             if name != f"sim-o-{at}":
                 raise Halt(f"{what} places {name}, not sim-o-{at}")
@@ -462,18 +473,20 @@ def _fills(events: SimEvents) -> list[Fill]:
     return [close.fill for close in events.closed if close.fill is not None]
 
 
-def _closes(order: SimOrder, close: SimClose) -> bool:
-    """Whether an end fits its order: its fill, if any, is of it and names its snapshot."""
+def _fits(order: SimOrder, close: SimClose) -> bool:
+    """Whether an end is one its order can have, and its fill, if any, is of it."""
     fill = close.fill
     if fill is None or close.priced_from is None:
-        return fill is None and close.priced_from is None
+        unfilled = (BrokerState.CANCELLED, BrokerState.EXPIRED, BrokerState.REJECTED)
+        return fill is None and close.priced_from is None and close.state in unfilled
+    whole = fill.qty == order.qty
     return (
         (fill.broker_order_id, fill.client_order_id, fill.instrument)
         == (order.id, order.client_order_id, order.instrument)
         and fill.qty != 0
         and (fill.qty > 0) == (order.qty > 0)
         and fill.qty.copy_abs() <= order.qty.copy_abs()
-        and (close.state is BrokerState.FILLED) == (fill.qty == order.qty)
+        and close.state is (BrokerState.FILLED if whole else BrokerState.EXPIRED)
     )
 
 

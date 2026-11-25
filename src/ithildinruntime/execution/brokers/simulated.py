@@ -13,14 +13,15 @@ fill rule by order type and no branch on a mode or a test.
 - **It moves only forward.** A call whose clock reads before the log's newest
   call, or before the decision its prices are of, halts.
 - **No clock and no price stops a cancel, or a read of the orders**, as the
-  charter's risk engineer vetoes a check on input that can stop a cancel. A cancel
-  reads no price and is judged by the clock, or by the log's newest call where
-  the clock gives no time. `open_orders`, `orders`, `lookup` and `find_order` give
-  the log as it stands where a clock or a price would halt them.
+  charter's risk engineer vetoes a check on input that can stop a cancel. Neither
+  reads a price. A cancel is judged by the clock, or by the log's newest call
+  where the clock gives no UTC time. `open_orders`, `orders`, `lookup` and
+  `find_order` give the log as it stands where the clock would halt them.
 
 Every call reads the log forward. Every call but a cancel then does what is due:
 what a fault has someone do to the account, an order that arrives late, a
-rejection that comes later, and the closes. A call then does its own part, stores
+rejection that comes later, and the closes, which a read of the orders leaves to
+the next call that reads a price. A call then does its own part, stores
 one blob where anything changed, and answers. Where its create fails, nothing this
 process remembers has changed, and the next call finds whether the blob landed.
 One whose number another call took starts over on what it then reads.
@@ -59,6 +60,7 @@ from ithildinruntime.core import (
     StoreError,
     TimeInForce,
     encode,
+    error_name,
     exact_total,
     exceeds_places,
     load_sessions,
@@ -175,7 +177,7 @@ class SimulatedBroker:
         while len(lost) <= _STARTS_OVER:
             with self._log.lock:
                 self._log.catch_up()
-                now, clock = self._time_of_cancel()
+                now, clock = self._stamp()
                 order = self._log.orders.get(broker_order_id)
                 if order is None:
                     return _rejected("the account holds no such order", now)
@@ -188,16 +190,20 @@ class SimulatedBroker:
             lost.append(taken)
         raise BrokerUnavailable(_CONTENDED, lost[-1])
 
-    def _time_of_cancel(self) -> tuple[datetime, datetime | None]:
-        """The time a blob of this call carries, which never goes back, and the clock's own."""
+    def _stamp(self) -> tuple[datetime, datetime | None]:
+        """The later of the clock and the log's newest call, and the clock's own reading.
+
+        It is the time of a call the clock does not stop, and `None` stands for a
+        clock that gives no UTC time.
+        """
         try:
             read: object = self._clock.now()
-        except Exception:
-            read = None
+        except Exception as error:
+            read = error_name(error)
         clock = read if isinstance(read, datetime) and read.utcoffset() == timedelta(0) else None
         seen = [at for at in (clock, self._log.at) if at is not None]
         if not seen:
-            # An account with no call but its opening holds nothing to cancel.
+            # An account with no call but its opening holds no order.
             raise Halt(f"the simulated account {self.alias}'s clock reads {read!r}, no UTC time")
         return max(seen), clock
 
@@ -248,11 +254,6 @@ class SimulatedBroker:
     def clock(self) -> datetime:
         return self._clock.now()
 
-    def _orders_since(self, since: datetime) -> OrdersRead:
-        now, _, short = self._read("orders")
-        placed = [o.copy() for o in self._log.orders.values() if o.submitted_at >= since]
-        return _orders(placed, now, short)
-
     def _read[R](
         self, name: str, part: Callable[[SimulatedAccount], R]
     ) -> tuple[datetime, R, bool]:
@@ -264,17 +265,9 @@ class SimulatedBroker:
             fault = self._faults.reads.get((name, log.reads[name]))
         if fault is ReadFault.FAILS:
             raise BrokerUnavailable(name, TimeoutError)
-        try:
-            now, found = self._call(lambda now, events: (events, lambda: (now, part(log))))
-        except Halt:
-            if name not in _OF_ORDERS:
-                raise
-            # What a cancel needs is in the log, whatever the clock or a price reads. A log that
-            # cannot be read halts here too.
-            with log.lock:
-                log.catch_up()
-                now, _ = self._time_of_cancel()
-                found = part(log)
+        now, found = self._call(
+            lambda now, events: (events, lambda: (now, part(log))), name in _OF_ORDERS
+        )
         return now, found, fault is ReadFault.SHORT
 
     # What every call does around its own part
@@ -283,7 +276,9 @@ class SimulatedBroker:
         with self._log.lock:
             self._log.calls += 1
 
-    def _call[R](self, work: Callable[[datetime, SimEvents], _Done[R]]) -> R:
+    def _call[R](
+        self, work: Callable[[datetime, SimEvents], _Done[R]], of_orders: bool = False
+    ) -> R:
         """Do what is due and then `work`, store both as one call, and answer.
 
         `work` gives every event of the call and what reads its answer once they
@@ -294,7 +289,7 @@ class SimulatedBroker:
         while len(lost) <= _STARTS_OVER:
             try:
                 with self._log.lock:
-                    now, due = self._due()
+                    now, due = self._due(of_orders)
                     events, answer = work(now, due)
                     changed = events != SimEvents()
                     taken = self._log.append(events, now, now) if changed else None
@@ -315,25 +310,43 @@ class SimulatedBroker:
             raise _Unpriced(instrument, session, why)
         return self._read_closes[instrument, session]
 
-    def _due(self) -> tuple[datetime, SimEvents]:
-        """The call's time, and every event that comes before the call's own."""
+    def _now(self) -> datetime:
+        """The clock's time, or a halt where it is none this account can go on from."""
         log = self._log
-        # The log first, since another process can store a call while the clock is read.
-        log.catch_up()
-        now = require_utc(f"the simulated account {self.alias}'s clock", self._clock.now())
+        try:
+            now = require_utc(f"the simulated account {self.alias}'s clock", self._clock.now())
+        except Halt:
+            raise
+        except Exception as error:
+            raise Halt(
+                f"the simulated account {self.alias}'s clock raised {error_name(error)}"
+            ) from None
         for what, at in (("newest call", log.at), ("prices' decision", self._prices.decision_at)):
             if at is not None and now < at:
                 raise Halt(
                     f"the clock reads {_time(now)}, before the simulated account {self.alias}'s "
                     f"{what} at {_time(at)}"
                 )
+        return now
+
+    def _due(self, of_orders: bool) -> tuple[datetime, SimEvents]:
+        """The call's time, and every event that comes before the call's own."""
+        log = self._log
+        # The log first, since another process can store a call while the clock is read.
+        log.catch_up()
+        try:
+            now = self._now()
+        except Halt:
+            if not of_orders:
+                raise
+            return self._stamp()[0], SimEvents()
         events = SimEvents()
         for count in sorted(self._faults.events):
             if count <= log.calls and count not in log.fired:
                 edit = self._edit(count, after(log.account_now, events), events, now)
                 events = replace(events, edits=(*events.edits, edit))
         events = self._arrivals(events, now)
-        return now, self._closes(events, now)
+        return now, self._closes(events, now, of_orders)
 
     def _edit(self, count: int, state: SimState, events: SimEvents, now: datetime) -> SimEdit:
         """What someone did to the account by hand, as the part it left."""
@@ -377,15 +390,17 @@ class SimulatedBroker:
             events = replace(events, placed=(*events.placed, placed))
         return events
 
-    def _closes(self, events: SimEvents, now: datetime) -> SimEvents:
+    def _closes(self, events: SimEvents, now: datetime, of_orders: bool) -> SimEvents:
         """Each open order that ends now: rejected later, filled at its close, or expired."""
         for order in after(self._log.account_now, events).open_orders:
-            close = self._close(order, events, now)
+            close = self._close(order, events, now, of_orders)
             if close is not None:
                 events = replace(events, closed=(*events.closed, close))
         return events
 
-    def _close(self, order: SimOrder, events: SimEvents, now: datetime) -> SimClose | None:
+    def _close(
+        self, order: SimOrder, events: SimEvents, now: datetime, of_orders: bool
+    ) -> SimClose | None:
         closed = _close_of(order)
         fault = self._faults.orders.get(order.client_order_id or "")
         if fault is OrderFault.REJECT_LATER:
@@ -394,6 +409,8 @@ class SimulatedBroker:
             return None
         if fault is OrderFault.FILL_NONE:
             return SimClose(order.id or "", BrokerState.EXPIRED, closed, None, None)
+        if of_orders:
+            return None
         why = (
             f"the simulated account {self.alias}'s order {order.id} is past its close and has no "
             "price"
