@@ -42,6 +42,7 @@ from .names import (
     TARGET_OUTPUT,
     UNSTATED,
     VALUATION_OUTPUT,
+    is_sha256,
 )
 from .plan import PLAN_FORMAT, BuiltPlan, build_plan
 from .ports import *  # noqa: F403
@@ -107,6 +108,7 @@ __all__ = [
     "encode",
     "exceeds_places",
     "from_received",
+    "is_sha256",
     "load_sessions",
     "load_strategies",
     "parse_sessions",

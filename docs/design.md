@@ -1507,8 +1507,8 @@ The price is five things.
    one more mapping replay has to keep right.
 3. The stamp's length limit, whether Alpaca refuses a repeated client order
    id, which its order reference does not say, and specific lot
-   identification need confirming on Alpaca's live account before the live
-   gate, on [#153](https://github.com/l3a0/ithildin-runtime/issues/153).
+   identification need confirming on Alpaca's live account, which is the owner's
+   at the live gate, as [#153](https://github.com/l3a0/ithildin-runtime/issues/153) lists.
    Nothing in the design rests on the refusal of a repeated id. It is a second line of
    defence to test, because the platform never resends an order and settles
    doubt by lookup.
@@ -1692,7 +1692,7 @@ expects the same journal and the same blobs byte for byte, so concurrency
 that changes an output fails CI. A second test runs test 2's replay with
 one instance of each component and again with two, as slice 1 runs, and compares the
 journal and the blobs byte for byte in the same way, so a race between
-instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names. The second also leaves out each journal entry's `writer`, which is drawn afresh at each process start, and the hashes are recomputed around both fields. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
+instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names. The second also leaves out each journal entry's `writer`, which is drawn afresh at each process start for each `Journal` that records, and the hashes are recomputed around both fields. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
 
 No worker on a VM receives until a supervisor instance on that
 VM has read the run's plan and found its VM on the plan's release, so a VM outside the run never
@@ -4372,5 +4372,6 @@ once rather than re-argued.
 | Shrinking a refused rebalance until each of its orders only reduces | Deferred rather than rejected. It would let out the rebalances the gate still refuses with room, and no cap has bound, so the path has run zero times. The journaled refusals say when it starts to matter, as on [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
 | A strategy alias of up to twelve lower case letters and digits in the stamp | It would shorten an id that is 38 characters for `chan_bollinger`, where Alpaca's create order page allows 128. Its price would be one more setting per strategy, which a person could give two strategies alike. The owner turned it down on 2026-11-25 |
 | A journal in SQLite on the VM | A machine holds no state, so a file on one is no record. The owner accepted on 2026-11-25 numbered blobs per account, at the price of one S3 round trip before each order step |
+| Reading a journal with no entry as a flat book, or asking the broker whether an account is new | An empty journal looks the same as a wrong account or a lost store, and the broker's empty answer looks like a lost one. The owner accepted on 2026-11-25 an `opening` entry a person writes, at the price of one command per account |
 | A realised profit in `Book` | Nothing read it, and no document said how it is computed. [#48](https://github.com/l3a0/ithildin-runtime/issues/48)'s figures come from its own calculation over the record. The owner accepted on 2026-11-25 that it goes |
 | Two fields in `Book` that name the newest correction alone, its entry's number and when it moved a position | Two numbers cannot tell a deposit from the broker's trade behind it, so the gate could not excuse the trade without excusing the deposit. The owner accepted on 2026-11-25 a list, at the price of a small change to the gate |

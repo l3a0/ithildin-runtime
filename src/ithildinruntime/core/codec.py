@@ -469,7 +469,10 @@ def _read_body(value: object, where: str) -> bytes:
     if not isinstance(data, str):
         raise CodecError(f"{where} holds no text")
     if form == _TEXT:
-        return data.encode("utf-8")
+        try:
+            return data.encode("utf-8")
+        except UnicodeEncodeError:
+            raise CodecError(f"{where} holds text that is no Unicode") from None
     if form == _BASE64:
         try:
             return base64.b64decode(data, validate=True)

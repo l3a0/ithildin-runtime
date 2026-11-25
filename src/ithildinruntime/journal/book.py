@@ -333,6 +333,8 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
                     f"entry {seq} is a verdict on the book through entry {record.book}, not "
                     "through the entry before it"
                 )
+            if record.close_entry is not None and not 1 <= record.close_entry < seq:
+                raise Halt(f"entry {seq} names entry {record.close_entry}, no entry before it")
             step.order(kind, order, state)
         case AbandonedEntry():
             step.order(kind, *_next(step, record.client_order_id, Move.ABANDONED))
@@ -439,7 +441,8 @@ def _fill(step: Step, record: FillEntry) -> None:
     _require_read(step, record.read)
     first = view.fills.get(fill.fill_id)
     if first is not None:
-        # A repeat of the first, or of a dispute already held, changes nothing.
+        # A repeat of the first, or of a dispute already held, changes nothing. One
+        # of a dispute that is past a fill's bounds halted before it came here.
         if _same(fill, first) or any(_same(fill, dispute.fill) for dispute in view.disputes):
             return
         raise Halt(

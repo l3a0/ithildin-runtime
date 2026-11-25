@@ -298,8 +298,8 @@ class Journal:
         stored bytes of entry `after`, so the chain is checked from there on.
         It halts on bytes that are not canonical, a key whose number differs
         from the `seq` inside it, a format it does not know, a link that does
-        not chain, a gap in the numbers that a second listing shows too and a
-        key that is not an entry's.
+        not chain, a gap in the numbers and a key that is not an entry's. A
+        number the listing left out is a gap where its own key holds nothing.
         Checkpoints, which #154 writes under the same prefix, are skipped.
         """
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:
@@ -310,7 +310,8 @@ class Journal:
     def _read_on(self, on: JournalAck) -> Iterator[tuple[JournalEntry, str]]:
         """Every entry after `on` with its hash. `on`'s is trusted as the first one's link."""
         seq, expected = on.seq, on.entry_hash
-        keys, looked_again, newest = self._keys_after(seq), -1, seq
+        start = journal_entry_key(self._account, seq) if seq else None
+        keys = deque(self._store.list(self._prefix, start))
         while keys:
             key = keys.popleft()
             if not key.startswith(self._prefix):
@@ -321,17 +322,21 @@ class Journal:
             if not _ENTRY_NAME.fullmatch(name):
                 raise Halt(f"journal {self._account}: {key} is not an entry's key")
             number = int(name[:12])
-            if number != seq + 1:
+            if number == seq + 1:
+                data = self._get(key)
+            else:
                 # A folder listed while a writer adds to it can show an entry
-                # and miss the one before it, so a gap is looked at twice.
-                if looked_again != seq:
-                    keys, looked_again, newest = self._keys_after(seq), seq, max(newest, number)
-                    continue
-                raise Halt(
-                    f"journal {self._account}: entry {seq + 1} is missing, "
-                    f"and the next key is entry {number}"
-                )
-            data = self._get(key)
+                # and miss the one before it, so the missing one is asked for
+                # by its own key before its gap halts.
+                keys.appendleft(key)
+                try:
+                    data = self._store.get(journal_entry_key(self._account, seq + 1))
+                except BlobMissing:
+                    raise Halt(
+                        f"journal {self._account}: entry {seq + 1} is missing, "
+                        f"and the next key is entry {number}"
+                    ) from None
+                number = seq + 1
             entry = self._checked(number, data)
             if entry.prev_hash != expected:
                 raise Halt(
@@ -342,15 +347,6 @@ class Journal:
             expected = entry.hash()
             self._advance(JournalAck(seq=seq, entry_hash=expected))
             yield entry, expected
-        if seq < newest:
-            raise Halt(
-                f"journal {self._account}: entry {seq + 1} is missing, and entry {newest} was "
-                "listed"
-            )
-
-    def _keys_after(self, seq: int) -> deque[str]:
-        start = journal_entry_key(self._account, seq) if seq else None
-        return deque(self._store.list(self._prefix, start))
 
     def _check_link(self, entry: JournalEntry) -> None:
         if isinstance(entry.seq, bool) or not isinstance(entry.seq, int) or entry.seq < FIRST_SEQ:

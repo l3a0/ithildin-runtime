@@ -493,7 +493,8 @@ def _committed() -> list[tuple[Record, datetime]]:
 
     Entry n is built n seconds after the decision. Each of the first eleven
     orders ends in a state of its own, and the last two are refused, so that
-    each optional part of a verdict is filled once.
+    each optional part of a verdict is filled once. The verdicts fill fields and
+    are not answers the gate would give.
     """
     at = datetime(2026, 10, 1, 19, 40, tzinfo=UTC)
     spy = InstrumentId("SPY")
@@ -568,7 +569,7 @@ def _committed() -> list[tuple[Record, datetime]]:
         loss=LossReading(Decimal("50.0001"), Decimal("50.0000"), True, date(2026, 9, 30)),
         past=(
             PastLimit(Limit.MAX_POSITION, Decimal("12.000000000"), Decimal("10.000000000")),
-            PastLimit(Limit.MAX_NET, Decimal("900.5"), Decimal("900.5")),
+            PastLimit(Limit.MAX_NET, Decimal("900.6"), Decimal("900.5")),
         ),
     )
     no_position = dataclasses.replace(
@@ -682,7 +683,6 @@ FROZEN = {
 
 @pytest.mark.parametrize("kind", FROZEN, ids=lambda kind: kind.__name__)
 def test_3_no_member_of_an_enumeration_an_entry_holds_is_renamed(kind: type) -> None:
-    assert {member.value for member in kind} >= set(FROZEN[kind].split())
     assert {member.value for member in kind} == set(FROZEN[kind].split()), "add the new one above"
 
 

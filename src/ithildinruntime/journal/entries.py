@@ -39,6 +39,7 @@ from ithildinruntime.core import (
     Verdict,
     decode,
     encode,
+    is_sha256,
 )
 
 __all__ = [
@@ -68,7 +69,6 @@ __all__ = [
 # `cut` true.
 RAW_LIMIT = 65_536
 _WRITER = re.compile(r"[0-9a-f]{32}")
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 _BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
 # How much of a value from outside a halt shows, since its reason is stored and sent.
 _SHOWN = 80
@@ -336,7 +336,7 @@ def _past_bounds(record: Record) -> Iterator[str]:
             yield from _shares(record.order)
         case VerdictEntry():
             yield from _blobs(record.snapshot, record.constraints, record.valuation)
-            if not record.caps or not _SHA256.fullmatch(record.caps_sha256):
+            if not record.caps or not is_sha256(record.caps_sha256):
                 yield "the caps are empty, or their SHA-256 is none"
         case _:
             pass
@@ -355,7 +355,7 @@ def shown(value: str | None) -> str:
 
 def _blobs(*refs: BlobRef) -> Iterator[str]:
     for ref in refs:
-        if not ref.key or not _SHA256.fullmatch(ref.sha256):
+        if not ref.key or not is_sha256(ref.sha256):
             yield f"the key {shown(ref.key)} and SHA-256 {shown(ref.sha256)} name no blob"
 
 

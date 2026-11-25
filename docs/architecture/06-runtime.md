@@ -1055,7 +1055,9 @@ Monitoring's report says the switch is set.
 
 ##### What happens when the journal cannot be read or take a write
 
-A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. A journal that reads and does not replay holds a cancel the same way, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse). [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
+A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
+
+A journal whose entries read and do not replay holds a cancel too, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) and there is none. This doc proposes, for [#150](https://github.com/l3a0/ithildin-runtime/issues/150), that the pull then goes the same way, with the alarm and a person at the broker's console.
 
 ##### What happens when execution is down at the pull
 
@@ -1095,7 +1097,7 @@ stateDiagram-v2
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: execution journals the sending entry
-    Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
+    Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
     Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
     InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
     InDoubt --> Lost: still not found once its time in force has run out

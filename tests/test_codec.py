@@ -458,3 +458,15 @@ def test_decoding_a_snapshot_with_a_bar_under_another_key_is_a_codec_error() -> 
     with pytest.raises(CodecError) as raised:
         decode(data, core.Snapshot)
     assert type(raised.value) is CodecError
+
+
+@pytest.mark.parametrize("escaped", ["\\ud800", "x\\udfff"])
+def test_text_that_is_no_unicode_is_refused_both_ways(escaped: str) -> None:
+    half = json.loads(f'"{escaped}"')
+    for value in (half, {half: 1}, [half], core.JournalAck(1, half)):
+        with pytest.raises(core.CodecError, match="text that is no Unicode"):
+            core.encode(value)
+    kind = core.BrokerRead
+    data = b'{"raw":{"data":"%s","encoding":"utf-8"},"value":null}' % escaped.encode()
+    with pytest.raises(core.CodecError, match="raw holds text that is no Unicode"):
+        core.decode(data, kind)

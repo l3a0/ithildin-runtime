@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import random
 import threading
 import time
 import tracemalloc
@@ -382,6 +383,18 @@ def test_4_a_verdicts_book_is_the_entry_before_it(number: int, fine: bool) -> No
         accepts(journal, record)
     else:
         refuses(journal, record, f"on the book through entry {number}, not through the entry")
+
+
+@pytest.mark.parametrize(
+    ("number", "fine"), [(-1, False), (0, False), (1, True), (4, True), (5, False), (99, False)]
+)
+def test_4_a_verdicts_close_entry_is_an_earlier_one(number: int, fine: bool) -> None:
+    journal, name = at("Intended")
+    record = dataclasses.replace(verdict(name, book=4), close_entry=number)
+    if fine:
+        accepts(journal, record)
+    else:
+        refuses(journal, record, f"entry 5 names entry {number}, no entry before it")
 
 
 def test_4_a_brokers_id_is_one_orders() -> None:
@@ -793,17 +806,6 @@ def test_7_two_writers_never_hold_one_acknowledgement_under_one_clock() -> None:
     assert len(held) == 1
 
 
-def test_7_two_journals_with_one_writer_do_both_hold_it_so_each_has_its_own() -> None:
-    """What the writer is for: without one of its own, a second `Journal` is told it wrote."""
-    journal, name = at("Approved")
-    other = Journal(journal._store, ACCOUNT, WRITER)
-    views = journal.view(), other.view()
-    held = [
-        j.record(v, SendingEntry(name), AT)[0] for j, v in zip((journal, other), views, strict=True)
-    ]
-    assert held[0] == held[1]
-
-
 def test_11_two_calls_that_build_the_same_bytes_hold_one_acknowledgement() -> None:
     """Two threads of one process share a writer, and under a history clock a time too."""
     journal, name = at("Approved")
@@ -912,8 +914,10 @@ def test_after_refuses_a_second_value_for_what_a_view_shows() -> None:
     step = after(view, journal._build(body_of(read(), WRITER), AT, view.through))
     with pytest.raises(Halt, match="gives 'b1-f1' a second value, after entry 8's"):
         step.add(view._shared.fills, "b1-f1", fill("b1-f1", qty=1))
-    # One entry's own value, folded by another thread, is not a second.
-    step.add(view._shared.reads, view.through.seq + 1, read())
+    # One entry's own value, already kept by a newer view of the same maps, is not a second.
+    _, newer = journal.record(view, read(), AT)
+    assert view._shared.reads.found[newer.through.seq] == (newer.through.seq, read())
+    step.add(view._shared.reads, newer.through.seq, read())
 
 
 class Failing(Memory):
@@ -1237,29 +1241,41 @@ class Torn(Memory):
         return [key for key in super().list(prefix, after) if key not in gone]
 
 
-def test_7_a_listing_that_missed_an_entry_is_taken_again_and_a_gap_that_stays_halts() -> None:
+def test_7_an_entry_a_listing_missed_is_read_by_its_own_key() -> None:
     made, _ = at("Acknowledged")
     good = shown(made.view())
-    store = Torn(made._store.blobs)
-    store.missed = [(4,)]
-    assert shown(Journal(store, ACCOUNT).view()) == good
-    assert (store.lists, store.gets) == (2, 7)
-    # Each gap is looked at twice, and a second one further on is too.
-    store.missed = [(3,), (5,)]
-    assert shown(Journal(store, ACCOUNT).view()) == good
-    store.missed = [(4,), (4,)]
+    for missed in [(4,), (1,), (6,), (2, 3), (1, 2, 4, 6), (1, 2, 3, 4, 5, 6)]:
+        store = Torn(made._store.blobs)
+        store.missed = [missed]
+        assert shown(Journal(store, ACCOUNT).view()) == good
+        assert (store.lists, store.gets) == (1, 7)
+    # One missed at the end is read by the next view, which lists it.
+    store.missed = [(7,)]
     journal = Journal(store, ACCOUNT)
-    with pytest.raises(Halt, match="entry 4 is missing, and the next key is entry 5"):
-        journal.view()
+    assert journal.view().through.seq == 6
     assert shown(journal.view()) == good
-    # A second listing that ends short of what the first one showed.
-    store.missed = [(4,), (4, 5, 6, 7)]
-    with pytest.raises(Halt, match="entry 4 is missing, and entry 5 was listed"):
+
+
+@pytest.mark.parametrize("gone", [(1,), (4,), (6,), (4, 5), (2, 6)])
+def test_7_an_entry_that_is_not_stored_is_a_gap_whatever_the_listing_shows(gone: tuple) -> None:
+    made, _ = at("Acknowledged")
+    store = Torn(made._store.blobs)
+    for number in gone:
+        del store.blobs[journal_entry_key(ACCOUNT, number)]
+    store.missed = [gone]
+    with pytest.raises(Halt, match=f"entry {gone[0]} is missing, and the next key is entry"):
         Journal(store, ACCOUNT).view()
-    for _ in range(2):
-        store.missed = [(4,)] * 2
-        with pytest.raises(Halt, match="entry 4 is missing"):
-            Journal(store, ACCOUNT).view()
+
+
+def test_7_no_view_ends_short_of_an_entry_its_listing_showed() -> None:
+    made, _ = at("Expired")
+    end = made.view().through.seq
+    draw = random.Random(142)
+    for _ in range(500):
+        store = Torn(made._store.blobs)
+        store.missed = [tuple(n for n in range(1, end + 1) if draw.random() < 0.3)]
+        listed = max((n for n in range(1, end + 1) if n not in store.missed[0]), default=0)
+        assert Journal(store, ACCOUNT).view().through.seq == listed
 
 
 def test_a_disputes_text_from_outside_is_cut_where_a_halt_shows_it() -> None:

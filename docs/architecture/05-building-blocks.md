@@ -1128,7 +1128,7 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 
 1. A repeat with the same broker's order, instrument, shares, price and time is skipped. The other fields may differ, because a second endpoint may leave one out or write it another way.
 2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
-3. A repeat of a dispute already held is skipped, because a recover stage that halts on one reads it again at each decision.
+3. A repeat of a dispute already held is skipped, because a recover stage that halts on one reads it again at each decision. One with no shares or no price is refused as a `fill`, so a caller looks at the view's disputes first.
 
 A fill that carries a correction identifier is refused as a `fill` until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
 
@@ -1631,7 +1631,7 @@ The figure below is a C4 component diagram.
 ```mermaid
 flowchart TB
     core["ithildinruntime.core<br/>the code every module shares"]
-    journal["ithildinruntime.journal<br/>the journal's writer and reader"]
+    journal["ithildinruntime.journal<br/>the journal's writer and reader,<br/>and the book its entries replay to"]
     adapters["adapters<br/>S3 and folder stores and buckets,<br/>SQS and named-pipe queues, two clocks"]
     data["data"]
     alpha["alpha"]
