@@ -174,7 +174,7 @@ moment, not against a blob.
 | Live | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
-which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. Shadow
+which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless [#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt. Shadow
 reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
@@ -1076,7 +1076,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
 | `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
-| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row |
+| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series) |
 | `volume` | The volume, or `None` where the source stated none, as on both imported vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
@@ -1706,7 +1706,7 @@ An arrow means "may import". The diagram draws four rules.
    - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage and the three files risk and portfolio construction read, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
-   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
@@ -1730,12 +1730,13 @@ An arrow means "may import". The diagram draws four rules.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
 4. **Only `runtime` imports `adapters`**, which holds the S3 and memory-backed folder stores, the S3 and folder read-only buckets, the SQS and named-pipe queues, and the history and wall clocks. So each of the outside libraries in the table below is imported in one module.
 
-   **Table:** The one module that imports each of four outside libraries
+   **Table:** The one module that imports each of five outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
    | boto3 | `adapters` |
-   | marketlake's package, of which `data` imports only `lake.loader`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
+   | marketlake's package, of which `data` imports only `lake.loader`, `lake.unsealed`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
+   | pyarrow, which marketlake's reader returns its rows in | `data` |
    | Alpaca's SDK | `execution.brokers` |
    | rfc8785, the one codec's canonical JSON | `core` |
 

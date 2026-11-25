@@ -375,13 +375,18 @@ def test_data_importing_a_named_part_of_marketlake_passes(tmp_path: Path, module
 
 
 def test_the_data_package_imports_marketlake_only_where_the_rule_allows() -> None:
-    """The submodules `data` imports today, so a new one is a change to the rule."""
+    """The submodules `data` imports today, so a new one is a change to the rule.
+
+    #100's read of an unsealed day is the first to import `lake.unsealed`, and
+    its build takes the name out of `unread` below.
+    """
+    unread = {"lake.unsealed"}
     found = set()
     for path in (SOURCE / "data").rglob("*.py"):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith(("from lake", "import lake")):
                 found.add(line.split()[1])
-    assert found == set(LAKE_SUBMODULES)
+    assert found == set(LAKE_SUBMODULES) - unread
 
 
 def test_core_imports_only_the_standard_library_and_rfc8785(tmp_path: Path) -> None:

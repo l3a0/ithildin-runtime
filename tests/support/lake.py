@@ -24,6 +24,9 @@ run does. Building it takes six steps.
    remove one have something to remove.
 6. **Import the two files** with `import_vintages`.
 
+`quotes_segment` adds one capture segment to a lake's journal with
+marketlake's own writer, for a day that is not sealed yet.
+
 marketlake's own test helpers sit under its `tests/` folder and are not
 installed, so these use its public names and, where a test needs a row
 marketlake would only capture, pyarrow directly.
@@ -36,14 +39,17 @@ import os
 import shutil
 import time
 import urllib.request
-from datetime import UTC, date, datetime
+from collections.abc import Mapping
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from lake import journal
 from lake.bar_import import import_vintages
 from lake.calendar import MARKET_TZ, ExchangeCalendar
 from lake.capture_spans import CaptureSpans, spans_path
+from lake.gap import SEGMENT_STAMP_FORMAT
 from lake.manifest import append_manifest, manifest_path, sha256_file
 from lake.schema_versions import record_schema_version
 from lake.security_master import KIND_EQUITY, SecurityMaster, master_path
@@ -225,3 +231,76 @@ def doubled(root: Path, ticker: str, day: date) -> str:
     rewrite(root, key, sink.getvalue().to_pybytes())
     record(root, key, rows=2)
     return key
+
+
+def quote_row(ticker: str, minute: datetime, /, **changes: object) -> dict[str, object]:
+    """One captured quote, landed a second after its minute, with any column changed.
+
+    A column not named here is null. The prices are made up.
+    """
+    landed = minute + timedelta(seconds=1)
+    millis = int(minute.timestamp() * 1000)
+    return {
+        "snap_ts": minute.isoformat(),
+        "fetch_ts": minute.isoformat(),
+        "fetch_end_ts": landed.isoformat(),
+        "vendor_quote_ts": minute.isoformat(),
+        "bid_time": millis,
+        "ask_time": millis,
+        "trade_time": millis,
+        "ticker": ticker,
+        "bid": 60.0,
+        "ask": 60.5,
+        "last": 60.25,
+        "bid_size": 1,
+        "ask_size": 2,
+        "last_size": 3,
+        "total_volume": 4,
+        "security_status": "Normal",
+        "realtime": True,
+        "close_tag": None,
+        "session_phase": None,
+        "row_kind": journal.ROW_KIND_DATA,
+        "suspect": False,
+        "schema_version": journal.SCHEMA_VERSION,
+        **changes,
+    }
+
+
+def gap_row(ticker: str, minute: datetime) -> dict[str, object]:
+    """The marker capture writes for a minute it could not read."""
+    return {
+        "snap_ts": minute.isoformat(),
+        "ticker": ticker,
+        "row_kind": journal.ROW_KIND_GAP,
+        "error_class": "timeout",
+        "suspect": False,
+        "schema_version": journal.SCHEMA_VERSION,
+    }
+
+
+def quotes_segment(
+    root: Path,
+    ticker: str,
+    minute: datetime,
+    *rows: Mapping[str, object],
+    schema: pa.Schema | None = None,
+) -> tuple[str, str]:
+    """Write one closed quotes segment, and give its lake-relative path and SHA-256.
+
+    It goes through `lake.journal`'s `schema_for`, `segment_path` and
+    `SegmentWriter`, so the file is one marketlake's own writer wrote. `schema`
+    retypes a column.
+    """
+    schema = schema or journal.schema_for(journal.QUOTES_SURFACE)
+    path = journal.segment_path(
+        root,
+        journal.QUOTES_SURFACE,
+        ticker,
+        minute.astimezone(MARKET_TZ).date(),
+        minute.strftime(SEGMENT_STAMP_FORMAT),
+        1,
+    )
+    with journal.SegmentWriter(path, schema) as writer:
+        writer.write_cycle(pa.Table.from_pylist([dict(row) for row in rows], schema=schema))
+    return path.relative_to(root).as_posix(), sha256_file(path)

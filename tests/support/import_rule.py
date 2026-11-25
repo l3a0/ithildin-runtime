@@ -101,6 +101,9 @@ LIBRARIES: dict[str, str] = {
     "boto3": "adapters",
     "botocore": "adapters",
     "lake": "data",
+    # What marketlake's files are read with, so a second reader of them would
+    # import it.
+    "pyarrow": "data",
     "alpaca": "brokers",
     "alpaca_trade_api": "brokers",
     # The one codec writes every blob, so only `core` writes canonical JSON.
@@ -108,10 +111,18 @@ LIBRARIES: dict[str, str] = {
 }
 
 # The submodules of `lake` that `data` may import, and nothing else of it:
-# the reader and its errors, the reader-file rule, the manifest, and the two
-# modules whose errors the reader raises.
+# the reader and its errors, the reader of a day before its seal, the
+# reader-file rule, the manifest, and the two modules whose errors the reader
+# raises.
 LAKE_SUBMODULES = frozenset(
-    {"lake.loader", "lake.paths", "lake.manifest", "lake.actions", "lake.config"}
+    {
+        "lake.loader",
+        "lake.unsealed",
+        "lake.paths",
+        "lake.manifest",
+        "lake.actions",
+        "lake.config",
+    }
 )
 
 # `core` imports nothing outside the standard library but these.
