@@ -1,10 +1,11 @@
 """What a book is worth and how far it could move, counted one way for every reader.
 
-The gate, the risk model, portfolio construction and execution each need a
-price for an instrument and what is held. The gate and execution also need the
-range a position could reach and whether an order only reduces. No worker
-imports another, so the functions live here, once. docs/design.md's `### Rule 9: how the gate counts
-open orders` says why an open order is counted both filled and not.
+The alpha model, the gate, the risk model, portfolio construction and execution
+each need a price for an instrument, and each but the alpha model what is held.
+The gate and execution also need the range a position could reach and whether an
+order only reduces. No worker imports another, so the functions live here, once.
+docs/design.md's `### Rule 9: how the gate counts open orders` says why an open
+order is counted both filled and not.
 
 Every sum and product is exact, as `core/exact.py` says. A book or an order
 that holds a value that is not finite halts naming it.
@@ -71,7 +72,9 @@ class Exposure(NamedTuple):
 
 
 def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetime) -> Decimal:
-    """The one price an instrument is valued at: its quote's midpoint, or its newest bar's close.
+    """An instrument's one price at a decision: its quote's midpoint, or its newest bar's close.
+
+    It is a signal's newest price, and what a position is sized and valued at.
 
     It is the midpoint where the snapshot holds a quote for the instrument,
     which `core.require_quote` judges as of `now`, and the close where it holds

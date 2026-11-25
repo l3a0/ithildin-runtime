@@ -7,6 +7,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 ## Prices in Introduction and goals
 
 - [How the model knows which unit it holds](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds)
+- [Which price a decision reads](01-introduction-and-goals.md#which-price-a-decision-reads)
 
 ## Prices in Context and scope
 
