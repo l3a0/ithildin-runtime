@@ -48,7 +48,7 @@ def _body(n: int) -> dict[str, object]:
 
 
 def _append(journal: Journal, n: int) -> None:
-    journal.append(journal.build(_body(n), AT + timedelta(seconds=n)))
+    journal._append(journal._build(_body(n), AT + timedelta(seconds=n)))
 
 
 def _plant(store, seq: int, data: bytes, account: str = ACCOUNT) -> None:
@@ -78,10 +78,10 @@ def test_the_first_entry_carries_sixty_four_zeros(spec: StoreSpec) -> None:
     store = spec.open()
     journal = Journal(store, ACCOUNT)
     assert journal.head() is None
-    entry = journal.build(_body(1), AT)
+    entry = journal._build(_body(1), AT)
     assert entry.seq == 1
     assert entry.prev_hash == "0" * 64 == FIRST_PREV_HASH
-    ack = journal.append(entry)
+    ack = journal._append(entry)
     data = _stored(store, 1)
     assert data == encode(entry)
     assert ack.seq == 1
@@ -128,9 +128,9 @@ def test_accounts_keep_separate_chains(tmp_path: Path) -> None:
 def test_a_resend_of_the_same_entry_is_its_own_earlier_attempt(spec: StoreSpec) -> None:
     store = spec.open()
     journal = Journal(store, ACCOUNT)
-    entry = journal.build(_body(1), AT)
-    first = journal.append(entry)
-    assert Journal(store, ACCOUNT).append(entry) == first
+    entry = journal._build(_body(1), AT)
+    first = journal._append(entry)
+    assert Journal(store, ACCOUNT)._append(entry) == first
     assert len(store.list("journal/", None)) == 1
 
 
@@ -155,10 +155,10 @@ class _LostReply:
 def test_a_lost_reply_is_settled_by_resending_the_same_entry(tmp_path: Path) -> None:
     store = _LostReply(FolderStore(tmp_path))
     journal = Journal(store, ACCOUNT)
-    entry = journal.build(_body(1), AT)
+    entry = journal._build(_body(1), AT)
     with pytest.raises(StoreUnavailable):
-        journal.append(entry)
-    ack = journal.append(entry)
+        journal._append(entry)
+    ack = journal._append(entry)
     assert ack.seq == 1
     assert [e.seq for e in Journal(store, ACCOUNT).read()] == [1]
 
@@ -169,17 +169,17 @@ def test_a_number_another_writer_took_is_refused_and_never_renumbered(
     store = spec.open()
     ours, theirs = Journal(store, ACCOUNT), Journal(store, ACCOUNT)
     _append(ours, 1)
-    late = ours.build(_body(2), AT)
+    late = ours._build(_body(2), AT)
     _append(theirs, 99)
     with pytest.raises(NumberTaken) as refused:
-        ours.append(late)
+        ours._append(late)
     assert refused.value.seq == 2
     assert refused.value.account == ACCOUNT
     assert Journal(store, ACCOUNT).head().seq == 2
-    again = ours.build(_body(2), AT)
+    again = ours._build(_body(2), AT)
     assert again.seq == 3
     assert again.prev_hash == hashlib.sha256(_stored(store, 2)).hexdigest()
-    ours.append(again)
+    ours._append(again)
     assert [e.body["n"] for e in Journal(store, ACCOUNT).read()] == [1, 99, 2]
 
 
@@ -189,11 +189,11 @@ def test_an_entry_with_a_wrong_link_is_refused_before_it_is_stored(tmp_path: Pat
     _append(journal, 1)
     for wrong in (FIRST_PREV_HASH, "f" * 64):
         with pytest.raises(Halt, match="prev_hash"):
-            journal.append(_entry(2, wrong))
+            journal._append(_entry(2, wrong))
         with pytest.raises(Halt, match="prev_hash"):
-            Journal(store, ACCOUNT).append(_entry(2, wrong))
+            Journal(store, ACCOUNT)._append(_entry(2, wrong))
     with pytest.raises(Halt, match="prev_hash"):
-        Journal(store, "fresh").append(_entry(1, "f" * 64))
+        Journal(store, "fresh")._append(_entry(1, "f" * 64))
     assert store.list("journal/", None) == ["journal/paper-1/000000000001.json"]
 
 
@@ -202,7 +202,7 @@ def test_an_entry_past_a_gap_is_refused_before_it_is_stored(tmp_path: Path) -> N
     journal = Journal(store, ACCOUNT)
     _append(journal, 1)
     with pytest.raises(Halt, match="entry 2 is missing"):
-        Journal(store, ACCOUNT).append(_entry(3, "f" * 64))
+        Journal(store, ACCOUNT)._append(_entry(3, "f" * 64))
     assert len(store.list("journal/", None)) == 1
 
 
@@ -215,14 +215,14 @@ def test_a_journal_that_knows_its_newest_entry_still_refuses_one_past_a_gap(
         _append(journal, n)
     newest = journal.head()
     with pytest.raises(Halt, match="entry 4 is missing"):
-        journal.append(_entry(5, newest.entry_hash))
+        journal._append(_entry(5, newest.entry_hash))
     assert len(store.list("journal/", None)) == 3
 
 
 @pytest.mark.parametrize("seq", [0, -1, True])
 def test_an_entry_numbered_below_one_is_refused(tmp_path: Path, seq: object) -> None:
     with pytest.raises(Halt, match="not an entry number"):
-        Journal(FolderStore(tmp_path), ACCOUNT).append(_entry(seq, FIRST_PREV_HASH))
+        Journal(FolderStore(tmp_path), ACCOUNT)._append(_entry(seq, FIRST_PREV_HASH))
     assert FolderStore(tmp_path).list("journal/", None) == []
 
 
@@ -230,7 +230,7 @@ def test_an_entry_in_a_format_this_release_does_not_read_is_refused(tmp_path: Pa
     unknown = max(FORMATS) + 1
     store = FolderStore(tmp_path)
     with pytest.raises(Halt, match=f"format {unknown}"):
-        Journal(store, ACCOUNT).append(_entry(1, FIRST_PREV_HASH, format=unknown))
+        Journal(store, ACCOUNT)._append(_entry(1, FIRST_PREV_HASH, format=unknown))
     assert store.list("journal/", None) == []
 
 
@@ -240,7 +240,7 @@ def test_a_body_the_codec_cannot_write_is_refused_at_build(tmp_path: Path) -> No
     from ithildinruntime.core import CodecError
 
     with pytest.raises(CodecError):
-        Journal(FolderStore(tmp_path), ACCOUNT).build({"qty": Decimal("1.5")}, AT)
+        Journal(FolderStore(tmp_path), ACCOUNT)._build({"qty": Decimal("1.5")}, AT)
 
 
 def test_racing_writers_each_take_their_own_numbers(spec: StoreSpec) -> None:
@@ -259,7 +259,7 @@ def test_racing_writers_each_take_their_own_numbers(spec: StoreSpec) -> None:
                 # here, so the tries are bounded and running out fails.
                 for _ in range(writers * each):
                     try:
-                        journal.append(journal.build({"kind": "fixture", "w": w, "i": i}, AT))
+                        journal._append(journal._build({"kind": "fixture", "w": w, "i": i}, AT))
                         break
                     except NumberTaken:
                         continue
@@ -513,7 +513,7 @@ def test_head_checks_what_another_writer_appended(tmp_path: Path) -> None:
     with pytest.raises(Halt, match="entry 2's prev_hash"):
         journal.head()
     with pytest.raises(Halt, match="entry 2's prev_hash"):
-        journal.append(journal.build(_body(3), AT))
+        journal._append(journal._build(_body(3), AT))
     assert len(store.list("journal/", None)) == 2
 
 
@@ -537,7 +537,7 @@ def test_a_writer_refused_at_a_number_reads_forward_before_its_next_build(
     _append(theirs, 51)
     with pytest.raises(NumberTaken):
         _append(ours, 2)
-    assert ours.build(_body(2), AT).seq == 4
+    assert ours._build(_body(2), AT).seq == 4
 
 
 class _RefusedThenMissing:
@@ -557,7 +557,7 @@ class _RefusedThenMissing:
 def test_a_key_refused_as_existing_and_then_missing_halts(tmp_path: Path) -> None:
     journal = Journal(_RefusedThenMissing(FolderStore(tmp_path)), ACCOUNT)
     with pytest.raises(Halt, match="refused as existing and then missing"):
-        journal.append(_entry(1, FIRST_PREV_HASH))
+        journal._append(_entry(1, FIRST_PREV_HASH))
 
 
 # Every format ever written stays readable.
@@ -585,7 +585,7 @@ def test_this_release_writes_the_committed_format_1_bytes(tmp_path: Path) -> Non
     entries = list(Journal(FolderStore(copy), "fixture").read())
     fresh = Journal(FolderStore(tmp_path / "fresh"), "fixture")
     for entry, path in zip(entries, committed, strict=True):
-        fresh.append(fresh.build(entry.body, entry.built_at))
+        fresh._append(fresh._build(entry.body, entry.built_at))
         assert (tmp_path / "fresh" / "journal" / "fixture" / path.name).read_bytes() == (
             path.read_bytes()
         )

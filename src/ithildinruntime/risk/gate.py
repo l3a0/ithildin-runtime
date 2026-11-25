@@ -32,6 +32,7 @@ from ithildinruntime.core import (
     BeforeClose,
     Book,
     Constraints,
+    Correction,
     Effect,
     Exposure,
     GateInputs,
@@ -237,12 +238,16 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
     The price is no trading for the rest of that session.
     """
     finite("the book's cash", book.cash)
-    corrected = book.corrected_through
+    corrections = book.corrections
+    if not isinstance(corrections, tuple) or not all(
+        isinstance(c, Correction) for c in corrections
+    ):
+        raise Halt(f"the book's corrections are {corrections!r}, not a list of corrections")
     # A journal's first entry is number 1, and one with no entry is replayed through 0.
     for what, number, least in (
         ("the valuation's replayed_through", valuation.replayed_through, 0),
         ("the book's replayed_through", book.replayed_through, 0),
-        ("the book's corrected_through", 1 if corrected is None else corrected, 1),
+        *(("a correction's seq", c.seq, 1) for c in corrections),
     ):
         if type(number) is not int or number < least:
             raise Halt(f"{what} is {number!r}, not an entry's number")
@@ -281,20 +286,24 @@ def _check_book(book: Book, valuation: Valuation, prior: Session) -> None:
             f"the valuation was replayed through entry {valuation.replayed_through}, past the "
             f"book's {book.replayed_through}"
         )
+    for c in corrections:
+        if c.seq > book.replayed_through:
+            raise Halt(f"a correction's seq is {c.seq}, past the book's {book.replayed_through}")
+        require_utc(f"when entry {c.seq} corrected the book", c.at)
+        if type(c.repositions) is not bool:
+            raise Halt(f"the correction at entry {c.seq} repositions {c.repositions!r}, no bool")
+    corrected = max((c.seq for c in corrections), default=None)
     if corrected is not None and corrected > valuation.replayed_through:
         raise Halt(
             f"entry {corrected} corrected the book after the valuation, which was replayed "
             f"through entry {valuation.replayed_through}"
         )
-    if book.repositioned_at is not None:
-        if corrected is None:
-            raise Halt("the book's repositioned_at is set with no correction behind it")
-        at = require_utc("the book's repositioned_at", book.repositioned_at)
-        if at > prior.close:
-            raise Halt(
-                f"a position was corrected at {at.isoformat()}, after the valuation's session "
-                f"closed at {prior.close.isoformat()}"
-            )
+    at = max((c.at for c in corrections if c.repositions), default=None)
+    if at is not None and at > prior.close:
+        raise Halt(
+            f"a position was corrected at {at.isoformat()}, after the valuation's session "
+            f"closed at {prior.close.isoformat()}"
+        )
 
 
 def _check_intent(intent: OrderIntent, book: Book, limits: Constraints) -> None:

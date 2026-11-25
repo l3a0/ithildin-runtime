@@ -179,3 +179,104 @@ def test_a_name_that_would_spell_another_rows_key_is_refused(build) -> None:
 def test_an_output_name_may_hold_a_dash() -> None:
     key = core.output_key("paper", RUN, AT, "alpha/bollinger", "signal-records")
     assert key == "runs/paper/2026-11-02/20261102T204000Z/alpha/bollinger/signal-records.json"
+
+
+# The platform's stamp, which is an order's client order id (#142, item 7).
+
+STAMPED = datetime(2026, 10, 1, 19, 40, tzinfo=UTC)
+NAMED = [
+    "a",
+    "chan_bollinger",
+    "a-b",
+    "a.b",
+    "9_-.x",
+    "ith-a",
+    "a-20261001T194000Z-01",
+    "a-20261001T194000Z",
+    "a--b-",
+]
+
+
+@pytest.mark.parametrize("strategy", NAMED)
+@pytest.mark.parametrize("place", [1, 2, 10, 99])
+def test_a_stamp_reads_back_for_each_name_the_strategy_reader_accepts(
+    strategy: str, place: int
+) -> None:
+    assert core.read_order_id(core.order_id(strategy, STAMPED, place)) == (strategy, STAMPED, place)
+
+
+def test_a_stamp_is_written_one_way() -> None:
+    made = core.order_id("chan_bollinger", STAMPED, 1)
+    assert made == "ith-chan_bollinger-20261001T194000Z-01"
+    assert len(made) == 38
+    assert core.order_id("a", STAMPED, 99) == "ith-a-20261001T194000Z-99"
+
+
+def test_a_stamp_has_at_most_128_characters() -> None:
+    longest = core.order_id("a" * 104, STAMPED, 1)
+    assert len(longest) == 128
+    assert core.read_order_id(longest) == ("a" * 104, STAMPED, 1)
+    with pytest.raises(core.Halt, match="has 129 characters, past 128"):
+        core.order_id("a" * 105, STAMPED, 1)
+    with pytest.raises(core.Halt, match="is not an order id the platform writes"):
+        core.read_order_id(longest.replace("ith-a", "ith-aa"))
+
+
+@pytest.mark.parametrize("place", [0, -1, 100, True, "1", 1.0, None])
+def test_a_stamp_takes_a_place_from_1_to_99(place: object) -> None:
+    with pytest.raises(core.Halt, match="not a whole number from 1 to 99"):
+        core.order_id("a", STAMPED, place)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("strategy", ["", "a b", "-a", "a..b", "a/b", "é", "a\n", None])
+def test_a_stamp_takes_a_name_the_strategy_reader_accepts(strategy: object) -> None:
+    with pytest.raises(core.Halt, match="cannot be part of an order id"):
+        core.order_id(strategy, STAMPED, 1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "at",
+    [
+        STAMPED.replace(microsecond=1),
+        STAMPED.replace(tzinfo=None),
+        STAMPED.astimezone(timezone(timedelta(hours=1))),
+        None,
+    ],
+)
+def test_a_stamp_takes_a_decision_time(at: object) -> None:
+    with pytest.raises(core.Halt, match="an order id names no decision"):
+        core.order_id("a", at, 1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        None,
+        7,
+        "ith-a-20261001T194000Z",
+        "ith-a-20261001T194000Z-",
+        "ith-a-20261001T194000Z-00",
+        "ith-a-20261001T194000Z-1",
+        "ith-a-20261001T194000Z-100",
+        "ith-a-20261001T194000Z-0x",
+        "ith-a-20261001T194000-01",
+        "ith-a-2026101T194000Z-01",
+        "ith-a-20261301T194000Z-01",
+        "ith-a-20261001T250000Z-01",
+        "ith--20261001T194000Z-01",
+        "ith-20261001T194000Z-01",
+        "ITH-a-20261001T194000Z-01",
+        "xith-a-20261001T194000Z-01",
+        "a-20261001T194000Z-01",
+        "ith-a..b-20261001T194000Z-01",
+        "ith-a b-20261001T194000Z-01",
+        "ith-a-20261001T194000Z-01\n",
+        " ith-a-20261001T194000Z-01",
+        "ith-a-２20261001T194000Z-01",
+        "ith-a-20261001T194000Z-١١",
+    ],
+)
+def test_a_malformed_stamp_is_refused(bad: object) -> None:
+    with pytest.raises(core.Halt, match="is not an order id the platform writes"):
+        core.read_order_id(bad)  # type: ignore[arg-type]

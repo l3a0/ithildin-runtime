@@ -43,11 +43,11 @@ _NET_CAP_PLACES = 4
 _PLAIN = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _SHARES = ("max_order_qty", "max_position")
-_MAXIMA = ("max_gross", "loss_stop")
+_MAXIMA = ("max_gross",)
 _COUNTS = ("max_open_orders", "moc_cutoff")
 _STRESS = ("share", "stress_move", "stress_low", "stress_high")
 _FIELDS = frozenset(
-    {*_SHARES, *_MAXIMA, *_COUNTS, *_STRESS}
+    {*_SHARES, *_MAXIMA, *_COUNTS, *_STRESS, "loss_stop"}
     | {"stress_vintage", "stress_through", "stress_max_age_days", "share_step"}
 )
 # The ten forms a share step is written in, 1 and 0.1 down to 0.000000001, which is the
@@ -241,6 +241,10 @@ def _check_shared(source: Constraints | HardCaps, where: str) -> None:
             )
     for name in _MAXIMA:
         _not_negative(f"{where} {name}", getattr(source, name))
+    # V is rounded to four places and cash is not, so a stop of zero fires on the rounding alone.
+    stop = finite(f"{where} loss_stop", source.loss_stop)
+    if stop <= 0:
+        raise Halt(f"{where} loss_stop is {stop}, not above zero")
     for name in _COUNTS:
         count = _integer(f"{where} {name}", getattr(source, name))
         if count < 0:

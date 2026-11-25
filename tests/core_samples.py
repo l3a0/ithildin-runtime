@@ -30,6 +30,9 @@ PROTOCOLS = (
 RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.PlanDecision,
     core.CostTerm,
+    core.Correction,
+    core.OrderEntry,
+    core.OrderRecord,
     core.Signal,
     core.ForecastSet,
     core.HardCaps,

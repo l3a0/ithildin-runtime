@@ -673,7 +673,7 @@ An order absent from a whole list stays `InDoubt`, because a request sent just b
 
 A broker that takes no client order id gets an adapter that pairs on the order's details instead. It takes a row the journal has not mapped, matching the order's instrument, side, quantity and type inside the same window. That match is close to unique, because an account holds one portfolio, one holder of the lease sends, and the gate refuses a second order beside one in doubt. The journal's mapping stands in for the stamp there, and more than one match halts. This adapter is designed and not built, and it passes the broker suite before any such broker is used, on the terms design.md's `### Orders the platform did not send` gives.
 
-Alpaca's [order reference](https://docs.alpaca.markets/reference/postorder) does not say whether it refuses a second order with the same client order id, so nothing here relies on that, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) tests it on the paper account as a second line of defence.
+Alpaca's [order reference](https://docs.alpaca.markets/reference/postorder) does not say whether it refuses a second order with the same client order id, so nothing here relies on that, and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) leaves the test of it on the paper account to the owner, as a second line of defence.
 
 ## When something is wrong
 
@@ -1057,6 +1057,8 @@ Monitoring's report says the switch is set.
 
 A pull sends no cancel the journal cannot hold, because an outside write with no record cannot be matched afterwards. Where the journal's entries cannot be read, or the store cannot take a write, execution sends no cancel and alarms, monitoring's second alarm fires at the pull's deadline, and `ithildin switch pull` names the broker's own console, where a person cancels by hand. [Rule 10: the kill switch is a blob](../design.md#rule-10-the-kill-switch-is-a-blob) and the [2026-11-07](../design.md#2026-11-07) entries in design.md hold the rule.
 
+The same holds where the entries read and do not replay, because [every entry is recorded on a view](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) and there is none. Execution sends no cancel and alarms, and a person cancels at the broker's console, as entry 6 of [2026-11-25](../design.md#2026-11-25) says. [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds it.
+
 ##### What happens when execution is down at the pull
 
 A starting execution instance checks the switch as soon as its digest and journal checks pass. If it finds the switch set, it takes the account's lease and cancels by the steps under [What happens after a pull](#what-happens-after-a-pull). So a switch pulled while execution is down still cancels once the host restarts it.
@@ -1095,8 +1097,8 @@ stateDiagram-v2
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
     Approved --> Abandoned: a restart before the sending entry
     Approved --> Sending: execution journals the sending entry
-    Sending --> Acknowledged: the broker acknowledges it, unless it is<br/>a late order, which halts
-    Sending --> InDoubt: no answer, a crash, or a refusal saying<br/>the broker already holds the id
+    Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
+    Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
     InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first
     InDoubt --> Lost: still not found once its time in force has run out
     Acknowledged --> PartlyFilled: some shares fill
@@ -1112,7 +1114,7 @@ stateDiagram-v2
     end note
     Acknowledged --> Expired: a day or market-on-close order<br/>stays unfilled at the close
     PartlyFilled --> Expired: the rest stay unfilled at the close
-    Sending --> Rejected: the broker refuses the submit, other than<br/>a refusal saying it already holds the id
+    Sending --> Rejected: the broker refuses the submit in an answer<br/>read whole, other than a refusal saying<br/>it already holds the id
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: execution journals the cancel, for the kill switch,<br/>a failed pair leg, a later plan or a sort
     PartlyFilled --> CancelSent: execution journals a cancel of the rest,<br/>for the same reasons
@@ -1135,6 +1137,8 @@ stateDiagram-v2
 
 `Refused` is the platform's own risk gate saying no. `Rejected` is the broker
 saying no.
+
+`journal/orders.py` holds the moves built so far as one table, and an entry that asks for a move it does not hold halts, naming the entry, the order and its state. The moves into and out of `Lost` arrive with [#147](https://github.com/l3a0/ithildin-runtime/issues/147), and those of `CancelSent` and `Cancelled` with [#149](https://github.com/l3a0/ithildin-runtime/issues/149).
 
 ### How an order leaves `InDoubt`
 
@@ -1201,6 +1205,8 @@ stateDiagram-v2
         a price that contradicts itself,
         a price of unstated kind,
         a lookback that crosses a change of series,
+        a journal that does not replay,
+        a fill in dispute,
         an unknown stamped fill,
         an unstamped order,
         a fill with no stamp,

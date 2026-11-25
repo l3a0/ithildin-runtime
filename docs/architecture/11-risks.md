@@ -15,6 +15,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured)
 - [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record)
 - [What the risk stage reads and stores](05-building-blocks.md#what-the-risk-stage-reads-and-stores)
+- [An empty journal is never a flat book](05-building-blocks.md#an-empty-journal-is-never-a-flat-book)
 - [Where the figures come from](05-building-blocks.md#where-the-figures-come-from)
 - [How a target is sized](05-building-blocks.md#how-a-target-is-sized)
 

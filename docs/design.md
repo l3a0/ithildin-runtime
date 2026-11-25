@@ -923,7 +923,7 @@ switch and any halt among the new entries, decides its step again against
 what it has just read, so an order is never sent on a stale book or after a
 pull, and starts again from the new end. Two writers can therefore never
 take one number, and no entry is ever written twice. Each entry is
-stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+stored before the step it records happens. A reader checks that each entry's `prev_hash` equals the SHA-256 of the stored bytes of the entry before it, and halts on a link that does not chain, bytes that are not canonical, or a gap in the numbers. Three things keep that check cheap and complete as the journal grows, as this doc proposes for [#154](https://github.com/l3a0/ithildin-runtime/issues/154).
 
 1. **Checkpoints.** After a full check, the reader writes a checkpoint, a create-only blob at `journal/<account>/checkpoints/<seq>.json` holding the sequence number and that entry's hash. A later startup checks from the newest checkpoint whose entry still hashes to the value it names.
 2. **A head anchor.** The account check at each session's start and end compares the journal's newest entry with the replica's entry at the same sequence number, through a read-only grant on the replica's bucket. Equal hashes mean identical histories, and a difference alarms and halts, so a rewrite of the whole chain, which recomputed hashes would hide, still shows.
@@ -1077,9 +1077,12 @@ at its worst case, until its time in force has run out. Only then is it
 journaled `Lost`, which means the platform stopped waiting and sending is unproved. The broker client's total request timeout is shorter than the wait before the first read of the order list or lookup. Five more rules keep a
 rerun from doubling anything. The first three follow, and the last two each have a section of their own below.
 
-1. Execution journals each fill under the broker's own fill id and correction
-   identifier. It compares a repeat's content with the journaled fill, skips
-   only an identical repeat, and journals a differing one and halts.
+1. Execution journals each fill under the broker's own fill id. A repeat with
+   the same broker's order, instrument, shares, price and time is skipped. One
+   that differs in any of the five is journaled as a `disputed_fill` beside the
+   first, after which the book halts until a person ends the dispute, which
+   [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. A fill that carries a correction identifier is refused
+   until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
 2. At the start of its send stage, before it plans, execution syncs with the broker in six steps.
 
    1. It fetches the broker's positions, open orders, cash and fills again, a fresh read on every attempt rather than a capture that the first one wins.
@@ -1371,26 +1374,28 @@ hold.
    extends it to the taxpayer's IRA.
 2. The platform's account chooses which tax lot each sale closes, called
    specific lot identification, rather than closing the oldest lot first.
-   [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms that
-   Alpaca's live account offers it.
+   The owner confirms at the live gate that Alpaca's live account offers it,
+   as [#153](https://github.com/l3a0/ithildin-runtime/issues/153) lists.
 
 The rest of this subsection is this doc's proposal for
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10), apart from what
 `## Decisions` rules.
 
 **The stamp is the client order id.** Every order the platform sends
-carries a client order id of the form `ith-<strategy>-<decision>-<n>`: a
-prefix only the platform uses, the strategy's alias, the decision's UTC
+carries a client order id of the form `ith-<strategy>-<decision>-<nn>`: a
+prefix only the platform uses, the strategy's name, the decision's UTC
 time in the compact form architecture/08-crosscutting-concepts.md's `### File formats and keys`
-gives, and the order's place in the decision's planned list, padded to two
-digits, such as `ith-gldusobb-20261102T204000Z-03`. A strategy's alias is a
-sixth row of its declaration in the table in `runtime`, up to twelve lower
-case letters and digits. Alpaca's
+gives, and the order's place in the decision's planned list, from `01` to
+`99`, such as `ith-chan_bollinger-20261102T204000Z-03`. So a decision plans
+at most 99 orders. `core.order_id` writes it and `core.read_order_id` reads
+it, from the right, since a strategy's name may hold `-`. Alpaca's
 [orders guide](https://docs.alpaca.markets/docs/working-with-orders)
 recommends a distinct client order id per strategy when several run on one
-account. The id is about thirty characters, under a length limit
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms on
-Alpaca's paper account. It is unique to its decision and the same on every rerun, as [How a rerun never doubles
+account. An id of `chan_bollinger`'s has 38 characters, and one over 128
+halts, which is the longest
+[Alpaca's create order page](https://docs.alpaca.markets/reference/postorder)
+allows, read 2026-11-25. [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s adapter never sends one past it, and the
+price list below says what the live account still has to confirm. The id is unique to its decision and the same on every rerun, as [How a rerun never doubles
 anything](#rule-9-how-a-rerun-never-doubles-anything) needs. A close after a broker's trade carries its close entry's id in place of the decision, unique to each leg, in a form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) fixes. A contract-suite order carries its run's id in place of the strategy and decision, in a form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) fixes, and its journal entries let reconciliation count it outside every strategy's book. Slice 1 has no person's order, because `ithildin override` never sends. An order placed at the broker's console traces to nothing and halts. The order path and the broker adapter refuse to
 send an order whose id is not a well-formed stamp with a journaled approval
 and `sending` entry, so no order leaves unstamped. The journal's intent
@@ -1500,10 +1505,11 @@ The price is five things.
    lets reconciliation explain in shadow or on paper.
 2. Each `Ack` entry carries the broker's order id and the order's details,
    one more mapping replay has to keep right.
-3. The stamp's length limit, whether Alpaca refuses a repeated client order
-   id, which its order reference does not say, and specific lot
-   identification need confirming on Alpaca's live account before the live
-   gate, on [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+3. The stamp's length limit and specific lot identification need confirming
+   on Alpaca's live account, which is the owner's at the live gate, as [#153](https://github.com/l3a0/ithildin-runtime/issues/153)
+   lists. Alpaca's order reference does not say whether it refuses a repeated
+   client order id, and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) leaves a repeated id on the paper account to
+   the owner to test.
    Nothing in the design rests on the refusal of a repeated id. It is a second line of
    defence to test, because the platform never resends an order and settles
    doubt by lookup.
@@ -1687,7 +1693,7 @@ expects the same journal and the same blobs byte for byte, so concurrency
 that changes an output fails CI. A second test runs test 2's replay with
 one instance of each component and again with two, as slice 1 runs, and compares the
 journal and the blobs byte for byte in the same way, so a race between
-instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names, with hashes recomputed around that field. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
+instances fails CI too. That second test leaves out test 2's kill, because a takeover adds entries the run without one lacks. Both comparisons leave out heartbeats, restart records, leases and the handler a claim or planned entry names. The second also leaves out each journal entry's `writer`, which is drawn afresh at each process start for each `Journal` that records, and the hashes are recomputed around both fields. A journal entry's `built_at` comes from the `Clock` adapter, so the history clock gives both runs the same value.
 
 No worker on a VM receives until a supervisor instance on that
 VM has read the run's plan and found its VM on the plan's release, so a VM outside the run never
@@ -1918,7 +1924,7 @@ keys, stored formats and the plan. Machinery that only a strategy deciding
 minutes apart, or a second strategy, would exercise waits for one, and the
 list of what waits is below.
 
-A strategy brings six things. All but its schedule, which the plan builder
+A strategy brings five things. All but its schedule, which the plan builder
 takes as an input of its own, are declared in the one table in `runtime`
 beside the workers' inputs.
 
@@ -1930,7 +1936,6 @@ beside the workers' inputs.
    strategies' forecasts never share a key. Its cost terms run as a stage of
    their own the same way, so a cost schedule's header names one strategy's hash.
 5. Its configuration, whose hash every blob it touches records.
-6. Its alias, up to twelve lower case letters and digits, which its orders' stamp carries. This item is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 The instruments and every other tracked setting a strategy's decisions
 depend on, a shared module's setting included, are written in one TOML file
@@ -2809,7 +2814,7 @@ A job that consumes broker messages, the journal or captured data halts with the
    4. A late order under an older lease halts. An instance that takes over the account's lease after it expired, or, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), after a person cleared it, stores the broker order list it read, as a capture named by a journaled takeover entry, before it acts. A late order is one whose `sending` entry precedes that takeover entry and that is absent from that stored list. Reconciliation flags such an order, and a lookup that finds one halts before it moves to `Acknowledged`, the explicit exception to guard 3. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how. That comparison needs no clock. A list read, a capture write or a takeover entry's journal write that fails halts new orders and serves every cancel whose own journal entry stores, apart from a plan's own, a store that stays down falls under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) with no cancel sent, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the comparison then fails closed. Whatever ends that halt, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed.
 
    Each guard has its own test, with the other three intact. In the pause scenario the test asserts that the broker holds exactly one order for the decision, and a separate test asserts that a late order under an older lease halts with that order named as the cause.
-5. **Each fill applies once, keyed by the broker's execution id, and every decision that reads shared buying power runs under the account's lease, one at a time.** Only an id carried from end to end can drop a duplicate, because each layer below sees only its own retries (DDIA L16438). Every broker message is journaled as received. No store row is keyed by fill id, and a check for a row that does not yet exist has nothing to lock, so two writers can each pass it (DDIA L7635). So the uniqueness guarantee on a fill's execution id and the broker's correction identifier is a compare-and-set at the journal's tail plus a replay that applies an identical repeat once and halts on a differing one, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) picks how. A repeat whose content differs is journaled beside the first and halts trading. The broker adapter states how its broker marks a correction or bust, by a new execution id that names the old one or by a version on the same id, and a correction is a new entry that names the execution it replaces, as a ledger adds a compensating entry rather than editing the old one (DDIA L\~14416). The derived position applies the latest version of each execution once. A test appends a repeat straight to the journal, bypassing the application's check, once identical and once differing, and asserts that replay applies the first once and halts on the second. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an outside entry's record id carries the same guarantee, and that the same test appends one, once identical and once differing. Every update to derived state sets a value or is keyed by an id that drops a repeat, since an increment applied twice counts twice (DDIA L\~14993). Two strategies that each read the account's buying power and then order against it can each pass the check and together exceed it, the race DDIA calls write skew (DDIA L7538). Its remedy without a transaction is to send every write that might conflict to one partition and process them in order (DDIA L16535), and it finds that one thread in a loop "can sometimes perform better" than concurrent execution by skipping the cost of locks (DDIA L7725). Here the account's lease serializes those decisions, whichever instance holds it. DDIA's serial execution works only when each step waits on no disk or network (DDIA L\~7743, L7821). This design waits on both inside each step, for the lease, the journal's write and the broker's buying power, so its throughput per account is the written scale limit of one lease cycle per order, measured and alarmed under the first section's rules. The holder re-reads the halt state just before each send.
+5. **Each fill applies once, keyed by the broker's execution id, and every decision that reads shared buying power runs under the account's lease, one at a time.** Only an id carried from end to end can drop a duplicate, because each layer below sees only its own retries (DDIA L16438). Every broker message is journaled as received. No store row is keyed by fill id, and a check for a row that does not yet exist has nothing to lock, so two writers can each pass it (DDIA L7635). So the uniqueness guarantee on a fill's execution id is a compare-and-set at the journal's tail plus a replay that applies an identical repeat once and halts on a differing one. A repeat whose content differs is journaled as a `disputed_fill` beside the first, and halts the book, and so trading, while every other entry can still be recorded, as [How a late fill is still fetched](architecture/05-building-blocks.md#how-a-late-fill-is-still-fetched) says. [#151](https://github.com/l3a0/ithildin-runtime/issues/151) extends the guarantee to the broker's correction identifier. The broker adapter states how its broker marks a correction or bust, by a new execution id that names the old one or by a version on the same id, and a correction is a new entry that names the execution it replaces, as a ledger adds a compensating entry rather than editing the old one (DDIA L\~14416). The derived position applies the latest version of each execution once. A test appends a repeat straight to the journal, bypassing the application's check, once identical and once differing, and asserts that replay applies the first once and halts on the second. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an outside entry's record id carries the same guarantee, and that the same test appends one, once identical and once differing. Every update to derived state sets a value or is keyed by an id that drops a repeat, since an increment applied twice counts twice (DDIA L\~14993). Two strategies that each read the account's buying power and then order against it can each pass the check and together exceed it, the race DDIA calls write skew (DDIA L7538). Its remedy without a transaction is to send every write that might conflict to one partition and process them in order (DDIA L16535), and it finds that one thread in a loop "can sometimes perform better" than concurrent execution by skipping the cost of locks (DDIA L7725). Here the account's lease serializes those decisions, whichever instance holds it. DDIA's serial execution works only when each step waits on no disk or network (DDIA L\~7743, L7821). This design waits on both inside each step, for the lease, the journal's write and the broker's buying power, so its throughput per account is the written scale limit of one lease cycle per order, measured and alarmed under the first section's rules. The holder re-reads the halt state just before each send.
 
 ### Recorded data is append-only, and every view of it is rebuilt
 
@@ -3741,7 +3746,7 @@ glossing it.
 | **target portfolio** | The positions portfolio construction asks for one strategy. The difference between it and that strategy's own positions and open orders is what execution trades |
 | **risk gate** | The pre-trade check every order passes on the one order path. It enforces the risk engineer's limits and can refuse an order |
 | **journal** | The append-only record of every intent, order, acknowledgment, fill, cancel, human override, contract-suite run, close entry and each close leg's outcome, written before the action it records, and of every order or fill the platform did not send, journaled as received before execution halts on it, which an outside entry later assigns to a strategy. It also records each adding order's worst loss, or the term that left it uncomputable, each request's recorded outcomes with their reasons, each drill before it starts, each opening, pause or end of a strategy's sample with its cause, each clean shutdown, and each confirmation after a stop without one |
-| **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<n>`, a close entry's form or a contract-suite run's form, which marks the order as the platform's and names its strategy or run |
+| **stamp** | The client order id the platform gives every order it sends, `ith-<strategy>-<decision>-<nn>`, a close entry's form or a contract-suite run's form, which marks the order as the platform's and names its strategy or run |
 | **worker** | One component, meaning one module of the charter's module table, run as its own process, which the host keeps running. It listens on its queue through its receive loop, which hands each item to a handler in its pool, reads its input blobs, writes its output blobs, and reaches the outside world only through the adapter at its edge. [Processes and files](#processes-and-files) gives its rules |
 | **blob** | One object in storage, written once and never replaced, except a lease, which its holder rewrites only by a condition on the tag it last got |
 | **output file** | A blob holding one thing a stage produced for one decision, at a key fixed by the run, the stage, the decision and the output's name |
@@ -4240,7 +4245,12 @@ This section lists every decision made on the project, oldest first, one heading
 
 ### 2026-11-25
 
-1. The owner ruled that Dependabot alerts and security updates are on for this repository, answering "turn them on" to the question from round 1 of the review of [PR #160](https://github.com/l3a0/ithildin-runtime/pull/160). The metric put to the owner was whether a hole in a pinned dependency reaches a person without somebody looking for it. Turned down: leaving both off, which would send no notice of a hole in pyarrow, held at one version. The price is an occasional pull request the pins refuse. [#131](https://github.com/l3a0/ithildin-runtime/issues/131#issuecomment-7163224608) Governs: `#### What else the build pins and keeps out` in architecture/07-deployment.md.
+1. The owner accepted that the journal is numbered blobs per account, each stored before the step it records, with S3's refusal of an existing number keeping two writers apart. The owner answered "Yes, all five" to five questions. This is one of the four rows the first one named, and entries 2 to 4 answer three more. The metric was whether dropping the row would let an order out or lose an entry. Turned down: a journal in SQLite on the VM. The price is one S3 round trip before each order step. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `### Rule 8: the journal is the one numbered log` in design.md and `#### The journal` in architecture/08-crosscutting-concepts.md.
+2. The owner accepted that an account's first journal entry is one a person writes, on shadow and paper, and that a backtest's starting code writes its own. An empty journal must never read as flat, and the only other way to know an account is new is to ask the broker, whose empty answer looks like a lost one. Turned down: reading an empty journal as a flat book, and asking the broker. The price is one command a person runs per account, and that a wrong opening makes that account alias unusable until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), because no entry is ever deleted. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `##### An empty journal is never a flat book` in architecture/05-building-blocks.md.
+3. The owner accepted that `Book` drops its realised profit and holds its corrections as a list. Nothing read the profit, and [#117](https://github.com/l3a0/ithildin-runtime/issues/117) cannot read one number. Turned down: the profit field, and two fields that name the newest correction alone. The price is a small change to the gate. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `##### What the book holds` in architecture/05-building-blocks.md.
+4. The owner turned down the strategy alias, so an order's stamp carries the strategy's own name. The metric was the stamp's length, 38 characters for `chan_bollinger`, against the 128 Alpaca takes. The price put to the owner was none found. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `### Orders the platform did not send` in design.md.
+5. The owner ruled that Dependabot alerts and security updates are on for this repository, answering "turn them on" to the question from round 1 of the review of [PR #160](https://github.com/l3a0/ithildin-runtime/pull/160). The metric put to the owner was whether a hole in a pinned dependency reaches a person without somebody looking for it. Turned down: leaving both off, which would send no notice of a hole in pyarrow, held at one version. The price is an occasional pull request the pins refuse. [#131](https://github.com/l3a0/ithildin-runtime/issues/131#issuecomment-7163224608) Governs: `#### What else the build pins and keeps out` in architecture/07-deployment.md.
+6. The owner ruled that entry 4 of [2026-11-07](#2026-11-07), under which no cancel goes out unjournaled where the journal's entries cannot be read and the page names the broker's own interface, covers entries that read and do not replay, such as one of a kind the release does not know. The owner's words were "Yes, it covers it". A cancel with no record cannot be matched. The price is a cancel by hand in that state. [#150](https://github.com/l3a0/ithildin-runtime/issues/150#issuecomment-7163250407) Governs: `##### What happens when the journal cannot be read or take a write` in architecture/06-runtime.md and the journal rows of `### Alarms on the order path` in halts-and-drills.md.
 
 ## Considered and rejected
 
@@ -4428,3 +4438,8 @@ once rather than re-argued.
 | The order manager rounding its difference to whole shares | The journaled target would be one no account can hold, and rounding each leg's order alone can pass a limit the target was sized within. Portfolio construction rounds the target instead, to the account's share step |
 | Whole shares of the dearer leg, with the other leg rounded to match the hedge | It keeps the hedge closest, yet the position's size jumps where the hedge ratio is near zero, which would need a threshold. Each leg is rounded toward zero, so no target passes G or a limit, at the price of a hedge off by less than a share of each leg |
 | Shrinking a refused rebalance until each of its orders only reduces | Deferred rather than rejected. It would let out the rebalances the gate still refuses with room, and no cap has bound, so the path has run zero times. The journaled refusals say when it starts to matter, as on [#9](https://github.com/l3a0/ithildin-runtime/issues/9) |
+| A strategy alias of up to twelve lower case letters and digits in the stamp | It would shorten an id that is 38 characters for `chan_bollinger`, where Alpaca's create order page allows 128. Its price would be one more setting per strategy, which a person could give two strategies alike. The owner turned it down on 2026-11-25 |
+| A journal in SQLite on the VM | A machine holds no state, so a file on one is no record. The owner accepted on 2026-11-25 numbered blobs per account, at the price of one S3 round trip before each order step |
+| Reading a journal with no entry as a flat book, or asking the broker whether an account is new | An empty journal looks the same as a wrong account or a lost store, and the broker's empty answer looks like a lost one. The owner accepted on 2026-11-25 an `opening` entry a person writes, at the price of one command per account |
+| A realised profit in `Book` | Nothing read it, and no document said how it is computed. [#48](https://github.com/l3a0/ithildin-runtime/issues/48)'s figures come from its own calculation over the record. The owner accepted on 2026-11-25 that it goes |
+| Two fields in `Book` that name the newest correction alone, its entry's number and when it moved a position | Two numbers cannot tell a deposit from the broker's trade behind it, so the gate could not excuse the trade without excusing the deposit. The owner accepted on 2026-11-25 a list, at the price of a small change to the gate |

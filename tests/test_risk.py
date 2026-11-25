@@ -433,9 +433,16 @@ BAD_SECTIONS: dict[str, tuple[str, str]] = {
         for f in SCALARS
     },
     **{
-        f"a-negative-{f}": (section(**{f: "-1"}), f"the constraints' {f} is -1, below zero")
+        f"a-negative-{f}": (
+            section(**{f: "-1"}),
+            f"the constraints' {f} is -1, {'not above' if f == 'loss_stop' else 'below'} zero",
+        )
         for f in SCALARS
     },
+    "a-loss_stop-of-zero": (
+        section(loss_stop="0"),
+        "the constraints' loss_stop is 0, not above zero",
+    ),
     **{
         f"a-{f}-with-a-fraction": (
             section(**{f: "1.0"}),

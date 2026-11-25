@@ -178,10 +178,10 @@ class FolderStore:
         folder = prefix.rpartition("/")[0]
         start = self._path(folder) if folder else self._root
         keys = []
+        least = None if after is None else _order(after)
         try:
-            for path in _files(start):
-                key = path.relative_to(self._root).as_posix()
-                if key.startswith(prefix) and (after is None or _order(key) > _order(after)):
+            for key in _keys(start, folder):
+                if key.startswith(prefix) and (least is None or _order(key) > least):
                     keys.append(key)
         except OSError as error:
             raise StoreUnavailable(prefix, f"{type(error).__name__}: {error}") from None
@@ -308,10 +308,18 @@ def _raise(error: OSError) -> None:
     raise error
 
 
-def _files(start: Path) -> Iterator[Path]:
+def _keys(start: Path, folder: str) -> Iterator[str]:
+    """The key of every file under `start`, the directory that holds the keys under `folder`.
+
+    Each key is put together as plain text, because a `Path` per key cost 30
+    times the listing itself on a journal of 17,000 entries.
+    """
+    # `os.path.isdir` would read a folder it cannot open as an empty one.
     if not start.is_dir():
         return
-    for directory, folders, files in os.walk(start, onerror=_raise):
+    top = str(start)
+    for directory, folders, files in os.walk(top, onerror=_raise):
         folders[:] = [f for f in folders if not f.startswith(".")]
+        inside = f"{folder}{directory[len(top) :]}/".lstrip("/")
         for name in files:
-            yield Path(directory, name)
+            yield inside + name

@@ -42,12 +42,14 @@ __all__ = [
     "BrokerRead",
     "BucketObject",
     "Constraints",
+    "Correction",
     "CostKind",
     "CostSchedule",
     "CostSide",
     "CostTerm",
     "DecisionResult",
     "Fill",
+    "FillBasis",
     "Forecast",
     "ForecastSet",
     "FoundOrder",
@@ -64,7 +66,10 @@ __all__ = [
     "LossReading",
     "Mode",
     "Money",
+    "OrderEntry",
     "OrderIntent",
+    "OrderRecord",
+    "OrderState",
     "OrderType",
     "PastLimit",
     "Plan",
@@ -493,42 +498,117 @@ class OrderIntent(_Record):
 
 
 @dataclass(frozen=True)
+class Correction(_Record):
+    """One journal entry that moved cash or a position by anything but a fill or a listed record.
+
+    `seq` is the entry's number, `at` the journal's stamp on it, `built_at`,
+    and `repositions` whether it moved a position. A broker's correction or
+    bust of a fill is such an entry. A fill of the platform's own order and a
+    broker record on the closed list are not.
+    """
+
+    seq: int
+    at: datetime
+    repositions: bool
+
+
+@dataclass(frozen=True)
 class Book(_Record):
     """The positions, open orders and cash the journal's replay gives, and what qualifies them.
 
-    - `open_orders_by_strategy` holds each order whose outcome is unknown, at
-      its unfilled remainder.
+    - `open_orders_by_strategy` holds each order the gate approved that has
+      not ended, at its unfilled remainder.
     - `in_doubt` names each instrument with a `sending` entry that no later
       entry settles. That order is open too, and every range and the count of
       open orders include it there.
-    - `corrected_through` is the number of the newest entry that moved cash or a
-      position by anything but the platform's own fill or a listed broker
-      record, or `None`.
-    - `repositioned_at` is the journal's stamp, `built_at`, of the newest such
-      entry that moved a position, or `None`. A broker's correction or bust of
-      a fill is such an entry.
+    - `corrections` holds one `Correction` per entry that is one, in the
+      journal's order.
     """
 
     positions_by_strategy: Mapping[str, Mapping[InstrumentId, Quantity]]
     open_orders_by_strategy: Mapping[str, tuple[OrderIntent, ...]]
     cash: Money
-    platform_realised_pnl: Money
     replayed_through: int
     in_doubt: tuple[InstrumentId, ...]
-    corrected_through: int | None
-    repositioned_at: datetime | None
+    corrections: tuple[Correction, ...]
+
+
+class OrderState(StrEnum):
+    """Where an order stands. The table of moves between them is `journal/orders.py`'s."""
+
+    INTENDED = "Intended"
+    APPROVED = "Approved"
+    REFUSED = "Refused"
+    ABANDONED = "Abandoned"
+    SENDING = "Sending"
+    IN_DOUBT = "InDoubt"
+    ACKNOWLEDGED = "Acknowledged"
+    PARTLY_FILLED = "PartlyFilled"
+    FILLED = "Filled"
+    REJECTED = "Rejected"
+    EXPIRED = "Expired"
+
+
+@dataclass(frozen=True)
+class OrderEntry(_Record):
+    """One journal entry that moved an order, by its number and the name of its kind."""
+
+    seq: int
+    kind: str
+
+
+@dataclass(frozen=True)
+class OrderRecord(_Record):
+    """One order as the journal's entries leave it.
+
+    - `decision` is the number of the `decision` entry that planned it.
+    - `broker_order_id` is the broker's id, or `None` before an `ack`.
+    - `filled` is the total of its fills, signed as the order's quantity is.
+    - `entries` names each entry that moved it, oldest first. A `disputed_fill`
+      and a repeated `fill` move no order, so neither is named.
+    - `sent_at` is its `sending` entry's `built_at`, or `None` before one.
+    """
+
+    intent: OrderIntent
+    decision: int
+    state: OrderState
+    broker_order_id: str | None
+    filled: Quantity
+    entries: tuple[OrderEntry, ...]
+    sent_at: datetime | None
+
+
+class FillBasis(StrEnum):
+    """What price a simulated fill was given. A broker's own fill carries none."""
+
+    SIGNAL_CLOSE = "signal_close"
+    OFFICIAL_CLOSE = "official_close"
+    QUOTE = "quote"
 
 
 @dataclass(frozen=True)
 class Fill(_Record):
+    """One fill as the broker reported it. `qty` is signed, negative for a sale.
+
+    - `at_text` is the time as the broker wrote it, beside `at` in UTC.
+    - `excess_places` names each field whose received value carries more places
+      than declared, which is kept rather than rounded.
+    - `basis` is `None` on a broker's fill, so a simulated one can never be
+      read as real or calibrate the cost model.
+    """
+
     fill_id: str
     correction_id: str | None
     broker_order_id: str
     client_order_id: str | None
+    instrument: InstrumentId
     qty: Quantity
     price: Price
+    at_text: str
     at: datetime
     received_at: datetime
+    excess_places: tuple[str, ...]
+    basis: FillBasis | None
 
 
 @dataclass(frozen=True)
