@@ -200,7 +200,7 @@ class RejectedEntry:
 class InDoubtEntry:
     """No answer that settles the order, or one this release does not read.
 
-    `raw` is `None` where no answer came.
+    `raw` is `None` where no plain bytes came.
     """
 
     client_order_id: str

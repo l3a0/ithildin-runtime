@@ -31,6 +31,7 @@ from ithildinruntime.core import (
     Outcome,
     Retry,
     StopState,
+    StoreError,
     StoreUnavailable,
     TimeInForce,
     account_halts_prefix,
@@ -786,6 +787,11 @@ def test_6_an_order_the_adapter_proves_was_not_sent() -> None:
         world.send()
     assert isinstance(last(world), AbandonedEntry) and world.alarms.sent == []
     assert world.state() is OrderState.ABANDONED and world.submits == 1
+    lost = World()
+    lost.broker.answer = world.broker.answer
+    lost.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    with pytest.raises(Halt, match="the abandoned of .*, which was not sent"):
+        lost.send()
 
 
 @pytest.mark.parametrize("outcome", [Outcome.UNKNOWN, Outcome.NOT_FOUND, Outcome.SEVERAL])
@@ -1281,6 +1287,17 @@ class Lazy:
         raise RuntimeError("PKFAKEKEY")
 
 
+class Compared:
+    """A broker's copy that raises as it is compared with the order sent."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    @property
+    def client_order_id(self) -> str:
+        raise self._error
+
+
 class _Nameless(type):
     @property
     def __name__(cls) -> str:  # type: ignore[override]
@@ -1332,6 +1349,12 @@ ANSWERS: dict[str, Callable[[OrderIntent, int], object]] = {
             ("outcome", Ours("accepted")),
             ("order", Lazy()),
         )
+    },
+    **{
+        f"its order raises {type(error).__name__} as it is compared": (
+            lambda intent, n, error=error: bent(order=Compared(error))
+        )
+        for error in (RuntimeError("PKFAKEKEY"), SystemExit("PKFAKEKEY"), KeyboardInterrupt())
     },
     "a lazy proxy": lambda intent, n: Lazy(),
     "an error with no name": raising(NAMELESS("PKFAKEKEY")),
@@ -1428,12 +1451,13 @@ def test_6_an_error_of_the_paths_own_after_the_call_is_in_doubt(monkeypatch, rai
     assert last(world).reason == "the submit raised MemoryError"
 
 
-def test_6_a_clock_that_fails_after_the_submit_loses_no_answer() -> None:
+@pytest.mark.parametrize("error", [RuntimeError("no time"), SystemExit(), KeyboardInterrupt()])
+def test_6_a_clock_that_fails_after_the_submit_loses_no_answer(error: BaseException) -> None:
     world = World()
     plain = world.clock.now
 
     def broken() -> datetime:
-        raise RuntimeError("no time")
+        raise error
 
     def answer(intent: OrderIntent, number: int) -> Ack:
         world.clock.now = broken  # type: ignore[method-assign]
@@ -2323,10 +2347,28 @@ def test_7_a_create_that_lands_late_doubles_nothing_and_unsays_nothing(
     assert world.reader().in_doubt() == () and account.unstored() == ()
 
 
-def test_6_an_alarm_error_with_no_name_stops_no_answers_entry() -> None:
+class Unheard(StoreError):
+    """A store's error that holds no answer, as an alert channel of a store's own could raise."""
+
+    def __init__(self) -> None:
+        Exception.__init__(self)
+
+
+class Hidden(Exception):
+    @property
+    def __class__(self) -> type:  # type: ignore[override]
+        raise RuntimeError("PKFAKEKEY")
+
+
+@pytest.mark.parametrize(
+    "made", [lambda: NAMELESS("PKFAKEKEY"), lambda: Unheard(), lambda: Hidden()]
+)
+def test_6_an_alarm_error_that_cannot_be_read_stops_no_answers_entry(
+    made: Callable[[], Exception],
+) -> None:
     world = World()
     world.broker.answer = raising(TimeoutError())
-    world.alarms.error = NAMELESS("PKFAKEKEY")
+    world.alarms.error = made()
     with pytest.raises(Halt, match="An alarm about it could not be sent"):
         world.send()
     assert world.state() is OrderState.IN_DOUBT
@@ -2508,21 +2550,63 @@ def test_6_an_alarm_raised_as_an_answer_is_settled_stops_nothing(error: BaseExce
     assert "was kept as in doubt" in alarm
 
 
+class Falsy(str):
+    """An id that reads as none, and says what it likes where it is put into words."""
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __format__(self, spec: str) -> str:
+        return "PKFAKEKEY"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "said"),
     [
         ("raw", Bytes(b"{}"), "its bytes are a Bytes"),
+        ("raw", bytearray(b"{}"), "its bytes are a bytearray"),
         ("raw", None, "its bytes are a NoneType"),
-        ("received_at", Time(2026, 11, 3, 20, 48, tzinfo=UTC), "its time is a Time"),
-        ("received_at", None, "its time is a NoneType"),
-        ("received_at", AT.replace(tzinfo=None), "its answer's time is not UTC"),
+        ("received_at", Time(2026, 11, 3, 20, 48, tzinfo=UTC), "its time is not a UTC datetime"),
+        ("received_at", None, "its time is not a UTC datetime"),
+        ("received_at", AT.replace(tzinfo=None), "its time is not a UTC datetime"),
         ("broker_order_id", Ours("b-1"), "its broker's id is a Ours"),
+        ("broker_order_id", Ours(""), "its broker's id is a Ours"),
+        ("broker_order_id", Falsy("b-1"), "its broker's id is a Falsy"),
+        ("broker_order_id", 0, "its broker's id is a int"),
     ],
 )
+@pytest.mark.parametrize("outcome", [Outcome.ACCEPTED, Outcome.REJECTED, Outcome.NOT_SENT])
 def test_6_an_answer_whose_field_is_of_another_type_is_in_doubt_and_says_which(
-    field: str, value: object, said: str
+    outcome: Outcome, field: str, value: object, said: str
 ) -> None:
     world = World()
-    world.broker.answer = lambda intent, n: bent(**{field: value})
+    world.broker.answer = lambda intent, n: bent(outcome=outcome, **{field: value})
     assert world.send() is OrderState.IN_DOUBT
     assert last(world).reason == said
+    (alarm,) = world.alarms.sent
+    # The alarm is where the id stands, since an entry of a doubt holds none.
+    assert ("as the broker's b-1" in alarm) == (field != "broker_order_id")
+    assert "PKFAKEKEY" not in alarm
+
+
+@pytest.mark.parametrize("outage", [False, True])
+def test_2_a_rejection_of_an_order_another_writer_saw_taken_stays_kept(outage: bool) -> None:
+    """The fold takes one, and the order would leave the book while the broker may hold it."""
+    world = World(orders=(order(1, 2), order(2, 2)))
+    account = world.account()
+
+    def answer(intent: OrderIntent, number: int) -> Ack:
+        world.record(AckEntry(ID, "b-9", b"", False, AT))
+        if outage:
+            world.store.refuse(("create", journal_entry_key(ACCOUNT, 8)))
+        return Ack(Outcome.REJECTED, "b-1", None, b"{}", AT)
+
+    world.broker.answer = answer
+    with pytest.raises(Halt, match="shows it Acknowledged, as the broker's b-9"):
+        world.send(1, account)
+    world.store.before = lambda n, op, key: None
+    for _ in range(2):
+        with pytest.raises(Halt, match="still does not take the rejected"):
+            world.send(2, account)
+    assert world.state() is OrderState.ACKNOWLEDGED and world.submits == 1
+    assert len(world.alarms.sent) == 1 and account.unstored()

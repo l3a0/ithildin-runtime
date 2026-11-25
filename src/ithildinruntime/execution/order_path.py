@@ -142,7 +142,7 @@ def _alarm(alerts: Alerts, reason: str) -> str:
     try:
         alerts.alarm(reason)
     except BaseException as error:
-        return f". The alarm could not be sent: {code_of(error)}"
+        return f". The alarm could not be sent: {error_name(error)}"
     return ""
 
 
@@ -296,6 +296,9 @@ class Unstored:
             doubt = _doubted(kept)
             if _holds(order, own):
                 return self._done(kept, order.state)
+            if isinstance(own, RejectedEntry) and order.broker_order_id is not None:
+                # The fold would take it, and the order another writer saw taken leaves the book.
+                raise Halt(f"the journal shows it {_now(order)}")
             if any(
                 tried(lambda s=e.seq: record_of(next(self._journal.read(after=s - 1)))) == doubt
                 for e in order.entries
@@ -631,8 +634,6 @@ class OrderPath:
         refused: BaseException
         try:
             found = call(self._broker)
-        except KeyboardInterrupt:
-            refused = KeyboardInterrupt()
         except Halt as halt:
             refused = Halt(_reason(halt))
         except BaseException as error:
@@ -835,7 +836,7 @@ class OrderPath:
         self._report()
         try:
             came = shared.clock.now()
-        except Exception:
+        except BaseException:
             # The answer is the one thing that cannot be had again, so no clock can lose it.
             came = went
         return _Answer(order.intent, went, came, found, error, halted)
@@ -918,19 +919,17 @@ class OrderPath:
             return self._doubt(answer, f"the submit raised {answer.error}"), answer.perhaps
         if type(ack) is not Ack:
             return self._doubt(answer, f"the submit gave a {error_name(type(ack))}"), answer.perhaps
-        raw, at, broker = ack.raw, _utc(ack.received_at), ack.broker_order_id
+        raw, at = _plain(lambda: ack.raw, bytes), _utc(ack.received_at)
+        broker = _plain(lambda: ack.broker_order_id, str)
         sent = answer.perhaps
-        for what, found, kind in (
-            ("bytes are", raw, bytes),
-            ("time is", ack.received_at, datetime),
-            ("broker's id is", broker or "", str),
-        ):
-            if type(found) is not kind:
-                return self._doubt(answer, f"its {what} a {error_name(type(found))}"), sent
         if broker is not None:
             sent = f"sent at {answer.went.isoformat()}, as the broker's {_shown(broker)}"
-        if at is None:
-            reason = "its answer's time is not UTC"
+        if broker is None and ack.broker_order_id is not None:
+            reason = f"its broker's id is a {error_name(type(ack.broker_order_id))}"
+        elif raw is None:
+            reason = f"its bytes are a {error_name(type(ack.raw))}"
+        elif at is None:
+            reason = "its time is not a UTC datetime"
         elif len(raw) > RAW_LIMIT:
             reason = f"its answer is longer than {RAW_LIMIT} bytes"
         elif differs := _differs(answer.order, ack):
@@ -994,15 +993,11 @@ class OrderPath:
         `Account` builds the first two from one alias. What the broker names is
         never shown, since it could be a broker's number.
         """
-        account, error, stopped = self._shared.account, None, False
+        account, error = self._shared.account, None
         try:
             same = bool(self._broker.alias == account)
-        except KeyboardInterrupt:
-            same, stopped = False, True
         except BaseException as raised:
             same, error = False, error_name(raised)
-        if stopped:
-            raise KeyboardInterrupt
         if error is not None:
             raise Halt(f"the broker's alias could not be read: {error}")
         if not same:

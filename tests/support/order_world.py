@@ -417,7 +417,11 @@ class World:
         return made.path(broker or self.broker, self.report)  # type: ignore[arg-type]
 
     def send(self, place: int = 1, account: Account | None = None) -> OrderState:
-        return self.path(account).send(self.orders[place - 1].client_order_id)
+        try:
+            return self.path(account).send(self.orders[place - 1].client_order_id)
+        except KeyboardInterrupt as error:
+            # One that escapes would end the test run with no test named.
+            raise AssertionError("an interrupt escaped the send") from error
 
     @property
     def submits(self) -> int:

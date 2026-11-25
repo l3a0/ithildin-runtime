@@ -550,7 +550,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `sending` | `client_order_id` | Execution's order path | The order may leave now |
 | `ack` | `client_order_id`, `broker_order_id`, `raw`, `cut`, `received_at` | Execution's order path | The broker has the order, with the bytes it sent |
 | `rejected` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution | The broker refused the order |
-| `in_doubt` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution's order path | No answer that settles the order, or one this release does not read. `raw` is null where none came |
+| `in_doubt` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution's order path | No answer that settles the order, or one this release does not read. `raw` is null where no plain bytes came |
 | `fill` | `fill`, `read` | Execution | One fill, and the number of the `read` entry whose file holds it |
 | `disputed_fill` | `fill`, `read` | Execution | A repeat of a fill whose content differs, kept beside the first |
 | `expired` | `client_order_id`, `filled`, `raw`, `cut`, `received_at` | Execution | The broker says the order ended with a part unfilled |

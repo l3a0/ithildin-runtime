@@ -332,6 +332,7 @@ def test_5_a_gate_that_raises_ends_the_order_abandoned_and_raises() -> None:
     with pytest.raises(ZeroDivisionError):
         world.send()
     assert world.state() is OrderState.ABANDONED and world.submits == 0
+    assert last(world).reason == f"the check of {ID} raised ZeroDivisionError"
 
 
 # 5. The journal
@@ -1074,11 +1075,9 @@ def test_11_a_read_that_raises_says_nothing_of_the_vendors(
         raise vendor(kind)
 
     world.broker.reads[name] = raises
-    ends = KeyboardInterrupt if kind is KeyboardInterrupt else BrokerUnavailable
-    with pytest.raises(ends) as raised:
+    with pytest.raises(BrokerUnavailable) as raised:
         READS[name](world.path())
-    said = "" if kind is KeyboardInterrupt else f"the broker's {name} failed with {kind.__name__}"
-    assert str(raised.value) == said
+    assert str(raised.value) == f"the broker's {name} failed with {kind.__name__}"
     captured = capfd.readouterr()
     every = [*told(raised.value), captured.out, captured.err, caplog.text, *world.alarms.sent]
     assert not leaks(*every)
@@ -1110,12 +1109,6 @@ def test_5_a_read_answers_with_its_own_type_or_raises(name: str) -> None:
         READS[name](world.path())
     assert (read.value.call, read.value.error) == (name, "TimeoutError")
 
-    def stops() -> object:
-        raise KeyboardInterrupt
-
-    world.broker.reads[name] = stops
-    with pytest.raises(KeyboardInterrupt):
-        READS[name](world.path())
     del world.broker.reads[name]
     world.report_error = SystemExit("x")
     assert READS[name](world.path()) == found
@@ -1133,13 +1126,11 @@ def test_11_an_alias_that_cannot_be_read_says_nothing_of_the_vendors(
             raise vendor(kind)
 
     world = World()
-    ends = KeyboardInterrupt if kind is KeyboardInterrupt else Halt
     for name, call in EVERY_CALL.items():
-        with pytest.raises(ends) as raised:
+        with pytest.raises(Halt) as raised:
             call(world.path(broker=NoAlias()))
         assert not leaks(*told(raised.value)), name
-        if ends is Halt:
-            assert raised.value.reason == f"the broker's alias could not be read: {kind.__name__}"
+        assert raised.value.reason == f"the broker's alias could not be read: {kind.__name__}"
 
 
 EVERY_CALL: dict[str, Callable] = {
