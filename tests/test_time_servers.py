@@ -99,9 +99,10 @@ def test_1_a_stall_between_the_stamps_widens_the_error_by_itself() -> None:
     assert stalled.error_us == still.error_us + 1_000
 
 
-@pytest.mark.parametrize("server", [RECEIVED_AT, (S, 0x40000001)])
+@pytest.mark.parametrize("server", [RECEIVED_AT, (S, 0x40000001), (S, 0x40000BB8)])
 def test_1_a_fraction_is_cut_to_the_microsecond(server: tuple[int, int]) -> None:
-    assert read(reply(t2=server)).offset_us == -31_250
+    # 0xBB8 of 2 ** 32 is 0.7 of a microsecond, and a microsecond more would read -31,251.
+    assert read(reply(t2=server), m4=M1 + 100_000).offset_us == -31_250
 
 
 def test_1_the_root_values_are_unsigned_and_round_up() -> None:
