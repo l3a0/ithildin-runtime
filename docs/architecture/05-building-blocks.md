@@ -1302,7 +1302,7 @@ flowchart TB
 
 Take a basket of one share of USO against 0.4 of GLD short, with USO at $50, GLD at $100 and a G of $900. These figures are made up. One basket's gross is 50 + 40 = 90 dollars, so G asks for 10 baskets, which is 10 USO long and 4 GLD short. At a stress move of 0.25 a `max_net` of $500 is read as 500 ÷ 1.25 = 400 dollars. USO's side is the larger at 50 dollars a basket, so that limit allows 8 baskets, and the target is 8 USO and, with 3.2 rounded toward zero, 3 GLD short.
 
-One leg can round to zero beside one that does not, and that target stands. So step 5 halts only where a limit leaves less than one step of every leg. A limit that leaves a step of any leg sells the position down to that, with the other leg possibly at zero, and the gate approves the sales. A `max_position` of 0.9 for GLD in the example gives 2 USO and no GLD. The alert on a cut target smaller than what is held, which [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds, reports such a target. The price is a hedge that is off by less than one share of each leg at every decision, and a cap lowered below what the position holds sells part of it, down to one leg alone. Where every leg comes to less than a step the cap sells nothing, and the owner closes by hand.
+One leg can round to zero beside one that does not, and that target stands. So step 5 halts only where every leg comes to less than one step, cut by a limit or not. A target cut to less than what is held asks for a smaller position, and the gate decides each of its orders, as [Which orders go out past a limit](#which-orders-go-out-past-a-limit) says. The price is a hedge that is off by less than one share of each leg at every decision, and that a limit lowered below a held position moves it only as far as the gate lets each order out.
 
 ##### Why a dollar limit is read less room for one stress move
 
@@ -1320,7 +1320,7 @@ Test 1's account alone is written 0.000000001, because whole shares miss the rep
 
 ##### What halts the portfolio stage
 
-A halt in any input is passed on, the first in the order the stage reads them. Every other halt the handler meets is the stage's own result, whose header names each result and file it had read and storage had accepted. The stage halts on each of these, the first it meets deciding, and all but the tenth hold for a flat forecast too.
+A halt in any input is passed on, the first in the order the stage reads them. Every other halt the handler meets is the stage's own result, whose header names each result and file it had read and storage had accepted. The stage halts on each of these, the first it meets deciding, and all but the tenth and eleventh hold for a flat forecast too.
 
 1. An input with no result, one storage refuses, or one that carries another configuration than the stage table's.
 2. A result that lists a file other than once, a file storage refuses, a file with another number of entries than one, or for `constraints.json` other than one per strategy, and a snapshot of another decision. A file that carries the "trade nothing" mark has no entries, so it halts here: `TargetPortfolio` has no form for holding every position.
@@ -1331,10 +1331,11 @@ A halt in any input is passed on, the first in the order the stage reads them. E
 7. A leg that is not a finite number, or a basket whose legs are all zero.
 8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, a share step of another form than the ten, and a leg no limit names.
 9. A leg `core.mark` cannot price. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision here, where the book is flat, and at the risk stage where it holds anything.
-10. A held direction sized to zero shares in every leg.
-11. A write storage refuses, such as a target already stored with other bytes.
+10. A count past what a record can hold, such as a G of 1e30 gives.
+11. A held direction sized to zero shares in every leg.
+12. A write storage refuses, such as a target already stored with other bytes.
 
-Risk's stage halts on two strategies in one deployment, so a target for each of two shows the files' form alone. [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says what lifts that halt.
+Risk's stage halts on two strategies in one deployment, so a target for each of two shows the files' form alone. [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions) says what is proposed to lift that halt.
 
 #### Every type that crosses between workers has a file form
 
@@ -1463,7 +1464,7 @@ An arrow means "may import". The diagram draws four rules.
    - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage and the three files risk and portfolio construction read, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
-   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation that the gate and execution each read, with the price and what is held read by the risk model and portfolio construction too, and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

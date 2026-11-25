@@ -10,11 +10,10 @@ neither, as execution cancels an accepted leg whose partner was refused. Such a
 day is classed by the change in the forecast's direction from the decision
 before, so an exit counts once, on the day it is first asked.
 
-#9 wrote these counts before the build, and the build reproduced them: the 1,146
-and 315 days, the refused days of 70, 62, 34, 24, 636 and 1,038 with 28 exits,
-the 9 flips, and 2,640 exits of which 344 are refused with no room. Every other
-count here came from the code at 19034c0, over quantitative-trading's vintages
-at `19aadbeb`, so it holds what the code did rather than what a plan expected.
+Each count #9's body states was written before the build, which reproduced it.
+Every count it does not state came from the code at 19034c0, over
+quantitative-trading's vintages at `19aadbeb`, so it holds what the code did
+rather than what a plan expected.
 Two checks are sampled: the stress exits at every seventh decision, and the
 wrong prices at every fourth.
 """

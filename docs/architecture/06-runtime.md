@@ -99,7 +99,7 @@ flowchart TB
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
 ```
 
-In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. That execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model, in flows 7.4 and 7.5, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. That execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
 
 The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 

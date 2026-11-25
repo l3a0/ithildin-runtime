@@ -170,16 +170,16 @@ def size(
         if bound.below(taken):
             taken = bound
 
-    def count(baskets: _Baskets, n: int) -> dict[InstrumentId, Decimal]:
+    def count(kind: str, baskets: _Baskets, n: int) -> dict[InstrumentId, Decimal]:
         made = {}
         for i, q in shares.items():
-            what = f"{name}'s target in {i}"
+            what = f"{name}'s {kind} in {i}"
             exact = exact_product(what, q, baskets.dividend)
             qty = rounded(what, quotient(what, exact, baskets.divisor, n, ROUND_DOWN), n)
             made[i] = qty if long[i] or not qty else qty.copy_negate()
         return made
 
-    target = count(taken, step)
+    target = count("target", taken, step)
     if not any(target.values()):
         raise Halt(
             f"{name} forecasts {forecast.direction} and its target is zero shares in every leg, "
@@ -188,7 +188,7 @@ def size(
         )
     return (
         TargetPortfolio(snapshot.decision_at, name, target),
-        Sizing(name, count(asked, _WANTED), cut),
+        Sizing(name, count("size before any limit", asked, _WANTED), cut),
     )
 
 

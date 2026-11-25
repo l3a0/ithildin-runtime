@@ -691,7 +691,11 @@ def test_5_a_leg_of_zero_is_held_to_a_limit_and_a_price_too(direction) -> None:
 
 
 def test_5_the_first_fault_in_order_decides() -> None:
-    """Every fault of items 6 to 11 and the zero target at once, each cleared in turn."""
+    """The faults of items 3 and 6 to 11 and the zero target, each cleared in turn.
+
+    A basket of zeros cannot hold a leg that is not finite, so it joins once that is cleared,
+    and the test below holds where it stands against the checks before it.
+    """
     faults: list[tuple[dict[str, object], str]] = [
         ({"config": CHAN}, "has no [portfolio] section"),
         ({"holds": book({"chan": {SPY: 1}})}, "under 'other', which the deployment does not run"),
@@ -732,12 +736,28 @@ def test_5_the_first_fault_in_order_decides() -> None:
     assert sized(**asked())[0].shares == {GLD: d(0), USO: d(18)}  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"holds": book({OTHER: {USO: 1}})}, "the deployment does not run"),
+        ({"name": "reversal"}, "chan's forecast is of strategy 'reversal'"),
+        ({"legs": {USO: 0}}, "do not both name GLD"),
+        ({"holds": book({"chan": {SPY: 1}})}, "chan holds SPY, or an open order in it"),
+    ],
+    ids=["another-strategy", "another-forecast", "a-leg-missing", "held-and-unnamed"],
+)
+def test_5_a_basket_of_nothing_is_found_after_the_checks_before_it(changes, reason) -> None:
+    legs = changes.get("legs", {USO: 0, GLD: 0})
+    given = forecast(1, legs, changes.get("name", "chan"))
+    assert reason in refused(given=given, holds=changes.get("holds", book()))
+
+
 def test_5_a_count_past_what_a_record_holds_halts() -> None:
-    """The reader takes a G of 1e30, and at a cent a share that is a count of 33 digits."""
+    """The reader takes a G of 1e30. At a cent a share that is 33 digits, and nine places more."""
     vast = strategy(text("1e30"))
     legs = {USO: "0.0001", GLD: 0}
     reason = refused(config=vast, legs=legs, marked=snapshot({GLD: 100, USO: "0.01"}))
-    assert reason.startswith("chan's target in USO cannot be recorded at ")
+    assert reason.startswith("chan's size before any limit in USO cannot be recorded at 9 places")
 
 
 @DIRECTIONS
@@ -876,7 +896,7 @@ ZEROS = {
 
 @pytest.mark.parametrize("direction", [1, -1])
 def test_5_a_v_read_100_times_low_halts_a_book_on_one_side(direction) -> None:
-    """The gate approves every sale there, so this halt is what stops them."""
+    """The gate would approve every order to zero there, so this halt is what stops them."""
     owners = replace(CAPS, share=d("0.02"))
     holds = book({"chan": {USO: 10 * direction, GLD: 4 * direction}})
     # A true V of 100,000 read as 1,000: 0.02 × 1,000 ÷ 0.25 = 80, less room 64, under 90.
@@ -886,19 +906,32 @@ def test_5_a_v_read_100_times_low_halts_a_book_on_one_side(direction) -> None:
         f"chan forecasts {direction} and its target is zero shares in every leg, at a gross of 900 "
         "cut by max_net"
     )
+    first, second = order(-4 * direction, GLD), order(-10 * direction, USO, name="new-2")
+    world = World(first, holds, MARKED).given(caps=owners, valuation=valuation(1000))
+    sent = replace(holds, open_orders_by_strategy={"chan": (first,)})
+    for verdict in (world.check(), world.at(intent=second, book=sent).check()):
+        assert verdict.approved and not verdict.adding
 
 
-def test_5_a_cap_below_one_share_of_one_leg_sells_down_to_the_other() -> None:
-    """Left standing: the gate approves both orders, and #11's alert reports the target."""
+def test_5_a_cap_below_one_share_of_one_leg_asks_for_the_other_alone() -> None:
+    """Left standing: the gate decides each order, and here it approves both or refuses both."""
     holds = book({"chan": {USO: 10, GLD: -4}})
-    for limits, uso in ((held_to(max_position={GLD: "0.9"}), 2), (held_to(max_gross=120), 1)):
+    for limits, uso, refusal in (
+        (held_to(max_position={GLD: "0.9"}), 2, None),
+        (held_to(max_gross=120), 1, None),
+        # Closing either leg first widens net past its limit.
+        (held_to(max_net=120), 1, Limit.MAX_NET),
+    ):
         target, record = sized(limits=limits, holds=holds)
         assert target.shares == {GLD: d(0), USO: d(uso)} and record.cut
         first, second = order(4, GLD), order(uso - 10, USO, name="new-2")
         world = World(first, holds, MARKED, limits).given(caps=CAPS)
-        sent = replace(holds, open_orders_by_strategy={"chan": (first,)})
-        for verdict in (world.check(), world.at(intent=second, book=sent).check()):
-            assert verdict.approved and not verdict.adding
+        verdicts = [world.check()]
+        sent = {"chan": (first,)} if verdicts[0].approved else {}
+        after = replace(holds, open_orders_by_strategy=sent)
+        verdicts.append(world.at(intent=second, book=after).check())
+        assert [v.limit for v in verdicts] == [refusal, refusal]
+        assert not any(v.adding for v in verdicts)
 
 
 @pytest.mark.parametrize("direction", [1, -1])
@@ -1215,18 +1248,21 @@ def test_7_a_second_run_stores_the_same_bytes_and_the_same_result(tmp_path) -> N
 
 def test_7_mappings_in_another_order_in_memory_give_the_same_bytes() -> None:
     """Storage hands back sorted keys, so the function is asked directly."""
-    turned = {
-        "given": forecast(legs=dict(reversed(LEGS.items()))),
-        "marked": snapshot(dict(reversed(MARKS.items()))),
-        "holds": book({"chan": {USO: 3, GLD: -1}}),
-        "limits": constraints(max_gross=d(900), max_position={USO: LOOSE, GLD: LOOSE}),
-        "owners": replace(CAPS, max_position={USO: LOOSE, GLD: LOOSE}),
-    }
-    for one, other in zip(sized(limits=LIMITS), sized(**turned), strict=True):  # type: ignore[arg-type]
-        assert encode(one) == encode(other)
-        for name in ("shares", "wanted"):
-            if hasattr(one, name):
-                assert list(getattr(other, name)) == [GLD, USO]
+    made = []
+    for turn in (dict, lambda mapping: dict(reversed(mapping.items()))):
+        loose = turn({GLD: LOOSE, USO: LOOSE})
+        made.append(
+            sized(
+                given=forecast(legs=turn(LEGS)),
+                marked=snapshot(turn(MARKS)),
+                holds=book({"chan": turn({USO: 3, GLD: -1})}),
+                limits=constraints(max_gross=d(900), max_order_qty=loose, max_position=loose),
+                owners=replace(CAPS, max_order_qty=loose, max_position=loose),
+            )
+        )
+    (target, record), (turned, sizing) = made
+    assert encode(target) == encode(turned) and encode(record) == encode(sizing)
+    assert list(turned.shares) == list(sizing.wanted) == [GLD, USO]
 
 
 def test_7_blobs_built_from_mappings_in_another_order_store_the_same_bytes(tmp_path) -> None:

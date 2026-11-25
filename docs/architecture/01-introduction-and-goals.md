@@ -93,9 +93,10 @@ flowchart TD
 The diagram shows one close, from the refit to what trades. Look for the two
 paths that keep the same units. A refit moves `h` even when the units hold
 still, so the target moves too, and the engine trades the difference as it
-would for any strategy. The engine holds as many of the strategy's units as come
-to G, a fixed amount of gross dollars, which the figure calls `k` baskets. So a
-new `h` or a new price changes `k`, and both legs resize.
+would for any strategy. The engine holds as many baskets, each one share of
+USO against `h` of GLD, as come to G, a fixed amount of gross dollars. The figure
+calls that count `k`. So a new `h` or a new price changes `k`, and both legs
+resize.
 
 These numbers are made up to show the mechanics, at a G of $10,000 and whole
 shares rounded toward zero. USO closes at $50 and GLD at $100 each day, except
@@ -142,8 +143,8 @@ changes none of them.
    on days the unit does not change. That is the alpha model's forecast
    changing, and the engine trades the difference like any other. The
    replication resizes the GLD leg alone, at one share of USO a unit. The engine
-   sizes a unit to a fixed gross amount, so both legs resize. Test 1's return is
-   over gross dollars held, which the size of a unit does not change.
+   sizes a position to a fixed gross amount, so both legs resize. Test 1's return
+   is over gross dollars held, which the size of a position does not change.
 2. The replication's return is profit over the gross dollars held, with no
    capital account. The engine keeps a capital account, so test 1's
    comparison recomputes Chan's return from the positions and prices the run
