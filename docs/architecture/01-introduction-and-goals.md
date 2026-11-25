@@ -82,31 +82,34 @@ flowchart TD
     z --> rule{"Does the z-score<br/>cross a threshold?"}
     rule -- "Yes" --> move["Units change<br/>to enter, exit or reverse"]
     rule -- "No" --> same["Units stay as they were"]
-    move --> target["Target portfolio<br/>USO: +units shares<br/>GLD: −units × h shares"]
+    move --> target["Target portfolio<br/>USO: units × k shares<br/>GLD: −units × k × h shares<br/>where k baskets<br/>come to G dollars gross"]
     same --> target
     target --> diff{"Does the target differ<br/>from what is held?"}
     diff -- "Units changed" --> trade["Trade both legs"]
-    diff -- "Units unchanged and held, and h moved" --> resize["Resize: trade the GLD leg only"]
+    diff -- "Units unchanged and held, and<br/>h or a price moved" --> resize["Resize: trade both legs"]
     diff -- "Flat, 0 units" --> none["No trade"]
 ```
 
 The diagram shows one close, from the refit to what trades. Look for the two
-paths that keep the same units. A refit moves `h` even when the position holds
+paths that keep the same units. A refit moves `h` even when the units hold
 still, so the target moves too, and the engine trades the difference as it
-would for any strategy. The USO leg stays at one share per unit, so only GLD
-resizes.
+would for any strategy. The engine holds as many baskets, each one share of
+USO against `h` of GLD, as come to G, a fixed amount of gross dollars. The figure
+calls that count `k`. So a new `h` or a new price changes `k`, and both legs
+resize.
 
-These numbers are made up to show the mechanics, and share counts are per unit
-of the spread:
+These numbers are made up to show the mechanics, at a G of $10,000 and whole
+shares rounded toward zero. USO closes at $50 and GLD at $100 each day, except
+that USO closes at $51 on Wednesday:
 
 **Table:** How the position and its legs resize, day by day, with made-up numbers
 
 | Day | z-score | Units | `h` | Target USO | Target GLD | What trades |
 | --- | --- | --- | --- | --- | --- | --- |
-| Monday | −1.2 | +1 | 0.50 | +1 | −0.50 | Enter: buy 1 USO, short 0.50 GLD |
-| Tuesday | −0.4 | +1 | 0.53 | +1 | −0.53 | Resize: short 0.03 more GLD |
-| Wednesday | −0.2 | +1 | 0.51 | +1 | −0.51 | Resize: buy back 0.02 GLD |
-| Thursday | +0.1 | 0 | 0.52 | 0 | 0 | Exit: sell 1 USO, buy back 0.51 GLD |
+| Monday | −1.2 | +1 | 0.50 | +100 | −50 | Enter: buy 100 USO, short 50 GLD |
+| Tuesday | −0.4 | +1 | 0.53 | +97 | −51 | Resize: sell 3 USO, short 1 more GLD |
+| Wednesday | −0.2 | +1 | 0.51 | +98 | −50 | Resize: buy 1 USO, buy back 1 GLD |
+| Thursday | +0.1 | 0 | 0.52 | 0 | 0 | Exit: sell 98 USO, buy back 50 GLD |
 | Friday | +0.4 | 0 | 0.50 | 0 | 0 | Nothing: flat, so `h` has no effect |
 
 Four facts make it the simplest candidate there.
@@ -122,8 +125,8 @@ Four facts make it the simplest candidate there.
 3. **A discrete unit.** The number of spread units held is only ever −1, 0 or
    +1, so a test can check it on each day, not only a summary ratio. The share
    counts are not discrete. One unit holds `−h` shares of GLD, and `h` is a
-   regression slope refitted daily, so the GLD leg is fractional on every day
-   the strategy holds a position. The replication never deals in shares. It
+   regression slope refitted daily, so the replication's GLD leg is fractional
+   on every day the strategy holds a position. The replication never deals in shares. It
    turns units, the hedge ratio and prices into a dollar position per leg, so
    test 1 checks the unit and the dollars, never a share count.
 4. **Tight pins.** [`tests/test_bollinger.py`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/tests/test_bollinger.py) pins the APR at 0.17824928 and the
@@ -136,9 +139,12 @@ account. So each quirk lives in the strategy's own pieces or in how test 1 is
 set up and compared, never in a shared module's code, and a second strategy
 changes none of them.
 
-1. The strategy refits the hedge ratio every day, so its target resizes the
-   GLD leg even on days the unit does not change. That is the alpha model's
-   forecast changing, and the engine trades the difference like any other.
+1. The strategy refits the hedge ratio every day, so its target resizes even
+   on days the unit does not change. That is the alpha model's forecast
+   changing, and the engine trades the difference like any other. The
+   replication resizes the GLD leg alone, at one share of USO a unit. The engine
+   sizes a position to a fixed gross amount, so both legs resize. Test 1's return
+   is over gross dollars held, which the size of a position does not change.
 2. The replication's return is profit over the gross dollars held, with no
    capital account. The engine keeps a capital account, so test 1's
    comparison recomputes Chan's return from the positions and prices the run

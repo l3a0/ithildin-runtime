@@ -1,9 +1,9 @@
 """What a book is worth and how far it could move, counted one way for every reader.
 
 The gate, the risk model, portfolio construction and execution each need a
-price for an instrument, and all but the risk model the range a position could
-reach and whether an order only reduces. No worker imports another, so the
-functions live here, once. docs/design.md's `### Rule 9: how the gate counts
+price for an instrument and what is held. The gate and execution also need the
+range a position could reach and whether an order only reduces. No worker
+imports another, so the functions live here, once. docs/design.md's `### Rule 9: how the gate counts
 open orders` says why an open order is counted both filled and not.
 
 Every sum and product is exact, as `core/exact.py` says. A book or an order
@@ -140,15 +140,16 @@ def classify(book: Book, intent: OrderIntent) -> Effect:
     return Effect.REDUCES
 
 
-def held(book: Book) -> tuple[InstrumentId, ...]:
-    """Each instrument any strategy holds or has an open order in."""
+def held(book: Book, strategy: str | None = None) -> tuple[InstrumentId, ...]:
+    """Each instrument the account, or one strategy, holds or has an open order in."""
     found = {
         instrument
-        for positions in book.positions_by_strategy.values()
+        for name, positions in book.positions_by_strategy.items()
+        if strategy in (None, name)
         for instrument, qty in positions.items()
         if qty != 0
     }
-    found.update(order.instrument for order in _open(book, None))
+    found.update(order.instrument for order in _open(book, strategy))
     return tuple(sorted(found))
 
 

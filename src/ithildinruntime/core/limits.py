@@ -1,5 +1,8 @@
 """The limits an order is held to: the owner's hard caps, the strategy's, and the tighter of each.
 
+The hard caps hold one field that is no limit, the step a share count moves in
+on the account, and the same checks cover it.
+
 The hard caps blob is written by hand, so it has a reader of its own rather
 than the codec, which refuses bytes that are not canonical. docs/design.md's
 `## Configuration` names the blob, and
@@ -18,7 +21,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import ROUND_DOWN, Decimal
 
-from .codec import INT_LIMIT, CodecError, from_received
+from .codec import INT_LIMIT, CodecError, from_received, places
 from .exact import exact_product, finite, quotient
 from .halt import Halt
 from .names import is_name, is_sha256
@@ -45,7 +48,13 @@ _COUNTS = ("max_open_orders", "moc_cutoff")
 _STRESS = ("share", "stress_move", "stress_low", "stress_high")
 _FIELDS = frozenset(
     {*_SHARES, *_MAXIMA, *_COUNTS, *_STRESS}
-    | {"stress_vintage", "stress_through", "stress_max_age_days"}
+    | {"stress_vintage", "stress_through", "stress_max_age_days", "share_step"}
+)
+# The ten forms a share step is written in, 1 and 0.1 down to 0.000000001, which is the
+# places a quantity declares. One written with a spare place, such as 1.0, is refused,
+# because a share count rounded to it would store a fraction.
+_STEPS = frozenset(
+    Decimal(1).scaleb(-n).as_tuple() for n in range(places(HardCaps, "share_step") + 1)
 )
 
 
@@ -91,6 +100,7 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
         stress_vintage=vintage,
         stress_through=_day("stress_through", limits),
         stress_max_age_days=_whole("stress_max_age_days", limits),
+        share_step=_decimal("share_step", limits["share_step"]),
     )
     _check_caps(caps)
     return caps
@@ -202,6 +212,9 @@ def _check_caps(caps: HardCaps) -> None:
             f"{where} stress_max_age_days is {age}, not a whole number of days from 1 to "
             f"{_MAX_STRESS_AGE_DAYS}"
         )
+    step = finite(f"{where} share_step", caps.share_step)
+    if step.as_tuple() not in _STEPS:
+        raise Halt(f"{where} share_step is {step}, not written as 1, 0.1 and so on to 0.000000001")
 
 
 def _check_shared(source: Constraints | HardCaps, where: str) -> None:

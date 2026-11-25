@@ -13,6 +13,6 @@ calibrates a term.
 """
 
 from .model import SECTION, LinearCostModel
-from .stage import COMPONENT, SCHEDULE, CostStage
+from .stage import CostStage
 
-__all__ = ["COMPONENT", "SCHEDULE", "SECTION", "CostStage", "LinearCostModel"]
+__all__ = ["SECTION", "CostStage", "LinearCostModel"]

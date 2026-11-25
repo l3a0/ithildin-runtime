@@ -27,6 +27,7 @@ LIMITS: dict[str, object] = {
     "stress_vintage": "a" * 64,
     "stress_through": "2026-11-20",
     "stress_max_age_days": 365,
+    "share_step": "1",
 }
 
 
@@ -55,6 +56,7 @@ def test_the_issues_sample_blob_parses() -> None:
         stress_vintage="a" * 64,
         stress_through=date(2026, 11, 20),
         stress_max_age_days=365,
+        share_step=d(1),
     )
 
 
@@ -192,7 +194,15 @@ def test_an_integer_a_record_cannot_hold_is_refused(name: str) -> None:
             parse_caps(with_(**{name: huge}), "paper")
 
 
-DECIMALS = ("max_gross", "loss_stop", "share", "stress_move", "stress_low", "stress_high")
+DECIMALS = (
+    "max_gross",
+    "loss_stop",
+    "share",
+    "stress_move",
+    "stress_low",
+    "stress_high",
+    "share_step",
+)
 WHOLES = ("max_open_orders", "moc_cutoff", "stress_max_age_days")
 
 
@@ -321,6 +331,23 @@ CAPS_ALONE: dict[str, tuple[dict[str, object], str]] = {
         "stress_max_age_days is 100000000000000000000, not .* from 1 to 365",
     ),
     "age-negative": ({"stress_max_age_days": -1}, "stress_max_age_days is -1, not a whole number"),
+    "step-absent": ({"share_step": None}, "share_step is None, not a finite decimal"),
+    "step-nan": ({"share_step": d("NaN")}, "share_step is .*not a finite decimal"),
+    "step-infinite": ({"share_step": d("Infinity")}, "share_step is .*not a finite decimal"),
+    "step-an-int": ({"share_step": 1}, "share_step is 1, not a finite decimal"),
+    **{
+        f"step-{step}": ({"share_step": d(step)}, f"share_step is {shown}, not written as 1, 0.1")
+        for step, shown in (
+            ("0", "0"),
+            ("-1", "-1"),
+            ("0.3", "0.3"),
+            ("2", "2"),
+            ("10", "10"),
+            ("0.0000000001", "1E-10"),
+            ("1.0", "1.0"),
+            ("0.10", "0.10"),
+        )
+    },
     "age-a-bool": ({"stress_max_age_days": True}, "stress_max_age_days is True, not a whole"),
 }
 CONSTRAINTS_ALONE: dict[str, tuple[dict[str, object], str]] = {
@@ -363,6 +390,21 @@ PARSED: dict[str, tuple[dict[str, object], str]] = {
         {"stress_max_age_days": 366},
         "stress_max_age_days is 366, not a whole number of days from 1 to 365",
     ),
+    **{
+        f"share_step-{step}": (
+            {"share_step": step},
+            f"share_step is {shown}, not written as 1, 0.1 and so on to 0.000000001",
+        )
+        for step, shown in (
+            ("0", "0"),
+            ("-1", "-1"),
+            ("0.3", "0.3"),
+            ("10", "10"),
+            ("0.0000000001", "1E-10"),
+            ("1.0", "1.0"),
+            ("0.10", "0.10"),
+        )
+    },
     "max_gross": ({"max_gross": "-1"}, "max_gross is -1, below zero"),
     "loss_stop": ({"loss_stop": "-1"}, "loss_stop is -1, below zero"),
     "max_open_orders": ({"max_open_orders": -1}, "max_open_orders is -1, below zero"),
@@ -457,6 +499,15 @@ def test_5_a_v_that_is_not_above_zero_halts(value: str) -> None:
 def test_tightening_twice_changes_nothing() -> None:
     once = tighten(constraints(max_gross=d(7)), caps(loss_stop=d(3)), valuation(1000))
     assert tighten(once, caps(loss_stop=d(3)), valuation(1000)) == once
+
+
+@pytest.mark.parametrize("n", range(10))
+def test_each_of_the_ten_steps_is_read(n: int) -> None:
+    written = "1" if n == 0 else f"0.{'0' * (n - 1)}1"
+    read = parse_caps(with_(share_step=written), "paper")
+    assert format(read.share_step, "f") == written
+    made = caps(share_step=read.share_step)
+    assert tighten(constraints(), made, valuation()) == tighten(constraints(), caps(), valuation())
 
 
 def test_the_stored_caps_read_back_from_their_bytes() -> None:

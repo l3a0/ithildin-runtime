@@ -505,6 +505,7 @@ EACH_CAP_NAME = (
     "stress_vintage",
     "stress_through",
     "stress_max_age_days",
+    "share_step",
     "holds",
     "account",
 )

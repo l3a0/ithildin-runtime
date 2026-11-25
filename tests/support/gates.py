@@ -83,6 +83,7 @@ def caps(**changes: object) -> HardCaps:
         "stress_vintage": VINTAGE,
         "stress_through": date(2026, 10, 30),
         "stress_max_age_days": 365,
+        "share_step": Decimal(1),
     }
     return HardCaps(**fields | changes)  # type: ignore[arg-type]
 

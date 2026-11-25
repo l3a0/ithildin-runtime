@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from ithildinruntime.core import Storage, StrategyConfig
-from ithildinruntime.cost import COMPONENT, CostStage, LinearCostModel
+from ithildinruntime.core import COST_COMPONENT, Storage, StrategyConfig
+from ithildinruntime.cost import CostStage, LinearCostModel
 
 from .loop import Stage, Table
 from .rows import strategy_rows
@@ -22,7 +22,7 @@ __all__ = ["cost_handlers", "cost_rows"]
 
 def cost_rows(strategies: Iterable[StrategyConfig]) -> tuple[Stage, ...]:
     """One deterministic row per strategy, each reading data's stage."""
-    return strategy_rows(COMPONENT, strategies)
+    return strategy_rows(COST_COMPONENT, strategies)
 
 
 def cost_handlers(
@@ -34,7 +34,7 @@ def cost_handlers(
     its own kind and input, from `table`.
     """
     made = {}
-    for stage in table.stages_of(COMPONENT):
+    for stage in table.stages_of(COST_COMPONENT):
         (data_stage,) = stage.inputs
         made[stage.name] = CostStage(
             LinearCostModel(table.strategy(stage.strategy)),

@@ -10,9 +10,9 @@ header of that result names each blob the stage had read and storage had
 accepted, so a stored halt says what it was judged from. docs/design.md's
 `### Rule 7: a halt is passed on` says what a stage does with a halt it reads.
 
-It serves a deterministic stage whose inputs each hold one entry. A stage that
-needs another form, such as a file of several entries or a capture stored at an
-attempt key, extends this class rather than writing beside it.
+It serves a deterministic stage. A stage that needs another form, such as a
+capture stored at an attempt key, extends this class rather than writing beside
+it.
 """
 
 from __future__ import annotations
@@ -82,14 +82,20 @@ class StageDecision:
         self._passed_on: list[tuple[Halt, BlobRef]] = []
         self._wrote = False
 
-    def result(self, upstream: str) -> DecisionResult:
+    def result(
+        self, upstream: str, config_hashes: Mapping[str, str] | None = None
+    ) -> DecisionResult:
         """The result stage `upstream` stored for this decision.
 
         It raises `Halt` where none is stored, where storage refuses the read,
-        and where the result holds a halt, which `halted` then passes on.
+        and where the result holds a halt, which `halted` then passes on. Given
+        `config_hashes`, the ones the stage table gives `upstream`, it also
+        halts on a result that names any other. Storage compares a file only
+        with the result that lists it, so a backtest rerun into one folder would
+        otherwise read a file that an older configuration wrote.
         """
+        key = result_key(self._run.deployment, self._run.run, self._at, upstream)
         if upstream not in self._results:
-            key = result_key(self._run.deployment, self._run.run, self._at, upstream)
             found = self._run.storage.read_result(key, self._at)
             if found is None:
                 raise Halt(f"{key} is not stored, and stage {self._run.stage} reads it")
@@ -101,15 +107,42 @@ class StageDecision:
                 self._passed_on.append((halt, ref))
                 raise halt
             self._results[upstream] = found
-        return self._results[upstream]
+        result = self._results[upstream]
+        if config_hashes is not None:
+            carried = result.header.config_hashes
+            names = sorted({*carried, *config_hashes})
+            if odd := [n for n in names if carried.get(n) != config_hashes.get(n)]:
+                raise Halt(
+                    f"{key} does not carry the configuration of {', '.join(odd)} that stage "
+                    f"{self._run.stage} runs"
+                )
+        return result
 
     def entry[T](self, upstream: str, name: str, kind: type[T]) -> T:
         """The one `kind` in the file `name` that stage `upstream` stored for this decision.
 
-        It raises `Halt` where `upstream`'s result lists that file other than
-        once, where storage refuses the read, and where the file holds other
+        It raises `Halt` where `entries` does, and where the file holds other
         than one entry.
         """
+        counts, found = self._opened(upstream, name, kind)
+        if len(found) != 1:
+            raise Halt(f"{counts} holds {len(found)} entries, not one")
+        return found[0]
+
+    def entries[T](self, upstream: str, name: str, kind: type[T]) -> tuple[T, ...]:
+        """Every `kind` in the file `name` that stage `upstream` stored for this decision.
+
+        It raises `Halt` where `upstream`'s result lists that file other than
+        once, where storage refuses the read, and where the file holds no entry,
+        as one that carries the "trade nothing" mark does.
+        """
+        counts, found = self._opened(upstream, name, kind)
+        if not found:
+            raise Halt(f"{counts} holds no entries")
+        return found
+
+    def _opened[T](self, upstream: str, name: str, kind: type[T]) -> tuple[str, tuple[T, ...]]:
+        """The key that counts of a file, and its entries."""
         result = self.result(upstream)
         run = self._run
         key = result_key(run.deployment, run.run, self._at, upstream)
@@ -121,9 +154,7 @@ class StageDecision:
             raise Halt(f"{key} lists {counts} {len(listed)} times, not once")
         file = run.storage.read_output(key, result, listed[0], self._at, kind)
         self._note(listed[0])
-        if len(file.entries) != 1:
-            raise Halt(f"{counts} holds {len(file.entries)} entries, not one")
-        return file.entries[0]
+        return counts, file.entries
 
     def snapshot(self, data_stage: str) -> Snapshot:
         """The snapshot `data_stage` stored, which halts where it is of another decision."""

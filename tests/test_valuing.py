@@ -415,11 +415,11 @@ def test_v_is_rounded_once_to_four_places_from_the_exact_sum() -> None:
 def test_a_sum_and_a_product_are_exact_or_halt() -> None:
     assert exact_total("x", [d("1E+20"), d("1E-20"), d("-1E+20")]) == d("1E-20")
     wide = Decimal("9" * 38)
-    assert exact_product("x", wide, wide, wide) == int(wide) ** 3
+    assert exact_product("x", wide, wide, wide, wide) == int(wide) ** 4
     with pytest.raises(Halt, match="the sum has no exact sum: Inexact"):
         exact_total("the sum", [d("1E+200"), d(1)])
     with pytest.raises(Halt, match="the size has no exact product: Inexact"):
-        exact_product("the size", wide, wide, wide, wide)
+        exact_product("the size", wide, wide, wide, wide, wide)
 
 
 @pytest.mark.parametrize("value", [d("NaN"), d("sNaN"), d("Infinity"), 1.0, 1, None, "1"])

@@ -4,7 +4,7 @@ Python's default decimal context rounds at 28 digits without a word, and a sum
 rounded that way depends on the order of its terms. A limit compared against
 such a sum could pass on one order of a book's positions and refuse on another.
 So the sums and products a limit reads run in one context here, wide enough for
-three factors of the codec's digits, and it traps any result it would have to
+four factors of the codec's digits, and it traps any result it would have to
 round. Only a figure that is recorded, or the one division, is rounded, and
 each says which way.
 
@@ -31,9 +31,10 @@ from .halt import Halt
 
 __all__ = ["exact_product", "exact_total", "finite", "quotient", "rounded", "worth"]
 
-# A product here takes at most three factors, such as a size, a price and the
-# stress move.
-_DIGITS = 3 * MAX_DIGITS
+# A product here takes at most four factors. A worst loss is a size, a price and the
+# stress move. Two limits on a target are compared across their divisors, such as a
+# share limit, one plus the stress move, a leg and its price.
+_DIGITS = 4 * MAX_DIGITS
 _TRAPS = [Inexact, InvalidOperation, DivisionByZero, Overflow]
 
 
