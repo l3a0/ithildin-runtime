@@ -1488,12 +1488,13 @@ An arrow means "may import". The diagram draws four rules.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
 4. **Only `runtime` imports `adapters`**, which holds the S3 and memory-backed folder stores, the S3 and folder read-only buckets, the SQS and named-pipe queues, and the history and wall clocks. So each of the outside libraries in the table below is imported in one module.
 
-   **Table:** The one module that imports each of four outside libraries
+   **Table:** The one module that imports each of five outside libraries
 
    | Library | The only module that imports it |
    | --- | --- |
    | boto3 | `adapters` |
-   | marketlake's package, of which `data` imports only `lake.loader`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
+   | marketlake's package, of which `data` imports only `lake.loader`, `lake.unsealed`, `lake.paths`, `lake.manifest`, `lake.actions` and `lake.config`, so it cannot read marketlake's bucket around the read-only port | `data` |
+   | pyarrow, which marketlake's reader returns its rows in | `data` |
    | Alpaca's SDK | `execution.brokers` |
    | rfc8785, the one codec's canonical JSON | `core` |
 
