@@ -21,7 +21,6 @@ canonical encoding of what it parsed.
 from __future__ import annotations
 
 import base64
-import binascii
 import dataclasses
 import json
 import re
@@ -167,8 +166,15 @@ def _bounded(value: Decimal, where: str) -> Decimal:
 def encode(value: object) -> bytes:
     """Write a record, or a plain JSON value, as canonical JSON bytes."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return rfc8785.dumps(_fields_to_plain(value, type(value).__name__))
-    return rfc8785.dumps(_to_plain(value, object, "value"))
+        plain: object = _fields_to_plain(value, type(value).__name__)
+    else:
+        plain = _to_plain(value, object, "value")
+    try:
+        return rfc8785.dumps(plain)  # type: ignore[arg-type]
+    except (rfc8785.CanonicalizationError, UnicodeEncodeError):
+        # Such as the half of a surrogate pair a JSON escape can hold. The
+        # library raises the second where it is in a mapping's key.
+        raise CodecError(f"{type(value).__name__} holds text that is no Unicode") from None
 
 
 def decode[T](data: bytes, kind: type[T]) -> T:
@@ -462,10 +468,14 @@ def _read_body(value: object, where: str) -> bytes:
     if not isinstance(data, str):
         raise CodecError(f"{where} holds no text")
     if form == _TEXT:
-        return data.encode("utf-8")
+        try:
+            return data.encode("utf-8")
+        except UnicodeEncodeError:
+            raise CodecError(f"{where} holds text that is no Unicode") from None
     if form == _BASE64:
         try:
             return base64.b64decode(data, validate=True)
-        except binascii.Error as error:
+        except ValueError as error:
+            # `binascii.Error` is one, and text that is not ASCII raises the plain one.
             raise CodecError(f"{where} is not base64") from error
     raise CodecError(f"{where} names an encoding {form!r} the codec does not know")

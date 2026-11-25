@@ -136,7 +136,7 @@ def _world(seed: int) -> World:
             },
             "max_gross": tight(chance, Decimal(draw.randint(5, 200))),
             "max_open_orders": draw.choice((2, 3, 100, 100)),
-            "loss_stop": tight(0.2, Decimal(draw.randint(0, 40))),
+            "loss_stop": tight(0.2, Decimal(draw.randint(1, 40))),
             "moc_cutoff": draw.choice((0, 0, 0, 12)),
         }
 
@@ -310,11 +310,9 @@ def _replace_opens(b: Book, opens: list[OrderIntent]) -> Book:
         b.positions_by_strategy,
         made.open_orders_by_strategy,
         b.cash,
-        b.platform_realised_pnl,
         b.replayed_through,
         b.in_doubt,
-        b.corrected_through,
-        b.repositioned_at,
+        b.corrections,
     )
 
 

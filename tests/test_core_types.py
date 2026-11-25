@@ -91,11 +91,9 @@ def test_a_records_mappings_and_lists_cannot_be_changed() -> None:
         positions_by_strategy={"bollinger": inner},
         open_orders_by_strategy={},
         cash=Decimal("0"),
-        platform_realised_pnl=Decimal("0"),
         replayed_through=0,
         in_doubt=(),
-        corrected_through=None,
-        repositioned_at=None,
+        corrections=(),
     )
     inner[USO] = Decimal("5")
     assert book.positions_by_strategy["bollinger"][USO] == Decimal("1")

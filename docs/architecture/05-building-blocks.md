@@ -401,11 +401,14 @@ classDiagram
         +dict positions_by_strategy
         +dict open_orders_by_strategy
         +Decimal cash
-        +Decimal platform_realised_pnl
         +int replayed_through
         +list in_doubt
-        +int or None corrected_through
-        +datetime or None repositioned_at
+        +list corrections
+    }
+    class Correction {
+        +int seq
+        +datetime at
+        +bool repositions
     }
     class OrderIntent {
         +str client_order_id
@@ -425,15 +428,52 @@ classDiagram
         DAY
         CLS
     }
+    class OrderState {
+        <<enumeration>>
+        INTENDED
+        APPROVED
+        REFUSED
+        ABANDONED
+        SENDING
+        IN_DOUBT
+        ACKNOWLEDGED
+        PARTLY_FILLED
+        FILLED
+        REJECTED
+        EXPIRED
+    }
+    class OrderRecord {
+        +OrderIntent intent
+        +int decision
+        +OrderState state
+        +str or None broker_order_id
+        +Decimal filled
+        +list entries
+        +datetime or None sent_at
+    }
+    class OrderEntry {
+        +int seq
+        +str kind
+    }
     class Fill {
         +str fill_id
-        +str correction_id
+        +str or None correction_id
         +str broker_order_id
-        +str client_order_id
+        +str or None client_order_id
+        +InstrumentId instrument
         +Decimal qty
         +Decimal price
+        +str at_text
         +datetime at
         +datetime received_at
+        +list excess_places
+        +FillBasis or None basis
+    }
+    class FillBasis {
+        <<enumeration>>
+        SIGNAL_CLOSE
+        OFFICIAL_CLOSE
+        QUOTE
     }
     class Ack {
         +str client_order_id
@@ -644,6 +684,13 @@ classDiagram
     Sizing --> Instrument
     Sizing --> Limit
     OrderIntent --> Instrument
+    Book o-- OrderIntent
+    Book o-- Correction
+    OrderRecord o-- OrderIntent
+    OrderRecord o-- OrderEntry
+    OrderRecord --> OrderState
+    Fill --> Instrument
+    Fill --> FillBasis
     BrokerOrder --> Instrument
     Ack o-- BrokerOrder
     StoredBlob o-- BlobRef
@@ -665,6 +712,102 @@ classDiagram
     GateInputs o-- Valuation
     GateInputs --> StopState
     GateInputs o-- JournalEntry
+```
+
+#### The records a journal entry's body holds
+
+`journal/entries.py` holds one frozen dataclass for each kind of entry, and [What a journal entry's body holds](08-crosscutting-concepts.md#what-a-journal-entrys-body-holds-and-how-a-retry-is-recognised) says what each one records. The figure below is a C4 code diagram.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class OpeningEntry {
+        +str account
+        +Decimal cash
+    }
+    class ReadEntry {
+        +str stage
+        +datetime decision_at
+        +BlobRef ref
+        +datetime at
+    }
+    class DecisionEntry {
+        +str deployment
+        +str run
+        +datetime decision_at
+        +list targets
+        +list orders
+        +list off
+        +dict inputs
+        +int read
+        +int synced
+    }
+    class IntentEntry {
+        +int decision
+        +OrderIntent order
+    }
+    class VerdictEntry {
+        +str client_order_id
+        +Verdict verdict
+        +datetime now
+        +StopState stop
+        +int or None close_entry
+        +int book
+        +bytes caps
+        +str caps_sha256
+        +BlobRef snapshot
+        +BlobRef constraints
+        +BlobRef valuation
+    }
+    class AbandonedEntry {
+        +str client_order_id
+        +str reason
+    }
+    class SendingEntry {
+        +str client_order_id
+    }
+    class AckEntry {
+        +str client_order_id
+        +str broker_order_id
+        +bytes raw
+        +bool cut
+        +datetime received_at
+    }
+    class RejectedEntry {
+        +str client_order_id
+        +str reason
+        +bytes raw
+        +bool cut
+        +datetime received_at
+    }
+    class InDoubtEntry {
+        +str client_order_id
+        +str reason
+        +bytes or None raw
+        +bool cut
+        +datetime received_at
+    }
+    class FillEntry {
+        +Fill fill
+        +int read
+    }
+    class DisputedFillEntry {
+        +Fill fill
+        +int read
+    }
+    class ExpiredEntry {
+        +str client_order_id
+        +Decimal filled
+        +bytes raw
+        +bool cut
+        +datetime received_at
+    }
+
+    DecisionEntry ..> ReadEntry : read names its number
+    IntentEntry ..> DecisionEntry : decision names its number
+    FillEntry ..> ReadEntry : read names its number
+    DisputedFillEntry ..> ReadEntry : read names its number
 ```
 
 ### The interfaces
@@ -810,12 +953,29 @@ classDiagram
     class Journal {
         -BlobStore store
         -str account
-        +head() JournalAck or None
-        +build(body, built_at) JournalEntry
-        +append(entry) JournalAck
-        +read(after) Iterator~JournalEntry~
-        +in_doubt() list
+        -str writer
+        +view(through) View
+        +record(View, record, at) JournalAck and View
         +replay() Book
+        +in_doubt() list
+        +head() JournalAck or None
+        +read(after) Iterator~JournalEntry~
+        -build(body, built_at, on) JournalEntry
+        -append(entry) JournalAck
+    }
+    class View {
+        +str account
+        +JournalAck through
+        +datetime or None opened_at
+        +datetime or None sent_at
+        +dict orders
+        +dict live
+        +dict decisions
+        +dict decided
+        +dict reads
+        +dict fills
+        +list disputes
+        +Book book
     }
     class OrderPath {
         -Journal journal
@@ -858,8 +1018,10 @@ classDiagram
     RiskGate ..> LossReading
     Broker ..> Ack
     Broker ..> Fill
-    Journal ..> Book
+    Journal ..> View
     Journal ..> JournalAck
+    View ..> Book
+    View ..> OrderRecord
     OrderPath ..> core
     Monitoring ..> core
 ```
@@ -962,16 +1124,17 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 
 ##### How a late fill is still fetched
 
-`fills(since)` takes the last decision's time less a stated overlap. The journal compares each fill with any it holds under that id and correction identifier.
+`fills(since)` takes a time before any fill not yet journaled, whose rule is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id.
 
-- It skips only an identical repeat.
-- It journals a differing one and halts.
+1. A repeat with the same broker's order, instrument, shares, price and time is skipped. The other fields may differ, because a second endpoint may leave one out or write it another way.
+2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
+3. A repeat of a dispute already held is skipped, because a recover stage that halts on one reads it again at each decision. One with no shares or no price is refused as a `fill`, so a caller looks at the view's disputes first.
 
-So a fill the broker posts late is still fetched.
+A fill that carries a correction identifier is refused as a `fill` until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
 
 ##### What each call returns, and what is journaled first
 
-`Journal.append` returns a `JournalAck` naming the entry's number and hash. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
+`Journal.record` returns a `JournalAck` naming the entry's number and hash, beside the view after that entry. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
 
 Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead, also before it uses the value.
 
@@ -1080,12 +1243,12 @@ flowchart LR
 2. The snapshot.
 3. The strategy's `Constraints`.
 4. `now`, the send stage's reading of the `Clock` port when it hands the order over, the history clock in a backtest, which the gate compares with the cutoff.
-5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and the newest entry that corrected it.
+5. The book, which the journal's replay gives. It names each instrument with an order in doubt, and each entry that corrected it.
 6. A `GateInputs`, which holds the hard caps, the session's `Valuation`, the loss stop's state and, for a close, its close entry.
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds that.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
 
 ##### What halts and what refuses
 
@@ -1118,7 +1281,7 @@ Each instrument has a range: what the account would hold if only its open sales 
 | `max_order_qty`, per instrument | One order's shares, such as one sized on a wrong price | The order's size | No |
 | `max_position`, per instrument | Shares held in one instrument | The order's instrument, at the end of its range further from zero | No |
 | `max_gross` | The account's dollars, long plus short | Each instrument's further end at its mark, summed | Yes |
-| `max_open_orders` | Orders whose outcome is unknown | Every open order, and the one being checked | No |
+| `max_open_orders` | Orders approved that have not ended | Every open order, and the one being checked | No |
 | `max_net` | A leg left alone under the stress move | Every low end summed at its mark, and every high end, signed across instruments, whichever sum is further from zero | Yes |
 | `loss_stop` | The day's loss past which every order is refused | V less the book's cash and each position at its mark | Yes |
 | `moc_cutoff`, in minutes before the close | A market-on-close order sent too late to cancel its partner | The instant that many minutes before the close, against `now` | No |
@@ -1156,7 +1319,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
-`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Eight checks go further.
+`core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Nine checks go further.
 
 1. The share lies strictly between 0 and 1, so 1 typed for 1% halts.
 2. The stress move lies inside its sane range, whose lower end is above zero.
@@ -1166,6 +1329,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 6. The two share caps of one source limit the same instruments, and the constraints' instruments are among the hard caps'. An order on an instrument the two do not both limit halts.
 7. Each count, `max_open_orders` and `moc_cutoff`, is below 2**53, the largest a record can hold.
 8. The share step is written as one of ten forms, 1, 0.1 and so on to 0.000000001. One written 1.0 halts, because a count rounded to its places would hold a tenth of a share.
+9. The loss stop is above zero. V is rounded to four places and the book's cash is not, so a stop of zero would fire on the rounding: 0.333333333 shares bought at 57.1237 leave V 0.0000333 above the cash.
 
 **Table:** Which value of each pair applies
 
@@ -1218,7 +1382,85 @@ The stage does not hold V against the book's corrections or the entry it was rep
 
 #### The book comes from the journal
 
-`Journal.replay()` applies every entry in order to build a `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool are the only code that may import it. [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal.
+The journal's entries, applied in order from the first, give the account's `Book`. The broker's positions, open orders and cash are read only in the places [The current book comes from the journal](06-runtime.md#the-current-book-comes-from-the-journal) lists. `Journal` lives in a package of its own, `ithildinruntime.journal`, which imports only `core`. Execution, monitoring, the supervisor and the `ithildin` tool are the only code that may import it. [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal.
+
+##### What the book holds
+
+**Table:** Each field of `Book`, and what the entries make it
+
+| Field | What it holds |
+| --- | --- |
+| `positions_by_strategy` | Each strategy's shares of each instrument, where they are not zero. A fill is filed under the strategy of its order |
+| `open_orders_by_strategy` | Each order the gate approved that has not ended, at its unfilled remainder. An order only intended is not in the book, so the order being checked is never counted twice |
+| `cash` | The opening cash less each fill's signed shares times its price, exact, with no rounding. It carries no fee, because no fee kind exists yet |
+| `replayed_through` | The number of the last entry |
+| `in_doubt` | Each instrument with an order that may or may not be with the broker. A `sending` entry with nothing after it is one |
+| `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, so it is empty until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) |
+
+The gate reads two facts from `corrections`: the newest correction's number against the valuation's, and the newest one that moved a position against the close of the valuation's session. The list tells a deposit from a broker's trade behind it, so [#117](https://github.com/l3a0/ithildin-runtime/issues/117) can excuse the trade without excusing the deposit. The book carries no realised profit, because nothing reads one.
+
+##### A view is one reading of the journal
+
+`Journal.view()` reads to the journal's end and returns a `View`: the book, each order with its state and the entries that moved it, each decision, broker read, fill and dispute, and the number and hash it was read through. It reads to the end before it returns, so nothing is acted on ahead of a later entry's check, and an entry that halts stays unread and halts the next view too. A call with nothing new costs one listing.
+
+A view never changes. It copies the positions, the cash and every order that has not ended, which do not grow with the journal. Orders that ended, decisions, reads and fills are kept once, and a view shows none whose entry is past its own.
+
+`view(through=n)` gives the reading at an earlier entry, folded from the first, with nothing read past it. A `verdict` entry names the entry before it as its `book`, so that view and the entry's own fields are enough to ask the gate again.
+
+##### Nothing is stored that a replay would refuse
+
+A halt at replay ends the account, because no entry can be deleted. So `Journal.record(view, record, at)` is the one way a writer adds an entry, and it works in these steps.
+
+1. It builds the entry after the view it was handed, and no other, so a step is stored only on the reading it was decided on.
+2. It applies that entry to the view in memory, and raises `Halt`, storing nothing, where a check fails or where the positions, the open orders or the cash would hold a value no record can hold.
+3. It appends. A refused append leaves nothing in memory. Where another writer's entry holds that number, it raises `NumberTaken`, and the caller views the journal again and decides again.
+4. It returns the acknowledgement and the view after the entry, which is never read back.
+
+One `Journal` acknowledges one number once. Two calls on it that build the same bytes, as two threads under a history clock can, do not both hold it, so they cannot both send. Two `Journal`s stay apart by their writers, so each one that records has a writer of its own, in one process and across processes. A call whose answer was lost is safe to repeat, because it builds the same bytes. `record` halts for a `Journal` built with no writer, as a reader is, and on a view another `Journal` gave.
+
+The figure below is a C4 dynamic diagram of one call.
+
+```mermaid
+sequenceDiagram
+    participant W as The writer
+    participant J as Journal
+    participant S as BlobStore
+    W->>J: asks for a view
+    J->>S: lists the keys after the last entry it read
+    S-->>J: the new keys
+    J->>S: gets each new entry
+    J-->>W: the view through the newest entry
+    W->>J: records a step on that view
+    J->>J: applies the entry to the view in memory
+    alt a check fails
+        J-->>W: halts, with nothing stored
+    else every check passes
+        J->>S: creates the entry at the next number
+        alt another entry holds the number
+            S-->>J: refuses the key
+            J-->>W: says the number is taken
+        else the number was free
+            S-->>J: stores the entry
+            J-->>W: the acknowledgement, and the view after the entry
+        end
+    end
+```
+
+##### An empty journal is never a flat book
+
+A journal with no entry halts when its book is read, because it looks the same as a wrong account or a lost store. Entry 1 is an `opening`, which names the account and its cash, and a journal whose first entry is another kind, or which holds a second `opening`, halts at the view. A person writes it on shadow and paper. The only other way to know an account is new is to ask the broker, whose empty answer looks like a lost one. The price is one command a person runs per account, and that a wrong one leaves that account alias unusable until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), since no entry is ever deleted. [#146](https://github.com/l3a0/ithildin-runtime/issues/146) writes a backtest's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the command.
+
+##### What the checks on an entry hold
+
+Each entry that names an order is checked against the entries before it, at `record` and again at every replay, and halts naming the entry where one of these fails.
+
+1. A `decision`'s orders each carry the stamp of that decision, of their own strategy and of their place in the plan, and none is of a strategy it names as off. Each decision time has one `decision` entry. Its `read` is an earlier `read` entry, and its `synced` any earlier entry.
+2. An `intent`'s order equals the one its `decision` entry plans.
+3. A `verdict`'s `book` is the entry before it.
+4. An `ack`'s broker's order id is no other order's.
+5. A `fill` names an earlier `read` entry and the broker's id of an acknowledged or part-filled order, in that order's instrument and on its side, under its client order id where the fill carries one, and takes its filled total no further than its quantity.
+6. An `expired`'s filled total equals the order's fills.
+7. An order moves only as [The life of an order](06-runtime.md#the-life-of-an-order) draws. `journal/orders.py` holds the one table of those moves, and a pair it does not hold halts naming the entry, the order and its state.
 
 #### The cost model writes a schedule rather than answering calls
 
@@ -1389,7 +1631,7 @@ The figure below is a C4 component diagram.
 ```mermaid
 flowchart TB
     core["ithildinruntime.core<br/>the code every module shares"]
-    journal["ithildinruntime.journal<br/>the journal's writer and reader"]
+    journal["ithildinruntime.journal<br/>the journal's writer and reader,<br/>and the book its entries replay to"]
     adapters["adapters<br/>S3 and folder stores and buckets,<br/>SQS and named-pipe queues, two clocks"]
     data["data"]
     alpha["alpha"]

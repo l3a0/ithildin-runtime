@@ -117,11 +117,9 @@ def book(
         },
         "open_orders_by_strategy": filed,
         "cash": d(cash),
-        "platform_realised_pnl": Decimal(0),
         "replayed_through": 7,
         "in_doubt": (),
-        "corrected_through": None,
-        "repositioned_at": None,
+        "corrections": (),
     }
     return Book(**fields | changes)  # type: ignore[arg-type]
 
