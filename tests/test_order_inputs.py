@@ -1016,7 +1016,7 @@ def test_11_an_object_that_raises_as_it_is_examined_says_nothing() -> None:
         world.path().positions()
     assert not leaks(*told(raised.value))
     world.broker.alias = Unequal()  # type: ignore[assignment]
-    with pytest.raises(Halt, match="alias could not be read: RuntimeError") as halt:
+    with pytest.raises(Halt, match="trades another account") as halt:
         world.path().positions()
     assert not leaks(*told(halt.value))
 

@@ -296,9 +296,6 @@ class Unstored:
             doubt = _doubted(kept)
             if _holds(order, own):
                 return self._done(kept, order.state)
-            if isinstance(own, RejectedEntry) and order.broker_order_id is not None:
-                # The fold would take it, and the order another writer saw taken leaves the book.
-                raise Halt(f"the journal shows it {_now(order)}")
             if any(
                 tried(lambda s=e.seq: record_of(next(self._journal.read(after=s - 1)))) == doubt
                 for e in order.entries
@@ -308,6 +305,9 @@ class Unstored:
                 if own is not doubt:
                     self._in_doubt(kept, report)
                 return self._done(kept, order.state)
+            if isinstance(own, RejectedEntry) and order.broker_order_id is not None:
+                # The fold would take it, and the order another writer saw taken leaves the book.
+                raise Halt(f"the journal shows it {_now(order)}")
             if own is doubt and order.state not in _DOUBTFUL:
                 self._say(
                     kept,
@@ -466,8 +466,17 @@ class _Answer(NamedTuple):
     halt: str | None
 
     @property
-    def perhaps(self) -> str:
-        return f"perhaps sent at {self.went.isoformat()}"
+    def broker(self) -> str | None:
+        """The broker's id, where the answer is an `Ack` that holds one as plain text."""
+        ack = self.ack
+        return _plain(lambda: ack.broker_order_id, str) if type(ack) is Ack else None
+
+    @property
+    def sent(self) -> str:
+        """Whether the order went out, in words, whatever else of the answer can be read."""
+        if self.broker is None:
+            return f"perhaps sent at {self.went.isoformat()}"
+        return f"sent at {self.went.isoformat()}, as the broker's {_shown(self.broker)}"
 
 
 class _Off(Exception):
@@ -911,19 +920,16 @@ class OrderPath:
             return self._entry(answer)
         except BaseException as error:
             reason = f"its answer could not be read: {error_name(error)}"
-        return self._doubt(answer, reason), answer.perhaps
+        return self._doubt(answer, reason), answer.sent
 
     def _entry(self, answer: _Answer) -> tuple[Record, str]:
         name, ack = answer.order.client_order_id, answer.ack
         if answer.error is not None:
-            return self._doubt(answer, f"the submit raised {answer.error}"), answer.perhaps
+            return self._doubt(answer, f"the submit raised {answer.error}"), answer.sent
         if type(ack) is not Ack:
-            return self._doubt(answer, f"the submit gave a {error_name(type(ack))}"), answer.perhaps
+            return self._doubt(answer, f"the submit gave a {error_name(type(ack))}"), answer.sent
         raw, at = _plain(lambda: ack.raw, bytes), _utc(ack.received_at)
-        broker = _plain(lambda: ack.broker_order_id, str)
-        sent = answer.perhaps
-        if broker is not None:
-            sent = f"sent at {answer.went.isoformat()}, as the broker's {_shown(broker)}"
+        broker, sent = answer.broker, answer.sent
         if broker is None and ack.broker_order_id is not None:
             reason = f"its broker's id is a {error_name(type(ack.broker_order_id))}"
         elif raw is None:
@@ -995,7 +1001,8 @@ class OrderPath:
         """
         account, error = self._shared.account, None
         try:
-            same = bool(self._broker.alias == account)
+            alias = self._broker.alias
+            same = type(alias) is str and alias == account
         except BaseException as raised:
             same, error = False, error_name(raised)
         if error is not None:

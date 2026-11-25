@@ -1362,6 +1362,9 @@ ANSWERS: dict[str, Callable[[OrderIntent, int], object]] = {
 }
 
 
+NAMED = {name for name in ANSWERS if name.startswith("its ") and "broker_order_id" not in name}
+
+
 @pytest.mark.parametrize("name", ANSWERS)
 def test_6_nothing_an_answer_does_as_it_is_read_makes_it_one_that_was_not_sent(name: str) -> None:
     world = World(orders=(order(1, 2), order(2, 2)))
@@ -1376,6 +1379,8 @@ def test_6_nothing_an_answer_does_as_it_is_read_makes_it_one_that_was_not_sent(n
     (alarm,) = world.alarms.sent
     assert f"the order {ID} is in doubt" in alarm
     assert "sent at" in alarm and "not sent" not in alarm
+    # The broker's id stands wherever it is plain text of a plain `Ack`.
+    assert ("as the broker's b-1" in alarm) == (name in NAMED)
     said = [
         alarm,
         *(str({k: v for k, v in e.body.items() if k != "raw"}) for e in world.reader().read()),
@@ -2589,8 +2594,11 @@ def test_6_an_answer_whose_field_is_of_another_type_is_in_doubt_and_says_which(
     assert "PKFAKEKEY" not in alarm
 
 
+@pytest.mark.parametrize("broker", ["b-1", "b-9", None])
 @pytest.mark.parametrize("outage", [False, True])
-def test_2_a_rejection_of_an_order_another_writer_saw_taken_stays_kept(outage: bool) -> None:
+def test_2_a_rejection_of_an_order_another_writer_saw_taken_stays_kept(
+    outage: bool, broker: str | None
+) -> None:
     """The fold takes one, and the order would leave the book while the broker may hold it."""
     world = World(orders=(order(1, 2), order(2, 2)))
     account = world.account()
@@ -2599,7 +2607,7 @@ def test_2_a_rejection_of_an_order_another_writer_saw_taken_stays_kept(outage: b
         world.record(AckEntry(ID, "b-9", b"", False, AT))
         if outage:
             world.store.refuse(("create", journal_entry_key(ACCOUNT, 8)))
-        return Ack(Outcome.REJECTED, "b-1", None, b"{}", AT)
+        return Ack(Outcome.REJECTED, broker, None, b"{}", AT)
 
     world.broker.answer = answer
     with pytest.raises(Halt, match="shows it Acknowledged, as the broker's b-9"):
@@ -2610,3 +2618,53 @@ def test_2_a_rejection_of_an_order_another_writer_saw_taken_stays_kept(outage: b
             world.send(2, account)
     assert world.state() is OrderState.ACKNOWLEDGED and world.submits == 1
     assert len(world.alarms.sent) == 1 and account.unstored()
+
+
+def test_2_a_stand_in_that_landed_is_done_whatever_another_writer_then_says() -> None:
+    """The broker rejects an order in doubt, its stand-in lands, and then the store goes down."""
+    world = World(orders=(order(1, 2), order(2, 2)))
+    account = world.account()
+
+    def answer(intent: OrderIntent, number: int) -> Ack:
+        world.record(InDoubtEntry(ID, "a takeover", None, False, AT))
+        return Ack(Outcome.REJECTED, None, None, b"the answer", AT)
+
+    def after(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", journal_entry_key(ACCOUNT, 8)):
+            world.store.after = lambda n, o, k: None
+            world.store.before = down
+            down(number, op, key)
+
+    world.broker.answer, world.store.after = answer, after
+    with pytest.raises(Halt, match="did not take the rejected"):
+        world.send(1, account)
+    assert account.unstored()
+    world.store.before = lambda n, op, key: None
+    world.record(AckEntry(ID, "b-9", b"", False, AT))
+    account.settle(world.report)
+    assert account.unstored() == () and world.state() is OrderState.ACKNOWLEDGED
+    assert f"the order {ID} is in doubt" in world.alarms.sent[-1]
+    assert world.kinds()[-2:] == ["in_doubt", "ack"]
+
+
+@pytest.mark.parametrize("error", ENDS)
+@pytest.mark.parametrize("answered", [False, True])
+def test_2_a_store_call_that_ends_in_more_than_an_exception_is_left_to_replay(
+    answered: bool, error: BaseException
+) -> None:
+    world = World()
+    account = world.account()
+
+    def before(number: int, op: str, key: str) -> None:
+        if number == (CALLS if answered else BEFORE_SUBMIT):
+            world.store.before = lambda n, o, k: None
+            raise error
+
+    world.store.before = before
+    ends = AssertionError if isinstance(error, KeyboardInterrupt) else type(error)
+    with pytest.raises(ends):
+        world.send(account=account)
+    assert world.state() is OrderState.SENDING and world.submits == answered
+    assert bool(account.unstored()) == answered
+    account.settle(world.report)
+    assert world.state() is (OrderState.ACKNOWLEDGED if answered else OrderState.SENDING)
