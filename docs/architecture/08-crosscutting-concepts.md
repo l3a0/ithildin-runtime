@@ -388,7 +388,7 @@ Every call first reads the log forward from the newest call it knows, and takes 
 | --- | --- |
 | A blob whose events, applied to the account before it, give the account it holds | Takes it in |
 | A blob of a later format, one that is not canonical, or one that is not the call before it with its events applied, such as a fill that is not of its order | Halts, and so does every later call |
-| A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it does not see a gap there and can store a call in it. Its own next call then halts on the call after the gap |
+| A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it does not see a gap there and can store a call in it. Its own next call then halts on the call after the gap, unless that one still follows |
 | Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed. One that lands after the close is an order the account took in time, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) halts on its fill where it had read that order as lost |
 | Its number holding these same bytes | The create is done, since its first answer was lost |
 | Its number holding another call, or a store that says the create raced another and did not land | Starts over on what it then reads, up to 100 times, and then raises with nothing changed |

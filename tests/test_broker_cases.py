@@ -545,6 +545,7 @@ CLOCKS: dict[str, Callable[[datetime], object]] = {
     "no-offset": lambda at: at.replace(tzinfo=None),
     "another-offset": lambda at: at.astimezone(NEW_YORK),
     "no-time": lambda at: "20:40",
+    "a-time-of-day": lambda at: at.timetz(),
 }
 
 
@@ -719,13 +720,31 @@ def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str
         made.broker().positions()
     number, broker = made.log.number, made.broker()
     if call == "find_order":
-        held = broker.find_order(order(1, 4, at=at), LONG_AGO, {}).rows
+        found = broker.find_order(order(1, 4, at=at), LONG_AGO, {})
+        held, whole = found.rows, found.whole_list
+    elif call == "lookup":
+        held, whole = (broker.lookup("sim-o-1"),), True
     else:
         found = READS[call](broker)
-        held = getattr(found, "orders", (found,))
+        held, whole = found.orders, found.whole
+    assert whole
     (one,) = [getattr(o, "order", o) for o in held]
     assert (one.broker_order_id, one.state) == ("sim-o-1", BrokerState.WORKING)
     assert made.log.number == number
+
+
+def test_3_an_order_whose_prices_cannot_be_read_is_in_doubt_and_not_held() -> None:
+    made = world()
+    at = close_of(FULL) - timedelta(minutes=20)
+    (intent,) = made.decide(at, made.orders(at, [(4, GLD)]))
+
+    def lost() -> None:
+        made.store.drop(result_key(DEPLOYMENT, made.run, at, DATA_STAGE))
+
+    why = "in doubt: the simulated account sim-1 cannot read the prices of its order: .* not stored"
+    with pytest.raises(Halt, match=why):
+        made.send(intent, RelayBroker(made.broker(), lost))
+    assert made.broker().orders(LONG_AGO).orders == ()
 
 
 @pytest.mark.parametrize("call", OF_ORDERS)

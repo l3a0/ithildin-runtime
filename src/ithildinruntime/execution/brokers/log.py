@@ -432,7 +432,7 @@ class SimulatedAccount:
             arrives = name in waiting and order.id is not None
             if name in seen or name in self.names and not arrives:
                 raise Halt(f"{what} places {name} a second time")
-            seen |= {name, order.id} - {None}
+            seen |= {name, order.id}
         opened = {order.id: order for order in unended.open_orders}
         for close in events.closed:
             if not _fits(opened[close.id], close):

@@ -287,8 +287,8 @@ never shares the paper account's lease.
    went back can cancel an order whose close had passed and was not yet settled.
    What stops these calls is the log: one that cannot be read or written, a number
    lost 101 times, and a clock that gives no UTC time on an account that holds no
-   call but its opening. So does a fault that cannot happen, which only a test hands
-   it.
+   call but its opening. A test's fault can stop a read of the orders, and stops no
+   cancel.
 
 #### What a simulated fill leaves out
 

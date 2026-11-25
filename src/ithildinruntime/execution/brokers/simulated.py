@@ -198,8 +198,9 @@ class SimulatedBroker:
         """
         clock: datetime | None = None
         try:
-            read = self._clock.now()
-            clock = read if read.utcoffset() == timedelta(0) else None
+            read: object = self._clock.now()
+            if isinstance(read, datetime) and read.utcoffset() == timedelta(0):
+                clock = read
         except Exception:
             # A clock that gives no time stops no cancel and no read of the orders.
             read = None
