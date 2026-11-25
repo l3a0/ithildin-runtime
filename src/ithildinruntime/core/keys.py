@@ -3,9 +3,10 @@
 docs/architecture/08-crosscutting-concepts.md's `#### Where each blob is
 stored` holds the table and `#### What each part of a key stands for` the
 parts. No module puts a key together from strings. Every key that carries a
-journal sequence number pads it to twelve digits, so a listing sorts entries
-in order. Rows whose key another issue holds, such as the order list that maps
-an order in doubt, have no builder here yet.
+journal sequence number, or a simulated account's call number, pads it to
+twelve digits, so a listing sorts entries in order. Rows whose key another issue
+holds, such as the order list that maps an order in doubt, have no builder here
+yet.
 """
 
 from __future__ import annotations
@@ -280,9 +281,8 @@ def book_snapshot_key(account: str, seq: int) -> str:
     return f"accounts/{_name(account, 'account')}/books/{_padded(seq, 12, 'seq')}.json"
 
 
-def sim_account_key(account: str, decision_at: datetime, call: int) -> str:
-    call_part = _padded(call, 4, "call")
-    return f"sim/{_name(account, 'account')}/{decision_part(decision_at)}/{call_part}.json"
+def sim_account_key(account: str, call: int) -> str:
+    return f"sim/{_name(account, 'account')}/{_padded(call, 12, 'call')}.json"
 
 
 def plan_lease_key(deployment: str, run: str) -> str:
