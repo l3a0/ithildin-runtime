@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import socket
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -107,11 +107,6 @@ def two(server: str, **changes: object) -> ClockReading:
             "time server {} has given no answer yet: the name does not resolve",
         ),
         (
-            {"offset_us": 0, "error_us": 1_000_001},
-            "the clock is 0.000000 seconds from time server {}, give or take 1.000001, "
-            "past the bound of 1.000000 seconds",
-        ),
-        (
             {k: None for k in ("offset_us", "error_us", "age_us", "received")},
             "time server {} has given no answer yet: no ask has ended",
         ),
@@ -135,6 +130,9 @@ def test_5_a_reading_that_measured_nothing_faults_only_a_run_that_measures() -> 
     nothing = ClockReading(START, None)
     assert clock_faults(nothing, measured=False) == ()
     assert clock_faults(nothing, measured=True) == ("no time server was asked",)
+    # An absent value is a missing input, and never reads as a run that measures nothing.
+    for absent in (None, 0, ""):
+        assert clock_faults(nothing, measured=absent) == ("no time server was asked",)  # type: ignore[arg-type]
 
 
 # 6. The records.
@@ -156,6 +154,7 @@ def test_5_a_reading_that_measured_nothing_faults_only_a_run_that_measures() -> 
         {"error_us": None},
         {"age_us": None},
         {"received": None},
+        {"offset_us": None, "error_us": None, "age_us": None},
         {"received": "24" * 47},
         {"received": "ZZ" * 48},
         {"received": "AB" * 48},
@@ -175,16 +174,17 @@ def test_6_an_answer_refuses_a_bad_value(changes) -> None:
     [
         (START, ()),
         (START, (answer(),)),
+        (START, 7),
         (START, (answer(), "far")),
-        (START, [answer(), answer("far")][:1]),
         (START, (answer(), answer())),
         (START, (answer("far"), answer(), answer("far"))),
         (datetime(2012, 4, 9), None),
+        (START.astimezone(timezone(timedelta(hours=1))), None),
         ("2012", None),
     ],
 )
 def test_6_a_reading_refuses_a_bad_value(at, answers) -> None:
-    with pytest.raises((ValueError, AttributeError)):
+    with pytest.raises(ValueError, match="^a clock (reading holds|is read at a UTC time)"):
         ClockReading(at, answers)
 
 
@@ -221,12 +221,15 @@ def test_7_the_history_clock_has_no_default() -> None:
 
 def test_7_the_history_clock_hands_back_a_recorded_reading_or_halts() -> None:
     earlier = close(before(LAST))
-    clock = HistoryClock(readings={earlier: good(earlier)})
+    # A session's reading is taken after its decision.
+    recorded = good(earlier + timedelta(seconds=9))
+    clock = HistoryClock(readings={earlier: recorded})
     clock.wait_until(earlier, Reports())
-    assert clock.reading() == good(earlier)
-    clock.wait_until(close(LAST), Reports())
-    with pytest.raises(Halt, match="no reading of the clock is recorded for the decision at 2012"):
-        clock.reading()
+    assert clock.reading() == recorded
+    for lacking in (clock, HistoryClock(readings={})):
+        lacking.wait_until(close(LAST), Reports())
+        with pytest.raises(Halt, match="no reading of the clock is recorded for the decision at"):
+            lacking.reading()
 
 
 def test_7_each_thread_reads_its_own_decision() -> None:
@@ -428,16 +431,22 @@ def _capture(clock: ClockReading, status=()) -> bytes:
 # 9. Through the receive loop, in a backtest.
 
 
-class NoDatagrams(socket.socket):
+class Opened(socket.socket):
+    """Notes each datagram socket, because the sampler swallows whatever an ask raises."""
+
+    datagrams: list[int] = []
+
     def __init__(self, family=-1, type=-1, proto=-1, fileno=None) -> None:
         super().__init__(family, type, proto, fileno)
-        assert self.type != socket.SOCK_DGRAM, "a history clock opened a datagram socket"
+        if self.type == socket.SOCK_DGRAM:
+            self.datagrams.append(self.fileno())
 
 
 def test_9_a_backtest_halts_on_a_recorded_fault_through_the_loop(
     lake: Path, tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr(socket, "socket", NoDatagrams)
+    monkeypatch.setattr(Opened, "datagrams", [])
+    monkeypatch.setattr(socket, "socket", Opened)
     strategy = chan()
     table = Table(stages=(DATA_ROW,), strategies=(strategy,))
     folder = Folder(tmp_path / "store", tmp_path / "queues")
@@ -488,3 +497,6 @@ def test_9_a_backtest_halts_on_a_recorded_fault_through_the_loop(
     assert results[bad].halt.reason == SLOW and len(results[bad].outputs) == 1
     assert "no reading of the clock is recorded" in results[lacking].halt.reason
     assert results[lacking].outputs == ()
+    assert Opened.datagrams == []
+    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).close()
+    assert len(Opened.datagrams) == 1

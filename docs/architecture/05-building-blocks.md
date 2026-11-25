@@ -104,7 +104,7 @@ flowchart TB
 
     subgraph adapters["Adapters, which each worker's entry point builds"]
         lakesrc["Two read-only buckets<br/>marketlake's lake and its live segments,<br/>in S3 or in two folders"]
-        clock["History clock or wall clock,<br/>which keeps each time server's last answer"]
+        clock["History clock or wall clock"]
         timer["Timer<br/>reads wall time and a monotonic clock, and tests fake it"]
         broker["Simulated or paper broker"]
         store["Blob store<br/>S3, or a memory-backed folder"]
@@ -114,13 +114,12 @@ flowchart TB
 
     lakesrc -. "Bucket, the lake read through data's mirror" .-> data
     clock -. "Clock" .-> data
-    clock -. "Clock, for its reading" .-> mon_report
     timer -. "Timer, for deadlines" .-> sup
     timer -. "Timer, for deadlines" .-> mon_report
     timer -. "Timer, for deadlines" .-> exec_recover
     timer -. "Timer, for deadlines" .-> exec_send
     timer -. "Timer, for a late forecast" .-> pc
-    clock -. "Clock, for the cutoff and its reading" .-> exec_send
+    clock -. "Clock, for the cutoff" .-> exec_send
     clock -. "Clock, for the simulator" .-> broker
     broker -. "Broker" .-> exec_recover
     broker -. "Broker" .-> exec_send
@@ -205,7 +204,7 @@ flowchart LR
 strategy sees:
 
 1. The data source's two buckets, folders in a backtest and two prefixes of marketlake's S3 bucket otherwise.
-2. The clock.
+2. The clock. Whether a run measures it, as [The time servers](03-context-and-scope.md#the-time-servers) says, goes with it.
 3. The broker.
 
 It lists three more beside them, which change only where records and signals go:

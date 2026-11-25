@@ -70,7 +70,7 @@ def sampler(hands: Hands, ask, **more) -> TimeServers:  # type: ignore[no-untype
     return TimeServers(TWO, now=hands.now, raw=hands.raw, ask=ask, **more)
 
 
-def never_asked(_: object = None) -> TimeServers:
+def never_asked() -> TimeServers:
     """A sampler no case starts, whose ask would fail."""
 
     def refuse(server: TimeServer, **_: object) -> Exchange:

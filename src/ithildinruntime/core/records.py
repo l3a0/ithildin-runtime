@@ -307,8 +307,8 @@ class TimeAnswer(_Record):
       reads negative, and `error_us` is how far off that can be.
     - `age_us` is the time since the exchange began.
     - `received` is the reply's 48 bytes as hex.
-    - `failed` is why the newest ask failed, not empty, or `None` when it did
-      not.
+    - `failed` is why the newest ask to end failed, not empty, or `None` when it
+      did not.
 
     The four from `offset_us` to `received` are all `None` where the server has
     given no answer yet.

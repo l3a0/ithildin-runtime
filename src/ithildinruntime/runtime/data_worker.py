@@ -6,9 +6,9 @@ stage's result.
 
 The entry point builds the two read-only buckets and hands them to `data`, which
 imports no adapter, so every mode runs one `LakeSource` and differs only in
-the buckets and the clock. One holds marketlake's lake and the other, beside it,
-the capture segments of days not yet sealed. Both come from one configured
-name, with `-live` after it for the second.
+the buckets, the clock and whether that clock is measured. One bucket holds
+marketlake's lake and the other, beside it, the capture segments of days not yet
+sealed. Both come from one configured name, with `-live` after it for the second.
 
 1. A backtest reads a folder that holds marketlake's lake and the folder beside
    it, with no credential. A folder that is not there lists no segment.

@@ -360,16 +360,18 @@ The writing commands are for the cases the platform cannot resolve alone:
 
 #### What to do about a halt on the clock
 
-A halt on the machine's clock is one decision's on shadow and paper, and the next decision reads the clock again, so most need no command. What the reason says decides the step.
+A halt on the machine's clock is one decision's on shadow and paper, and the next decision reads the clock again, so a first one needs no command there. On live it holds the account until the owner clears it, as every halt does. A reason that comes back at the next decision needs the step below.
 
-**Table:** The owner's step for each reason a halt on the clock gives
+**Table:** The owner's step where a halt on the clock repeats
 
 | The reason says | What it means | Step |
 | --- | --- | --- |
-| One server's answer is too old or missing, with why the ask failed, and the other server has no fault | That server, its name's lookup or the path to it is out | Wait. A reading with no fault comes back within 128 seconds of the server's return |
-| Both servers' answers are too old or missing, with why each ask failed | Nothing leaves the host on UDP 123, or the host is cut off | Revert the last apply, if one touched the network or the firewall |
-| An answer is too old or missing, and no ask has ended since | The thread that asks has died or hangs | Replace the VM |
-| The clock is past the bound against a server, and still is at the next decision | chrony is not holding the clock | Replace the VM |
+| A server's answer is too old, or it has given none | The server, its name's lookup or the path to it is out, or the thread that asks it is stuck | Revert the last apply that touched the network, the firewall or the metadata fence. Where none did, wait, and replace the VM if the reason outlasts the server's outage |
+| The clock is past its bound against both servers | chrony is not holding the clock | Replace the VM |
+| The clock is past its bound against one server, and the other has no fault | That server, its name's lookup or the path to it is wrong, and the other shows the clock is right. A new VM would ask the same server | Wait, and keep the snapshot, which holds the reply |
+| No time server was asked | The release gave a trading run a clock that measures nothing | Roll the release back with `ithildin pin set` |
+
+Replace a VM between sessions. Inside one, nothing on slice 1's one VM serves a cancel or the kill switch until the new one is up, so first pull each account's kill switch, or wait until the cancel cutoff has passed. [How a lost VM is replaced](architecture/07-deployment.md#item-1-how-a-lost-vm-is-replaced) says what follows, and the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) says who ends the VM and how.
 
 [The time servers](architecture/03-context-and-scope.md#the-time-servers) says how each reason comes about.
 

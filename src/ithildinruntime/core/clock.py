@@ -34,10 +34,10 @@ def clock_faults(reading: ClockReading, *, measured: bool) -> tuple[str, ...]:
     Every server has to be fresh and within the bound, so there is no vote for a
     forged or broken answer to win. A history clock measures nothing, so a
     reading with no answers is one fault where the run measures its clock, and
-    none where `measured` is false.
+    none where `measured` is `False`. An absent `measured` is not `False`.
     """
     if reading.answers is None:
-        return ("no time server was asked",) if measured else ()
+        return () if measured is False else ("no time server was asked",)
     return tuple(fault for answer in reading.answers if (fault := _fault(answer)) is not None)
 
 

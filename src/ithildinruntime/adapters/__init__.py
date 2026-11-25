@@ -19,8 +19,6 @@ from .time_servers import (
     TimeServer,
     TimeServers,
     exchange,
-    fresh_nonce,
-    raw_us,
 )
 
 __all__ = [
@@ -39,6 +37,4 @@ __all__ = [
     "TimeServers",
     "WallClock",
     "exchange",
-    "fresh_nonce",
-    "raw_us",
 ]

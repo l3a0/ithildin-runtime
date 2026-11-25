@@ -715,7 +715,7 @@ class FakeProgress:
 def test_19_the_wall_clock_reports_while_it_waits_past_the_heartbeat_limit() -> None:
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
-    clock = WallClock(time, servers=never_asked(time), interval=5.0)
+    clock = WallClock(time, servers=never_asked(), interval=5.0)
     report = FakeProgress(time)
     # The receive loop's heartbeat limit is 30 seconds, and the wait is 7 hours.
     at = start + timedelta(hours=7)
@@ -736,7 +736,7 @@ def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(
     at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
     time = FakeTime(at + past)
     report = FakeProgress(time, at if stopped else None)
-    WallClock(time, servers=never_asked(time)).wait_until(at, report)
+    WallClock(time, servers=never_asked()).wait_until(at, report)
     assert report.waited == [] and time.now() == at + past
 
 
@@ -744,7 +744,7 @@ def test_19_the_wall_clock_waits_out_the_last_microsecond() -> None:
     at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
     time = FakeTime(at - timedelta(microseconds=1))
     report = FakeProgress(time)
-    WallClock(time, servers=never_asked(time)).wait_until(at, report)
+    WallClock(time, servers=never_asked()).wait_until(at, report)
     assert report.waited == [1e-06] and time.now() == at
 
 
@@ -752,7 +752,7 @@ def test_19_the_wall_clock_never_waits_past_the_time() -> None:
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
     report = FakeProgress(time)
-    WallClock(time, servers=never_asked(time), interval=5.0).wait_until(
+    WallClock(time, servers=never_asked(), interval=5.0).wait_until(
         start + timedelta(seconds=12), report
     )
     assert report.waited == [5.0, 5.0, 2.0] and time.now() == start + timedelta(seconds=12)
@@ -764,7 +764,7 @@ def test_a_stop_ends_the_wall_clocks_wait_at_once() -> None:
     stop_at = start + timedelta(seconds=12)
     report = FakeProgress(time, stop_at)
     with pytest.raises(Stopped, match="2012-04-09T20:00:00"):
-        WallClock(time, servers=never_asked(time), interval=5.0).wait_until(
+        WallClock(time, servers=never_asked(), interval=5.0).wait_until(
             start + timedelta(hours=7), report
         )
     assert time.now() == stop_at
@@ -775,7 +775,7 @@ def test_a_stop_already_asked_ends_the_wall_clocks_wait_before_any_time_passes()
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
     with pytest.raises(Stopped):
-        WallClock(time, servers=never_asked(time)).wait_until(
+        WallClock(time, servers=never_asked()).wait_until(
             start + timedelta(hours=7), FakeProgress(time, start)
         )
     assert time.now() == start

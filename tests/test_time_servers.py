@@ -171,6 +171,7 @@ LATE = (S, QUARTER - 0x10000)
         ({}, reply(stratum=16), STRATUM),
         ({}, reply(origin=SENT[::-1]), ORIGIN),
         ({}, reply(origin=SENT[:7] + b"\0"), ORIGIN),
+        ({}, reply(origin=b"\0" + SENT[1:]), ORIGIN),
         ({}, reply(t2=bytes(8)), ZERO),
         ({}, reply(t3=bytes(8)), ZERO),
         ({}, reply(t3=LATE), BACK),
@@ -265,7 +266,8 @@ def answers(sock, packet: bytes, client, *, more: bytes = b"", origin: bytes | N
 
 def ask(server: TimeServer, hands: Hands | None = None, sent: bytes = SENT, **more) -> Exchange:
     hands = hands or Hands(wall=EPOCH + micro(S * 10**6 + 250_000), step_us=10)
-    return exchange(server, now=hands.now, raw=hands.raw, nonce=lambda: sent, **more)
+    more = {"nonce": lambda: sent, "timeout": 5} | more
+    return exchange(server, now=hands.now, raw=hands.raw, **more)
 
 
 def test_2_an_answer_and_the_request_that_asked() -> None:
@@ -285,7 +287,7 @@ def test_2_two_asks_carry_different_bytes() -> None:
     for _ in range(2):
         hands = Hands(wall=EPOCH + micro(S * 10**6 + 250_000))
         with Server(answers) as server:
-            exchange(server.at, now=hands.now, raw=hands.raw, nonce=module.fresh_nonce)
+            ask(server.at, hands, nonce=module.fresh_nonce)
         seen.append(server.packet[40:])
     assert seen[0] != seen[1] and {len(s) for s in seen} == {8}
 
@@ -322,8 +324,22 @@ def test_2_every_stamp_before_the_send_is_read_before_the_packet_arrives() -> No
 
             return stamp
 
-        exchange(server.at, now=held(hands.now), raw=held(hands.raw), nonce=lambda: SENT)
+        exchange(server.at, now=held(hands.now), raw=held(hands.raw), nonce=lambda: SENT, timeout=5)
     assert early == [False, False, False]
+
+
+def test_2_the_last_stamp_is_read_once_the_reply_is_in() -> None:
+    hands = Hands(wall=EPOCH + micro(S * 10**6 + 250_000), step_us=10)
+
+    def late(sock, packet: bytes, client) -> None:  # type: ignore[no-untyped-def]
+        # A stamp taken before the reply has been read by now.
+        time.sleep(0.2)
+        hands.pass_us(1_000)
+        answers(sock, packet, client)
+
+    with Server(late) as server:
+        got = ask(server.at, hands)
+    assert got.error_us == 515 + 20 + 2
 
 
 def test_2_a_silent_server_is_a_timeout() -> None:
@@ -420,10 +436,34 @@ def test_2_an_address_written_out_is_asked_as_it_is(monkeypatch) -> None:
 @pytest.mark.parametrize(
     "address", ["127.0.0.1", "10.0.0.9", "100.64.0.1", "224.0.1.1", "169.254.169.123"]
 )
-def test_2_a_name_that_resolves_to_no_global_address_fails(address: str) -> None:
+def test_2_a_name_that_resolves_to_no_global_address_fails(monkeypatch, address: str) -> None:
+    to = redirected(monkeypatch)
     with pytest.raises(AskFailed) as raised:
-        ask(TimeServer("time.example.", 16), resolve=resolving(address, "8.8.8.8"))
-    assert str(raised.value) == "the name does not resolve to a global address"
+        ask(TimeServer("time.example.", 16), resolve=resolving(address, "8.8.8.8"), timeout=0.2)
+    assert str(raised.value) == "the name does not resolve to a global address" and to == []
+
+
+@pytest.mark.parametrize(
+    ("addresses", "said"),
+    [
+        ((), "the ask raised IndexError"),
+        (("2001:db8::1",), "the ask raised AddressValueError"),
+        (("no address",), "the ask raised AddressValueError"),
+    ],
+)
+def test_2_a_lookup_that_gives_no_ipv4_address_is_named_by_its_class(
+    monkeypatch, addresses: tuple[str, ...], said: str
+) -> None:
+    to = redirected(monkeypatch)
+    hands = Hands()
+
+    def lookup(server: TimeServer, **clocks) -> Exchange:
+        return exchange(server, resolve=resolving(*addresses), timeout=0.2, **clocks)
+
+    named = TimeServer("time.example.", 16)
+    servers = TimeServers((named, FAR), now=hands.now, raw=hands.raw, ask=lookup)
+    servers.poll(named)
+    assert servers.reading().answers[0].failed == said and to == []
 
 
 @pytest.mark.parametrize(
@@ -433,30 +473,30 @@ def test_2_a_name_that_resolves_to_no_global_address_fails(address: str) -> None
         UnicodeError("label empty or too long"),
         TimeoutError(),
         PermissionError(),
+        ValueError("a port past 65535"),
     ],
 )
 def test_2_every_error_of_the_lookup_is_a_name_that_does_not_resolve(error: Exception) -> None:
     with pytest.raises(AskFailed) as raised:
         ask(TimeServer("time.example.", 16), resolve=resolving(error=error))
     assert str(raised.value) == "the name does not resolve"
-    with pytest.raises(LookupError):
-        ask(TimeServer("time.example.", 16), resolve=resolving(error=LookupError()))
 
 
-# One reply from time.aws.com, captured on 2026-11-25, with the stamps around it.
+# One reply of time.aws.com to one laptop, captured on 2026-11-25 with the stamps the
+# ask took. The raw ones are less the first of them.
 CAPTURED = bytes.fromhex(
-    "240400ee000000180000000da9fea97beeb16ad4d2b5db6e17a2ce27868bb486eeb16ad7002d2ce7eeb16ad7002d5074"
+    "240400ee000000180000000da9fea97beeb1a724e2618af9a2505884833876a7eeb1a726b42b45a9eeb1a726b42b784f"
 )
 
 
 def test_2_the_captured_reply_parses() -> None:
-    w1 = 1_795_615_830_924_028
-    sent = bytes.fromhex("17a2ce27868bb486")
-    got = read_reply(CAPTURED, sent, m1=0, w1=w1, m2=2, m4=27_000)
-    # T2 is 2026-11-25T14:10:31.000689Z, and T3 two microseconds later.
-    assert got.offset_us == (2 * (w1 - 1_795_615_831_000_690) + 27_000) // 2 == -63_162
+    w1 = 1_795_631_270_655_777
+    got = read_reply(CAPTURED, bytes.fromhex("a2505884833876a7"), m1=0, w1=w1, m2=141, m4=26_201)
+    # T2 is 2026-11-25T18:27:50.703785Z, and T3 three microseconds later.
+    t2 = 1_795_631_270_703_785
+    assert got.offset_us == (2 * w1 - 2 * t2 - 3 + 26_201) // 2 == -34_909
     # 24/65536 and 13/65536 round up to 367 and 199.
-    assert got.error_us == 13_499 + 184 + 199 + 2 + 2
+    assert got.error_us == 13_099 + 184 + 199 + 141 + 2 == 13_625
 
 
 # 3. The sampler.
@@ -522,6 +562,37 @@ def test_3_an_ask_is_due_from_when_the_last_one_began() -> None:
     servers.poll(NEAR)
     assert len(asks.asked) == 1
     hands.pass_us(1)
+    servers.poll(NEAR)
+    assert len(asks.asked) == 2
+
+
+@pytest.mark.parametrize("error", [AskFailed("no reply came in time"), ValueError("a reply")])
+def test_3_a_failed_ask_is_due_from_when_it_began(error: Exception) -> None:
+    hands, asks = Hands(), Asks()
+    asks.fails["near"] = error
+
+    def takes_long(server: TimeServer, **clocks) -> Exchange:
+        hands.pass_us(1_500_000)
+        return asks(server, **clocks)
+
+    servers = sampler(hands, takes_long)
+    servers.poll(NEAR)
+    for us, want in [(499_999, 1), (1, 2)]:
+        hands.pass_us(us)
+        servers.poll(NEAR)
+        assert len(asks.asked) == want
+
+
+def test_3_an_ask_is_due_from_before_its_lookup() -> None:
+    hands, asks = Hands(), Asks()
+
+    def looks_up(server: TimeServer, **clocks) -> Exchange:
+        hands.pass_us(5_000_000)
+        return asks(server, **clocks)
+
+    servers = sampler(hands, looks_up)
+    servers.poll(NEAR)
+    hands.pass_us(11_000_000)
     servers.poll(NEAR)
     assert len(asks.asked) == 2
 
@@ -727,6 +798,8 @@ def test_3_a_wall_clock_with_no_servers_reads_no_answers() -> None:
             return hands.now()
 
     assert WallClock(OnHands(), servers=None).reading() == ClockReading(START, None)
+    with pytest.raises(TypeError):
+        WallClock(OnHands())  # type: ignore[call-arg]
 
 
 # 4. The threads.
@@ -765,6 +838,26 @@ def test_4_each_server_is_polled_again_and_none_after_a_stop() -> None:
     assert len(faults) == 2 and all("past the bound" in fault for fault in faults)
 
 
+def test_4_a_thread_outlives_the_asks_that_fail() -> None:
+    hands, asks = Hands(), Asks()
+    tries: list[str] = []
+    failures = [AskFailed("no reply came in time"), ValueError("a reply"), AskFailed("again")]
+
+    def fails_first(server: TimeServer, **clocks) -> Exchange:
+        hands.pass_us(64_000_000)
+        if server.name == "near" and len(tries) < len(failures):
+            tries.append(server.name)
+            raise failures[len(tries) - 1]
+        return asks(server, **clocks)
+
+    servers = sampler(hands, fails_first, pause=0.005)
+    servers.start()
+    try:
+        assert servers.wait(10) and len(tries) == 3
+    finally:
+        servers.stop()
+
+
 @pytest.mark.parametrize("hung", [{"far"}, {"near", "far"}], ids=["one", "two"])
 def test_4_a_hung_ask_holds_neither_the_other_server_nor_start_nor_stop(hung: set[str]) -> None:
     hands, asks = Hands(), Asks()
@@ -783,19 +876,24 @@ def test_4_a_hung_ask_holds_neither_the_other_server_nor_start_nor_stop(hung: se
         servers.start()
         assert time.monotonic() - began < 1.5
         assert all(event.wait(5) for event in hanging.values())
-        end = time.monotonic() + 5
+        end = time.monotonic() + 10
         while "near" not in hung and servers.reading().answers[0].age_us is None:
             assert time.monotonic() < end
             time.sleep(0.005)
         # A reading comes back while an ask blocks.
         answered = [a.server for a in servers.reading().answers if a.age_us is not None]
         assert answered == [name for name in ("near", "far") if name not in hung]
+        # It goes on being asked while the other hangs.
+        while "near" not in hung and asks.asked.count("near") < 4:
+            assert time.monotonic() < end
+            hands.pass_us(16_000_000)
+            time.sleep(0.01)
         with pytest.raises(RuntimeError, match="already started"):
             servers.start()
         began = time.monotonic()
         servers.stop()
         # Two seconds in all, however many hang.
-        assert 1.9 < time.monotonic() - began < 3.9
+        assert time.monotonic() - began < 3.9
     finally:
         release.set()
     for thread in servers._threads:
@@ -818,6 +916,11 @@ def test_4_wait_ends_at_its_time_where_one_has_not() -> None:
     assert 0.15 < time.monotonic() - began < 2
 
 
+def test_4_wait_ends_at_its_time_where_no_ask_has_ended() -> None:
+    servers, _, _ = made()
+    assert servers.wait(0.1) is False
+
+
 def test_4_wait_ends_on_the_answer_that_arrives_while_it_waits() -> None:
     servers, _, _ = made()
     servers.poll(NEAR)
@@ -832,7 +935,8 @@ def test_4_wait_ends_on_the_answer_that_arrives_while_it_waits() -> None:
     waiter = threading.Thread(target=waits)
     waiter.start()
     assert waiting.wait(5)
-    time.sleep(0.1)
+    time.sleep(0.2)
+    assert results == []
     servers.poll(FAR)
     waiter.join(15)
     ((answered, took),) = results

@@ -138,7 +138,7 @@ def _address(server: TimeServer, resolve: Callable[..., Any]) -> str:
         pass
     try:
         found = resolve(server.name, server.port, socket.AF_INET, socket.SOCK_DGRAM)
-    except (OSError, UnicodeError):
+    except Exception:
         # Whatever the lookup failed by, a timeout of it among them.
         raise AskFailed("the name does not resolve") from None
     address = ipaddress.IPv4Address(found[0][4][0])

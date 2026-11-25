@@ -2,9 +2,9 @@
 
 `LakeSource` implements `core.DataSource` over the mirror, the live bucket, the
 security master, the two kind contracts and `core.sessions`. Every mode runs it,
-and the modes differ only in the buckets it reads and the clock the stage
-waits on. A snapshot holds only bars whose end and knowable time are at or
-before the decision.
+and the modes differ only in the buckets it reads, the clock the stage waits
+on and, with that clock, whether it is measured. A snapshot holds only bars
+whose end and knowable time are at or before the decision.
 
 How one decision is read, in order.
 
@@ -67,6 +67,10 @@ maximum age and spread halts before either bucket is called, because a quote
 read under none is stale. A fault in the read of the quotes never takes the
 snapshot's place. `_quote_halts` gives each one, and each reason a quote cannot
 be read, once the snapshot is stored.
+
+After the last answer the read waits on, the source takes the clock's reading,
+which the snapshot holds. `core.clock_faults` judges it, and its faults come
+first among the reasons the decision halts.
 """
 
 from __future__ import annotations
@@ -269,10 +273,11 @@ class LakeSource:
         """The port's read, which halts on any reason a stored snapshot would halt on.
 
         `core.DataSource` returns a snapshot alone, so a caller of this method
-        never sees `Reading.halts`. A missing, stale or unstated input, a bar
-        whose prices contradict each other, two bars of one instrument that
-        are of two series, or a quote that cannot be read, therefore raises here
-        rather than come back as a snapshot that reads as usable.
+        never sees `Reading.halts`. A clock past a bound, a missing, stale or
+        unstated input, a bar whose prices contradict each other, two bars of one
+        instrument that are of two series, or a quote that cannot be read,
+        therefore raises here rather than come back as a snapshot that reads as
+        usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
         """
         reading = self.read(decision_at)
