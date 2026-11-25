@@ -48,7 +48,7 @@ from ithildinruntime.runtime.loop import Item
 from tests.support import lake as lakes
 from tests.support import made_lake as made
 from tests.support import segments
-from tests.support.spreads import GLD, USO, synthetic
+from tests.support.spreads import GLD, USO, bar, synthetic
 from tests.test_alpha import DEPLOYMENT, RELEASE, RUN, handler, run, store, table_of
 from tests.test_data_source import Clock, Timer
 from tests.test_data_stage import Reports
@@ -230,16 +230,9 @@ def read_as_a_move(
 ) -> None:
     """The stored bars and the forecast read the planted closes, with no split undone."""
     assert [b.close for b in found.snapshot.bars[leg]["1d"]] == [planted[d] for d in WINDOW]
-    # The marks a model would read are taken off: basis, origin, source, volume counting and flags.
+    # Fresh bars of the same sessions and closes, so nothing of a captured bar is left.
     adjusted = {
-        i: {
-            "1d": tuple(
-                replace(
-                    b, basis="adjusted", origin="imported", source="made up", volume_counted="x"
-                )
-                for b in by["1d"]
-            )
-        }
+        i: {"1d": tuple(bar(i, b.session, b.close) for b in by["1d"])}
         for i, by in found.snapshot.bars.items()
     }
     held = replace(found.snapshot, bars=adjusted, flags={})
