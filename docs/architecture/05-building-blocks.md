@@ -1124,7 +1124,7 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 
 ##### How a late fill is still fetched
 
-`fills(since)` takes the last decision's time less a stated overlap, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id.
+`fills(since)` takes a time before any fill not yet journaled, whose rule is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id.
 
 1. A repeat with the same broker's order, instrument, shares, price and time is skipped. The other fields may differ, because a second endpoint may leave one out or write it another way.
 2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
