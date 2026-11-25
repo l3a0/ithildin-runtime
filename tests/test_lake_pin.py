@@ -1,9 +1,9 @@
 """The check that marketlake's `main` says the pin is due a raise, for #131.
 
 Each case builds a small git repository in place of marketlake's, whose pinned
-commit holds the two modules as the installed package does, and runs the whole
-script against it. So the fetch, the reads and the exit code all run, with no
-network. The workflow that runs the script gets its own checks, because a
+commit holds short stand-ins for the three files the script reads, and runs the
+whole script against it. So the fetch, the reads and the exit code all run, with
+no network. The workflow that runs the script gets its own checks, because a
 credential or a pull request trigger added to it later would fail nothing else.
 """
 
@@ -22,6 +22,7 @@ from types import ModuleType
 import lake
 import pytest
 import yaml
+from lake import journal
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "check_lake_pin.py"
@@ -43,13 +44,12 @@ def _load() -> ModuleType:
 
 script = _load()
 
-# The pin's own files, as the installed package holds them, and the version its lock names.
+# What the stand-in's pinned commit holds.
 PINNED = {
-    JOURNAL: (INSTALLED / "journal.py").read_text(encoding="utf-8"),
-    JOIN: (INSTALLED / "segment_join.py").read_text(encoding="utf-8"),
+    JOURNAL: "\nSCHEMA_VERSION = 2\n",
+    JOIN: "JOINS = 1\n",
     "uv.lock": '[[package]]\nname = "pyarrow"\nversion = "25.0.1"\n',
 }
-
 
 # What a commit changes: each file's new text, or `None` where it is removed.
 type Files = Mapping[str, str | bytes | None]
@@ -65,7 +65,10 @@ GIT_ENV = {
 
 
 def _git(where: Path, *args: str) -> str:
-    env = {**os.environ, **GIT_ENV}
+    # Git exports GIT_DIR to a hook or a `rebase -x`, which would point this at the
+    # repository the suite runs in, so none of the machine's own names are passed on.
+    machine = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    env = {**machine, **GIT_ENV}
     done = subprocess.run(
         ["git", *args], cwd=where, env=env, check=True, capture_output=True, text=True
     )
@@ -121,9 +124,7 @@ def _run(lock: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
 
 
 def _versioned(version: int) -> str:
-    text = PINNED[JOURNAL]
-    assert text.count("\nSCHEMA_VERSION = 2\n") == 1
-    return text.replace("\nSCHEMA_VERSION = 2\n", f"\nSCHEMA_VERSION = {version}\n")
+    return f"\nSCHEMA_VERSION = {version}\n"
 
 
 def _locked(version: str) -> str:
@@ -159,9 +160,16 @@ VERSION_SAID = (
     "- `SCHEMA_VERSION` in src/lake/journal.py is 3 on marketlake's main and 2 at the pin."
 )
 JOIN_SAID = "- src/lake/segment_join.py on marketlake's main differs from the pin's."
-PYARROW_SAID = (
-    "- pyarrow is 26.0.1 in marketlake's uv.lock on main and 25.0.1 in this repository's uv.lock."
-)
+PYARROW_SAID = "- pyarrow in marketlake's uv.lock is 26.0.1 on main and 25.0.1 at the pin."
+
+
+def _whole(marketlake: Marketlake, commit: str, said: list[str]) -> list[str]:
+    return [
+        "- The marketlake pin does not match: marketlake's main at "
+        f"{commit[:12]} against the pin at {marketlake.pin[:12]}.",
+        *said,
+        f"- Read {script.CONTRACT}.",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -225,25 +233,51 @@ def test_each_difference_fails_the_run_and_is_named_with_its_rule(
     commit = marketlake.commit(files)
     code, out = _run(lock, capsys)
     assert code == 1
-    assert out.splitlines() == [
-        "- The marketlake pin may be due a raise: marketlake's main at "
-        f"{commit[:12]} against the pin at {marketlake.pin[:12]}.",
-        *said,
-        f"- Read {script.CONTRACT}.",
+    assert out.splitlines() == _whole(marketlake, commit, said)
+
+
+def test_each_rule_says_what_to_do() -> None:
+    assert "raise the pin now" in script.RAISE_NOW
+    assert "moves in that same raise" in script.RAISE_TOGETHER
+    assert "wait to raise the pin until marketlake's deploy" in script.WAIT
+    assert "raise nothing" in script.NO_RAISE
+    assert "set pyarrow here to the pinned commit's version now" in script.MATCH_PIN
+
+
+def _mispinned(here: str, pinned: str) -> list[str]:
+    return [
+        f"- pyarrow is {here} in this repository's uv.lock and {pinned} in marketlake's at the "
+        "pin.",
+        f"- {script.MATCH_PIN}",
     ]
 
 
-def test_the_rules_are_the_contracts_own_two() -> None:
-    assert "raise the pin now" in script.RAISE_NOW
-    assert "wait to raise the pin until marketlake's deploy" in script.WAIT
-
-
-def test_pyarrow_moved_here_alone_fails_the_run(
+def test_pyarrow_moved_here_alone_is_told_to_match_the_pin(
     marketlake: Marketlake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, out = _run(marketlake.lock(tmp_path / "uv.lock", pyarrow="26.0.1"), capsys)
     assert code == 1
-    assert "pyarrow is 25.0.1 in marketlake's uv.lock on main and 26.0.1 in this" in out
+    assert out.splitlines() == _whole(marketlake, marketlake.pin, _mispinned("26.0.1", "25.0.1"))
+
+
+def test_a_commit_raised_without_its_pyarrow_is_told_to_match_the_pin(
+    marketlake: Marketlake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    marketlake.pin = marketlake.commit({"uv.lock": _locked("26.0.1")})
+    code, out = _run(marketlake.lock(tmp_path / "uv.lock", pyarrow="25.0.1"), capsys)
+    assert code == 1
+    assert out.splitlines() == _whole(marketlake, marketlake.pin, _mispinned("25.0.1", "26.0.1"))
+
+
+def test_pyarrow_moved_to_mains_without_the_commit_is_no_pass(
+    marketlake: Marketlake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The edit a red run for pyarrow on main invites, before the deploy it waits for."""
+    commit = marketlake.commit({"uv.lock": _locked("26.0.1")})
+    code, out = _run(marketlake.lock(tmp_path / "uv.lock", pyarrow="26.0.1"), capsys)
+    assert code == 1
+    said = [PYARROW_SAID, f"- {script.WAIT}", *_mispinned("26.0.1", "25.0.1")]
+    assert out.splitlines() == _whole(marketlake, commit, said)
 
 
 def test_a_branch_other_than_main_is_not_read(
@@ -268,8 +302,18 @@ TWO_PYARROWS = PINNED["uv.lock"] + '\n[[package]]\nname = "pyarrow"\nversion = "
         ({JOURNAL: "SCHEMA_VERSION = True\n"}, "assigns no one integer"),
         ({JOURNAL: 'SCHEMA_VERSION = "2"\n'}, "assigns no one integer"),
         ({JOURNAL: "SCHEMA_VERSION: int\n"}, "assigns no one integer"),
+        ({JOURNAL: "SCHEMA_VERSION = 2\nSCHEMA_VERSION += 1\n"}, "assigns no one integer"),
+        ({JOURNAL: "SCHEMA_VERSION = 2\nif X:\n    SCHEMA_VERSION = 3\n"}, "assigns no one"),
+        ({JOURNAL: "SCHEMA_VERSION = 2\nSCHEMA_VERSION, X = 3, 4\n"}, "assigns no one integer"),
+        ({JOURNAL: "SCHEMA_VERSION = 0\n"}, "assigns no one integer"),
+        ({JOURNAL: "SCHEMA_VERSION = 10000\n"}, "assigns no one integer"),
+        ({JOURNAL: f"SCHEMA_VERSION = {'9' * 5000}\n"}, "does not parse"),
+        ({JOURNAL: f"X = {'-' * 100_000}2\n"}, "does not parse"),
+        ({JOURNAL: b"#" * (script.FILE_BYTES + 1)}, "is past 8000000 bytes"),
         ({"uv.lock": None}, "uv.lock is not at"),
-        ({"uv.lock": b"\xff"}, "is not text"),
+        ({"uv.lock": b"\xff"}, "says nothing of the pin: UnicodeDecodeError"),
+        ({"uv.lock": f"x = {'[' * 100_000}"}, "is no uv lock"),
+        ({"uv.lock": _locked("1" * 33)}, "names no version of pyarrow"),
         ({"uv.lock": "not = toml = at all"}, "is no uv lock"),
         ({"uv.lock": "version = 1\n"}, "is no uv lock"),
         ({"uv.lock": '[[package]]\nname = "duckdb"\n'}, "holds 0 entries for pyarrow"),
@@ -319,6 +363,55 @@ def test_a_remote_that_does_not_answer_is_no_pass(
     assert "git fetch failed" in out
 
 
+def test_a_remote_that_never_answers_is_no_pass(
+    lock: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stand_in = tmp_path / "bin"
+    stand_in.mkdir()
+    (stand_in / "git").write_text("#!/bin/sh\nexec sleep 60\n")
+    (stand_in / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(script, "FETCH_SECONDS", 0.2)
+    code, out = _run(lock, capsys)
+    assert code == 2
+    assert "git init failed: TimeoutExpired" in out
+
+
+def test_a_lock_that_is_not_there_is_no_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out = _run(tmp_path / "absent.lock", capsys)
+    assert code == 2
+    assert "says nothing of the pin: FileNotFoundError" in out
+
+
+@pytest.mark.parametrize("form", ["option", "ssh", "ext"])
+def test_a_remote_that_is_no_https_address_runs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    """The lock's own text reaches git, so an option or another transport is refused."""
+    ran = tmp_path / "ran"
+    stand_in = tmp_path / "bin"
+    stand_in.mkdir()
+    (stand_in / "ssh").write_text(f"#!/bin/sh\ntouch {ran}\n")
+    (stand_in / "ssh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stand_in}{os.pathsep}{os.environ['PATH']}")
+    remote = {
+        "option": f"--upload-pack=touch {ran}; false ",
+        "ssh": "ssh://127.0.0.1/x",
+        "ext": f"ext::touch {ran}",
+    }[form]
+    path = tmp_path / "uv.lock"
+    path.write_text(
+        f'[[package]]\nname = "marketlake"\nsource = {{ git = "{remote}#{"a" * 40}" }}\n\n'
+        '[[package]]\nname = "pyarrow"\nversion = "25.0.1"\n'
+    )
+    code, out = _run(path, capsys)
+    assert code == 2
+    assert "git fetch failed" in out
+    assert not ran.exists()
+
+
 @pytest.mark.parametrize("source", ["", "https://example.com/x", "https://example.com/x?rev=a#abc"])
 def test_a_lock_that_pins_no_full_commit_is_no_pass(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], source: str
@@ -350,7 +443,20 @@ def test_the_fetch_takes_no_credential_from_the_machine(
     remote = script.Remote(bare, "unused")
     assert "credential" not in remote._git("config", "--list").decode()
     assert "planted" not in remote.env.values()
-    assert remote.env["GIT_TERMINAL_PROMPT"] == "0"
+    assert remote.env == {
+        "PATH": os.environ["PATH"],
+        "HOME": str(bare),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ALLOW_PROTOCOL": "https:file",
+    }
+
+
+def test_the_installed_journal_reads_as_the_version_it_holds() -> None:
+    """The stand-in is short, so this shows the real file's shape is one the script reads."""
+    source = (INSTALLED / "journal.py").read_bytes()
+    assert script.schema_version(source, "installed") == journal.SCHEMA_VERSION
+    assert (INSTALLED / "segment_join.py").is_file()
 
 
 def test_the_tracked_lock_holds_what_pyproject_pins() -> None:
@@ -390,9 +496,13 @@ def test_every_scheduled_slot_is_on_a_weekday_before_the_earliest_open() -> None
 def test_the_workflow_reads_and_holds_no_credential() -> None:
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}
+    # True is the key `on`. Every key is named, so none that hides a failure or adds a
+    # credential, such as `continue-on-error`, `if`, `env` or `environment`, can join them.
+    assert set(workflow) == {"name", True, "permissions", "jobs"}
     (job,) = workflow["jobs"].values()
-    assert "permissions" not in job and "environment" not in job and "env" not in job
+    assert set(job) == {"runs-on", "timeout-minutes", "steps"}
     checkout, check = job["steps"]
+    assert set(checkout) == {"uses", "with"}
     assert re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkout["uses"])
     assert checkout["with"] == {"persist-credentials": False}
     assert set(check) == {"name", "shell", "run"}

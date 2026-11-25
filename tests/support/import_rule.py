@@ -101,6 +101,9 @@ LIBRARIES: dict[str, str] = {
     "boto3": "adapters",
     "botocore": "adapters",
     "lake": "data",
+    # What marketlake's files are read with, so a second reader of them would
+    # import it.
+    "pyarrow": "data",
     "alpaca": "brokers",
     "alpaca_trade_api": "brokers",
     # The one codec writes every blob, so only `core` writes canonical JSON.

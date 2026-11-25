@@ -49,6 +49,7 @@ from lake import journal
 from lake.bar_import import import_vintages
 from lake.calendar import MARKET_TZ, ExchangeCalendar
 from lake.capture_spans import CaptureSpans, spans_path
+from lake.gap import SEGMENT_STAMP_FORMAT
 from lake.manifest import append_manifest, manifest_path, sha256_file
 from lake.schema_versions import record_schema_version
 from lake.security_master import KIND_EQUITY, SecurityMaster, master_path
@@ -232,8 +233,8 @@ def doubled(root: Path, ticker: str, day: date) -> str:
     return key
 
 
-def quote_row(ticker: str, minute: datetime, **changes: object) -> dict[str, object]:
-    """One captured quote as marketlake's capture writes it, landed a second after its minute.
+def quote_row(ticker: str, minute: datetime, /, **changes: object) -> dict[str, object]:
+    """One captured quote, landed a second after its minute, with any column changed.
 
     A column not named here is null. The prices are made up.
     """
@@ -288,7 +289,8 @@ def quotes_segment(
     """Write one closed quotes segment, and give its lake-relative path and SHA-256.
 
     It goes through `lake.journal`'s `schema_for`, `segment_path` and
-    `SegmentWriter`, so the bytes are the ones capture writes.
+    `SegmentWriter`, so the file is one marketlake's own writer wrote. `schema`
+    retypes a column.
     """
     schema = schema or journal.schema_for(journal.QUOTES_SURFACE)
     path = journal.segment_path(
@@ -296,7 +298,7 @@ def quotes_segment(
         journal.QUOTES_SURFACE,
         ticker,
         minute.astimezone(MARKET_TZ).date(),
-        minute.strftime("%Y%m%dT%H%M%S"),
+        minute.strftime(SEGMENT_STAMP_FORMAT),
         1,
     )
     with journal.SegmentWriter(path, schema) as writer:

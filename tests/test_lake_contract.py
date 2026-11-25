@@ -3,10 +3,11 @@
 Acceptance tests 22 and 23 on #5, and the contract tests of #131. A raise of
 the pin that changes a name here fails here first.
 
-marketlake's README publishes `lake.unsealed` in its `Read an unsealed day`,
-and of the rest only `is_reader_file` and `latest_entries`, as names a consumer
-imports. So every other name is relied on by its docstring at the pinned
-commit, and a test here exercises each over the built lake.
+marketlake's README publishes `lake.unsealed` in its `Read an unsealed day`, and
+there it names `lake.loader`'s `LoadError`, `is_reader_file`, `latest_entries` and
+`lake.journal.SCHEMA_VERSION`. Every other name, `load_bars` among them, is relied
+on by its docstring at the pinned commit. A test of a published name holds what
+the README states and no more, so a change it allows passes.
 
 1. `lake.loader.load_bars`, its `LoadError` family and the columns it returns.
 2. `lake.paths.is_reader_file`, and `lake.paths.parse_bars_rel`, which inverts
@@ -19,8 +20,11 @@ commit, and a test here exercises each over the built lake.
    and the 21 columns the README publishes, at their types.
 7. `lake.journal`'s `SCHEMA_VERSION`, the newest the pinned reader reads.
 8. `lake.journal`'s `schema_for`, `segment_path`, `SegmentWriter`,
-   `QUOTES_SURFACE` and the two row kinds, in tests only, which build a segment.
-9. pyarrow's version, the one marketlake's `uv.lock` holds at the pinned commit.
+   `QUOTES_SURFACE` and the two row kinds, and `lake.gap.SEGMENT_STAMP_FORMAT`,
+   in tests only, which build a segment. `lake.schema_versions` and
+   `lake.battery.build_entry`, in tests only, build the two ledgers the reader reads.
+9. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
+   compares it with the one marketlake's `uv.lock` holds at the pinned commit.
 """
 
 from __future__ import annotations
@@ -31,9 +35,10 @@ from pathlib import Path
 
 import pyarrow as pa
 import pytest
-from lake import journal
+from lake import capture, journal
 from lake.battery import build_entry
-from lake.calendar import ExchangeCalendar
+from lake.calendar import MARKET_TZ, ExchangeCalendar
+from lake.gap import SEGMENT_STAMP_FORMAT
 from lake.loader import BarsAbsent, LoadError, load_bars
 from lake.manifest import append_quarantine, latest_entries
 from lake.paths import LakePaths, is_reader_file, parse_bars_rel
@@ -194,7 +199,7 @@ def test_23_latest_entries_drops_a_torn_last_line_and_still_answers(lake: Path) 
 
 # The reader of a day before its seal, over segments marketlake's own writer wrote.
 
-DAY = date(2026, 11, 24)
+DAY = "2026-11-24"
 MINUTES = [datetime(2026, 11, 24, 20, minute, tzinfo=UTC) for minute in (37, 38, 39)]
 LATE = datetime(2026, 11, 24, 20, 40, tzinfo=UTC)
 SECOND = timedelta(seconds=1)
@@ -243,10 +248,55 @@ def _read(root: Path, segments: dict[str, str], at: datetime = LATE) -> pa.Table
 def test_unsealed_the_door_returns_the_data_rows_landed_by_the_instant(tmp_path: Path) -> None:
     segments = _day(tmp_path)
     landed = MINUTES[2] + SECOND
-    assert _read(tmp_path, segments, landed).column("bid").to_pylist() == [60.0, 61.0]
+    assert sorted(_read(tmp_path, segments, landed).column("bid").to_pylist()) == [60.0, 61.0]
     earlier = _read(tmp_path, segments, landed - timedelta(microseconds=1))
     assert earlier.column("bid").to_pylist() == [60.0]
     assert earlier.column("fetch_end_ts").to_pylist() == [(MINUTES[0] + SECOND).isoformat()]
+
+
+def test_unsealed_the_cut_compares_instants_and_never_text(tmp_path: Path) -> None:
+    """This row lands a second after `at`, and its text sorts before `at`'s in UTC."""
+    landed = MINUTES[2] + SECOND
+    stamp = landed.astimezone(MARKET_TZ).isoformat()
+    assert stamp < MINUTES[2].isoformat()
+    row = lakes.quote_row("GLD", MINUTES[2], fetch_end_ts=stamp)
+    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[2], row)
+    assert _read(tmp_path, {rel: digest}, MINUTES[2]).num_rows == 0
+    assert _read(tmp_path, {rel: digest}, landed).num_rows == 1
+
+
+def test_unsealed_every_row_of_a_minute_is_returned(tmp_path: Path) -> None:
+    rows = [
+        lakes.quote_row("GLD", MINUTES[0], fetch_end_ts=(MINUTES[0] + wait * SECOND).isoformat())
+        for wait in (2, 1)
+    ]
+    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], *rows)
+    stamps = _read(tmp_path, {rel: digest}).column("fetch_end_ts").to_pylist()
+    assert sorted(stamps) == sorted(row["fetch_end_ts"] for row in rows)
+
+
+def test_unsealed_a_value_held_in_extra_is_never_read_as_null(tmp_path: Path) -> None:
+    """A field the writer could not hold in its column sits in `extra`, its column null."""
+    older = journal.SCHEMA_VERSION - 1
+    shapes = running_fingerprints()
+    del shapes[journal.QUOTES_SURFACE]["bid_size"]
+    recorded = RecordedVersion(older, datetime(2026, 8, 1, tzinfo=UTC), shapes)
+    SchemaVersionLedger([recorded]).write(ledger_path(tmp_path))
+    schema = journal.schema_for(journal.QUOTES_SURFACE)
+    held = {"extra": '{"quote": {"bidSize": 7}}'}
+    lifted, digest = lakes.quotes_segment(
+        tmp_path,
+        "GLD",
+        MINUTES[0],
+        lakes.quote_row("GLD", MINUTES[0], schema_version=older, **held),
+        schema=schema.remove(schema.get_field_index("bid_size")),
+    )
+    assert _read(tmp_path, {lifted: digest}).column("bid_size").to_pylist() == [7]
+    row = lakes.quote_row("GLD", MINUTES[1], bid_size=None, **held)
+    routed, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[1], row)
+    with pytest.raises(UnsealedRefused) as raised:
+        _read(tmp_path, {routed: digest})
+    assert raised.value.segment == routed
 
 
 def test_unsealed_the_door_returns_an_empty_table_with_its_columns(tmp_path: Path) -> None:
@@ -265,13 +315,26 @@ def test_unsealed_every_segment_the_writer_names_sits_under_its_own_tickers_pref
 ) -> None:
     prefix = segment_prefix("GLD", DAY)
     assert prefix == "journal/date=2026-11-24/surface=quotes/ticker=GLD/"
-    assert prefix == segment_prefix("GLD", "2026-11-24")
-    rels = list(_day(tmp_path))
-    assert all(rel.startswith(prefix) for rel in rels)
-    # Paths under one prefix sort by the cycle's start, which the walk back rests on.
-    assert rels == sorted(rels)
+    assert all(rel.startswith(prefix) for rel in _day(tmp_path))
     other, _ = lakes.quotes_segment(tmp_path, "GLDM", MINUTES[0], lakes.gap_row("GLDM", MINUTES[0]))
     assert not other.startswith(prefix)
+
+
+def test_unsealed_paths_under_one_prefix_sort_by_cycle_start(tmp_path: Path) -> None:
+    """#100's walk from the newest segment back rests on it."""
+    start = datetime(2026, 11, 24, 14, 58, 59, 999999, tzinfo=UTC)
+    steps = [timedelta(microseconds=1), SECOND, 60 * SECOND, 3600 * SECOND]
+    cycles = [start, *(start + step for step in steps)]
+    rels = [
+        lakes.quotes_segment(tmp_path, "GLD", cycle, lakes.quote_row("GLD", cycle))[0]
+        for cycle in cycles
+    ]
+    assert rels == sorted(rels)
+
+
+def test_unsealed_capture_writes_the_stamp_these_segments_carry() -> None:
+    """Capture holds a copy of the format beside the published name."""
+    assert capture._SEGMENT_STAMP_FORMAT == SEGMENT_STAMP_FORMAT
 
 
 def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
@@ -284,7 +347,7 @@ def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
         ],
         schema=journal.schema_for(journal.QUOTES_SURFACE),
     )
-    assert captured_by(table, landed).column("bid").to_pylist() == [61.0, 60.0]
+    assert sorted(captured_by(table, landed).column("bid").to_pylist()) == [60.0, 61.0]
     assert captured_by(table, landed - timedelta(microseconds=1)).column("bid").to_pylist() == [
         60.0
     ]
@@ -294,9 +357,69 @@ def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
         captured_by(table.drop_columns(["fetch_end_ts"]), landed)
 
 
+@pytest.mark.parametrize("column", ["row_kind", "fetch_end_ts"])
+def test_unsealed_a_row_that_cannot_be_cut_is_refused_and_never_dropped(
+    tmp_path: Path, column: str
+) -> None:
+    good = lakes.quote_row("GLD", MINUTES[0])
+    bad = lakes.quote_row("GLD", MINUTES[0], **{column: None})
+    schema = journal.schema_for(journal.QUOTES_SURFACE)
+    with pytest.raises(UnsealedRefused):
+        captured_by(pa.Table.from_pylist([good, bad], schema=schema), LATE)
+    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good, bad)
+    with pytest.raises(UnsealedRefused) as raised:
+        _read(tmp_path, {rel: digest})
+    assert "GLD" in str(raised.value) and DAY in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"ticker": "USO"}, {"snap_ts": (MINUTES[0] - timedelta(days=1)).isoformat()}],
+    ids=["another ticker's row", "another day's row"],
+)
+def test_unsealed_another_tickers_or_days_row_is_refused_by_segment(
+    tmp_path: Path, changes: dict[str, str]
+) -> None:
+    good = lakes.quote_row("GLD", MINUTES[0])
+    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good, {**good, **changes})
+    with pytest.raises(UnsealedRefused) as raised:
+        _read(tmp_path, {rel: digest})
+    assert raised.value.segment == rel
+
+
+@pytest.mark.parametrize(
+    "name", ["schema_version", "row_kind", "fetch_end_ts", "snap_ts", "ticker", "extra"]
+)
+def test_unsealed_the_six_columns_the_door_checks_are_refused_at_another_type(
+    tmp_path: Path, name: str
+) -> None:
+    schema = journal.schema_for(journal.QUOTES_SURFACE)
+    place = schema.get_field_index(name)
+    other = pa.int32() if schema.field(place).type == pa.int64() else pa.large_string()
+    rel, digest = lakes.quotes_segment(
+        tmp_path,
+        "GLD",
+        MINUTES[0],
+        lakes.quote_row("GLD", MINUTES[0]),
+        schema=schema.set(place, pa.field(name, other)),
+    )
+    with pytest.raises(UnsealedRefused) as raised:
+        _read(tmp_path, {rel: digest})
+    assert raised.value.segment == rel
+
+
+def test_unsealed_a_bad_segment_after_the_instant_is_refused_too(tmp_path: Path) -> None:
+    segments = _day(tmp_path)
+    rel = list(segments)[2]
+    (tmp_path / rel).write_bytes(b"not a segment")
+    with pytest.raises(SegmentMismatch) as raised:
+        _read(tmp_path, segments, MINUTES[0] + SECOND)
+    assert raised.value.segment == rel
+
+
 @pytest.mark.parametrize("name", sorted(PUBLISHED))
 def test_unsealed_each_published_column_holds_its_type(tmp_path: Path, name: str) -> None:
-    """The door checks the type of six columns. The rest #100 reads by these names and types."""
+    """#100 reads each by this name and type."""
     pinned = journal.schema_for(journal.QUOTES_SURFACE).field(name)
     assert pinned.type == PUBLISHED[name]
     assert _read(tmp_path, _day(tmp_path)).schema.field(name).type == PUBLISHED[name]
@@ -310,9 +433,10 @@ def test_unsealed_the_refusals_are_one_family_under_load_error() -> None:
 
 
 def test_unsealed_no_segment_named_is_absent_and_names_none(tmp_path: Path) -> None:
-    with pytest.raises(SegmentAbsent, match="GLD 2026-11-24") as raised:
+    with pytest.raises(SegmentAbsent) as raised:
         _read(tmp_path, {})
     assert raised.value.segment is None
+    assert "GLD" in str(raised.value) and DAY in str(raised.value)
 
 
 def test_unsealed_a_named_segment_not_under_the_root_is_absent(tmp_path: Path) -> None:
@@ -373,7 +497,7 @@ def test_unsealed_an_older_row_reads_with_its_ledger_and_is_refused_without(
 def test_unsealed_a_bad_argument_is_refused_as_a_value_error(tmp_path: Path, bad: str) -> None:
     segments = _day(tmp_path)
     rel = list(segments)[0]
-    ticker, day, at = "GLD", "2026-11-24", LATE
+    ticker, day, at = "GLD", DAY, LATE
     if bad == "ticker":
         ticker = "GLD/"
     elif bad == "day":
@@ -387,7 +511,6 @@ def test_unsealed_a_bad_argument_is_refused_as_a_value_error(tmp_path: Path, bad
     with pytest.raises(UnsealedArgument) as raised:
         load_unsealed_quotes(ticker, day, at, segments=segments, lake_root=tmp_path)
     assert isinstance(raised.value, ValueError)
-    assert raised.value.segment is None
 
 
 def test_unsealed_a_torn_segment_is_refused_by_name(tmp_path: Path) -> None:
@@ -396,7 +519,8 @@ def test_unsealed_a_torn_segment_is_refused_by_name(tmp_path: Path) -> None:
     path.write_bytes(path.read_bytes()[:-8])
     with pytest.raises(UnsealedRefused) as raised:
         _read(tmp_path, {rel: hashlib.sha256(path.read_bytes()).hexdigest()})
-    assert type(raised.value) is UnsealedRefused
+    named = (SegmentAbsent, SegmentMismatch, SchemaVersionUnknown, UnsealedArgument)
+    assert not isinstance(raised.value, named)
     assert raised.value.segment == rel
 
 
@@ -411,9 +535,13 @@ def test_unsealed_a_withheld_day_is_refused_from_the_roots_own_quarantine(tmp_pa
             observed_at=LATE,
         ),
     )
-    with pytest.raises(UnsealedRefused, match="planted") as raised:
+    with pytest.raises(UnsealedRefused) as raised:
         _read(tmp_path, segments)
-    assert raised.value.segment is None
+    assert "GLD" in str(raised.value) and DAY in str(raised.value)
+    ledger = tmp_path / "quarantine.jsonl"
+    ledger.write_text(f"not a verdict\n{ledger.read_text()}".replace("GLD", "USO"))
+    with pytest.raises(UnsealedRefused):
+        _read(tmp_path, segments)
 
 
 def test_unsealed_an_unreadable_segment_escapes_as_its_own_oserror(tmp_path: Path) -> None:
@@ -421,8 +549,9 @@ def test_unsealed_an_unreadable_segment_escapes_as_its_own_oserror(tmp_path: Pat
     path = tmp_path / list(segments)[0]
     path.unlink()
     path.mkdir()
-    with pytest.raises(IsADirectoryError):
+    with pytest.raises(OSError) as raised:
         _read(tmp_path, segments)
+    assert not isinstance(raised.value, UnsealedRefused)
 
 
 def test_unsealed_the_pinned_reader_reads_up_to_version_2() -> None:
@@ -430,6 +559,6 @@ def test_unsealed_the_pinned_reader_reads_up_to_version_2() -> None:
     assert journal.SCHEMA_VERSION == 2
 
 
-def test_unsealed_pyarrow_is_the_version_marketlakes_lock_holds_at_the_pin() -> None:
-    """The rows equal the seal's only while the two match, so it moves with the pin."""
+def test_unsealed_the_installed_pyarrow_is_the_pinned_one() -> None:
+    """marketlake's uv.lock holds it at 2d41793, the pinned commit, and the two move together."""
     assert pa.__version__ == "25.0.1"

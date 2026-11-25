@@ -2,30 +2,34 @@
 
 The runtime reads a day before marketlake seals it through marketlake's own
 reader, at the commit uv.lock pins. marketlake's contract, the section `Read
-an unsealed day` of its README, names what a consumer watches on `main`, and
-this compares three things there with the pin.
+an unsealed day` of its README, names what a consumer watches on `main`. This
+compares the same three things there and at the pinned commit.
 
 1. `SCHEMA_VERSION` in `src/lake/journal.py`. Once the capture host writes a
    version above the pin's, the pinned reader refuses every read, so a higher
    version is raised now.
 2. The bytes of `src/lake/segment_join.py`, which joins segments into rows.
-3. pyarrow's version in `uv.lock`, against the one this repository's `uv.lock`
-   holds rather than the pinned commit's, so a raise that moved one of the two
-   without the other also shows.
+3. pyarrow's version in `uv.lock`.
 
 The rows read before the seal equal the seal's only while the join and pyarrow
 match the capture host's. A merge to marketlake's `main` can wait days for its
 deploy, so a change to either alone waits until that deploy is known.
+
+It also compares this repository's pyarrow with the one the pinned commit's own
+`uv.lock` holds, which the contract says to pin. A raise that moved one of the
+two without the other shows there, whatever `main` holds.
 
 It exits 0 when nothing moved, 1 when something did, naming what and which
 rule applies, and 2 when either side could not be read, so an unread side
 never passes. It fetches both commits from marketlake's public repository with
 git's credential helpers and prompts off, and it parses what it fetched and
 runs none of it. It prints no text of marketlake's but a version it checked
-the form of. Standard library only, so `.github/workflows/lake-pin.yml` runs it
-with the runner's own `python3`.
+the form of. It reads the tip of `main` alone, so it does not see a version
+raised and reverted between two runs, or whether the pin is on `main`. Standard
+library only, so `.github/workflows/lake-pin.yml` runs it with the runner's own
+`python3`, which has to be 3.11 or later.
 
-Usage: `python3 scripts/check_lake_pin.py [--lock uv.lock] [--main refs/heads/main]`
+Usage: `uv run python scripts/check_lake_pin.py [--lock uv.lock] [--main refs/heads/main]`
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,8 +52,12 @@ JOIN = "src/lake/segment_join.py"
 LOCK = "uv.lock"
 CONTRACT = "https://github.com/l3a0/marketlake#how-a-consumer-pins-it"
 FETCH_SECONDS = 120
+# Far past either file, whose sizes at the pin are under half a megabyte.
+FILE_BYTES = 8_000_000
 
 _VERSION = re.compile(r"[0-9]+(?:\.[0-9A-Za-z]+)*")
+_VERSION_LENGTH = 32
+_SCHEMA_VERSIONS = range(1, 10_000)
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 
 RAISE_NOW = (
@@ -60,10 +69,20 @@ RAISE_TOGETHER = (
     "rows read before a seal as possibly unequal to the seal's."
 )
 WAIT = (
-    "Rule: wait to raise the pin until marketlake's deploy of this is known. Until then the "
-    "pin matches the capture host, and afterwards it does not."
+    "Rule: wait to raise the pin until marketlake's deploy of this is known. Nothing here says "
+    "which commit the capture host runs."
 )
-NO_RAISE = "Rule: raise nothing for this. A newer pin reads the older rows."
+NO_RAISE = (
+    "Rule: raise nothing for this. A newer pin reads the older rows, where the lake's "
+    "schema-version ledger holds their version."
+)
+MATCH_PIN = (
+    "Rule: set pyarrow here to the pinned commit's version now. The two pins move in one "
+    "pull request."
+)
+
+
+UNREAD = "The check could not run, so it says nothing of the pin"
 
 
 class Unreadable(Exception):
@@ -85,13 +104,14 @@ class Side:
 
     version: int
     join: bytes | None
+    pyarrow: str
 
 
 def package(text: str, name: str, where: str) -> dict:
     """The one entry a uv lock holds for a package. A lock can hold several, by marker."""
     try:
         found = [held for held in tomllib.loads(text)["package"] if held["name"] == name]
-    except (tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError, RecursionError) as error:
         raise Unreadable(f"{where} is no uv lock: {type(error).__name__}") from error
     if len(found) != 1:
         raise Unreadable(f"{where} holds {len(found)} entries for {name}")
@@ -100,7 +120,11 @@ def package(text: str, name: str, where: str) -> dict:
 
 def pyarrow_version(text: str, where: str) -> str:
     version = package(text, "pyarrow", where).get("version")
-    if not isinstance(version, str) or not _VERSION.fullmatch(version):
+    if (
+        not isinstance(version, str)
+        or len(version) > _VERSION_LENGTH
+        or not _VERSION.fullmatch(version)
+    ):
         raise Unreadable(f"{where} names no version of pyarrow")
     return version
 
@@ -114,27 +138,40 @@ def read_pin(text: str) -> Pin:
 
 
 def schema_version(source: bytes, where: str) -> int:
-    """The one integer a module assigns to `SCHEMA_VERSION` at its top level."""
+    """The one integer a module assigns to `SCHEMA_VERSION`, at its top level.
+
+    A second place that sets the name, at any depth, is refused, because this
+    reads the module and never runs it.
+    """
     try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError) as error:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = ast.parse(source)
+        stored = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name)
+            and node.id == "SCHEMA_VERSION"
+            and not isinstance(node.ctx, ast.Load)
+        ]
+    except (SyntaxError, ValueError, RecursionError, MemoryError) as error:
         raise Unreadable(f"{where} does not parse: {type(error).__name__}") from error
-    found = []
     for stmt in tree.body:
-        targets: list[ast.expr] = []
         if isinstance(stmt, ast.Assign):
             targets = stmt.targets
         elif isinstance(stmt, ast.AnnAssign):
             targets = [stmt.target]
-        if any(isinstance(t, ast.Name) and t.id == "SCHEMA_VERSION" for t in targets):
-            found.append(stmt.value)
-    if len(found) != 1 or not isinstance(found[0], ast.Constant) or type(found[0].value) is not int:
-        raise Unreadable(f"{where} assigns no one integer to SCHEMA_VERSION")
-    return found[0].value
+        else:
+            continue
+        if stored == targets and isinstance(stmt.value, ast.Constant):
+            value = stmt.value.value
+            if type(value) is int and value in _SCHEMA_VERSIONS:
+                return value
+    raise Unreadable(f"{where} assigns no one integer to SCHEMA_VERSION")
 
 
-def differences(pin: Pin, pinned: Side, main: Side, main_pyarrow: str) -> list[str]:
-    """Each thing that moved, and after them the rule that applies to it."""
+def differences(pin: Pin, pinned: Side, main: Side) -> list[str]:
+    """Each thing that differs, and after it the rule that applies to it."""
     said: list[str] = []
     higher = main.version > pinned.version
     if main.version != pinned.version:
@@ -148,13 +185,19 @@ def differences(pin: Pin, pinned: Side, main: Side, main_pyarrow: str) -> list[s
         moved.append(f"{JOIN} is not on marketlake's main, and the pin holds it.")
     elif main.join != pinned.join:
         moved.append(f"{JOIN} on marketlake's main differs from the pin's.")
-    if main_pyarrow != pin.pyarrow:
+    if main.pyarrow != pinned.pyarrow:
         moved.append(
-            f"pyarrow is {main_pyarrow} in marketlake's {LOCK} on main and {pin.pyarrow} in "
-            f"this repository's {LOCK}."
+            f"pyarrow in marketlake's {LOCK} is {main.pyarrow} on main and {pinned.pyarrow} "
+            "at the pin."
         )
     if moved:
         said += [*moved, RAISE_TOGETHER if higher else WAIT]
+    if pin.pyarrow != pinned.pyarrow:
+        said.append(
+            f"pyarrow is {pin.pyarrow} in this repository's {LOCK} and {pinned.pyarrow} in "
+            "marketlake's at the pin."
+        )
+        said.append(MATCH_PIN)
     return said
 
 
@@ -171,6 +214,8 @@ class Remote:
             "HOME": str(directory),
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0",
+            # `file` is for the tests. ssh would read the machine's own keys.
+            "GIT_ALLOW_PROTOCOL": "https:file",
         }
         self._git("init", "--quiet", "--bare", ".")
 
@@ -191,19 +236,28 @@ class Remote:
 
     def fetch(self, ref: str) -> str:
         """The commit `ref` names at the remote, fetched."""
-        self._git("fetch", "--quiet", "--depth=1", "--no-tags", self.remote, ref)
+        self._git("fetch", "--quiet", "--depth=1", "--no-tags", "--", self.remote, ref)
         return self._git("rev-parse", "FETCH_HEAD^{commit}").decode().strip()
 
     def file(self, commit: str, path: str) -> bytes | None:
         """The file's bytes at a fetched commit, or `None` where the commit holds none."""
-        listed = self._git("ls-tree", "--name-only", commit, "--", path)
-        return self._git("cat-file", "blob", f"{commit}:{path}") if listed.strip() else None
+        blob = f"{commit}:{path}"
+        if not self._git("ls-tree", "--name-only", commit, "--", path).strip():
+            return None
+        if int(self._git("cat-file", "-s", blob)) > FILE_BYTES:
+            raise Unreadable(f"{path} at {commit[:12]} is past {FILE_BYTES} bytes")
+        return self._git("cat-file", "blob", blob)
 
     def side(self, commit: str) -> Side:
-        journal = self.file(commit, JOURNAL)
-        if journal is None:
-            raise Unreadable(f"{JOURNAL} is not at {commit[:12]}")
-        return Side(schema_version(journal, f"{JOURNAL} at {commit[:12]}"), self.file(commit, JOIN))
+        journal, locked = self.file(commit, JOURNAL), self.file(commit, LOCK)
+        for path, held in ((JOURNAL, journal), (LOCK, locked)):
+            if held is None:
+                raise Unreadable(f"{path} is not at {commit[:12]}")
+        return Side(
+            schema_version(journal, f"{JOURNAL} at {commit[:12]}"),
+            self.file(commit, JOIN),
+            pyarrow_version(locked.decode(), f"marketlake's {LOCK} at {commit[:12]}"),
+        )
 
 
 def check(lock: Path, main_ref: str) -> list[str]:
@@ -214,18 +268,10 @@ def check(lock: Path, main_ref: str) -> list[str]:
         if pinned.join is None:
             raise Unreadable(f"{JOIN} is not at the pin")
         commit = remote.fetch(main_ref)
-        locked = remote.file(commit, LOCK)
-        if locked is None:
-            raise Unreadable(f"{LOCK} is not at {commit[:12]}")
-        where = f"marketlake's {LOCK} at {commit[:12]}"
-        try:
-            main_pyarrow = pyarrow_version(locked.decode(), where)
-        except UnicodeDecodeError as error:
-            raise Unreadable(f"{where} is not text") from error
-        said = differences(pin, pinned, remote.side(commit), main_pyarrow)
+        said = differences(pin, pinned, remote.side(commit))
     against = f"marketlake's main at {commit[:12]} against the pin at {pin.commit[:12]}"
     if said:
-        return [f"The marketlake pin may be due a raise: {against}.", *said, f"Read {CONTRACT}."]
+        return [f"The marketlake pin does not match: {against}.", *said, f"Read {CONTRACT}."]
     print(f"Nothing moved: {against}.")
     return []
 
@@ -237,8 +283,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         said = check(args.lock, args.main)
-    except (Unreadable, OSError) as error:
-        print(f"The check could not run, so it says nothing of the pin: {error}")
+    except Unreadable as error:
+        print(f"{UNREAD}: {error}")
+        return 2
+    except Exception as error:  # Any other failure is a side unread, so never a pass or a raise.
+        print(f"{UNREAD}: {type(error).__name__}")
         return 2
     for line in said:
         print(f"- {line}")

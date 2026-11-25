@@ -1,17 +1,19 @@
 # Says when the marketlake commit pyproject.toml pins is due a raise.
 #
 # scripts/check_lake_pin.py compares marketlake's main with the pin and fails the run
-# where one of three things moved, naming it and which of the two rules of marketlake's
-# contract applies. A red run is not always a raise to make now: a change to the join or
-# to pyarrow alone waits until marketlake's deploy is known, and the run stays red until
-# then.
+# where one of three things moved, or where pyarrow here is not the pinned commit's,
+# naming it and the rule that applies. A red run is not always a raise to make now: a
+# change to the join or to pyarrow alone waits until marketlake's deploy is known, and the
+# run stays red until then. So a red run's own text is what says whether a higher version
+# has arrived meanwhile.
 #
 # It is no pull request check, because marketlake moving must not turn an unrelated pull
 # request red, and the ruleset on main does not require it. Nothing pages when no run
 # starts. GitHub delays or drops a scheduled run, and board.yml measured about 11% of its
 # slots firing, so this is a best effort until #11 builds the check whose missing result
-# alarms. A raise that is missed halts every decision inside a session, with the reason,
-# until a release raises the pin.
+# alarms. A missed raise to a higher version halts every decision inside a session, with
+# the reason, until a release raises the pin. A missed raise of the join or of pyarrow
+# halts nothing, and the rows read before a seal may differ from the sealed rows.
 #
 # It holds no credential. The token reads this repository and checkout does not keep it,
 # and marketlake is a public repository the script fetches with no token. Nothing fetched
