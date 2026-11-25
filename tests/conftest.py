@@ -29,9 +29,10 @@ def no_order_reached_a_fake_broker_wrongly() -> Iterator[None]:
     """Fail a test that let an order reach a fake broker wrongly, whatever the path made of it."""
     fake_broker.made.clear()
     yield
-    refused = [why for broker in fake_broker.made for why in broker.refused]
-    fake_broker.made.clear()
-    assert not refused, refused
+    try:
+        fake_broker.check()
+    finally:
+        fake_broker.made.clear()
 
 
 @pytest.fixture(scope="session")

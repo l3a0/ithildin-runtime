@@ -440,7 +440,7 @@ sequenceDiagram
         X->>F: is its own send result empty?
         X->>F: is the lease tag unchanged?
         X->>F: has the loss stop not fired?
-        X->>F: is the strategy not off?
+        X->>F: is the strategy not off,<br/>and no halt of its stored?
         X->>X: is it before the cutoff?
         X->>B: sends the order, with its client order id
         B-->>X: answers
@@ -586,19 +586,19 @@ The steps run in this order.
 Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
 1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
-2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again.
+2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
-5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the cutoff.
+5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
 6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
-7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a stop that stands, halts the decision too.
+7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
 8. Journal that it is sending.
-9. Make the checks in the table below, on a third view.
+9. Make the checks in the table below, on a third view. A pass in which any read had to wait is made again whole.
 10. Send, with the order's client order id.
-11. Journal the broker's answer: the ack, the rejection, or the order's doubt.
+11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. An entry the store does not answer for is sent again unchanged, and no try ahead of the broker call goes past a market-on-close order's cutoff.
+A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
 
 **Table:** The seven checks made right before the broker call
 
@@ -610,9 +610,9 @@ A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an or
 | 4 | The decision's own send result | It is still empty |
 | 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
 | 6 | The loss stop | None has fired, and its state can be read |
-| 7 | The market-on-close cutoff | It has not passed |
+| 7 | The order's last moment, its market-on-close cutoff or its session's close | It has not passed |
 
-Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. A check that halts is read before the strategy's, so a switch never hides one. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch never hides a halt. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
 A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
 
@@ -846,8 +846,7 @@ refusal. So a refusal never hides such an input, apart from a stop whose state
 could not be read, as
 [What halts and what refuses](05-building-blocks.md#what-halts-and-what-refuses)
 says. Execution then journals the
-order `Abandoned` with the reason and halts the decision, as
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+order `Abandoned` with the reason and halts the decision.
 
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
@@ -884,7 +883,7 @@ The stop has a stated limit: no decision tests the price move from close−20 to
 
 #### What happens when the stop fires
 
-A fired stop latches, which means it stays fired whatever the price does next. It takes four steps, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+A fired stop latches, which means it stays fired whatever the price does next. It takes four steps. `OrderPath` takes the second and the gate the third, and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) builds the first. Until it does, a loss past its stop halts its own decision and the next one trades again once the price recovers, so no mode but a backtest may run.
 
 1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. The record is a journal entry and a blob at `accounts/<account>/stop.json`, created with a create-only write as the kill switch is, and a firing that reached either one stands. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
 2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate.
@@ -1103,9 +1102,9 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: the switch is set or the cutoff passes before the gate,<br/>or a restart
+    Intended --> Abandoned: a check before the gate fails,<br/>or a restart
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
-    Approved --> Abandoned: a restart before the sending entry
+    Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, or a restart comes before it
     Approved --> Sending: execution journals the sending entry
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
     Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read or that was cut short
@@ -1114,10 +1113,11 @@ stateDiagram-v2
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
-    Sending --> Abandoned: a check before the broker call fails
+    Sending --> Abandoned: a check before the broker call fails,<br/>or the adapter proves nothing was sent
     note left of Abandoned
         A failed check on the switch, a run or account halt,
-        its own result key, the lease tag or the cutoff also halts.
+        its own result key, the lease tag, the loss stop
+        or the order's last moment also halts.
         A switched-off strategy abandons without halting.
         A close reads the checks as design.md's
         checks before a broker call say.
@@ -1128,6 +1128,7 @@ stateDiagram-v2
     Acknowledged --> Rejected: broker rejects
                 Acknowledged --> CancelSent: execution journals the cancel, for the kill switch,<br/>a failed pair leg, a later plan or a sort
     PartlyFilled --> CancelSent: execution journals a cancel of the rest,<br/>for the same reasons
+    InDoubt --> InDoubt: execution journals the bytes of a later answer<br/>that does not settle it
     InDoubt --> InDoubt: execution journals a cancel on a row a list returned,<br/>and the order stays blocked and counted<br/>until a lookup settles it
     CancelSent --> CancelSent: execution journals a new cancel, under the rule<br/>for a cancel whose answer is lost
     CancelSent --> Cancelled: the broker confirms, or a lookup finds it cancelled

@@ -2,27 +2,33 @@
 
 It names the call and the type of error and nothing the broker or its library
 said. The receive loop puts an uncaught error's text in an alarm and in a
-stored halt, and a broker's text can hold a key or an account number.
+stored halt, and a broker's text can hold a key or an account number. So it
+takes the error itself, or its type, and never a word an adapter writes.
 """
 
 from __future__ import annotations
 
 import re
 
-__all__ = ["BrokerUnavailable"]
+__all__ = ["BrokerUnavailable", "error_name"]
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,79}")
+
+
+def error_name(error: object) -> str:
+    """The name of an error's type, as code spells one, and never a sentence."""
+    name = error.__name__ if isinstance(error, type) else type(error).__name__
+    return _word(name)
 
 
 class BrokerUnavailable(Exception):
     """A broker's call that failed or did not answer. Raise it `from None`."""
 
-    def __init__(self, call: str, error: str) -> None:
+    def __init__(self, call: str, error: BaseException | type) -> None:
         self.call = _word(call)
-        self.error = _word(error)
+        self.error = error.error if isinstance(error, BrokerUnavailable) else error_name(error)
         super().__init__(f"the broker's {self.call} failed with {self.error}")
 
 
 def _word(value: object) -> str:
-    """A name as code spells one, so no sentence a broker wrote can stand in for it."""
     return value if isinstance(value, str) and _WORD.fullmatch(value) else "Unnamed"

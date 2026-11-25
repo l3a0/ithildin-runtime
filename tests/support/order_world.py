@@ -77,9 +77,13 @@ from tests.support.gate_oracle import answer
 from tests.support.journals import Memory, ack, fill
 from tests.support.journals import verdict as planted
 
-ACCOUNT, DEPLOYMENT, RUN = "paper-1", "paper", "2026-11-03"
+# The run is a backtest's two dates and the deployment no part of the alias, so a key built from
+# the decision's date or from the account reads nothing.
+ACCOUNT, DEPLOYMENT, RUN = "paper-1", "d-7", "2026-11-02_2026-11-30"
 PLANNER, WRITER, OTHER_WRITER = "0" * 32, "1" * 32, "2" * 32
 AT = gates.DECISION
+# What the clock reads when a send begins, which is never the decision time itself.
+NOW = AT + timedelta(seconds=7)
 HASHES = {gates.CHAN: "c" * 64}
 CASH = Decimal(1_000_000)
 
@@ -232,7 +236,7 @@ class World:
     position: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
-        self.clock = Clock(AT)
+        self.clock = Clock(NOW)
         self.alarms = Alarms()
         self.reports = 0
         self.report_error: BaseException | None = None
@@ -251,7 +255,7 @@ class World:
                 self.hold(self.position)
             self.decide(self.orders)
         self.store.quiet = False
-        self.broker = FakeBroker(lambda: self.store.blobs, ACCOUNT, AT)
+        self.broker = FakeBroker(lambda: self.store.blobs, ACCOUNT, NOW)
 
     # What is stored
 
@@ -319,11 +323,13 @@ class World:
             self.store.quiet = quiet
         return ack.seq
 
-    def decide(self, orders: Iterable[OrderIntent], at: datetime = AT, read: int = 2) -> int:
+    def decide(
+        self, orders: Iterable[OrderIntent], at: datetime = AT, read: int = 2, run: str = RUN
+    ) -> int:
         return self.record(
             DecisionEntry(
                 deployment=DEPLOYMENT,
-                run=RUN,
+                run=run,
                 decision_at=at,
                 targets=(TargetPortfolio(at, gates.CHAN, {gates.GLD: Decimal(1)}),),
                 orders=tuple(orders),
@@ -355,7 +361,7 @@ class World:
         return Journal(Memory(self.store.blobs), ACCOUNT)
 
     def kinds(self) -> list[str]:
-        """The kinds of entry after the decision's, oldest first."""
+        """The kinds of entry that moved an order or a fill, oldest first."""
         return [k for k in self.every_kind() if k not in ("opening", "read", "decision")]
 
     def every_kind(self) -> list[str]:
@@ -492,6 +498,7 @@ __all__ = [
     "AT",
     "CASH",
     "DEPLOYMENT",
+    "NOW",
     "OTHER_WRITER",
     "PLANNER",
     "RUN",

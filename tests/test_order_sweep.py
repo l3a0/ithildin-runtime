@@ -51,6 +51,30 @@ WAYS: dict[str, tuple[str, str]] = {
     "an entry's class through its package": (IN_EXECUTION, "journal.AbandonedEntry(name, 'x')"),
     "an entry written to the store": (IN_EXECUTION, "store.create(journal_entry_key(a, 7), d, s)"),
     "an entry appended around the fold": (IN_EXECUTION, "journal._append(journal._build(b, at))"),
+    "a path that resizes": (
+        IN_EXECUTION,
+        "class Resized(OrderPath):\n    def _just_sending(self, *given): ...",
+    ),
+    "a gate that always approves": (IN_RUNTIME, "class Yes(risk.Gate):\n    pass"),
+    "a path with its check replaced": (IN_EXECUTION, "OrderPath._asked = mine"),
+    "a control replaced": (IN_MONITORING, "Controls.stopping = lambda *given: None"),
+    "a path's parts rebuilt": (IN_EXECUTION, "OrderPath(replace(Shared(), gate=g), b, r)"),
+    "a path's parts imported": (
+        IN_RUNTIME,
+        "from ithildinruntime.execution.order_path import Shared",
+    ),
+    "a path's gate replaced": (IN_RUNTIME, "path._shared.gate = yes"),
+    "an acknowledgement set by hand": (IN_EXECUTION, "shared.cleared[6] = ack"),
+    "an entry's class by its kind": (IN_EXECUTION, "KINDS['sending'](name)"),
+    "an entry read back to be recorded": (IN_EXECUTION, "journal.record(v, record_of(e), at)"),
+    "a name by its path": (IN_TESTS, "attrgetter('path._broker')(world)"),
+    "a name in a dictionary": (IN_TESTS, "path.__dict__['_broker'].x()"),
+    "a name in an object's vars": (IN_SCRIPTS, "vars(path)['_broker']"),
+    "a name got past its object": (IN_TESTS, "object.__getattribute__(broker, 'submit')"),
+    "a static getter": (IN_TESTS, "inspect.getattr_static(broker, 'submit')"),
+    "a name kept as a path": (IN_MONITORING, "attrgetter('_broker.submit')(path)"),
+    "an object's members": (IN_EXECUTION, "inspect.getmembers(broker)"),
+    "a method set": (IN_RUNTIME, "setattr(OrderPath, name, mine)"),
     "a broker imported by a stage": (
         IN_EXECUTION,
         "from ithildinruntime.execution.brokers.simulated import SimulatedBroker",
@@ -94,12 +118,22 @@ def test_3_the_receive_loops_tasks_are_exempt_by_name_and_no_other_is() -> None:
         assert [h for h in found_in(other, loop) if exemption(h) is None], other
 
 
-def test_3_the_execution_workers_entry_point_alone_imports_a_broker() -> None:
-    source = "from ithildinruntime.execution.brokers import simulated"
-    assert all(exemption(hit) for hit in found_in(source, IN_RUNTIME))
-    assert [h for h in found_in(source, IN_EXECUTION) if exemption(h) is None]
+def test_3_the_order_path_holds_one_call_of_a_brokers_submit_and_one_of_its_own() -> None:
+    """An exemption names a call and not how many, so a second route would pass it."""
+    where = "src/ithildinruntime/execution/order_path.py"
+    hits = [h.what for h in found_in((REPO / where).read_text(), where) if h.kind == "call"]
+    assert sorted(h for h in hits if h.endswith("submit")) == ["self._submit", "submit"]
+    # The one is written once, and every read goes through `_called`.
+    assert hits.count("self._broker") == 4
 
 
 def test_3_what_is_out_of_the_sweeps_reach() -> None:
-    """A name a test puts together at run time. The fake broker's refusals are what catch it."""
-    assert not list(found_in("getattr(broker, 'sub' + 'mit')(intent)", IN_TESTS))
+    """The three ways the sweep's docstring names, each still out of it."""
+    for where, source in (
+        (IN_TESTS, "getattr(broker, 'sub' + 'mit')(intent)"),
+        (IN_TESTS, "N = 'submit'\ngetattr(broker, N)(intent)"),
+        (IN_MONITORING, "getattr(broker, 'sub' + 'mit')(intent)"),
+        (IN_MONITORING, "store.create(f'journal/{a}/{n:012d}.json', data, sha)"),
+        (IN_MONITORING, "journal.record(view, replace(old, client_order_id=n), at)"),
+    ):
+        assert not list(found_in(source, where)), source

@@ -131,6 +131,7 @@ ALLOWED = {
     ("rejected", "Sending"): "Rejected",
     ("rejected", "Acknowledged"): "Rejected",
     ("in_doubt", "Sending"): "InDoubt",
+    ("in_doubt", "InDoubt"): "InDoubt",
     ("part", "Acknowledged"): "PartlyFilled",
     ("part", "PartlyFilled"): "PartlyFilled",
     ("whole", "Acknowledged"): "Filled",
@@ -1472,6 +1473,28 @@ def test_an_order_that_is_sending_is_abandoned_by_the_writer_of_its_sending_alon
     assert view.orders[name].state is OrderState.ABANDONED
     # A journal read from its first entry gives the same answer, on the stored bytes alone.
     assert Journal(journal._store, ACCOUNT).view().orders[name].state is OrderState.ABANDONED
+
+
+def test_the_writer_of_each_sending_is_kept_apart() -> None:
+    one, two = planned(1, 4), planned(2, 4, USO)
+    journal = started(one, two)
+    for order in (one, two):
+        for record in route("Sending", order):
+            add(journal, record)
+    for order in (one, two):
+        _, view = journal.record(journal.view(), abandoned(order.client_order_id), AT)
+        assert view.orders[order.client_order_id].state is OrderState.ABANDONED
+
+
+def test_an_order_in_doubt_takes_another_answers_bytes_and_stays_in_doubt() -> None:
+    order = planned(1, 4)
+    journal = started(order)
+    for record in route("InDoubt", order):
+        add(journal, record)
+    _, view = journal.record(journal.view(), in_doubt(order.client_order_id, b"late"), AT)
+    found = view.orders[order.client_order_id]
+    assert found.state is OrderState.IN_DOUBT and found.entries[-1].kind == "in_doubt"
+    assert view.book.in_doubt == (GLD,)
 
 
 def test_a_stored_abandonment_by_another_writer_halts_the_replay() -> None:

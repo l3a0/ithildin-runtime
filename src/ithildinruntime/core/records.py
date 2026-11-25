@@ -684,7 +684,7 @@ class Ack(_Record):
     outcome: Outcome
     broker_order_id: str | None
     order: BrokerOrder | None
-    raw: bytes
+    raw: bytes = dataclasses.field(repr=False)
     received_at: datetime
 
     def __post_init__(self) -> None:
@@ -699,7 +699,7 @@ class FoundOrder(_Record):
     answer: Outcome
     rows: tuple[BrokerOrder, ...]
     whole_list: bool
-    raw: bytes
+    raw: bytes = dataclasses.field(repr=False)
 
 
 # The most bytes a broker read holds in all its pages. Alpaca's order list gives at most 500
@@ -711,7 +711,7 @@ READ_LIMIT = 4 * 1024 * 1024
 class ReceivedPage(_Record):
     """One page of a broker read as it came: its body, never a header, and when it came."""
 
-    body: bytes
+    body: bytes = dataclasses.field(repr=False)
     at: datetime
 
     def __post_init__(self) -> None:

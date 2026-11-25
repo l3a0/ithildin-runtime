@@ -23,6 +23,7 @@ from ithildinruntime.core import (
     RISK_STAGE,
     SNAPSHOT_OUTPUT,
     VALUATION_OUTPUT,
+    BlobMissing,
     BlobRef,
     BrokerUnavailable,
     Constraints,
@@ -45,8 +46,15 @@ from ithildinruntime.core import (
     strategy_halts_prefix,
 )
 from ithildinruntime.core import journal_entry_key as entry_key
-from ithildinruntime.journal import InDoubtEntry, OpeningEntry, ReadEntry, VerdictEntry
+from ithildinruntime.journal import (
+    InDoubtEntry,
+    Journal,
+    OpeningEntry,
+    ReadEntry,
+    VerdictEntry,
+)
 from ithildinruntime.risk import Gate
+from ithildinruntime.runtime.loop.receive import _said as _loop_said
 from tests.support import gates
 from tests.support.fake_broker import raising, says
 from tests.support.order_world import (
@@ -205,7 +213,7 @@ FILE_FAULTS: dict[str, tuple[Callable[[World, str], None], str]] = {
     ),
     "file rewritten since the plan": (
         lambda w, n: refiled(w, n, _changed(w, n)),
-        "planned on runs/paper",
+        "planned on runs/d-7",
     ),
     "file of two entries": (
         lambda w, n: refiled(w, n, entries(w, n) * 2),
@@ -281,13 +289,35 @@ def test_5_the_constraints_read_are_the_orders_own_strategys() -> None:
 
 
 def test_5_a_wrong_run_reads_its_own_files_and_never_a_callers() -> None:
-    """A `decision` entry of a run nothing is stored for halts on its own absent result."""
+    """A `decision` entry of a run nothing is stored for halts on its own absent results."""
+    assert World().send() is OrderState.ACKNOWLEDGED
     world = World(plan=False)
-    world.store.drop(stage_key("snapshot"))
     world.record(OpeningEntry(ACCOUNT, CASH))
     world.record(ReadEntry("execution/send", AT, BlobRef("r", "a" * 64), AT))
-    world.decide(world.orders)
-    halted(world, "data/result.json is not stored")
+    world.decide(world.orders, run="2026-11-03")
+    reason = halted(world, "data/result.json is not stored")
+    assert "runs/d-7/2026-11-03/" in reason
+
+
+@pytest.mark.parametrize("read", [0, 1])
+def test_5_a_wrong_runs_halt_is_the_one_that_stops_its_order(read: int) -> None:
+    """The run's halt is read under the run its `decision` names, whatever the date says."""
+    at = control_reads("run halt")[read]
+    for run, stops in ((RUN, True), ("2026-11-03", False)):
+        world = World()
+        key = run_halt_key(DEPLOYMENT, run)
+        world.store.before = lambda n, op, k, w=world, put=key: (
+            w.store.put(put, b"{}") if n == at else None
+        )
+        if stops:
+            halted(world, "run halt stands")
+        else:
+            assert world.send() is OrderState.ACKNOWLEDGED
+
+
+def test_5_two_constraints_of_one_strategy_halt() -> None:
+    world = World(constraints=(gates.constraints(), gates.constraints()))
+    halted(world, "holds 2 constraints of 'chan', not one")
 
 
 def test_5_a_gate_that_raises_ends_the_order_abandoned_and_raises() -> None:
@@ -314,10 +344,13 @@ def test_5_a_journal_that_cannot_be_used_stops_the_order() -> None:
     world = World()
     world.store.drop(entry_key(ACCOUNT, 2))
     halted(world, "entry 2 is missing")
-    halted(World(), "not an order id", lambda: World().path().send("made-up"))
-    halted(World(), "in no decision", lambda: World().path().send(order(2, 1).client_order_id))
-    early = order(1, 2, at=AT - DAY).client_order_id
-    halted(World(), "in no decision", lambda: World().path().send(early))
+    for name, why in (
+        ("made-up", "not an order id"),
+        (order(2, 1).client_order_id, "in no decision"),
+        (order(1, 2, at=AT - DAY).client_order_id, "in no decision"),
+    ):
+        world = World()
+        halted(world, why, lambda w=world, n=name: w.path().send(n))
 
 
 def _refusing(op: str, key: str):
@@ -358,7 +391,12 @@ def control_reads(name: str) -> list[int]:
     ("name", "error"),
     [
         *((name, error) for name in CONTROLS for error in ("StoreUnavailable", "PermissionError")),
-        *((name, "None") for name, (op, _, _) in CONTROLS.items() if op == "list"),
+        *(
+            (name, error)
+            for name, (op, _, _) in CONTROLS.items()
+            for error in ("None", "BlobMissing")
+            if op == "list"
+        ),
     ],
 )
 @pytest.mark.parametrize("read", [0, 1])
@@ -376,15 +414,19 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
                 raise StoreUnavailable(k, "the store's own text")
 
     world.store.before = before
-    if error == "None":
+    if error in ("None", "BlobMissing"):
 
         def listed(prefix: str, after: str | None):  # type: ignore[no-untyped-def]
             found = plain(prefix, after)
-            return None if prefix == key and len(world.store.calls) >= at else found
+            if prefix != key or len(world.store.calls) < at:
+                return found
+            if error == "BlobMissing":
+                raise BlobMissing(prefix, "no such folder")
+            return None
 
         world.store.list = listed  # type: ignore[method-assign]
-        error = "NoneType"
-    reason = halted(world, f"{name} unreadable: {error}")
+    shown = "NoneType" if error == "None" else error
+    reason = halted(world, f"{name} unreadable: {shown}")
     assert "own text" not in reason + str(world.records()) + str(world.alarms.sent)
     late = read == 1
     assert ("sending" in world.kinds()) == late
@@ -501,10 +543,11 @@ def test_9_a_loss_past_its_bound_halts_there_and_on_a_verdict() -> None:
         "the day's loss of 100.0001 is past its stop of 100.0000, measured from the valuation of "
         "2026-11-02"
     )
+    alarm = f"account {ACCOUNT}: {said}"
     halted(world, said, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
-    assert world.alarms.sent == [said] and world.kinds() == []
+    assert world.alarms.sent == [alarm] and world.kinds() == []
     halted(world, said)
-    assert world.alarms.sent == [said, said]
+    assert world.alarms.sent == [alarm, alarm]
     assert world.kinds() == ["intent", "verdict"]
     assert world.state() is OrderState.REFUSED
 
@@ -688,15 +731,17 @@ def told(error: BaseException | None) -> list[str]:
 
 @pytest.mark.parametrize("store_down", [False, True])
 @pytest.mark.parametrize(
-    "kind", [RuntimeError, SystemExit, CancelledError, Halt, BrokerUnavailable]
+    "kind",
+    [RuntimeError, SystemExit, CancelledError, Halt, BrokerUnavailable, KeyboardInterrupt],
 )
 def test_11_a_submit_that_raises_says_nothing_of_the_vendors(
     kind: type[BaseException], store_down: bool, capfd, caplog
 ) -> None:
+    caplog.set_level(0)
     world = World()
     error: BaseException
     if kind is BrokerUnavailable:
-        error = BrokerUnavailable(f"{NUMBER} ", f"{KEY}: no")
+        error = BrokerUnavailable(f"{NUMBER} ", vendor())
     elif kind is Halt:
         error = Halt("the adapter's own halt")
         error.__cause__ = vendor()
@@ -708,9 +753,9 @@ def test_11_a_submit_that_raises_says_nothing_of_the_vendors(
     raised: BaseException | None = None
     try:
         world.send()
-    except Halt as halt:
-        raised = halt
-    assert (raised is not None) == (store_down or kind is Halt)
+    except (Halt, KeyboardInterrupt) as error:
+        raised = error
+    assert (raised is not None) == (store_down or kind in (Halt, KeyboardInterrupt))
     captured = capfd.readouterr()
     said = [*everything_said(world), *told(raised), captured.out, captured.err, caplog.text]
     assert not leaks(*said)
@@ -718,6 +763,7 @@ def test_11_a_submit_that_raises_says_nothing_of_the_vendors(
 
 @pytest.mark.parametrize("outcome", list(Outcome))
 def test_11_a_brokers_bytes_reach_raw_alone(outcome: Outcome, capfd, caplog) -> None:
+    caplog.set_level(0)
     world = World()
     raw = f"{KEY} {NUMBER}".encode()
     world.broker.answer = says(outcome, f"id {NUMBER}", raw, client_order_id=KEY)
@@ -726,6 +772,93 @@ def test_11_a_brokers_bytes_reach_raw_alone(outcome: Outcome, capfd, caplog) -> 
     assert isinstance(found, InDoubtEntry) and found.raw == raw
     captured = capfd.readouterr()
     assert not leaks(*everything_said(world), captured.out, captured.err, caplog.text)
+
+
+class Talks:
+    """An answer whose every form says too much."""
+
+    def __repr__(self) -> str:
+        return f"{KEY} of {NUMBER}"
+
+    __str__ = __repr__
+
+
+def test_11_an_answer_of_no_kind_is_never_printed(capfd, caplog) -> None:
+    caplog.set_level(0)
+    world = World()
+    world.broker.answer = lambda intent, number: Talks()
+    assert world.send() is OrderState.IN_DOUBT
+    world.broker.reads["positions"] = Talks
+    with pytest.raises(BrokerUnavailable, match="failed with Talks") as raised:
+        world.path().positions()
+    captured = capfd.readouterr()
+    said = [*everything_said(world), *told(raised.value), captured.out, captured.err, caplog.text]
+    assert not leaks(*said)
+
+
+BAD_ID = f"acct {NUMBER} {KEY}"
+
+
+@pytest.mark.parametrize("store", ["answers", "lost answer", "down", "another writer"])
+def test_11_an_id_the_journal_refuses_is_in_no_alarm_and_no_halt(store: str) -> None:
+    world = World()
+    account = world.account()
+
+    def answer(intent: object, number: int) -> object:
+        if store == "another writer":
+            world.record(InDoubtEntry(ID, "taken over", None, False, AT), other)
+        return says(Outcome.ACCEPTED, BAD_ID)(intent, number)  # type: ignore[arg-type]
+
+    def after(number: int, op: str, key: str) -> None:
+        if store == "lost answer" and key == entry_key(ACCOUNT, 7) and op == "create":
+            world.store.after = lambda n, o, k: None
+            raise StoreUnavailable(key, "timeout")
+
+    other = Journal(world.store, ACCOUNT, "2" * 32)
+    world.broker.answer, world.store.after = answer, after
+    if store == "down":
+        world.store.refuse(("create", entry_key(ACCOUNT, 7)))
+    raised = None
+    try:
+        assert world.send(account=account) is OrderState.IN_DOUBT
+    except Halt as halt:
+        raised = halt
+    assert (raised is not None) == (store == "down")
+    world.store.before = lambda n, op, key: None
+    account.settle(world.report)
+    assert account.unstored() == () and world.state() is OrderState.IN_DOUBT
+    assert last(world).raw == b"{}"
+    assert not leaks(*everything_said(world), *told(raised))
+
+
+def test_11_a_key_shaped_word_is_no_type_of_error() -> None:
+    """`BrokerUnavailable` takes an error or its type, so no word an adapter writes is shown."""
+    world = World()
+
+    def raises() -> object:
+        raise BrokerUnavailable("positions", KEY)  # type: ignore[arg-type]
+
+    world.broker.reads["positions"] = raises
+    with pytest.raises(BrokerUnavailable, match="failed with str") as raised:
+        world.path().positions()
+    assert not leaks(*told(raised.value))
+    world.broker.answer = raising(type(f"APIError account {NUMBER}", (Exception,), {})())
+    assert world.send() is OrderState.IN_DOUBT
+    assert not leaks(*everything_said(world))
+
+
+def test_11_a_brokers_error_reaches_no_failure_of_the_receive_loop() -> None:
+    """What a handler raises is what the loop alarms on, stores and prints as its worker ends."""
+    world = World()
+
+    def raises() -> object:
+        raise vendor()
+
+    world.broker.reads["positions"] = raises
+    try:
+        world.path().positions()
+    except BrokerUnavailable as error:
+        assert not leaks(_loop_said(error))
 
 
 READS: dict[str, Callable] = {
@@ -737,23 +870,28 @@ READS: dict[str, Callable] = {
 }
 
 
-@pytest.mark.parametrize("kind", [RuntimeError, SystemExit, CancelledError, KeyError])
+@pytest.mark.parametrize(
+    "kind", [RuntimeError, SystemExit, CancelledError, KeyError, KeyboardInterrupt]
+)
 @pytest.mark.parametrize("name", READS)
 def test_11_a_read_that_raises_says_nothing_of_the_vendors(
     name: str, kind: type[BaseException], capfd, caplog
 ) -> None:
+    caplog.set_level(0)
     world = World()
 
     def raises() -> object:
         raise vendor(kind)
 
     world.broker.reads[name] = raises
-    with pytest.raises(BrokerUnavailable) as raised:
+    ends = KeyboardInterrupt if kind is KeyboardInterrupt else BrokerUnavailable
+    with pytest.raises(ends) as raised:
         READS[name](world.path())
-    assert str(raised.value) == f"the broker's {name} failed with {kind.__name__}"
+    said = "" if kind is KeyboardInterrupt else f"the broker's {name} failed with {kind.__name__}"
+    assert str(raised.value) == said
     captured = capfd.readouterr()
-    said = [*told(raised.value), captured.out, captured.err, caplog.text, *world.alarms.sent]
-    assert not leaks(*said)
+    every = [*told(raised.value), captured.out, captured.err, caplog.text, *world.alarms.sent]
+    assert not leaks(*every)
 
 
 @pytest.mark.parametrize("name", READS)
@@ -775,12 +913,12 @@ def test_5_a_read_answers_with_its_own_type_or_raises(name: str) -> None:
     assert not leaks(*told(raised.value))
 
     def unavailable() -> object:
-        raise BrokerUnavailable("get_all_positions", "ReadTimeout")
+        raise BrokerUnavailable("get_all_positions", TimeoutError())
 
     world.broker.reads[name] = unavailable
     with pytest.raises(BrokerUnavailable) as read:
         READS[name](world.path())
-    assert (read.value.call, read.value.error) == (name, "ReadTimeout")
+    assert (read.value.call, read.value.error) == (name, "TimeoutError")
 
     def stops() -> object:
         raise KeyboardInterrupt

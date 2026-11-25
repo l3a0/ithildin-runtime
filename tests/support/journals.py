@@ -290,6 +290,7 @@ LIVES: tuple[tuple[str, ...], ...] = (
     ("intent", "approved", "sending", "rejected"),
     ("intent", "approved", "sending", "in_doubt"),
     ("intent", "approved", "sending", "in_doubt", "ack", "whole"),
+    ("intent", "approved", "sending", "in_doubt", "in_doubt", "ack", "whole"),
     ("intent", "approved", "sending", "ack"),
     ("intent", "approved", "sending", "ack", "rejected"),
     ("intent", "approved", "sending", "ack", "expired"),

@@ -3,7 +3,7 @@
 docs/design.md's `### Rule 9, fourth item: what is checked right before a broker
 call` lists them. Each is read with one `get`, and a folder with one `list`.
 Only a key that holds no blob, and an empty list, read as nothing standing. Any
-other answer stops the order, and its reason names the type of error and never
+other answer stops the order, and its reason names the error's code and never
 the store's text.
 
 A control that halts the decision is read before the strategy's, so a strategy
@@ -13,7 +13,6 @@ tag are read here too once #11 and #148 build them.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from typing import NamedTuple
 
@@ -31,7 +30,7 @@ from ithildinruntime.core import (
     strategy_halts_prefix,
 )
 
-from .patience import Patience
+from .patience import Tries, code_of
 
 __all__ = ["Controls", "Stopping", "Where"]
 
@@ -62,19 +61,11 @@ class _Read(NamedTuple):
 class Controls:
     """The controls of one account, read afresh at each call."""
 
-    def __init__(self, store: BlobStore, account: str, patience: Patience) -> None:
+    def __init__(self, store: BlobStore, account: str) -> None:
         self._store = store
         self._account = account
-        self._patience = patience
 
-    def stopping(
-        self,
-        where: Where,
-        report: Callable[[], None],
-        until: datetime | None,
-        *,
-        with_stop: bool,
-    ) -> Stopping | None:
+    def stopping(self, where: Where, tries: Tries, *, with_stop: bool) -> Stopping | None:
         """The first control that stops an order, or `None` where every one read as absent.
 
         `with_stop` reads the loss stop too. The check ahead of the gate leaves
@@ -90,7 +81,7 @@ class Controls:
         if with_stop:
             halting.append(("loss stop", loss_stop_key(account), False))
         for name, key, folder in halting:
-            read = self._read(key, folder, report, until)
+            read = self._read(key, folder, tries)
             if read.error is not None:
                 return Stopping(f"{name} unreadable: {read.error}", True)
             if read.found is not None:
@@ -99,30 +90,26 @@ class Controls:
             ("strategy off switch", off_switch_key(account, strategy), False),
             ("strategy halt", strategy_halts_prefix(account, strategy), True),
         ):
-            read = self._read(key, folder, report, until)
+            read = self._read(key, folder, tries)
             if read.error is not None:
                 return Stopping(f"{name} unreadable: {read.error}", True)
             if read.found is not None:
                 return Stopping(f"strategy off: {name} stands{read.found}", False)
         return None
 
-    def stop(
-        self, report: Callable[[], None], until: datetime | None = None
-    ) -> tuple[StopState, str]:
-        """The loss stop's state, with the error's type where it could not be read."""
-        read = self._read(loss_stop_key(self._account), False, report, until)
+    def stop(self, tries: Tries) -> tuple[StopState, str]:
+        """The loss stop's state, with the error's code where it could not be read."""
+        read = self._read(loss_stop_key(self._account), False, tries)
         if read.error is not None:
             return StopState.UNREADABLE, read.error
         return (StopState.ABSENT if read.found is None else StopState.FIRED), ""
 
-    def _read(
-        self, key: str, folder: bool, report: Callable[[], None], until: datetime | None
-    ) -> _Read:
+    def _read(self, key: str, folder: bool, tries: Tries) -> _Read:
         try:
             if not folder:
-                self._patience.tried(lambda: self._store.get(key), report, until)
+                tries(lambda: self._store.get(key))
                 return _Read("", None)
-            keys = self._patience.tried(lambda: self._store.list(key, None), report, until)
+            keys = tries(lambda: self._store.list(key, None))
             if not isinstance(keys, list | tuple):
                 return _Read(None, type(keys).__name__)
             if not keys:
@@ -130,6 +117,6 @@ class Controls:
             return _Read(f": {str(keys[0]).removeprefix(key)}", None)
         except BlobMissing as missing:
             # A folder that lists answers with an empty list, never with a missing blob.
-            return _Read(None, type(missing).__name__ if folder else None)
+            return _Read(None, code_of(missing) if folder else None)
         except Exception as error:
-            return _Read(None, type(error).__name__)
+            return _Read(None, code_of(error))

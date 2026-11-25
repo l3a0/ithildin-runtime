@@ -54,8 +54,8 @@ class TwicePath(BrokenPath):
 class _ResizedPath(BrokenPath):
     by = Decimal(1)
 
-    def _just_sending(self, view, cleared) -> OrderRecord:
-        order = super()._just_sending(view, cleared)
+    def _just_sending(self, view, cleared, tries) -> OrderRecord:
+        order = super()._just_sending(view, cleared, tries)
         return replace(order, intent=replace(order.intent, qty=order.intent.qty * self.by))
 
 

@@ -19,6 +19,7 @@ from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     Ack,
     BlobRef,
+    BrokerState,
     BrokerUnavailable,
     Halt,
     JournalAck,
@@ -56,7 +57,8 @@ from ithildinruntime.journal import (
     SendingEntry,
     VerdictEntry,
 )
-from tests.support import gates
+from tests import conftest
+from tests.support import fake_broker, gates
 from tests.support.broken_paths import (
     BrokenPath,
     DoubledPath,
@@ -66,15 +68,17 @@ from tests.support.broken_paths import (
     UnapprovedPath,
     UnsentPath,
 )
-from tests.support.fake_broker import FakeBroker, raising, says
+from tests.support.fake_broker import FakeBroker, Refused, check, raising, says
 from tests.support.journals import ack, fill, route
 from tests.support.order_world import (
     ACCOUNT,
     AT,
     CASH,
     DEPLOYMENT,
+    NOW,
     OTHER_WRITER,
     RUN,
+    WRITER,
     Kill,
     World,
     halted,
@@ -86,6 +90,7 @@ from tests.support.order_world import (
 ID = order(1, 2).client_order_id
 SENT = ["intent", "verdict", "sending", "ack"]
 PAIR = (order(1, 2), order(2, -3, gates.USO))
+WENT = f"which was sent at {NOW.isoformat()}, as the broker's b-1"
 
 
 def down(number: int, op: str, key: str) -> None:
@@ -103,13 +108,13 @@ def test_1_an_order_sends_once_with_every_entry_in_order() -> None:
     assert world.alarms.sent == []
     assert world.rebuilt() == 1
     ack = last(world)
-    assert ack == AckEntry(ID, "b-1", b'{"id": "b-1"}', False, AT)
+    assert ack == AckEntry(ID, "b-1", b'{"id": "b-1"}', False, NOW)
     (entry,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
     assert entry.snapshot == world.refs["snapshot"]
     assert entry.constraints == world.refs["constraints"]
     assert entry.valuation == world.refs["valuation"]
     assert entry.caps_sha256 == sha256_of(world.store.blobs[caps_key(ACCOUNT)])
-    assert (entry.now, entry.stop, entry.close_entry) == (AT, StopState.ABSENT, None)
+    assert (entry.now, entry.stop, entry.close_entry) == (NOW, StopState.ABSENT, None)
     assert entry.book == 4
 
 
@@ -171,8 +176,27 @@ def test_1_a_refusal_the_path_swallowed_still_fails_the_test() -> None:
     world = World()
     path = DoubledPath(world.account()._shared, world.broker, world.report)
     assert path.send(ID) is OrderState.IN_DOUBT
-    assert world.broker.refused
+    # `check` is the whole of what the fixture in conftest.py does after each test.
+    with pytest.raises(Refused, match="is not as its decision plans it"):
+        check()
     world.broker.take_refusals()
+    check()
+
+
+def test_1_the_fixture_checks_every_test() -> None:
+    """The fixture runs around this test too, and calls `check` once it ends."""
+    ran: list[str] = []
+    plain = fake_broker.check
+    fixture = conftest.no_order_reached_a_fake_broker_wrongly.__wrapped__
+    steps = fixture()
+    next(steps)
+    fake_broker.check = lambda: ran.append("check")  # type: ignore[assignment]
+    try:
+        assert list(steps) == [] and ran == ["check"]
+    finally:
+        fake_broker.check = plain
+    marker = conftest.no_order_reached_a_fake_broker_wrongly
+    assert marker._fixture_function_marker.autouse
 
 
 # 2. A kill and a refusing store at every call
@@ -323,7 +347,9 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
     assert world.submits == sent
     assert world.alarms.sent, "no halt blob reaches monitoring while the store is down"
     if sent:
-        assert f"the ack of {ID}, which was sent, as the broker's b-1" in world.alarms.sent[0]
+        assert f"the ack of {ID}, {WENT}" in world.alarms.sent[0]
+        assert world.alarms.sent[0].startswith(f"account {ACCOUNT}: ")
+        assert "The owner's step: the broker's site" in world.alarms.sent[0]
     owed = account.unstored()
     assert bool(owed) == (at >= CREATES[2])
     world.store.before = world.store.after = lambda n, op, key: None
@@ -419,7 +445,7 @@ def test_2_an_answer_the_journal_did_not_take_is_settled_at_the_next_decision() 
     world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
     with pytest.raises(Halt, match="the journal did not take the ack"):
         world.send(account=account)
-    assert account.unstored() == (f"the ack of {ID}, which was sent, as the broker's b-1",)
+    assert account.unstored() == (f"the ack of {ID}, {WENT}",)
     with pytest.raises(Halt, match="the journal still does not take the ack"):
         account.settle(world.report)
     assert world.reader().in_doubt()
@@ -490,7 +516,8 @@ def test_2_a_kept_doubt_whose_order_moved_on_is_done_with_an_alarm() -> None:
     account.settle(world.report)
     assert account.unstored() == ()
     assert world.alarms.sent[-1] == (
-        f"the order {ID} was kept as in doubt, and the journal shows it Acknowledged"
+        f"account {ACCOUNT}: the order {ID} was kept as in doubt, and the journal shows it "
+        "Acknowledged"
     )
 
 
@@ -527,6 +554,7 @@ def test_2_a_report_that_raises_changes_nothing(error: BaseException) -> None:
 def test_2_report_is_called_after_each_append_and_each_broker_call() -> None:
     world = World()
     told: list[str] = []
+    world.store.before = lambda n, op, key: told.append("call")
     world.store.after = lambda n, op, key: told.append(op) if op == "create" else None
     path = world.account().path(world.broker, lambda: told.append("report"))
 
@@ -704,8 +732,11 @@ def test_6_a_rejected_order() -> None:
 def test_6_an_order_the_adapter_proves_was_not_sent() -> None:
     world = World()
     world.broker.answer = says(Outcome.NOT_SENT, None, b"")
-    assert world.send() is OrderState.ABANDONED
+    halt = pytest.raises(Halt, match="could not be sent to the broker")
+    with halt:
+        world.send()
     assert isinstance(last(world), AbandonedEntry) and world.alarms.sent == []
+    assert world.state() is OrderState.ABANDONED and world.submits == 1
 
 
 @pytest.mark.parametrize("outcome", [Outcome.UNKNOWN, Outcome.NOT_FOUND, Outcome.SEVERAL])
@@ -716,7 +747,7 @@ def test_6_every_other_outcome_is_in_doubt(outcome: Outcome) -> None:
     found = last(world)
     assert isinstance(found, InDoubtEntry) and (found.raw, found.cut) == (b"what", False)
     (alarm,) = world.alarms.sent
-    assert ID in alarm and "b-1" in alarm and ACCOUNT not in alarm
+    assert alarm.startswith(f"account {ACCOUNT}: the order {ID} is in doubt") and "b-1" in alarm
 
 
 @pytest.mark.parametrize(
@@ -783,6 +814,7 @@ def forged(**changes: object) -> Callable[[OrderIntent, int], Ack]:
         {"raw": "text"},
         {"outcome": "shrug"},
         {"outcome": None},
+        {"outcome": []},
         {"order": "b-1"},
     ],
 )
@@ -840,9 +872,12 @@ def test_6_an_answer_too_long_to_keep_whole_is_in_doubt(outcome: Outcome) -> Non
     assert world.send() is OrderState.IN_DOUBT
     found = last(world)
     assert isinstance(found, InDoubtEntry) and found.cut and found.raw == b"x" * RAW_LIMIT
+    if outcome is Outcome.NOT_SENT:
+        return
     whole = World()
     whole.broker.answer = says(outcome, "b-1", b"x" * RAW_LIMIT)
-    assert whole.send() is not OrderState.IN_DOUBT
+    ended = {Outcome.ACCEPTED: OrderState.ACKNOWLEDGED, Outcome.REJECTED: OrderState.REJECTED}
+    assert whole.send() is ended[outcome]
 
 
 @pytest.mark.parametrize("broker", ["b 1", "a" * 129, "acct.PA3FAKE"])
@@ -873,17 +908,107 @@ def test_6_an_order_in_doubt_alarms_even_where_its_entry_is_not_stored() -> None
     world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
     with pytest.raises(Halt, match="did not take the in_doubt"):
         world.send()
-    assert "is in doubt, perhaps sent: the submit raised TimeoutError" in world.alarms.sent[0]
+    sent = f"is in doubt, perhaps sent at {NOW.isoformat()}: the submit raised TimeoutError"
+    assert sent in world.alarms.sent[0]
 
 
 def test_6_an_alarm_that_cannot_be_sent_halts_once_the_entry_is_stored() -> None:
     world = World()
     world.broker.answer = raising(TimeoutError())
     world.alarms.error = RuntimeError("the channel's own text")
-    with pytest.raises(Halt, match="The alarm could not be sent: RuntimeError") as raised:
-        world.send()
+    account = world.account()
+    with pytest.raises(Halt, match="An alarm about it could not be sent") as raised:
+        world.send(account=account)
     assert "own text" not in raised.value.reason
     assert world.state() is OrderState.IN_DOUBT
+    # The alarm is owed until it goes out, and nothing is sent before it does.
+    assert account.unstored()[0].startswith(f"an alarm about the in_doubt of {ID}")
+    tried = len(world.alarms.sent)
+    with pytest.raises(Halt, match="an alarm about the in_doubt of .* could not be sent"):
+        account.settle(world.report)
+    assert len(world.alarms.sent) == tried + 1
+    world.alarms.error = None
+    account.settle(world.report)
+    assert world.alarms.sent[-1] == world.alarms.sent[0]
+    assert account.unstored() == () and world.kinds() == [*SENT[:3], "in_doubt"]
+
+
+def test_6_an_alarm_lost_with_the_store_goes_out_when_the_channel_is_back() -> None:
+    """One outage takes the broker, the store and the alert channel together."""
+    world = World()
+    account = world.account()
+    world.broker.answer = raising(TimeoutError())
+    world.alarms.error = ConnectionError("down")
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    with pytest.raises(Halt, match="did not take the in_doubt"):
+        world.send(account=account)
+    world.alarms.error, world.alarms.sent = None, []
+    with pytest.raises(Halt, match="still does not take the in_doubt"):
+        account.settle(world.report)
+    assert f"the order {ID} is in doubt" in world.alarms.sent[0]
+    world.store.before = lambda n, op, key: None
+    account.settle(world.report)
+    assert account.unstored() == () and world.state() is OrderState.IN_DOUBT
+
+
+def test_6_an_alarm_lost_while_an_answer_is_settled_is_owed_too() -> None:
+    world = World(orders=PAIR)
+    account = world.account()
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    with pytest.raises(Halt):
+        world.send(account=account)
+    world.store.before = lambda n, op, key: None
+    for record in route("Acknowledged", PAIR[1], broker="b-1"):
+        world.record(_numbered(world, record))
+    world.alarms.error = ConnectionError("down")
+    for _ in range(2):
+        with pytest.raises(Halt, match="an alarm about the ack of .* could not be sent"):
+            account.settle(world.report)
+    assert world.state() is OrderState.IN_DOUBT
+    world.alarms.error, world.alarms.sent = None, []
+    account.settle(world.report)
+    assert f"the order {ID} is in doubt" in world.alarms.sent[0] and account.unstored() == ()
+
+
+CONTRADICTIONS = {
+    "not sent with an id": says(Outcome.NOT_SENT, "b-1", b""),
+    "not sent with bytes": says(Outcome.NOT_SENT, None, b"{}"),
+    "not sent with a working copy": says(Outcome.NOT_SENT, "b-1", b"", filled=Decimal(0)),
+    "not sent with a filled copy": says(
+        Outcome.NOT_SENT, "b-1", b"", state=BrokerState.FILLED, filled=Decimal(2)
+    ),
+    "rejected with a working copy": says(Outcome.REJECTED, "b-1", filled=Decimal(0)),
+    "rejected with a filled copy": says(
+        Outcome.REJECTED, "b-1", state=BrokerState.FILLED, filled=Decimal(2)
+    ),
+    "rejected with a part filled": says(
+        Outcome.REJECTED, "b-1", state=BrokerState.REJECTED, filled=Decimal(1)
+    ),
+    "accepted with a rejected copy": says(Outcome.ACCEPTED, "b-1", state=BrokerState.REJECTED),
+}
+
+
+@pytest.mark.parametrize("name", CONTRADICTIONS)
+def test_6_an_answer_that_says_two_things_is_in_doubt(name: str) -> None:
+    """An order journaled as never sent leaves the book, and the next would double it."""
+    world = World(orders=(order(1, 2), order(2, 2)))
+    world.broker.answer = CONTRADICTIONS[name]
+    account = world.account()
+    assert world.send(1, account) is OrderState.IN_DOUBT
+    found = last(world)
+    assert isinstance(found, InDoubtEntry) and found.raw is not None
+    assert len(world.alarms.sent) == 1
+    assert world.send(2, account) is OrderState.REFUSED and world.submits == 1
+
+
+def test_6_an_answer_that_agrees_with_its_copy_is_taken() -> None:
+    world = World()
+    world.broker.answer = says(Outcome.REJECTED, "b-1", state=BrokerState.REJECTED)
+    assert world.send() is OrderState.REJECTED
+    for state in (BrokerState.WORKING, BrokerState.FILLED, BrokerState.CANCELLED):
+        world = World()
+        world.broker.answer = says(Outcome.ACCEPTED, "b-1", state=state)
+        assert world.send() is OrderState.ACKNOWLEDGED
 
 
 def test_6_a_clock_that_fails_after_the_submit_loses_no_answer() -> None:
@@ -993,7 +1118,7 @@ def test_7_an_intent_that_loses_its_number_starts_over_five_times() -> None:
             assert len(stored) == 5
         else:
             halted(world, "lost its intent's number 6 times")
-            assert world.kinds() == ["read"] * 6 or world.state() is None
+            assert world.kinds() == [] and world.state() is None
 
 
 def test_7_an_answer_that_loses_its_number_is_appended_until_it_lands() -> None:
@@ -1162,39 +1287,107 @@ MICRO = timedelta(microseconds=1)
 RETRY = Retry(timedelta(seconds=600), 1.0, 4.0)
 
 
+def moved(world: World, read: str, at: datetime) -> None:
+    """Set the clock so that one of an order's two reads of its last moment sees `at`.
+
+    The submit's is read after its controls, so the clock moves once the last
+    store call before the broker's has answered.
+    """
+    if read == "first":
+        world.clock.at = at
+        return
+
+    def after(number: int, op: str, key: str) -> None:
+        if number == {"after sending": CREATES[2], "last": BEFORE_SUBMIT}[read]:
+            world.clock.at = at
+
+    world.store.after = after
+
+
 @pytest.mark.parametrize("later", ["strategy", "caps"])
 @pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
-@pytest.mark.parametrize("read", ["first", "submit"])
+@pytest.mark.parametrize("read", ["first", "after sending", "last"])
 def test_8_the_cutoff(later: str, by: timedelta, read: str) -> None:
     minutes = {"strategy": (10, 5), "caps": (5, 10)}[later]
     world = World(
         constraints=(gates.constraints(moc_cutoff=minutes[0]),),
         caps=gates.caps(moc_cutoff=minutes[1]),
     )
-    cutoff = gates.CLOSE - timedelta(minutes=10)
-    if read == "first":
-        world.clock.at = cutoff + by
-    else:
-        # The clock moves once the `sending` is stored.
-        def after(number: int, op: str, key: str) -> None:
-            if number == CREATES[2]:
-                world.clock.at = cutoff + by
-
-        world.store.after = after
+    moved(world, read, gates.CLOSE - timedelta(minutes=10) + by)
     if by > timedelta(0):
-        halted(world, "the market-on-close cutoff")
+        reason = halted(world, "its market-on-close cutoff")
+        assert ID in reason
         assert world.state() is OrderState.ABANDONED
-        assert ("sending" in world.kinds()) == (read == "submit")
-        assert "verdict" not in world.kinds() or read == "submit"
+        assert ("sending" in world.kinds()) == (read != "first")
     else:
         assert world.send() is OrderState.ACKNOWLEDGED
 
 
-def test_8_a_market_order_for_the_day_has_no_cutoff() -> None:
+@pytest.mark.parametrize("by", [-MICRO, timedelta(0), MICRO])
+@pytest.mark.parametrize("read", ["first", "after sending", "last"])
+def test_8_an_order_for_the_day_goes_out_until_its_sessions_close(by: timedelta, read: str) -> None:
     made = order(1, 2, kind=OrderType.MARKET, tif=TimeInForce.DAY)
     world = World(orders=(made,), caps=gates.caps(moc_cutoff=390))
-    world.clock.at = gates.CLOSE
-    assert world.send() is OrderState.ACKNOWLEDGED
+    moved(world, read, gates.CLOSE + by)
+    if by > timedelta(0):
+        halted(world, "its session's close")
+        assert world.state() is OrderState.ABANDONED
+    else:
+        assert world.send() is OrderState.ACKNOWLEDGED
+
+
+def test_8_an_order_for_the_day_is_not_tried_past_its_sessions_close() -> None:
+    made = order(1, 2, kind=OrderType.MARKET, tif=TimeInForce.DAY)
+    world = World(orders=(made,), retry=RETRY)
+    world.clock.at, world.clock.moves = gates.CLOSE - timedelta(seconds=30), True
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 6)))
+    halted(world, "the sending of")
+
+
+@pytest.mark.parametrize("step", ["verdict", "sending", "view", "control", "folder"])
+def test_8_each_try_ahead_of_the_call_ends_by_the_cutoff(step: str) -> None:
+    """Each is tried for the 53 seconds left to the cutoff, and never for the deadline."""
+    world = World(caps=gates.caps(moc_cutoff=19), retry=RETRY)
+    world.clock.moves = True
+    number, key = {
+        "verdict": (0, journal_entry_key(ACCOUNT, 5)),
+        "sending": (0, journal_entry_key(ACCOUNT, 6)),
+        "view": (CREATES[2] + 1, "journal/"),
+        "control": (CREATES[2] + 3, kill_switch_key(ACCOUNT)),
+        "folder": (CREATES[2] + 4, account_halts_prefix(ACCOUNT)),
+    }[step]
+    waited: list[float] = []
+    gave_up: list[int] = []
+    world.clock.wait = waited.append  # type: ignore[method-assign]
+
+    def before(n: int, op: str, k: str) -> None:
+        # The first refused call is tried until it gives up. What follows it goes through.
+        if k.startswith(key) and n >= number and not gave_up:
+            world.clock.elapsed = sum(waited)
+            if sum(waited) >= 53:
+                gave_up.append(n)
+            down(n, op, k)
+
+    world.store.before = before
+    halted(world, "unreadable|not stored|could not be read")
+    assert sum(waited) == 53.0
+
+
+def test_8_the_clock_is_the_gates_now_and_the_answers_time() -> None:
+    world = World()
+    world.clock.at = AT + timedelta(minutes=3)
+    late = AT + timedelta(minutes=4)
+
+    def answer(intent: OrderIntent, number: int) -> object:
+        world.clock.at = late
+        raise TimeoutError
+
+    world.broker.answer = answer
+    assert world.send() is OrderState.IN_DOUBT
+    (verdict,) = [r for r in world.records() if isinstance(r, VerdictEntry)]
+    assert verdict.now == AT + timedelta(minutes=3)
+    found = last(world)
+    assert isinstance(found, InDoubtEntry) and found.received_at == late
 
 
 def test_8_the_tries_end_by_the_cutoff_and_one_at_it_is_made() -> None:
@@ -1202,6 +1395,7 @@ def test_8_the_tries_end_by_the_cutoff_and_one_at_it_is_made() -> None:
     for left, waited in ((60, 60.0), (0, 0.0)):
         minutes = 20 - left // 60
         world = World(caps=gates.caps(moc_cutoff=minutes), retry=RETRY)
+        world.clock.at = AT
         world.clock.moves = True
         world.store.refuse(("create", journal_entry_key(ACCOUNT, 4)))
         told: list[float] = []
@@ -1218,3 +1412,251 @@ def test_8_the_tries_end_by_the_cutoff_and_one_at_it_is_made() -> None:
         first = [op for op, _ in tries].index("list")
         assert sum(told[: first - 1]) == waited
         assert first == len(told[: first - 1]) + 1
+
+
+# 7. A control set while another is being read again
+
+
+WAITS = [n for n in range(CREATES[2] + 1, BEFORE_SUBMIT + 1)]
+
+
+@pytest.mark.parametrize("name", CONTROLS)
+@pytest.mark.parametrize("at", WAITS)
+def test_7_a_control_set_while_a_later_read_waits_stops_the_order(name: str, at: int) -> None:
+    """The submit's reads count only when none of them waited, so each is made again."""
+    key, halts = CONTROLS[name]
+    world = World()
+
+    def before(number: int, op: str, k: str) -> None:
+        if number == at:
+            world.store.put(key, b"{}")
+            down(number, op, k)
+
+    world.store.before = before
+    if halts:
+        halted(world, f"{name} stands")
+    else:
+        assert world.send() is OrderState.ABANDONED
+    assert world.submits == 0 and world.state() is OrderState.ABANDONED
+
+
+@pytest.mark.parametrize("at", WAITS)
+def test_7_a_book_disputed_while_a_read_waits_stops_the_order(at: int) -> None:
+    world = World(position=Decimal(5))
+    shift = next_create(world, 3) - CREATES[2]
+    bad = DisputedFillEntry(replace(fill("old-f1", "old-1", 5, 2, gates.GLD), at=AT), 2)
+
+    def before(number: int, op: str, k: str) -> None:
+        if number == at + shift:
+            world.record(bad)
+            down(number, op, k)
+
+    world.store.before = before
+    halted(world, "is in dispute")
+
+
+def test_7_checks_that_never_come_in_one_pass_end_by_their_deadline() -> None:
+    world = World()
+    calls: list[int] = []
+
+    def before(number: int, op: str, k: str) -> None:
+        # The run's halt is refused once in every pass of the submit.
+        if number > CREATES[2] and (op, k) == ("get", run_halt_key(DEPLOYMENT, RUN)):
+            calls.append(number)
+            if len(calls) % 2:
+                down(number, op, k)
+
+    world.store.before = before
+    halted(world, "were not all read in one pass by the deadline")
+    assert world.state() is OrderState.ABANDONED
+    assert len(calls) == 20, "ten passes, each with one wait of a second"
+
+
+# 7. Other ends of a race
+
+
+def test_7_an_older_decisions_order_is_not_sent_after_a_newer_one_is_journaled() -> None:
+    newer = AT + timedelta(minutes=5)
+    world = World()
+    world.decide((order(1, -2, at=newer),), newer)
+    halted(world, "and the journal holds a later one")
+    assert world.kinds() == []
+    assert world.path().abandon(ID, "a later decision") is OrderState.ABANDONED
+    raced = World()
+    raced.store.before = lambda n, op, key: raced.decide((), newer) if n == CREATES[2] + 1 else None
+    halted(raced, "and the journal holds a later one")
+    assert raced.state() is OrderState.ABANDONED
+
+
+def test_7_an_id_of_another_strategy_at_the_same_place_is_in_no_plan() -> None:
+    world = World()
+    other = order(1, 2, strategy=gates.OTHER).client_order_id
+    halted(world, "is in no decision", lambda: world.path().send(other))
+
+
+def test_7_abandon_leaves_an_order_this_writer_has_since_made_sending() -> None:
+    world = World()
+    account = world.account()
+    world.path(account).hold([ID])
+    views: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("list", f"journal/{ACCOUNT}/") and not world.store.quiet:
+            views.append(number)
+            if len(views) == 2:
+                world.record(SendingEntry(ID), Journal(world.store, ACCOUNT, WRITER))
+
+    world.store.before = before
+    halted(world, "is Sending, so it is not", lambda: world.path(account).abandon(ID, "no"))
+    assert world.state() is OrderState.SENDING
+
+
+def test_7_a_kept_ack_stays_where_the_journal_shows_another_broker_id() -> None:
+    world = World()
+    account = world.account()
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 7)))
+    with pytest.raises(Halt):
+        world.send(account=account)
+    world.store.before = lambda n, op, key: None
+    world.record(AckEntry(ID, "b-other", b"", False, AT))
+    with pytest.raises(Halt, match="still does not take the ack"):
+        account.settle(world.report)
+    assert account.unstored()
+
+
+def test_7_an_in_doubt_whose_answer_was_lost_is_not_stored_twice() -> None:
+    for answer, kept in ((raising(TimeoutError()), None), (says(Outcome.UNKNOWN), b"{}")):
+        world = World()
+        world.broker.answer = answer
+        world.store.after = lambda n, op, key, w=world: (
+            down(n, op, key) if n == CREATES[3] else None
+        )
+        assert world.send() is OrderState.IN_DOUBT
+        assert world.kinds() == [*SENT[:3], "in_doubt"]
+        assert last(world).raw == kept
+
+
+def test_7_a_stand_in_whose_answer_was_lost_is_done_with_its_alarm() -> None:
+    """The fold refuses the ack, its `in_doubt` lands, and the store does not answer for it."""
+    world = World(orders=PAIR)
+    account = world.account()
+    world.broker.answer = says(Outcome.ACCEPTED, "b-1", b"the answer")
+    assert world.send(1, account) is OrderState.ACKNOWLEDGED
+    creates: list[int] = []
+
+    def after(number: int, op: str, key: str) -> None:
+        if op == "create":
+            creates.append(number)
+            if len(creates) == 4:
+                down(number, op, key)
+
+    world.store.after = after
+    assert world.send(2, account) is OrderState.IN_DOUBT
+    assert world.kinds()[-2:] == ["sending", "in_doubt"] and account.unstored() == ()
+    assert f"the order {PAIR[1].client_order_id} is in doubt" in world.alarms.sent[-1]
+    account.settle(world.report)
+
+
+def test_7_an_answers_bytes_are_stored_beside_another_writers_doubt() -> None:
+    world = World()
+    other = Journal(world.store, ACCOUNT, OTHER_WRITER)
+
+    def answer(intent: OrderIntent, number: int) -> Ack:
+        world.record(InDoubtEntry(ID, "taken over", None, False, AT), other)
+        return says(Outcome.UNKNOWN, "b-1", b"what it said")(intent, number)
+
+    world.broker.answer = answer
+    assert world.send() is OrderState.IN_DOUBT
+    assert world.kinds()[-2:] == ["in_doubt", "in_doubt"]
+    assert last(world).raw == b"what it said"
+
+
+def test_7_an_order_not_sent_that_another_writer_put_in_doubt_says_so_and_holds_nobody() -> None:
+    world = World(orders=PAIR)
+    account = world.account()
+    world.store.put(off_switch_key(ACCOUNT, gates.CHAN), b"")
+    world.store.drop(off_switch_key(ACCOUNT, gates.CHAN))
+    key = kill_switch_key(ACCOUNT)
+
+    def before(number: int, op: str, k: str) -> None:
+        if number == CREATES[2] + 1:
+            world.store.put(key, b"")
+        if number > CREATES[2] + 1 and op == "create":
+            down(number, op, k)
+
+    world.store.before = before
+    halted(world, "kill switch stands", lambda: world.send(1, account))
+    world.store.before = lambda n, op, k: None
+    world.record(
+        InDoubtEntry(ID, "taken over", None, False, AT), Journal(world.store, ACCOUNT, OTHER_WRITER)
+    )
+    account.settle(world.report)
+    assert account.unstored() == ()
+    assert last(world).reason.endswith("an order that was not sent")
+    assert f"the order {ID} is in doubt, not sent" in world.alarms.sent[-1]
+
+
+def test_7_a_clock_that_fails_after_the_sending_still_journals_what_was_not_sent() -> None:
+    world = World()
+    plain = world.clock.now
+
+    def broken() -> datetime:
+        raise RuntimeError("no time")
+
+    def after(number: int, op: str, key: str) -> None:
+        if number == BEFORE_SUBMIT:
+            world.clock.now = broken  # type: ignore[method-assign]
+
+    world.store.after = after
+    with pytest.raises(RuntimeError, match="no time"):
+        world.send()
+    world.clock.now = plain  # type: ignore[method-assign]
+    assert world.state() is OrderState.ABANDONED and world.submits == 0
+
+
+@pytest.mark.parametrize("create", range(4))
+@pytest.mark.parametrize("calls", [1, 2, 5, 9, 14, 40])
+def test_7_a_create_that_lands_late_doubles_nothing_and_unsays_nothing(
+    create: int, calls: int
+) -> None:
+    """The store does not answer for a create, and the create lands `calls` calls later."""
+    world = World()
+    account = world.account()
+    held: list[tuple[str, bytes, int]] = []
+    plain = world.store.create
+
+    def creating(key: str, data: bytes, sha256: str) -> str:
+        seen = len([c for c in world.store.calls if c[0] == "create"])
+        if seen == create and not held and not world.store.quiet:
+            world.store.calls.append(("create", key))
+            held.append((key, data, len(world.store.calls)))
+            down(0, "create", key)
+        if held and key == held[0][0] and key not in world.store.blobs:
+            # The same key is refused until the first try of it has landed.
+            world.store.calls.append(("create", key))
+            down(0, "create", key)
+        return plain(key, data, sha256)
+
+    def before(number: int, op: str, key: str) -> None:
+        if held and number >= held[0][2] + calls and held[0][0] not in world.store.blobs:
+            world.store.put(held[0][0], held[0][1])
+
+    world.store.create = creating  # type: ignore[method-assign]
+    world.store.before = before
+    for _ in range(3):
+        try:
+            world.send(account=account)
+        except Halt:
+            pass
+    if held and held[0][0] not in world.store.blobs:
+        world.store.put(held[0][0], held[0][1])
+    try:
+        world.send(account=account)
+    except Halt:
+        pass
+    assert world.submits <= 1
+    if world.submits:
+        assert world.state() is OrderState.ACKNOWLEDGED
+    else:
+        assert world.state() in (OrderState.ABANDONED, OrderState.INTENDED, OrderState.APPROVED)
+    assert world.reader().in_doubt() == () and account.unstored() == ()

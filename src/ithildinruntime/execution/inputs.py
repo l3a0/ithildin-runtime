@@ -61,6 +61,7 @@ def read_inputs(
     def entries[T](stage: str, name: str, kind: type[T]) -> tuple[T, ...]:
         key = result_key(deployment, run, at, stage)
         result = storage.read_result(key, at)
+        report()
         if result is None:
             raise Halt(f"{key} is not stored, and an order is checked against it")
         counts = output_key(deployment, run, at, stage, name)

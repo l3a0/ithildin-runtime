@@ -1200,20 +1200,20 @@ Every call to the broker goes through `OrderPath`.
 
 Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
 
-Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a call to a broker, an entry only the order path records, or an import of an adapter anywhere else. The sweep reads what is written, so a name a test builds at run time is out of its reach. The fake broker catches that one, because it reads the stored journal itself and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a submit, a cancel or a search for an order, one of six entries only the order path records, a change to the path from outside it, or an import of an adapter. The sweep reads what is written, so a name put together at run time outside `execution` and `runtime` is out of its reach, and its docstring lists the rest. In a test handed the fake broker, the fake broker catches what the sweep does not, because it reads the stored journal itself and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
 
 ##### What an order path takes, and what it answers
 
 The worker builds one `Account` for each broker account and keeps it across decisions. It holds the journal, the gate, the controls and each answer the journal has not taken yet. `Account.path` gives the `OrderPath` for one decision's broker.
 
-`send` takes a client order id and nothing else. The order, the deployment, the run, the decision time and the inputs all come from the `decision` entry the journal holds, so no caller can hand it an order that was not planned, or a looser limit. It answers the state the journal then shows the order in, and it halts where nothing more may go out in the decision.
+`send` takes a client order id and nothing else. The order, the deployment, the run, the decision time and the inputs all come from the `decision` entry the journal holds, so no caller can hand it an order that was not planned, or a looser limit. It answers the state the journal then shows the order in, and it halts where nothing more may go out in the decision. An answer of `Abandoned` says the order's strategy is off.
 
 Five rules hold whatever a step does.
 
-1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again, and its state is the answer.
+1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again. Its state is the answer, apart from one left `Intended` or `Approved`, which halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
 2. **One acknowledgement sends one order.** The account holds the acknowledgement of each `sending` entry its own journal gave, and the private submit takes it out before it does anything else. So one that was used, belongs to another order or was made up from the journal's bytes sends nothing. The journal could not tell a second use apart, because an order whose answer was not stored is still `Sending`.
-3. **Nothing goes out on a book that moved.** The `verdict` and the `sending` are each the entry right after the one they were decided on. A number another writer took ends the order `abandoned` and halts the decision.
-4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which each stage calls before its first view. Nothing is sent while it still fails. The same holds for an order that has a `sending` and was stopped before the call, because only that process knows nothing left.
+3. **No approval and no `sending` is recorded on a book that moved.** Each is the entry right after the one it was decided on. A number another writer took ends the order `abandoned` and halts the decision. After the `sending`, an entry stops the order where it moves this order, halts the book or is a newer `decision`. Any other does not, because the gate counted every open order at its worst case.
+4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stages call before their first view. An alarm that could not be sent is kept and tried again the same way. Nothing is sent while either still fails. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. The same holds for an order that has a `sending` and was stopped before the call, because only that process knows nothing left.
 5. **Every call halts unless the broker's `alias` names the journal's account.** Nothing raises while an account is built, because a worker that fails to start is restarted by the host and read by no person.
 
 ##### How a call names an order
@@ -1244,22 +1244,23 @@ A call about one order answers an `Ack`, whose `outcome` is one of six.
 | --- | --- | --- |
 | `accepted` | The broker has the order, under the id it gives | `ack` |
 | `rejected` | The broker refused the order | `rejected` |
-| `not_sent` | Proof that nothing left, such as a connection refused before any byte | `abandoned` |
+| `not_sent` | Proof that nothing left, such as a connection refused before any byte | `abandoned`, and the decision halts |
 | `unknown` | Any answer the adapter cannot classify, and a refusal that says the broker already holds the id | `in_doubt` |
 | `not_found` | A lookup found no order | `in_doubt` |
 | `several` | A search for an order found more than one | `in_doubt` |
 
-Five more things end `in_doubt`, and each alarms at once, naming the order and no account.
+Six more things end `in_doubt`, and each alarms at once, naming the account by its alias, the order and when it went out.
 
 1. An error the submit raises, whatever its type. An adapter's own halt does too, and then halts the decision with its reason.
 2. An accepted order with no broker's id, with one another order holds, or with one the journal refuses.
 3. A broker's copy of the order that differs from the order sent in its id, instrument, shares, type or time in force.
-4. An answer of more than 65,536 bytes, whose first part is kept.
-5. An answer that is no `Ack`, or whose time is not UTC.
+4. An answer that says two things of the order: that nothing was sent, with an id, a copy or bytes of the broker's, that it was rejected, with a copy that is not rejected or has shares filled, or that it was accepted, with a copy that is rejected. An order journaled as never sent leaves the book, so the next one would double it.
+5. An answer of more than 65,536 bytes, whose first part is kept.
+6. An answer that is no `Ack`, or whose time is not UTC.
 
 Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `CashRead` and `RecordsRead`, whose records [#151](https://github.com/l3a0/ithildin-runtime/issues/151) types. Each holds the pages as received, with the time each came, and says whether every page came. A read holds at least one page, since an empty answer is one the broker gave, and one past 4 MiB cannot say it is whole. The price of that cap is that a day whose list passes it halts until the cap is raised.
 
-A read that fails raises `BrokerUnavailable`, which carries the call's name and a type of error and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
+A read that fails raises `BrokerUnavailable`, which takes the error or its type, and carries the call's name and that type's name and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
 
 `orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) reads it.
 
@@ -1315,7 +1316,7 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, does the reading.
+The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath` does the reading.
 
 The figure below is a C4 component diagram.
 
@@ -1362,7 +1363,7 @@ flowchart LR
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and `OrderPath` journals it. `tests/support/order_world.py` works each sent order's answer out again from its `verdict` entry alone, with the second implementation in `tests/support/gate_oracle.py`.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and `OrderPath` journals it. `rebuilt` in `tests/support/order_world.py` works a sent order's answer out again from its `verdict` entry alone, with the second implementation in `tests/support/gate_oracle.py`.
 
 ##### What halts and what refuses
 
@@ -1431,7 +1432,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 ##### Where the limits come from
 
-Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
+Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath` reads the blob as each order's send begins, so a cap the owner lowers binds at the next one.
 
 `core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Nine checks go further.
 
@@ -1799,7 +1800,7 @@ An arrow means "may import". The diagram draws four rules.
 
 1. **No worker module imports another worker module.** The workers are data, alpha, risk, cost, portfolio, execution and monitoring. The code they share sits below them, in two packages, so no worker needs a sibling's code.
    1. `core`, which every module may import.
-   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Execution builds the `Journal` that `OrderPath` holds, and monitoring the one `Monitoring` holds, each from the `BlobStore` and the account it is handed. No code outside the four importers constructs one.
+   2. `journal`, which holds `Journal` and imports only `core`. Only execution, monitoring, the supervisor and the `ithildin` tool may import it, and [The journal](08-crosscutting-concepts.md#the-journal) lists the six writers that append to the journal. Execution's `Account` builds the `Journal` its order paths share, and monitoring the one `Monitoring` holds, each from the `BlobStore` and the account it is handed. No code outside the four importers constructs one.
 
    `adapters`, `execution.brokers` and `runtime.loop` import nothing from `ithildinruntime` but `core`.
 
@@ -1859,14 +1860,15 @@ An arrow means "may import". The diagram draws four rules.
 
 ### How tests hold the rule
 
-A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A package's `__init__.py` runs whenever a module beneath it is imported, so the test holds it to the rule of every box beneath it too, and `runtime/__init__.py` and `execution/__init__.py` may import only `core`. A second test runs a day under the supervisor against a fake broker that fails on four things.
+A test reads every module's imports with Python's `ast` module and fails on an arrow the diagram does not draw, an import of `journal` from a module other than its four importers included. A package's `__init__.py` runs whenever a module beneath it is imported, so the test holds it to the rule of every box beneath it too, and `runtime/__init__.py` and `execution/__init__.py` may import only `core`. A second test runs a day under the supervisor against a fake broker that fails on five things.
 
 1. An order whose client order id has no approval in the journal.
 2. An order whose `sending` entry is not yet stored in the journal.
 3. A client order id it has already received.
-4. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included.
+4. An order that differs in any field from the one its `decision` entry plans.
+5. A cancel whose `cancel` entry is not yet stored in the journal, since a cancel is journaled before it is sent, the kill switch's included. [#149](https://github.com/l3a0/ithildin-runtime/issues/149) adds this one with the cancels, and the fake broker refuses the other four today.
 
-The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fourth check. The fake broker applies the fourth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
+The day pulls the kill switch, rejects one leg of a pair and answers one cancel with a 429, so the kill switch's cancels, a pair-keeping cancel and a cancel retried after a 429 meet the fifth check. The fake broker applies the fifth check in every test that runs against it, so each other path that sends a cancel meets the check in the test that drives that path.
 
 Together they turn acceptance test 3's claim that no order reaches the broker adapter without passing the gate into something executed rather than reviewed. That test, in [How the four acceptance tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it), checks that the risk gate refuses an order over each limit and that nothing bypasses it.
 

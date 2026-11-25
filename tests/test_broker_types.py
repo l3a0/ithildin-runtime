@@ -15,6 +15,7 @@ from ithildinruntime.core import (
     BrokerUnavailable,
     CashRead,
     FillsRead,
+    FoundOrder,
     OrdersRead,
     Outcome,
     PositionsRead,
@@ -82,10 +83,25 @@ def test_only_an_accepted_answer_needs_a_brokers_order_id(outcome: Outcome) -> N
 
 
 def test_an_unavailable_broker_names_a_call_and_a_type_and_no_sentence() -> None:
-    assert str(BrokerUnavailable("fills", "ReadTimeout")) == (
-        "the broker's fills failed with ReadTimeout"
-    )
-    for said in ("401: key PK1", "two words", "", "a" * 81, "9lives", "x\n", None, 7):
-        error = BrokerUnavailable("fills", said)  # type: ignore[arg-type]
-        assert (error.call, error.error) == ("fills", "Unnamed")
-        assert BrokerUnavailable(said, "X").call == "Unnamed"  # type: ignore[arg-type]
+    class ReadTimeout(Exception):
+        pass
+
+    said = "the broker's fills failed with ReadTimeout"
+    assert str(BrokerUnavailable("fills", ReadTimeout("401: key PK1"))) == said
+    assert str(BrokerUnavailable("fills", ReadTimeout)) == said
+    inner = BrokerUnavailable("get_account_activities", ReadTimeout())
+    assert str(BrokerUnavailable("fills", inner)) == said
+    # No word an adapter writes is shown, whatever it looks like.
+    for word in ("PKFAKEKEY0123456789", "401: key PK1", ""):
+        assert BrokerUnavailable("fills", word).error == "str"  # type: ignore[arg-type]
+    for name in ("401: key PK1", "two words", "a" * 81, "9lives", "x\n"):
+        assert BrokerUnavailable("fills", type(name, (Exception,), {})).error == "Unnamed"
+        assert BrokerUnavailable(name, ReadTimeout).call == "Unnamed"
+
+
+def test_no_answer_prints_the_bytes_it_holds() -> None:
+    secret = b"PKFAKEKEY0123456789"
+    found = FoundOrder(Outcome.NOT_FOUND, (), True, secret)
+    page = ReceivedPage(secret, AT)
+    for held in (Ack(Outcome.UNKNOWN, None, None, secret, AT), found, page):
+        assert "PKFAKEKEY" not in repr(held)

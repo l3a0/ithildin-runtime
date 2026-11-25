@@ -38,10 +38,17 @@ from ithildinruntime.core import (
     read_order_id,
 )
 
-__all__ = ["FakeBroker", "Refused", "copy", "made", "raising", "says"]
+__all__ = ["FakeBroker", "Refused", "check", "copy", "made", "raising", "says"]
 
 # Every fake broker the running test built, which conftest.py checks and clears.
 made: list[FakeBroker] = []
+
+
+def check() -> None:
+    """Raise where a fake broker the running test built refused an order."""
+    refused = [why for broker in made for why in broker.refused]
+    if refused:
+        raise Refused("; ".join(refused))
 
 
 class Refused(AssertionError):

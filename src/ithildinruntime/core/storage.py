@@ -258,6 +258,11 @@ class Storage:
         self._claimed: list[_Held] = []
         self._lock = threading.Lock()
 
+    @property
+    def owner_step(self) -> str:
+        """The step an outage gives the owner, the broker's interface."""
+        return self._owner_step
+
     # Writing
 
     def put(

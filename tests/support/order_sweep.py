@@ -4,16 +4,21 @@ It reads source with `ast` and reports two reaches.
 
 1. **In `src/`, `tests/` and `scripts/`**, a reference to one of `CALLS`, as an
    attribute or a match pattern, and one spelled as text to `getattr` and its
-   kin.
+   kin or as a key of an object's own dictionary.
 2. **In `src/` alone**, the text of one of those names, the class of an entry
    that only the order path records, the key of a journal entry, an import of
-   `execution.brokers`, and, in `execution/` and `runtime/`, any call that
-   reaches a name by its text.
+   `execution.brokers`, a change to the path from outside it, and, in
+   `execution/` and `runtime/`, any call that reaches a name by its text.
 
-`ALLOWED` names each exemption, and one nothing uses fails the test. The sweep
-reads what is written. Code that builds a name at run time, such as from two
-halves of a string handed to a `getattr` in a test, is out of its reach, and so
-is a name bound by a package outside these folders.
+`ALLOWED` names each exemption, and one nothing uses fails the test.
+
+It reads what is written, so three ways are out of its reach: a name put
+together at run time, such as from two halves of a string or held in a variable,
+in a test, a script or a package of `src/` outside `execution/` and `runtime/`, a
+journal entry's key spelled out as a path, and an old entry recorded again with
+one field replaced. Nothing in the package imports by a string, which
+tests/test_import_rule.py holds. In a test handed a fake broker, the fake
+broker's refusals catch what the sweep does not.
 """
 
 from __future__ import annotations
@@ -39,12 +44,18 @@ RECORDED = frozenset(
     }
 )
 # What reaches a name by its text, so the sweep could not read which.
-BY_TEXT = frozenset({"getattr", "methodcaller", "attrgetter"})
-IN_WORKERS = BY_TEXT | {"vars", "dir", "__dict__", "__getattribute__"}
+BY_TEXT = frozenset({"getattr", "methodcaller", "attrgetter", "getattr_static"})
+BY_TEXT |= {"getmembers", "__getattribute__"}
+IN_WORKERS = BY_TEXT | {"vars", "dir", "__dict__", "setattr"}
+# What only `account.py` and `order_path.py` may name, since each changes what the path does.
+INSIDE = frozenset({"Shared", "Unstored", "cleared", "record_of", "KINDS"})
+# The classes whose methods nothing outside them replaces.
+WHOLE = frozenset({"OrderPath", "Account", "Controls", "Gate", "Unstored", "Journal"})
 
 _PATH = "src/ithildinruntime/execution/order_path.py"
 _JOURNAL = "src/ithildinruntime/journal/"
-_WORKER = "src/ithildinruntime/runtime/execution_worker.py"
+_ACCOUNT = "src/ithildinruntime/execution/account.py"
+_EXECUTION = ("src/ithildinruntime/execution/", "src/ithildinruntime/runtime/")
 
 # Each exemption: where, what, and the hits it lets through, or `None` for any.
 ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
@@ -59,6 +70,8 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     ),
     (_PATH, "entry"): None,
     (_JOURNAL, "entry"): None,
+    (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "record_of"}),
+    (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored"}),
 }
 
 
@@ -82,7 +95,8 @@ def sweep(root: Path) -> list[Hit]:
 def found_in(source: str, where: str) -> Iterator[Hit]:
     """Every hit in one file's source, as if it stood at `where`."""
     shipped = where.startswith("src/")
-    by_text = IN_WORKERS if shipped and ("/execution/" in where or "/runtime/" in where) else ()
+    inside = where.startswith(_EXECUTION)
+    by_text = IN_WORKERS if inside else ()
     for node in ast.walk(ast.parse(source)):
         line = getattr(node, "lineno", 0)
         match node:
@@ -92,12 +106,15 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
                 yield Hit(where, line, "call", sorted(CALLS & set(names))[0])
             case ast.Call(func=func, args=args) if _last(func) in BY_TEXT:
                 for text in (a.value for a in args if isinstance(a, ast.Constant)):
-                    if text in CALLS:
+                    if CALLS & set(str(text).split(".")):
                         yield Hit(where, line, "call", str(text))
+            case ast.Subscript(value=held, slice=ast.Constant(value=str(text))) if text in CALLS:
+                if _last(held) == "__dict__" or _last(getattr(held, "func", held)) == "vars":
+                    yield Hit(where, line, "call", text)
         if not shipped:
             continue
         match node:
-            case ast.Constant(value=str(text)) if text in CALLS:
+            case ast.Constant(value=str(text)) if CALLS & set(text.split(".")):
                 yield Hit(where, line, "text", text)
             case ast.Name(id=name) | ast.Attribute(attr=name) if name in RECORDED:
                 yield Hit(where, line, "entry", name)
@@ -107,6 +124,15 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
                         yield Hit(where, line, "entry", named.rpartition(".")[2])
                     if "brokers" in named.split("."):
                         yield Hit(where, line, "import", named)
+        yield from _changes(node, where, line)
+        if inside:
+            match node:
+                case ast.Name(id=name) | ast.Attribute(attr=name) if name in INSIDE:
+                    yield Hit(where, line, "inside", name)
+                case ast.ImportFrom():
+                    for named in _imported(node):
+                        if named.rpartition(".")[2] in INSIDE:
+                            yield Hit(where, line, "inside", named.rpartition(".")[2])
         match node:
             case ast.Name(id=name) | ast.Attribute(attr=name) if name in by_text:
                 yield Hit(where, line, "reach", name)
@@ -114,6 +140,22 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
                 for named in _imported(node):
                     if named.rpartition(".")[2] in by_text:
                         yield Hit(where, line, "reach", named.rpartition(".")[2])
+
+
+def _changes(node: ast.AST, where: str, line: int) -> Iterator[Hit]:
+    """A class built on one of `WHOLE`, and a write to an attribute of one or of `_shared`."""
+    if isinstance(node, ast.ClassDef):
+        for base in node.bases:
+            if _last(base) in WHOLE:
+                yield Hit(where, line, "change", f"class {node.name}({_last(base)})")
+    targets: list[ast.expr] = []
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, ast.AugAssign | ast.AnnAssign):
+        targets = [node.target]
+    for target in targets:
+        if isinstance(target, ast.Attribute) and _last(target.value) in WHOLE | {"_shared"}:
+            yield Hit(where, line, "change", ast.unparse(target))
 
 
 def _imported(node: ast.ImportFrom | ast.Import) -> list[str]:
@@ -136,8 +178,6 @@ def _said(node: ast.Attribute) -> str:
 
 def exemption(hit: Hit) -> tuple[str, str] | None:
     """The exemption that lets a hit through, where one does."""
-    if hit.kind == "import" and hit.path == _WORKER:
-        return (_WORKER, "import")
     for (start, kind), names in ALLOWED.items():
         if kind != hit.kind or not hit.path.startswith(start):
             continue

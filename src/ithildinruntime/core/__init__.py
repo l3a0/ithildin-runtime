@@ -6,7 +6,7 @@ but `rfc8785`. docs/architecture/05-building-blocks.md's `## Package layout
 and the import rule` says what it holds and why.
 """
 
-from .broker import BrokerUnavailable
+from .broker import BrokerUnavailable, error_name
 from .codec import (
     CodecError,
     Places,
@@ -110,6 +110,7 @@ __all__ = [
     "build_plan",
     "decode",
     "encode",
+    "error_name",
     "exceeds_places",
     "from_received",
     "is_sha256",
