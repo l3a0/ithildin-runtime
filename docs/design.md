@@ -1122,7 +1122,7 @@ rerun from doubling anything. The first three follow, and the last two each have
 ### Rule 9, fourth item: what is checked right before a broker call
 
 **Right before every submit**, after the order's `sending` entry
-is stored, execution checks six things.
+is stored, execution checks seven things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop, whose state the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent, and any other answer stops the order with the type of error in its reason.
 
 1. The kill switch is absent.
 2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with [the kill
@@ -1135,11 +1135,12 @@ is stored, execution checks six things.
    `accounts/<account>/halts/` that is not released, by the release test in
    [Halts and drills](halts-and-drills.md#how-a-sort-runs),
    reading as a stored halt, and the plan's lease holds the run's status as running, so a halt or stop the supervisor has
-   recorded but not yet announced also stops the send.
+   recorded but not yet announced also stops the send. Until [#150](https://github.com/l3a0/ithildin-runtime/issues/150) reads a release, any file in that folder stops an order, and the plan's lease is read once [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it.
 4. Its own send-stage result key is still empty.
 5. The account's lease still carries the tag that the holder's own
-   last take or renewal of it returned.
-6. The market-on-close cutoff has not passed, for such an order.
+   last take or renewal of it returned, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds the lease.
+6. The loss stop has not fired, and its state can be read.
+7. The market-on-close cutoff has not passed, for such an order. It is read last, and at the cutoff itself the order goes.
 
 Any one failing journals the
 order `Abandoned`, sends nothing, and halts the decision, except the
@@ -1147,7 +1148,7 @@ second when it finds the off switch, which abandons only that
 strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
 `accounts/<account>/strategies/<strategy>/off.json`, stops one
 strategy without a deploy and never reads as a target of zero, as [Every
-change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. So a run the
+change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. A check that halts is read before the strategy's, so a switch never hides one. Until both leases are read, only a backtest runs, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. So a run the
 supervisor has halted, a switch pulled mid-loop, or a lease another
 execution has taken over stops the next send, even when the message
 saying so is lost or unread.
@@ -1173,7 +1174,7 @@ counted, and ends the clock on a cancel whose answer is lost, because only a fai
 nothing was sent. A plan's cancel
 skips the strategy's off switch, so a switched-off strategy's
 cancels still go out, and the replacement itself is a submit, which
-checks all six. A cancel skips the risk gate's limits on purpose: every open
+checks all seven. A cancel skips the risk gate's limits on purpose: every open
 order is already counted at its worst case, so a cancel can only lower
 each counted limit.
 

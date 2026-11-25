@@ -476,30 +476,75 @@ classDiagram
         QUOTE
     }
     class Ack {
-        +str client_order_id
-        +str broker_order_id
-        +BrokerOrder order
-        +str state
-        +str outcome
+        +Outcome outcome
+        +str or None broker_order_id
+        +BrokerOrder or None order
         +bytes raw
+        +datetime received_at
+    }
+    class Outcome {
+        <<enumeration>>
+        ACCEPTED
+        REJECTED
+        NOT_SENT
+        UNKNOWN
+        NOT_FOUND
+        SEVERAL
     }
     class BrokerOrder {
         +str broker_order_id
-        +str client_order_id
+        +str or None client_order_id
         +InstrumentId instrument
-        +str side
         +Decimal qty
-        +str type
+        +Decimal filled
+        +OrderType or None type
+        +TimeInForce or None time_in_force
+        +BrokerState state
+        +datetime submitted_at
+    }
+    class BrokerState {
+        <<enumeration>>
+        WORKING
+        PENDING_CANCEL
+        FILLED
+        CANCELLED
+        EXPIRED
+        REJECTED
+        UNKNOWN
     }
     class FoundOrder {
-        +str answer
+        +Outcome answer
         +list rows
         +bool whole_list
         +bytes raw
     }
-    class BrokerRead {
-        +bytes raw
-        +object value
+    class PositionsRead {
+        +dict positions
+        +list received
+        +bool whole
+    }
+    class OrdersRead {
+        +list orders
+        +list received
+        +bool whole
+    }
+    class FillsRead {
+        +list fills
+        +list received
+        +bool whole
+    }
+    class CashRead {
+        +Decimal cash
+        +list received
+        +bool whole
+    }
+    class RecordsRead {
+        +list received
+        +bool whole
+    }
+    class ReceivedPage {
+        +bytes body
+        +datetime at
     }
     class JournalAck {
         +int seq
@@ -692,13 +737,25 @@ classDiagram
     Fill --> Instrument
     Fill --> FillBasis
     BrokerOrder --> Instrument
+    BrokerOrder --> OrderType
+    BrokerOrder --> TimeInForce
+    BrokerOrder --> BrokerState
     Ack o-- BrokerOrder
+    Ack --> Outcome
+    PositionsRead o-- ReceivedPage
+    OrdersRead o-- ReceivedPage
+    OrdersRead o-- BrokerOrder
+    FillsRead o-- ReceivedPage
+    FillsRead o-- Fill
+    CashRead o-- ReceivedPage
+    RecordsRead o-- ReceivedPage
     StoredBlob o-- BlobRef
     DecisionResult o-- BlobHeader
     DecisionResult o-- HaltRecord
     HaltRecord o-- BlobRef
     HaltRecord o-- RestartRecord
     FoundOrder o-- BrokerOrder
+    FoundOrder --> Outcome
     CostSchedule o-- CostTerm
     CostTerm --> CostKind
     CostTerm --> CostSide
@@ -885,14 +942,16 @@ classDiagram
     }
     class Broker {
         <<Protocol>>
+        +str alias
         +submit(OrderIntent) Ack
         +find_order(OrderIntent, since, mapped) FoundOrder
-        +orders(since) BrokerRead
+        +orders(since) OrdersRead
         +lookup(broker_order_id) Ack
-        +fills(since) BrokerRead
-        +positions() BrokerRead
-        +open_orders() BrokerRead
-        +activities(since) BrokerRead
+        +fills(since) FillsRead
+        +positions() PositionsRead
+        +open_orders() OrdersRead
+        +account() CashRead
+        +activities(since) RecordsRead
         +cancel(broker_order_id) Ack
         +clock() datetime
     }
@@ -928,6 +987,7 @@ classDiagram
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
         +exists(key) bool
+        +read_blob(key) bytes
         +read_result(key, decision_at) DecisionResult
         +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
         +announce(key) bool
@@ -977,19 +1037,31 @@ classDiagram
         +list disputes
         +Book book
     }
-    class OrderPath {
+    class Account {
         -Journal journal
         -RiskGate gate
+        -Controls controls
+        +path(Broker, report) OrderPath
+        +settle(report)
+        +unstored() list
+    }
+    class Controls {
+        -BlobStore store
+        +stopping(where, report, until, with_stop) Stopping or None
+        +stop(report, until) StopState
+    }
+    class OrderPath {
         -Broker broker
-        +settle_in_doubt() list
-        +journal_fills(since) list
-        +broker_account() BrokerAccount
-        +send(OrderIntent, Snapshot, Constraints) Ack
-        +cancel(broker_order_id) Ack
-        +cancel_resting() list
-        +broker_clock() datetime
-        -submit(JournalAck) Ack
-        -send_cancel(JournalAck) Ack
+        +send(client_order_id) OrderState
+        +hold(client_order_ids) list
+        +abandon(client_order_id, reason) OrderState
+        +loss(deployment, run, decision_at) list
+        +positions() PositionsRead
+        +open_orders() OrdersRead
+        +account() CashRead
+        +fills(since) FillsRead
+        +lookup(broker_order_id) Ack
+        -submit(JournalAck) answer
     }
     class Monitoring {
         -Alerts alerts
@@ -1005,9 +1077,13 @@ classDiagram
     Storage o-- BlobStore
     Storage o-- Alerts
     Monitoring o-- Alerts
-    OrderPath o-- Journal
-    OrderPath o-- RiskGate
+    Account o-- Journal
+    Account o-- RiskGate
+    Account o-- Controls
+    Account ..> OrderPath
+    Controls o-- BlobStore
     OrderPath o-- Broker
+    OrderPath ..> OrderState
     DataSource ..> Snapshot
     Clock ..> Progress
     Bucket ..> BucketObject
@@ -1017,7 +1093,12 @@ classDiagram
     RiskGate ..> Verdict
     RiskGate ..> LossReading
     Broker ..> Ack
-    Broker ..> Fill
+    Broker ..> FoundOrder
+    Broker ..> PositionsRead
+    Broker ..> OrdersRead
+    Broker ..> FillsRead
+    Broker ..> CashRead
+    Broker ..> RecordsRead
     Journal ..> View
     Journal ..> JournalAck
     View ..> Book
@@ -1109,14 +1190,31 @@ Every call to the broker goes through `OrderPath`.
 
 ##### Which calls reach the broker
 
-`OrderPath` has one method per kind of call.
+`OrderPath` has one method per kind of call, and [the section on an order's path](#what-an-order-path-takes-and-what-it-answers) says what each takes.
 
-- Settling orders in doubt.
-- Journaling fills.
-- Reading positions and open orders.
-- Sending and cancelling.
+- Sending an order, which is `send`.
+- Asking the gate and journaling its answer with nothing sent, which is `hold`.
+- Journaling that an order was never sent, which is `abandon`.
+- Reading the day's loss with no order, which is `loss`.
+- Reading the positions, the open orders, the cash and the fills, and looking one order up.
 
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) states which read supplies cash. Nothing else in the package is given a broker, and only the execution worker's entry point builds one, which the import rule enforces. The fake broker in test 3, the test that the risk gate refuses an order over each limit and that nothing bypasses it, checks the send path itself, as [Package layout and the import rule](#package-layout-and-the-import-rule) says. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
+
+Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a call to a broker, an entry only the order path records, or an import of an adapter anywhere else. The sweep reads what is written, so a name a test builds at run time is out of its reach. The fake broker catches that one, because it reads the stored journal itself and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
+
+##### What an order path takes, and what it answers
+
+The worker builds one `Account` for each broker account and keeps it across decisions. It holds the journal, the gate, the controls and each answer the journal has not taken yet. `Account.path` gives the `OrderPath` for one decision's broker.
+
+`send` takes a client order id and nothing else. The order, the deployment, the run, the decision time and the inputs all come from the `decision` entry the journal holds, so no caller can hand it an order that was not planned, or a looser limit. It answers the state the journal then shows the order in, and it halts where nothing more may go out in the decision.
+
+Five rules hold whatever a step does.
+
+1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again, and its state is the answer.
+2. **One acknowledgement sends one order.** The account holds the acknowledgement of each `sending` entry its own journal gave, and the private submit takes it out before it does anything else. So one that was used, belongs to another order or was made up from the journal's bytes sends nothing. The journal could not tell a second use apart, because an order whose answer was not stored is still `Sending`.
+3. **Nothing goes out on a book that moved.** The `verdict` and the `sending` are each the entry right after the one they were decided on. A number another writer took ends the order `abandoned` and halts the decision.
+4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which each stage calls before its first view. Nothing is sent while it still fails. The same holds for an order that has a `sending` and was stopped before the call, because only that process knows nothing left.
+5. **Every call halts unless the broker's `alias` names the journal's account.** Nothing raises while an account is built, because a worker that fails to start is restarted by the host and read by no person.
 
 ##### How a call names an order
 
@@ -1134,20 +1232,36 @@ A fill that carries a correction identifier is refused as a `fill` until [#151](
 
 ##### What each call returns, and what is journaled first
 
-`Journal.record` returns a `JournalAck` naming the entry's number and hash, beside the view after that entry. The private calls that submit an order or send a cancel take that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says.
+`Journal.record` returns a `JournalAck` naming the entry's number and hash, beside the view after that entry. The private call that submits an order takes that acknowledgement alone, as [The code holds its own rules](../design.md#the-code-holds-its-own-rules-and-every-check-runs-in-production) says, and so will the one that sends a cancel ([#149](https://github.com/l3a0/ithildin-runtime/issues/149)).
 
-Every `Broker` read and write returns its received bytes apart from the converted value, including on a failed conversion. `OrderPath` journals those bytes before it uses the value. For a send-stage read it journals the hash of the output file that holds them instead, also before it uses the value.
+Every `Broker` read and write returns its received bytes apart from the converted value. `OrderPath` journals a submit's bytes in the entry that says what the answer came to. A read's bytes are stored in an output file, whose hash a `read` entry journals before any value is used.
 
-Each call ends in one of these outcomes.
+A call about one order answers an `Ack`, whose `outcome` is one of six.
 
-1. Accepted.
-2. Rejected.
-3. Provably not sent.
-4. Unknown.
-5. Not found.
-6. More than one, an outcome only a `find_order` can reach.
+**Table:** What a broker's answer to a submit comes to
 
-`orders(since)` reads a takeover's whole list, open and closed orders across every page. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns the form of these outcomes and of that list.
+| Outcome | What it says | The entry |
+| --- | --- | --- |
+| `accepted` | The broker has the order, under the id it gives | `ack` |
+| `rejected` | The broker refused the order | `rejected` |
+| `not_sent` | Proof that nothing left, such as a connection refused before any byte | `abandoned` |
+| `unknown` | Any answer the adapter cannot classify, and a refusal that says the broker already holds the id | `in_doubt` |
+| `not_found` | A lookup found no order | `in_doubt` |
+| `several` | A search for an order found more than one | `in_doubt` |
+
+Five more things end `in_doubt`, and each alarms at once, naming the order and no account.
+
+1. An error the submit raises, whatever its type. An adapter's own halt does too, and then halts the decision with its reason.
+2. An accepted order with no broker's id, with one another order holds, or with one the journal refuses.
+3. A broker's copy of the order that differs from the order sent in its id, instrument, shares, type or time in force.
+4. An answer of more than 65,536 bytes, whose first part is kept.
+5. An answer that is no `Ack`, or whose time is not UTC.
+
+Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `CashRead` and `RecordsRead`, whose records [#151](https://github.com/l3a0/ithildin-runtime/issues/151) types. Each holds the pages as received, with the time each came, and says whether every page came. A read holds at least one page, since an empty answer is one the broker gave, and one past 4 MiB cannot say it is whole. The price of that cap is that a day whose list passes it halts until the cap is raised.
+
+A read that fails raises `BrokerUnavailable`, which carries the call's name and a type of error and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
+
+`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) reads it.
 
 ##### One function lists the differences from the broker
 
@@ -1248,7 +1362,7 @@ flowchart LR
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and `OrderPath` journals it. `tests/support/order_world.py` works each sent order's answer out again from its `verdict` entry alone, with the second implementation in `tests/support/gate_oracle.py`.
 
 ##### What halts and what refuses
 
@@ -1461,6 +1575,7 @@ Each entry that names an order is checked against the entries before it, at `rec
 5. A `fill` names an earlier `read` entry and the broker's id of an acknowledged or part-filled order, in that order's instrument and on its side, under its client order id where the fill carries one, and takes its filled total no further than its quantity.
 6. An `expired`'s filled total equals the order's fills.
 7. An order moves only as [The life of an order](06-runtime.md#the-life-of-an-order) draws. `journal/orders.py` holds the one table of those moves, and a pair it does not hold halts naming the entry, the order and its state.
+8. An `abandoned` of an order that is `Sending` comes from the writer of its `sending`. No other process can know that nothing left, and after it the order is out of the book.
 
 #### The cost model writes a schedule rather than answering calls
 

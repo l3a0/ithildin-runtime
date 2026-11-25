@@ -4,7 +4,8 @@ Each store test runs once against the folder and once against S3 on moto. Each
 data test reads its own copy of one marketlake lake, built once per session
 from quantitative-trading's vintages, as tests/support/lake.py says. The alpha
 stage's and portfolio construction's replication tests share one run of the
-alpha stage, which tests/support/replication.py builds.
+alpha stage, which tests/support/replication.py builds. A test that let an order
+reach a fake broker wrongly fails at its end, as tests/support/fake_broker.py says.
 """
 
 from __future__ import annotations
@@ -15,11 +16,22 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import fake_broker
 from tests.support import lake as lakes
 from tests.support.replication import every_session, replicated  # noqa: F401
 from tests.support.stores import StoreSpec
 
 _buckets = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def no_order_reached_a_fake_broker_wrongly() -> Iterator[None]:
+    """Fail a test that let an order reach a fake broker wrongly, whatever the path made of it."""
+    fake_broker.made.clear()
+    yield
+    refused = [why for broker in fake_broker.made for why in broker.refused]
+    fake_broker.made.clear()
+    assert not refused, refused
 
 
 @pytest.fixture(scope="session")

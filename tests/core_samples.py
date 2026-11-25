@@ -16,10 +16,10 @@ from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from ithildinruntime import core
 
-# The 33 data types and 11 interfaces that #22's part A names.
+# The data types and interfaces that #22's part A names, less what a later part replaced.
 DATA_TYPES = (
     "Instrument Bar Quote Snapshot Basket Forecast Constraints TargetPortfolio Book "
-    "OrderIntent Fill Ack BrokerOrder FoundOrder BrokerRead JournalAck Verdict CostSchedule "
+    "OrderIntent Fill Ack BrokerOrder FoundOrder JournalAck Verdict CostSchedule "
     "BrokerAccount Valuation GateInputs SendOutcome BlobRef StoredBlob BlobHeader "
     "DecisionResult HaltRecord RestartRecord Heartbeat Lease Plan JournalEntry Halt"
 ).split()
@@ -39,6 +39,12 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.PastLimit,
     core.LossReading,
     core.Sizing,
+    core.ReceivedPage,
+    core.PositionsRead,
+    core.OrdersRead,
+    core.FillsRead,
+    core.CashRead,
+    core.RecordsRead,
 ]
 
 
@@ -105,6 +111,9 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             # A valuation's value is its cash and its positions at their marks.
             fields["value"] = fields["cash"] = Decimal("-0.0004")
             fields["positions"] = {i: Decimal(0) for i in fields["marks"]}
+        if "received" in fields:
+            # A broker read holds at least one page.
+            fields["received"] = sample(hints["received"], depth=depth + 1)
         if hint is core.PastLimit:
             # A past limit is one of three, at or over its bound.
             fields["limit"] = core.Limit.MAX_NET

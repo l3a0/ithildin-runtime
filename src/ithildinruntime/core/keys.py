@@ -14,11 +14,12 @@ import re
 from datetime import UTC, date, datetime, timedelta
 
 from .halt import Halt
-from .names import RECOVER_STAGE, VALUATION_OUTPUT, is_name, is_sha256
+from .names import RECOVER_STAGE, SEND_STAGE, VALUATION_OUTPUT, is_name, is_sha256
 from .records import Mode
 
 __all__ = [
     "account_halt_key",
+    "account_halts_prefix",
     "account_lease_key",
     "attempt_key",
     "blocked_record_key",
@@ -54,6 +55,7 @@ __all__ = [
     "run_stop_key",
     "sim_account_key",
     "strategy_halt_key",
+    "strategy_halts_prefix",
     "takeover_key",
     "timestamp_part",
     "utc_time_part",
@@ -246,7 +248,7 @@ def valuation_key(deployment: str, run: str, decision_at: datetime) -> str:
 
 def broker_read_key(deployment: str, run: str, decision_at: datetime, attempt: int) -> str:
     n = _count(attempt, "attempt")
-    return f"{_stage_prefix(deployment, run, decision_at, 'execution/send')}/broker-read-{n}.json"
+    return f"{_stage_prefix(deployment, run, decision_at, SEND_STAGE)}/broker-read-{n}.json"
 
 
 def attempt_key(
@@ -263,7 +265,7 @@ def takeover_key(deployment: str, run: str, at: datetime) -> str:
 
 
 def claim_key(deployment: str, run: str, decision_at: datetime) -> str:
-    return f"{_stage_prefix(deployment, run, decision_at, 'execution/send')}/claim.json"
+    return f"{_stage_prefix(deployment, run, decision_at, SEND_STAGE)}/claim.json"
 
 
 def journal_entry_key(account: str, seq: int) -> str:
@@ -306,19 +308,29 @@ def _halt_name(component: str, cause: str, at: datetime, count: int) -> str:
     )
 
 
+def account_halts_prefix(account: str) -> str:
+    """The folder that holds an account's halts, which a reader lists."""
+    return f"accounts/{_name(account, 'account')}/halts/"
+
+
 def account_halt_key(account: str, component: str, cause: str, at: datetime, count: int) -> str:
-    return f"accounts/{_name(account, 'account')}/halts/{_halt_name(component, cause, at, count)}"
+    return f"{account_halts_prefix(account)}{_halt_name(component, cause, at, count)}"
 
 
 def off_switch_key(account: str, strategy: str) -> str:
     return f"accounts/{_name(account, 'account')}/strategies/{_name(strategy, 'strategy')}/off.json"
 
 
+def strategy_halts_prefix(account: str, strategy: str) -> str:
+    """The folder that holds a strategy's halts on an account, which a reader lists."""
+    return f"accounts/{_name(account, 'account')}/strategies/{_name(strategy, 'strategy')}/halts/"
+
+
 def strategy_halt_key(
     account: str, strategy: str, component: str, cause: str, at: datetime, count: int
 ) -> str:
-    prefix = f"accounts/{_name(account, 'account')}/strategies/{_name(strategy, 'strategy')}"
-    return f"{prefix}/halts/{_halt_name(component, cause, at, count)}"
+    prefix = strategy_halts_prefix(account, strategy)
+    return f"{prefix}{_halt_name(component, cause, at, count)}"
 
 
 def caps_key(account: str) -> str:

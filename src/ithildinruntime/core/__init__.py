@@ -6,6 +6,7 @@ but `rfc8785`. docs/architecture/05-building-blocks.md's `## Package layout
 and the import rule` says what it holds and why.
 """
 
+from .broker import BrokerUnavailable
 from .codec import (
     CodecError,
     Places,
@@ -36,6 +37,7 @@ from .names import (
     RECOVER_STAGE,
     RISK_STAGE,
     SCHEDULE_OUTPUT,
+    SEND_STAGE,
     SIGNALS_OUTPUT,
     SIZING_OUTPUT,
     SNAPSHOT_OUTPUT,
@@ -83,10 +85,12 @@ __all__ = [
     "RECOVER_STAGE",
     "RISK_STAGE",
     "SCHEDULE_OUTPUT",
+    "SEND_STAGE",
     "SIGNALS_OUTPUT",
     "SIZING_OUTPUT",
     "SNAPSHOT_OUTPUT",
     "BeforeClose",
+    "BrokerUnavailable",
     "BuiltPlan",
     "CodecError",
     "ExchangeTime",

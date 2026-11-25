@@ -423,18 +423,24 @@ sequenceDiagram
     end
     loop each order the order manager plans,<br/>a replacement only if its old order settled
         X->>F: takes the account's lease
-        X->>F: is the kill switch blob absent?
-        X->>X: is it before the cutoff?
+        X->>J: finds the order in its plan
+        X->>F: reads the hard caps
         X->>J: journals the intent
+        X->>F: is the switch absent, no halt stored, its own<br/>send result empty and the strategy not off?
+        X->>F: reads the files the plan was made from
+        X->>X: is it before the cutoff?
         X->>J: replays the book
+        X->>F: has the loss stop not fired?
         X->>X: runs the risk gate check
         X->>J: journals the approval
         X->>J: journals the sending entry
+        X->>J: replays the book again
         X->>F: is the switch absent?
-        X->>F: is the strategy not off?
         X->>F: is no run or account halt stored<br/>or on the plan's lease?
         X->>F: is its own send result empty?
         X->>F: is the lease tag unchanged?
+        X->>F: has the loss stop not fired?
+        X->>F: is the strategy not off?
         X->>X: is it before the cutoff?
         X->>B: sends the order, with its client order id
         B-->>X: answers
@@ -533,7 +539,7 @@ flowchart TB
     end
     subgraph each["Send, once per order"]
         direction LR
-        b1["Steps 1 and 2<br/>take the lease, check the switch and cutoff"] --> b2["Steps 3 to 7<br/>journal, replay, ask the risk gate"] --> b3["Step 8<br/>make the six checks"] --> b4["Step 9<br/>send"] --> b5["Steps 10 and 11<br/>journal the answer, release the lease"]
+        b1["Steps 1 and 2<br/>take the lease, find the order in its plan"] --> b2["Steps 3 to 8<br/>journal, check, ask the risk gate"] --> b3["Step 9<br/>make the seven checks"] --> b4["Step 10<br/>send"] --> b5["Steps 11 and 12<br/>journal the answer, release the lease"]
     end
     subgraph finish["Finish, once per decision"]
         direction LR
@@ -577,32 +583,36 @@ The steps run in this order.
 
 #### Send, once per order
 
-Each order goes through the order path alone, and the journal gains a line before the broker hears anything.
+Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
-1. Take the account's lease.
-2. Check the kill switch and the cutoff again.
-3. Journal the intent.
-4. Replay the book from the journal, so the risk gate sees every order already approved.
-5. Ask the risk gate.
-6. Journal the approval.
-7. Journal that it is sending.
-8. Make the six checks in the table below.
-9. Send, with the order's client order id.
-10. Journal the broker's answer: the ack, the rejection, or the order's doubt.
-11. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
+1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
+2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again.
+3. Journal the intent. A number another writer took starts the order over, at most five times.
+4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
+5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the cutoff.
+6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
+7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a stop that stands, halts the decision too.
+8. Journal that it is sending.
+9. Make the checks in the table below, on a third view.
+10. Send, with the order's client order id.
+11. Journal the broker's answer: the ack, the rejection, or the order's doubt.
+12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-**Table:** The six checks made right before the broker call
+A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. An entry the store does not answer for is sent again unchanged, and no try ahead of the broker call goes past a market-on-close order's cutoff.
+
+**Table:** The seven checks made right before the broker call
 
 | Check | What it reads | Passes when |
 | --- | --- | --- |
 | 1 | The kill switch | It is absent |
-| 2 | The order's strategy | It is not switched off |
-| 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running |
-| 4 | This instance's own send result | It is still empty |
-| 5 | The account's lease | It still carries this instance's tag |
-| 6 | The market-on-close cutoff | It has not passed |
+| 2 | The order's strategy | It is not switched off, and no halt of its is stored |
+| 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running, once [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it |
+| 4 | The decision's own send result | It is still empty |
+| 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
+| 6 | The loss stop | None has fired, and its state can be read |
+| 7 | The market-on-close cutoff | It has not passed |
 
-Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. A check that halts is read before the strategy's, so a switch never hides one. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
 A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
 

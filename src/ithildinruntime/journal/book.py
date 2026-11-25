@@ -169,6 +169,8 @@ class View:
     _owner: object = field(repr=False)
     _cash: Decimal = field(repr=False)
     _positions: Mapping[str, Mapping[InstrumentId, Decimal]] = field(repr=False)
+    # Who wrote the `sending` entry of each order that is still `Sending`.
+    _senders: Mapping[str, object] = field(repr=False)
     _shared: _Shared = field(repr=False)
 
     @property
@@ -239,6 +241,7 @@ def empty(account: str, owner: object, entry_hash: str) -> View:
         _owner=owner,
         _cash=_ZERO,
         _positions=MappingProxyType({}),
+        _senders=MappingProxyType({}),
         _shared=_Shared(),
     )
 
@@ -249,6 +252,7 @@ class Step:
     def __init__(self, entry: JournalEntry, view: View) -> None:
         self.seq = entry.seq
         self.at = entry.built_at
+        self.writer = entry.body["writer"]
         self.view = view
         self._changes: dict[str, object] = {}
         self._news: list[tuple[_Kept, object, object]] = []
@@ -273,6 +277,10 @@ class Step:
             **changes,  # type: ignore[arg-type]
         )
         name = made.intent.client_order_id
+        senders = {n: w for n, w in self.view._senders.items() if n != name}
+        if state is OrderState.SENDING:
+            senders[name] = self.writer
+        self.change(_senders=MappingProxyType(senders))
         live = dict(self.view.live)
         if state in ENDED:
             live.pop(name, None)
@@ -337,7 +345,16 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
                 raise Halt(f"entry {seq} names entry {record.close_entry}, no entry before it")
             step.order(kind, order, state)
         case AbandonedEntry():
-            step.order(kind, *_next(step, record.client_order_id, Move.ABANDONED))
+            order, state = _next(step, record.client_order_id, Move.ABANDONED)
+            # No other writer can know that an order whose `sending` is stored never left.
+            if order.state is OrderState.SENDING and (
+                view._senders[record.client_order_id] != step.writer
+            ):
+                raise Halt(
+                    f"entry {seq} abandons {record.client_order_id}, whose sending another "
+                    "writer stored"
+                )
+            step.order(kind, order, state)
         case SendingEntry():
             order, state = _next(step, record.client_order_id, Move.SENDING)
             step.order(kind, order, state, sent_at=step.at)
