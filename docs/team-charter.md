@@ -375,7 +375,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   Has the simulated broker's fill of an order meant for the opening or closing auction state which price it
   filled at, so a backtest quoted as evidence can state it, under rule 1 of the design doc's
   [A closing order is tested against the closing auction](design.md#a-closing-order-is-tested-against-the-closing-auction-a-pair-against-the-prices-it-trades-and-a-significance-figure-against-its-null), with
-  [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holding the mechanism.
+  [What fills, and when](architecture/05-building-blocks.md#what-fills-and-when) holding the mechanism.
   Holds that a position's initial risk rebuilds from the journal alone, and its R multiple from
   the journal, the fills and the named cost, under the design doc's
   [A result is measured against the risk it took](design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear).

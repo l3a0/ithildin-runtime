@@ -17,6 +17,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 ## Prices in Building blocks
 
+- [What fills, and when](05-building-blocks.md#what-fills-and-when)
 - [What each call returns, and what is journaled first](05-building-blocks.md#what-each-call-returns-and-what-is-journaled-first)
 - [Package layout and the import rule](05-building-blocks.md#package-layout-and-the-import-rule)
 - [Where the limits come from](05-building-blocks.md#where-the-limits-come-from)
@@ -48,6 +49,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [Who writes and reads a blob](08-crosscutting-concepts.md#who-writes-and-reads-a-blob)
 - [How a computed value is rounded](08-crosscutting-concepts.md#how-a-computed-value-is-rounded)
 - [The stress move's record](08-crosscutting-concepts.md#the-stress-moves-record)
+- [The simulated broker's account](08-crosscutting-concepts.md#the-simulated-brokers-account)
 
 ## Prices in Quality requirements
 
