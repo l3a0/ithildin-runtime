@@ -63,6 +63,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions)
 - [What data reads for several strategies](../design.md#what-data-reads-for-several-strategies)
 - [Where each series starts](../design.md#where-each-series-starts)
+- [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series)
 - [Faults are expected, and the platform checks itself while it runs](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs)
 - [Every change can be undone or switched off](../design.md#every-change-can-be-undone-or-switched-off)
 - [A release is checked where it runs, and nothing heals by hiding a fault](../design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)

@@ -44,7 +44,10 @@ each of these.
    in the snapshot that is missing, stale or has no bar, in
    `Snapshot.require_fresh`'s own words.
 2. A bar whose basis is not `adjusted`, because a split inside a window of
-   prices as traded would read as a move of the market.
+   prices as traded would read as a move of the market. Data's stage halts first
+   on a lookback whose bars are of two series, such as one of both `adjusted`
+   and `raw` bars, so a decision reaches this halt on a window of one other
+   basis throughout.
 3. Legs whose bars name different sessions.
 4. A newest bar that is not the decision's own session, meaning the latest
    session that opened by the decision. Data's newest bar before the close is

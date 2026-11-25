@@ -47,11 +47,22 @@ Each instrument's status follows from the sessions that hold a knowable bar.
 2. **`stale`** when the newest bar's session lags the latest session ended by
    more sessions than the written lag allows.
 3. **`fresh`** otherwise. No gap is filled.
+
+A bar the read can hold may still halt the decision, once its snapshot is
+stored, for one of three reasons that `_bar_halts` finds in the bars alone.
+
+1. Its prices contradict each other.
+2. Its price kind is unstated.
+3. It is of another series than the bar before it in its own instrument. Two
+   series can be on two scales, and every reader of the bars would take the
+   step between them for a move of the market. docs/design.md's `#### A
+   lookback that crosses a change of series` says why, and what it costs.
 """
 
 from __future__ import annotations
 
 import bisect
+import itertools
 import logging
 import threading
 from collections.abc import Mapping, Sequence
@@ -82,6 +93,7 @@ from ithildinruntime.core import (
     from_received,
     load_sessions,
     places,
+    series_of,
     unstated_fields,
 )
 from ithildinruntime.core.sessions import SessionTable
@@ -203,9 +215,10 @@ class LakeSource:
         """The port's read, which halts on any reason a stored snapshot would halt on.
 
         `core.DataSource` returns a snapshot alone, so a caller of this method
-        never sees `Reading.halts`. A missing, stale or unstated input, or a bar
-        whose prices contradict each other, therefore raises here rather than
-        come back as a snapshot that reads as usable.
+        never sees `Reading.halts`. A missing, stale or unstated input, a bar
+        whose prices contradict each other, or two bars of one instrument that
+        are of two series, therefore raises here rather than come back as a
+        snapshot that reads as usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
         """
         reading = self.read(decision_at)
@@ -500,7 +513,9 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
 
     1. an instrument the settings read and the snapshot does not hold;
     2. an instrument that is not fresh, or is fresh with no bar;
-    3. each bar `LakeSource.read` halts on, through the same `_bar_halts`;
+    3. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
+       whose prices contradict each other, one of unstated kind, and one of
+       another series than the bar before it in its own instrument;
     4. each stored flag that is not the move rule's and that this release's
        rules do not find in the bars. Within one release the bars raise
        every flag stored beside them, so such a flag means the record is not
@@ -546,8 +561,10 @@ def _key(instrument: InstrumentId, flag: SpikeFlag) -> tuple[object, ...]:
 
 
 def _bar_halts(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
-    """The halts one instrument's bars raise: each contradiction, then any unstated kind.
+    """The halts one instrument's bars raise, in three kinds.
 
+    Each contradiction comes first, then any unstated kind, then each change of
+    series.
     The contradictions come in the order `spike_flags` gives them, by session
     and then field, keeping the order the checks found them in a tie.
     """
@@ -555,7 +572,9 @@ def _bar_halts(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
         (flag for bar in bars for flag in contradictions(bar)),
         key=lambda f: (f.session, f.field),
     )
-    return _contradicted(instrument, found) + _unstated(instrument, bars)
+    return (
+        _contradicted(instrument, found) + _unstated(instrument, bars) + _changed(instrument, bars)
+    )
 
 
 def _contradicted(instrument: InstrumentId, found: Sequence[SpikeFlag]) -> list[str]:
@@ -589,6 +608,16 @@ def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
                 f"{', '.join(silent)}, from {source}, which data/price_kinds.csv states nothing for"
             ]
     return []
+
+
+def _changed(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
+    """A halt for each two consecutive bars of two series, which can be on two scales."""
+    return [
+        f"{instrument}'s bars for {one.session.isoformat()} and {two.session.isoformat()} are of "
+        f"two series, {series_of(one)} and {series_of(two)}"
+        for one, two in itertools.pairwise(bars)
+        if series_of(one) != series_of(two)
+    ]
 
 
 def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime | None]:

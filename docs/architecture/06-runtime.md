@@ -1199,6 +1199,7 @@ stateDiagram-v2
         Preparing halts when it finds
         data missing, stale or not ready,
         a price that contradicts itself,
+        a lookback that crosses a change of series,
         an unknown stamped fill,
         an unstamped order,
         a fill with no stamp,
@@ -1260,7 +1261,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### When the run stops
 

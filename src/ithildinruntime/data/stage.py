@@ -35,8 +35,9 @@ things, in order.
    one snapshot or was written under another release or other strategy
    configuration hashes.
    That read is the alarm's single try, so one failed read of the first
-   capture halts its decision. A missing or stale instrument, or a bar
-   of unstated kind, or a bar whose prices contradict each other, and on a
+   capture halts its decision. A missing or stale instrument, a bar of
+   unstated kind, a bar whose prices contradict each other, or two
+   consecutive bars of one instrument that are of two series, and on a
    redelivery each case `data.source.judge` lists, ends the decision with a
    halt as data's result that names the stored snapshot, as
    hard limit 3 asks. A close past the written multiple, or below its bar's
