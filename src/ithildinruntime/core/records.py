@@ -166,7 +166,7 @@ class Bar(_Record):
     - `volume` is `None` where marketlake holds none, as on both Chan vintages.
     - `fetched` and `fetched_end` are marketlake's `fetch_ts` and `fetch_end_ts`
       as received, each beside its UTC instant, and `None` where marketlake
-      holds none, as on the Chan vintages.
+      holds none, as on the Chan vintages and the Yahoo files.
     - `knowable_at` is the time the bar could first have been known. For a
       captured bar it is `fetched_at`. For an imported bar it is `end`, because
       a vintage records only `source_as_of`, the date its source recorded the

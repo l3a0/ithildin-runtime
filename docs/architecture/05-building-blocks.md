@@ -1072,7 +1072,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `origin` | Whether marketlake captured the bar or imported it |
 | `vintage_id` | The vintage the bar was read from |
 | `first_seen` | When the platform first held the bar |
-| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for adjusted by its source, for splits alone or for splits and dividends, as each source's record says |
+| `basis` | Which price the series carries, such as `raw` for as traded or `adjusted` for numbers its source had already adjusted, where the word does not say for what |
 | `end` | When the bar closed |
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
@@ -1092,7 +1092,7 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
 3. A captured bar's knowable time is marketlake's `fetch_ts`, when the request left, and a stamp with no stated zone halts the decision. `fetch_end_ts`, when the answer arrived, is kept beside it, and [#100](https://github.com/l3a0/ithildin-runtime/issues/100) decides again which of the two counts when it first reads captured days.
-4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages and 2026-11-22 for both Yahoo files. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections. USO's Yahoo prices before 2020-04-29 are eight times those that traded and its volume an eighth, on a factor not knowable then, so a backtest there sizes USO in an eighth of the shares that traded, and a share cap or a per-share cost reads that count. The `adjusted` basis does not say the scale, because Chan's bars read `adjusted` too, and the row's `read_from` does.
+4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages and 2026-11-22 for both Yahoo files. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections. USO's Yahoo prices before 2020-04-29 are eight times those that traded and its volume an eighth, on a factor not knowable then, as USO's row in `data/price_kinds.csv` states. So a backtest there holds an eighth as many shares as the same dollars bought then. A per-share cost reads an eighth of what it was, a share cap binds late, and a share of the volume is unchanged. `adjusted` does not say the scale, because Chan's bars read `adjusted` too.
 
 ##### What a quote and a snapshot's flags carry
 

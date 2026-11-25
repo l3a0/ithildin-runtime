@@ -8,6 +8,7 @@ adding one means adding it here too.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -149,10 +150,14 @@ def test_a_session_on_each_side_of_each_rows_edges_reads_the_kind_it_should(
 
 @pytest.mark.parametrize("name", ["gld", "uso"])
 def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -> None:
-    """The 2026-11-22 rows state each file's digest beside its name, so a swap of two shows."""
-    assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {_SHA[name]}" in _CHAN_READ_FROM
-    row = next(line for line in KIND_ROWS if line.startswith("2026-11-25") and f":{name}_" in line)
-    assert f"pins the file at sha256 {_SHA[name]} " in row
+    """The tracked rows of 2026-11-22 and of Yahoo name one digest for each file."""
+    rows = _data_rows(PRICE_KINDS)
+    (yahoo,) = [row for row in rows if f",yahoo:{name}_daily_yahoo_2026-11-22.csv," in row]
+    (digest,) = re.findall(r"pins the file at sha256 ([0-9a-f]{64}) ", yahoo)
+    (chan,) = [
+        row for row in rows if f",quantitative-trading:data/inputdata_etf/{name}.csv," in row
+    ]
+    assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {digest}" in chan
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"
