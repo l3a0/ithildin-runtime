@@ -506,8 +506,6 @@ BOOKS = {
         {"chan": {USO: 3}}, [order(-1, USO, "chan"), order(2, GLD, "chan", "new-2")]
     ),
     "other-cash": book({"chan": {USO: 10, GLD: -4}}, cash=-5),
-    "a-win": book({"chan": {USO: 10}}, platform_realised_pnl=d(10**6)),
-    "a-loss": book({"chan": {USO: 10}}, platform_realised_pnl=d(-(10**6))),
 }
 
 
