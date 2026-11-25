@@ -19,6 +19,7 @@ from ithildinruntime.core import (
     BlobHeader,
     ClockReading,
     CodecError,
+    DecisionResult,
     Halt,
     InstrumentId,
     Mode,
@@ -467,6 +468,13 @@ def test_9_a_backtest_halts_on_a_recorded_fault_through_the_loop(
         release="r1",
         table=table,
     )
+    turn = threading.Lock()
+
+    def one_at_a_time(item: Item, report) -> DecisionResult:  # type: ignore[no-untyped-def]
+        # Decisions that open the mirror at once can halt one another, which #178 holds.
+        with turn:
+            return handler(item, report)
+
     plan = Plan(
         format=1,
         deployment=DEPLOYMENT,
@@ -483,7 +491,7 @@ def test_9_a_backtest_halts_on_a_recorded_fault_through_the_loop(
         queue=folder.queue("data"),
         storage=store,
         bucket=folder.bucket,
-        handlers={"data": handler},
+        handlers={"data": one_at_a_time},
         alerts=alarms,
         timer=SystemTimer(),
         beat=lambda: None,
