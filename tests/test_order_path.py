@@ -2294,7 +2294,6 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException) -> None:
     plain = world.clock.now
 
     def broken() -> datetime:
-        world.clock.now = plain  # type: ignore[method-assign]
         raise error
 
     def after(number: int, op: str, key: str) -> None:
@@ -2304,6 +2303,7 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException) -> None:
     world.store.after = after
     with pytest.raises(type(error), match="no time"):
         world.send(account=account)
+    world.clock.now = plain  # type: ignore[method-assign]
     left = OrderState.ABANDONED if isinstance(error, Exception) else OrderState.SENDING
     assert world.state() is left and world.submits == 0
     assert account.unstored() == ()
@@ -2672,7 +2672,7 @@ def test_2_a_store_call_that_ends_in_more_than_an_exception_is_left_to_replay(
     with pytest.raises(ends):
         world.send(account=account)
     assert world.state() is OrderState.SENDING and world.submits == answered
-    assert bool(account.unstored()) == answered
+    assert bool(account.unstored()) == answered and world.alarms.sent == []
     account.settle(world.report)
     assert world.state() is (OrderState.ACKNOWLEDGED if answered else OrderState.SENDING)
 

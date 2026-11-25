@@ -522,7 +522,8 @@ class OrderPath:
         A send that journals an order `ABANDONED` and returns it says the
         strategy is off. One the gate refused, the broker rejected or that is in
         doubt is returned too, for the send stage to end its plan on. Anything
-        else that stops an order raises `Halt`.
+        else that stops an order raises `Halt`, or the error itself where the
+        path does not expect it.
         """
         self._one_account()
         self._shared.unstored.settle(self._report)
