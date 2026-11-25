@@ -554,6 +554,16 @@ def test_9_a_loss_past_its_bound_halts_there_and_on_a_verdict() -> None:
     assert world.state() is OrderState.REFUSED
 
 
+@pytest.mark.parametrize("named", [True, False])
+def test_9_a_loss_whose_alarm_is_lost_says_so_and_halts(named: bool) -> None:
+    world = losing(100 + STEP)
+    nameless = _Nameless("E", (Exception,), {})
+    world.alarms.error = ConnectionError(KEY) if named else nameless(KEY)
+    said = "ConnectionError" if named else "Unnamed"
+    reason = halted(world, f"2026-11-02. The alarm could not be sent: {said}$")
+    assert not leaks(reason) and world.state() is OrderState.REFUSED
+
+
 def test_9_a_refusal_for_another_limit_that_read_a_loss_past_its_bound_halts_too() -> None:
     world = losing(101 * Decimal(1), caps=gates.caps(max_gross=gates.d(1)))
     halted(world, "the day's loss of 101")
@@ -883,9 +893,9 @@ def test_11_a_key_shaped_word_is_no_type_of_error() -> None:
 class Set(BrokerUnavailable):
     """An adapter's own kind, which holds words where the platform's holds a type."""
 
-    def __init__(self) -> None:
+    def __init__(self, word: str) -> None:
         Exception.__init__(self, f"account {NUMBER}")
-        self.call, self.error = "positions", f"401: key {KEY}"
+        self.call, self.error = "positions", word
 
 
 class Bare(BrokerUnavailable):
@@ -904,7 +914,9 @@ class Raising(BrokerUnavailable):
         Exception.__init__(self, f"key {KEY}")
 
 
-@pytest.mark.parametrize("error", [Set(), Bare(), Raising()])
+@pytest.mark.parametrize(
+    "error", [Set(f"401: key {KEY}"), Set(KEY), Set(NUMBER), Bare(), Raising()]
+)
 def test_11_a_kind_of_unavailable_of_an_adapters_own_names_no_word_of_it(error: Exception) -> None:
     world = World()
 
@@ -914,7 +926,7 @@ def test_11_a_kind_of_unavailable_of_an_adapters_own_names_no_word_of_it(error: 
     world.broker.reads["positions"] = raises
     with pytest.raises(BrokerUnavailable) as raised:
         world.path().positions()
-    assert str(raised.value) == "the broker's positions failed with Unnamed"
+    assert str(raised.value) == f"the broker's positions failed with {type(error).__name__}"
     assert not leaks(*told(raised.value))
 
 
@@ -936,6 +948,40 @@ class Unequal:
         raise RuntimeError(KEY)
 
     __hash__ = None  # type: ignore[assignment]
+
+
+class _Nameless(type):
+    @property
+    def __name__(cls) -> object:  # type: ignore[override]
+        raise SystemExit(KEY)
+
+
+class _Proxied(type):
+    @property
+    def __name__(cls) -> object:  # type: ignore[override]
+        return Lazy()
+
+
+@pytest.mark.parametrize("meta", [_Nameless, _Proxied])
+def test_11_an_error_whose_name_cannot_be_read_is_unnamed(meta: type) -> None:
+    world = World()
+
+    def raises() -> object:
+        raise meta("E", (Exception,), {})(KEY)
+
+    world.broker.reads["positions"] = raises
+    with pytest.raises(BrokerUnavailable, match="failed with Unnamed$") as raised:
+        world.path().positions()
+    assert not leaks(*told(raised.value))
+
+    class NoAlias:
+        @property
+        def alias(self) -> str:
+            return raises()  # type: ignore[return-value]
+
+    with pytest.raises(Halt, match="alias could not be read: Unnamed$") as halt:
+        world.path(broker=NoAlias()).positions()
+    assert not leaks(*told(halt.value))
 
 
 def test_11_an_object_that_raises_as_it_is_examined_says_nothing() -> None:

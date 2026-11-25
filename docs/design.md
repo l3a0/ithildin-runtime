@@ -1140,7 +1140,7 @@ is stored, execution checks eight things. Each is read again there, after a firs
 5. The account's lease still carries the tag that the holder's own
    last take or renewal of it returned, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds the lease.
 6. The loss stop has not fired, and its state can be read.
-7. The hard caps' limits are the ones the gate was handed, so a cap the owner lowers during a send stops that order.
+7. The hard caps' limits are the ones the gate was handed, so a change to one during a send, looser or tighter, stops that order.
 8. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. It is read last, and at that moment itself the order goes.
 
 Any one failing journals the

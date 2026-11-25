@@ -23,7 +23,7 @@ def error_name(error: object) -> str:
     try:
         name = error.__name__ if issubclass(type(error), type) else type(error).__name__
     except BaseException:
-        return _word(None)
+        name = None
     return _word(name)
 
 
@@ -32,15 +32,10 @@ class BrokerUnavailable(Exception):
 
     def __init__(self, call: str, error: BaseException | type) -> None:
         self.call = _word(call)
-        self.error = error_name(error)
-        if issubclass(type(error), BrokerUnavailable):
-            # A subclass may hold any word there, or none, or raise as it is read.
-            try:
-                self.error = _word(error.error)
-            except BaseException:
-                self.error = _word(None)
+        # A subclass is an adapter's own, whose word could be a key.
+        self.error = _word(error.error) if type(error) is BrokerUnavailable else error_name(error)
         super().__init__(f"the broker's {self.call} failed with {self.error}")
 
 
 def _word(value: object) -> str:
-    return value if isinstance(value, str) and _WORD.fullmatch(value) else "Unnamed"
+    return value if type(value) is str and _WORD.fullmatch(value) else "Unnamed"

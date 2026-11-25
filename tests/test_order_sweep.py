@@ -75,6 +75,13 @@ WAYS: dict[str, tuple[str, str]] = {
     ),
     "a path's parts replaced": (IN_RUNTIME, "path._held = other"),
     "an account's parts replaced": (IN_RUNTIME, "account._shared = other"),
+    **{
+        f"the parts of {held}": (IN_RUNTIME, f"x = replace({held}._shared, gate=yes)")
+        for held in ("self._path", "self._account", "self.order_path", "account.path(b, r)")
+    },
+    "the parts a stage's own path holds": (IN_RUNTIME, "self._path._held = other"),
+    "a broker's call unmarked": (IN_EXECUTION, "self._path._shared.called.clear()"),
+    "a broker's call unmarked by hand": (IN_EXECUTION, "shared.called.discard(6)"),
     "an acknowledgement set by hand": (IN_EXECUTION, "shared.cleared[6] = ack"),
     "an entry's class by its kind": (IN_EXECUTION, "KINDS['sending'](name)"),
     "an entry read back to be recorded": (IN_EXECUTION, "journal.record(v, record_of(e), at)"),
@@ -123,7 +130,12 @@ def test_3_each_way_around_is_caught(way: str) -> None:
 def test_3_an_ordinary_word_is_no_hit() -> None:
     """#156's clear of the loss stop, and a local of that name, are no part of the path."""
     for source in (
-        *("cleared = read_stop(store)", "state.cleared = True", "stop.cleared()"),
+        *(
+            "cleared = read_stop(store)",
+            "state.cleared = True",
+            "stop.cleared()",
+            "self.called = 0",
+        ),
         *("self._held = {}", "view._shared.lock", "self._shared = None"),
     ):
         assert not list(found_in(source, IN_EXECUTION)), source

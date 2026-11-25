@@ -13,7 +13,14 @@ import re
 from collections.abc import Callable
 from datetime import datetime
 
-from ithildinruntime.core import ChecksumMismatch, Clock, Retry, StoreError, StoreUnavailable
+from ithildinruntime.core import (
+    ChecksumMismatch,
+    Clock,
+    Retry,
+    StoreError,
+    StoreUnavailable,
+    error_name,
+)
 
 __all__ = ["Patience", "Tries", "code_of"]
 
@@ -27,8 +34,8 @@ def code_of(error: BaseException) -> str:
     `403 AccessDenied`, which tells a denied grant from an outage. The rest of
     the answer is the store's own text and is left out.
     """
-    name = type(error).__name__
-    code = error.answer.partition(":")[0] if isinstance(error, StoreError) else ""
+    name = error_name(error)
+    code = error.answer.partition(":")[0] if issubclass(type(error), StoreError) else ""
     return f"{name} {code}" if _CODE.fullmatch(code) else name
 
 

@@ -14,7 +14,9 @@ It reads source with `ast` and reports two reaches.
 
 It catches the spellings tests/test_order_sweep.py plants, and others pass. It
 reads what is written, so no list of spellings is whole, such as a name put
-together at run time or a class bound to another name first.
+together at run time or a class bound to another name first. The fake broker
+catches none of those that replace the gate or the controls, whose approval is
+in the journal like any other.
 """
 
 from __future__ import annotations
@@ -46,7 +48,12 @@ IN_WORKERS = BY_TEXT | {"vars", "dir", "__dict__", "setattr"}
 # What only `account.py` and `order_path.py` may name, since each changes what the path does.
 INSIDE = frozenset({"Shared", "Unstored", "record_of", "KINDS"})
 # A part of the path or the account, by what it is read from, since each is an ordinary word.
-PARTS = {"cleared": {"shared", "_shared"}, "_shared": {"path", "account"}, "_held": {"path"}}
+PARTS = {
+    "cleared": {"shared"},
+    "called": {"shared"},
+    "_shared": {"path", "account"},
+    "_held": {"path"},
+}
 # The classes whose methods nothing outside them replaces.
 WHOLE = frozenset({"OrderPath", "Account", "Controls", "Gate", "Unstored", "Journal"})
 
@@ -68,7 +75,7 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     ),
     (_PATH, "entry"): None,
     (_JOURNAL, "entry"): None,
-    (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "record_of"}),
+    (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "called", "record_of"}),
     (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored"}),
     # The measurement a person runs, which reads the bars and holds no broker and no account.
     ("src/ithildinruntime/runtime/stress_move.py", "reach"): frozenset({"getattr", "vars"}),
@@ -129,7 +136,7 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
             match node:
                 case ast.Name(id=name) | ast.Attribute(attr=name) if name in INSIDE:
                     yield Hit(where, line, "inside", name)
-                case ast.Attribute(value=held, attr=name) if _last(held) in PARTS.get(name, ()):
+                case ast.Attribute(value=held, attr=name) if _owner(held) in PARTS.get(name, ()):
                     yield Hit(where, line, "inside", name)
                 case ast.ImportFrom():
                     for named in _imported(node):
@@ -171,6 +178,12 @@ def _last(func: ast.expr) -> str | None:
     if isinstance(func, ast.Name):
         return func.id
     return func.attr if isinstance(func, ast.Attribute) else None
+
+
+def _owner(held: ast.expr) -> str:
+    """The last word of what an attribute is read from, such as `path` of `self._order_path`."""
+    name = _last(held.func if isinstance(held, ast.Call) else held) or ""
+    return name.rpartition("_")[2]
 
 
 def _said(node: ast.Attribute) -> str:

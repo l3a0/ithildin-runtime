@@ -1059,7 +1059,7 @@ class StopState(StrEnum):
 class GateInputs(_Record):
     """What the order path reads for one check, beside the book, the snapshot and the limits.
 
-    `caps` are the hard caps as they read just before the check, `valuation`
+    `caps` are the hard caps as they read as the order's send began, `valuation`
     the session's V or `None` where none was found, and `close_entry` the
     journal's entry of a close after a broker's trade.
     """
