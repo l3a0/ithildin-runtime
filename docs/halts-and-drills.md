@@ -433,7 +433,7 @@ Each row here has fired before a sample opens on Paper, under [A fill is measure
 | Alarm | Reason it writes | Drill | Built on | Gate |
 | --- | --- | --- | --- | --- |
 | A price of unstated kind | The price and its source | Feed a bar and a quote with no stated kind, each expecting the halt and its reason read back | [#5](https://github.com/l3a0/ithildin-runtime/issues/5) and [#100](https://github.com/l3a0/ithildin-runtime/issues/100) | paper |
-| A quote fails the age and status check, its written widest spread and a crossed or non-positive price among it | The quote, its stamp and status, the clock's bound and the written maximum age, or both sides, with the written share for a wide quote, or the one side as received | Feed a quote whose age plus the clock's bound is within its maximum, expecting no halt, then one whose age is within the maximum and whose age plus the bound is past it, one with no usable stamp and one whose status is not normal, each expecting the halt and the account held until a person clears it. Feed one whose spread is at its written share, expecting no halt, then one a step past it, one whose ask is a step below its bid and one with a side at zero, each expecting the same | [#100](https://github.com/l3a0/ithildin-runtime/issues/100), [#16](https://github.com/l3a0/ithildin-runtime/issues/16) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) | paper |
+| A quote fails the age and status check, its written widest spread and a crossed, non-positive or missing price among it | The quote, its stamp and status, the clock's bound and the written maximum age, or both sides, with the written share for a wide quote, or the one side as received | Feed a quote whose age plus the clock's bound is within its maximum, expecting no halt, then one whose age is within the maximum and whose age plus the bound is past it, one with no usable stamp and one whose status is not normal, each expecting the halt and the account held until a person clears it. Feed one whose spread is at its written share, expecting no halt, then one a step past it, one whose ask is a step below its bid, one with a side at zero and one with no bid, each expecting the same | [#100](https://github.com/l3a0/ithildin-runtime/issues/100), [#16](https://github.com/l3a0/ithildin-runtime/issues/16) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) | paper |
 | An order entry names no snapshot | The order | Journal an order entry with no snapshot, expecting the halt and no order sent | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |
 | A write of a snapshot or a halt failed | What failed to write and what the process still holds | Fail each write on shadow's own stores, expecting the page and the process held | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | paper |
 | A lone leg | The legs and the net exposure | Leave one leg of a pair unfilled, expecting the alert | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | paper |
@@ -456,11 +456,10 @@ reading halt where one of them has no mark, a person's order and one that only
 reduces included. [How the gate values the book](architecture/05-building-blocks.md#how-the-gate-values-the-book)
 says when a quote is no mark, and any fault [How a quote is judged](architecture/03-context-and-scope.md#how-a-quote-is-judged)
 lists leaves none. A quote that fails its age and status check, the spread
-and a crossed or non-positive price among it, also holds the account until a person clears it, as
+and a crossed, non-positive or missing price among it, also holds the account until a person clears it, as
 [A fill is measured from the decision](design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
 says, which names the cancels that still go out. [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build that
-hold. Whether a quote with no bid or no ask holds a shadow or paper account too waits for the
-owner there.
+hold.
 
 The next decision acts once its own quotes pass and a person has cleared any hold.
 Until then only the owner's act bounds the position, and
