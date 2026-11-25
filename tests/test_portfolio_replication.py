@@ -10,12 +10,9 @@ neither, as execution cancels an accepted leg whose partner was refused. Such a
 day is classed by the change in the forecast's direction from the decision
 before, so an exit counts once, on the day it is first asked.
 
-Each count #9's body states was written before the build, which reproduced it.
-Every count it does not state came from the code at 19034c0, over
-quantitative-trading's vintages at `19aadbeb`, so it holds what the code did
-rather than what a plan expected.
-Two checks are sampled: the stress exits at every seventh decision, and the
-wrong prices at every fourth.
+#9 and its plan's comments hold the counts written before the build. Two checks
+are sampled: the stress exits at every seventh decision, and the wrong prices at
+every fourth.
 """
 
 from __future__ import annotations

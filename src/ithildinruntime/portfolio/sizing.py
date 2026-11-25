@@ -127,8 +127,8 @@ def size(
     """One strategy's target for the decision, and the record of how it was sized.
 
     `deployed` names every strategy of the deployment. It halts on the first
-    input it cannot size from, and each check but the last holds for a flat
-    forecast too.
+    input it cannot size from, and each check holds for a flat forecast too but
+    the last two, of a count too large to record and of a target of zero.
     """
     name = strategy.name
     wanted_gross = gross(strategy)
@@ -180,6 +180,7 @@ def size(
         return made
 
     target = count("target", taken, step)
+    wanted = count("size before any limit", asked, _WANTED)
     if not any(target.values()):
         raise Halt(
             f"{name} forecasts {forecast.direction} and its target is zero shares in every leg, "
@@ -188,7 +189,7 @@ def size(
         )
     return (
         TargetPortfolio(snapshot.decision_at, name, target),
-        Sizing(name, count("size before any limit", asked, _WANTED), cut),
+        Sizing(name, wanted, cut),
     )
 
 

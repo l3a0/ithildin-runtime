@@ -1331,7 +1331,7 @@ A halt in any input is passed on, the first in the order the stage reads them. E
 7. A leg that is not a finite number, or a basket whose legs are all zero.
 8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, a share step of another form than the ten, and a leg no limit names.
 9. A leg `core.mark` cannot price. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision here, where the book is flat, and at the risk stage where it holds anything.
-10. A count past what a record can hold, such as a G of 1e30 gives.
+10. A share count, of the target or before any limit, too large for a record to hold.
 11. A held direction sized to zero shares in every leg.
 12. A write storage refuses, such as a target already stored with other bytes.
 

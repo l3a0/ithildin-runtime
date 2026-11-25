@@ -756,8 +756,13 @@ def test_5_a_count_past_what_a_record_holds_halts() -> None:
     """The reader takes a G of 1e30. At a cent a share that is 33 digits, and nine places more."""
     vast = strategy(text("1e30"))
     legs = {USO: "0.0001", GLD: 0}
-    reason = refused(config=vast, legs=legs, marked=snapshot({GLD: 100, USO: "0.01"}))
-    assert reason.startswith("chan's size before any limit in USO cannot be recorded at 9 places")
+    given = {"config": vast, "legs": legs, "marked": snapshot({GLD: 100, USO: "0.01"})}
+    # It is found before a target of zero is.
+    for limits in (constraints(), held_to(max_gross=0)):
+        reason = refused(**given, limits=limits)
+        assert reason.startswith(
+            "chan's size before any limit in USO cannot be recorded at 9 places"
+        )
 
 
 @DIRECTIONS
