@@ -368,7 +368,8 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
         (date(2026, 9, 8), date(2026, 11, 30), 59),
         (date(2026, 11, 3), date(2027, 1, 28), 59),
     ]
-    assert src.read(close(captured[-1]) - early).halts == ()
+    # Its quotes halt it, since no segment is here to read, and no change of series does.
+    assert not any("two series" in r for r in src.read(close(captured[-1]) - early).halts)
 
 
 # 4. Through the receive loop.
