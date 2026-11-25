@@ -633,7 +633,7 @@ A reading reads the raw clock, the wall clock and the raw clock again, and moves
 
 At a bound is no fault. An ask that hangs or a thread that dies after a failed ask still shows that failure, so a reason cannot tell a stuck thread from a server that stays out. A reading with no answers at all, which a history clock gives, is none only where the run was told it does not measure its clock, as [Who judges the clock](#who-judges-the-clock-and-who-records-it) says.
 
-This doc proposes two things here for [#134](https://github.com/l3a0/ithildin-runtime/issues/134). The bound on an answer's age is 300 seconds, about four asks of the slower server. And both servers have to be fresh and within the bound, so there is no vote to win. A forged or broken answer from one can only halt, apart from hiding what neither of the machine's clocks shows, such as a pause of the virtual machine, until the other server's next answer, or for 300 seconds without one. Both forged hide any fault.
+The bound on an answer's age, 300 seconds, is about four asks of the slower server. Both servers have to be fresh and within the bound, so there is no vote to win. A forged or broken answer from one can only halt, apart from hiding what neither of the machine's clocks shows, such as a pause of the virtual machine, until the other server's next answer, or for 300 seconds without one. Both forged hide any fault.
 
 #### Who judges the clock, and who records it
 

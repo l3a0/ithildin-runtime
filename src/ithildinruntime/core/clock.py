@@ -18,7 +18,7 @@ __all__ = ["ANSWER_BOUND", "CLOCK_BOUND", "DRIFT_PPM", "SYNC_BOUND", "clock_faul
 # bounds one clock, so a time measured between two stamps, or between two
 # machines, can be off by twice it.
 CLOCK_BOUND = timedelta(seconds=1)
-# How old a server's last answer may be. It is proposed, not ruled on.
+# How old a server's last answer may be.
 SYNC_BOUND = timedelta(seconds=300)
 # An answer less sure than this says too little to judge by, unless it proves a fault.
 ANSWER_BOUND = CLOCK_BOUND / 4
