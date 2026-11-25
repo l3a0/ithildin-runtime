@@ -8,6 +8,7 @@ in through `OrderPath`.
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
@@ -18,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from ithildinruntime.core import (
+    DATA_STAGE,
     BrokerState,
     BrokerUnavailable,
     CodecError,
@@ -29,6 +31,7 @@ from ithildinruntime.core import (
     StoreUnavailable,
     decode,
     encode,
+    result_key,
     sim_account_key,
 )
 from ithildinruntime.execution.brokers.faults import (
@@ -42,12 +45,14 @@ from ithildinruntime.execution.brokers.faults import (
     OrderFault,
     ReadFault,
 )
-from ithildinruntime.execution.brokers.log import SimCall, SimState, SimulatedAccount
+from ithildinruntime.execution.brokers.log import SimCall, SimClose, SimState, SimulatedAccount
+from ithildinruntime.execution.brokers.log import after as applied
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from tests.support.order_world import Kill, Wired, order
 from tests.support.sim_world import (
     ACCOUNT,
     CASH,
+    DEPLOYMENT,
     FULL,
     GLD,
     MICRO,
@@ -327,6 +332,18 @@ def test_4_a_create_that_lands_after_a_call_read_forward_is_in_the_next_read() -
     assert again(made).state == made.log.state
 
 
+def test_4_a_create_that_lands_after_the_close_is_taken_and_fills() -> None:
+    """The account took it in time, and no call could know, so #147 halts on its fill."""
+    made, store, (first, _) = slow()
+    made.clock.at = close_of(FULL) + timedelta(minutes=5)
+    found = made.broker().find_order(first, made.at, {})
+    assert (found.answer, found.whole_list) == (Outcome.NOT_FOUND, True)
+    store.land()
+    assert len(made.broker().find_order(first, made.at, {}).rows) == 1
+    made.decide(close_of(after(FULL)))
+    assert made.broker().positions().positions == {GLD: 4}
+
+
 def test_4_a_create_that_lands_under_the_next_one_starts_that_call_over() -> None:
     made, store, (first, second) = slow()
     store.lands = True
@@ -556,22 +573,19 @@ def test_4_a_call_whose_number_another_process_takes_starts_over_on_what_it_did(
 
 
 @pytest.mark.parametrize(("times", "goes"), [(100, True), (101, False)])
-def test_4_a_call_that_loses_its_number_too_often_has_no_answer(times: int, goes: bool) -> None:
+def test_4_a_cancel_whose_number_another_process_keeps_taking(times: int, goes: bool) -> None:
     made, first, second = two()
-    made.log = first
-    other, lost = made.broker(), []
-    made.log = second
-    edits = {n: EditCash(D(1)) for n in range(first.calls + 1, first.calls + 110)}
-    made.faults = Faults(events=edits)
+    made.faults = Faults(events={n: EditCash(D(1)) for n in range(1, first.calls + 120)})
     made.log = first
     other = made.broker()
-    made.faults = Faults()
-    made.log = second
+    made.faults, made.log = Faults(), second
+    lost: list[str] = []
 
     def hook(count: int, op: str, at: str) -> None:
-        if op == "create" and not made.sim.quiet and len(lost) < times:  # type: ignore[attr-defined]
+        if op == "create" and len(lost) < times:
             lost.append(at)
             made.sim.quiet = True  # type: ignore[attr-defined]
+            first.fired.update(range(first.calls + 1))
             other.account()
             made.sim.quiet = False  # type: ignore[attr-defined]
 
@@ -585,6 +599,43 @@ def test_4_a_call_that_loses_its_number_too_often_has_no_answer(times: int, goes
     state = made.broker().lookup("sim-o-1").order.state
     assert state is (BrokerState.CANCELLED if goes else BrokerState.WORKING)
     assert made.broker().account().cash == CASH + times
+
+
+@pytest.mark.parametrize("what", ["cancel", "read", "send"])
+@pytest.mark.parametrize(("times", "goes"), [(100, True), (101, False)])
+def test_4_a_call_that_loses_its_number_too_often_has_no_answer(times, goes, what) -> None:
+    made = world()
+    made.day(FULL, [(4, GLD)], early=20)
+    at = close_of(FULL) - timedelta(minutes=10)
+    (intent,) = made.decide(at, made.orders(at, [(5, USO)]))
+    made.faults = Faults(events={made.log.calls + 1: EditCash(D(7))} if what == "read" else {})
+    lost: list[str] = []
+
+    def hook(count: int, op: str, found: str) -> None:
+        if op == "create" and len(lost) < times:
+            lost.append(found)
+            raise Conflict(found, "409 ConditionalRequestConflict")
+
+    made.sim.before = hook  # type: ignore[attr-defined]
+    number, state = made.log.number, made.log.state
+    if what == "send":
+        found = made.send(intent)
+        assert found is (OrderState.ACKNOWLEDGED if goes else OrderState.IN_DOUBT)
+    elif goes:
+        assert made.broker().account().cash == CASH + 7 if what == "read" else True
+        if what == "cancel":
+            assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    else:
+        name = "account" if what == "read" else "cancel"
+        with pytest.raises(BrokerUnavailable, match="contended_log failed with Conflict"):
+            made.broker().account() if name == "account" else made.broker().cancel("sim-o-1")
+    quiet(made)
+    if goes:
+        assert made.log.number == number + 1
+    else:
+        # Nothing changed, in this process or in the log.
+        assert (made.log.number, made.log.state) == (number, state)
+        assert len(made.blobs()) == number
 
 
 def test_4_a_create_that_raced_and_did_not_land_starts_over() -> None:
@@ -635,13 +686,30 @@ def test_4_the_clock_is_read_after_the_log() -> None:
 
 
 def test_4_two_processes_never_hold_one_order_as_their_own() -> None:
-    """The second create of one id meets another writer's blob and is refused as a repeat."""
-    made, first, second = two()
-    name = made.orders(made.at, [(4, GLD)])[0].client_order_id
+    """Both send one id at one time, and only the one whose blob landed owns the order.
+
+    Their two blobs differ in the writer alone, so the one that lost its number
+    starts over and finds the id held.
+    """
+    made = world()
     other = SimWorld(made.closes, sim_store=made.sim, sim_writer="e" * 32)
-    assert other.day(FULL, [(4, GLD)], early=20, recover=False) == [OrderState.IN_DOUBT]
-    held = made.broker().open_orders().orders
-    assert [o.client_order_id for o in held] == [name]
+    at = close_of(FULL) - timedelta(minutes=20)
+    (ours,) = made.decide(at, made.orders(at, [(4, GLD)]))
+    (theirs,) = other.decide(at, other.orders(at, [(4, GLD)]))
+    assert ours == theirs
+    states: list[OrderState] = []
+
+    def hook(count: int, op: str, found: str) -> None:
+        if (op, found) == ("create", key(2)) and not states:
+            states.append(OrderState.SENDING)
+            states.append(other.send(theirs))
+
+    made.sim.before = hook  # type: ignore[attr-defined]
+    assert made.send(ours) is OrderState.IN_DOUBT
+    assert states[1] is OrderState.ACKNOWLEDGED
+    (held,) = made.broker().orders(at).orders
+    assert held.client_order_id == ours.client_order_id
+    assert call(made, 2).writer == "e" * 32
 
 
 # A log that cannot be read back
@@ -704,6 +772,20 @@ def test_4_a_lost_newest_call_reads_as_the_account_before_it() -> None:
         made.agree()
 
 
+def test_4_a_call_lost_under_a_running_process_halts_the_next_process() -> None:
+    """A running process asks for the next number alone, so only a first read sees the gap."""
+    made, first, second = two()
+    made.faults = Faults(events={n: EditCash(D(1)) for n in range(1, 3)})
+    for _ in range(2):
+        second.fired.clear()
+        made.broker().account()
+    made.faults = Faults()
+    made.sim.drop(key(3))  # type: ignore[attr-defined]
+    made.log = first
+    assert made.broker().account().cash == CASH
+    halts(made, "call 3 is missing, and the next key is")
+
+
 def test_4_a_newest_call_lost_under_the_process_that_made_it_leaves_a_gap() -> None:
     made = full()
     made.sim.drop(key(4))  # type: ignore[attr-defined]
@@ -742,6 +824,10 @@ BAD: dict[str, tuple[Callable[[SimCall], object], str]] = {
     "another-account": (lambda c: replace(c, account="sim-2"), "holds call 3 of sim-2"),
     "another-call": (lambda c: replace(c, call=2), "holds call 2 of sim-1"),
     "another-format": (lambda c: replace(c, format=2), "has format 2"),
+    "a-later-format": (
+        lambda c: encode(c).replace(b'"format":1', b'"format":2,"later":null'),
+        "has format 2, which this release does not read",
+    ),
     "no-writer": (lambda c: replace(c, writer=None), "names the writer None"),
     "no-time": (lambda c: replace(c, at=None), "and the time None"),
     "other-cash": (
@@ -763,6 +849,85 @@ BAD: dict[str, tuple[Callable[[SimCall], object], str]] = {
 }
 
 
+def _at(c: SimCall, **events: object) -> SimCall:
+    changed = replace(c.events, **events)  # type: ignore[arg-type]
+    return replace(c, events=changed)
+
+
+def _state(c: SimCall, **after_: object) -> SimCall:
+    return replace(c, after=replace(c.after, **after_))  # type: ignore[arg-type]
+
+
+def _order(c: SimCall, **changes: object) -> SimCall:
+    made = replace(c.events.placed[0], **changes)  # type: ignore[arg-type]
+    held = tuple(made if o.id == c.events.placed[0].id else o for o in c.after.open_orders)
+    return _state(_at(c, placed=(made,)), open_orders=held)
+
+
+BAD["a-repeated-id"] = (
+    lambda c: _order(c, client_order_id=c.after.open_orders[0].client_order_id),
+    "a second time",
+)
+BAD["a-held-order"] = (
+    lambda c: _state(
+        _at(c, placed=(replace(c.events.placed[0], id="sim-o-1"),)),
+        open_orders=(replace(c.events.placed[0], id="sim-o-1"),),
+    ),
+    "places sim-o-1, which it holds already",
+)
+BAD["a-repeated-id-on-its-way"] = (
+    lambda c: _state(
+        _at(c, placed=(), delayed=(replace(c.after.open_orders[0], id=None),)),
+        open_orders=c.after.open_orders[:1],
+        delayed=(replace(c.after.open_orders[0], id=None),),
+    ),
+    "a second time",
+)
+
+
+def _expired(end: SimClose, qty: Decimal) -> SimClose:
+    return replace(end, state=BrokerState.EXPIRED, fill=replace(end.fill, qty=qty))
+
+
+# A fill that is not of its order, by what it changes of call 4's first end.
+FILLS: dict[str, Callable[[SimClose], SimClose]] = {
+    "no-snapshot": lambda e: replace(e, priced_from=None),
+    "no-fill": lambda e: replace(e, fill=None),
+    "another-order": lambda e: replace(e, fill=replace(e.fill, broker_order_id="sim-o-2")),
+    "another-name": lambda e: replace(e, fill=replace(e.fill, client_order_id="x")),
+    "another-instrument": lambda e: replace(e, fill=replace(e.fill, instrument=USO)),
+    "another-side": lambda e: replace(e, fill=replace(e.fill, qty=D(-4))),
+    "too-many": lambda e: replace(e, fill=replace(e.fill, qty=D(400))),
+    "none": lambda e: replace(e, fill=replace(e.fill, qty=D(0))),
+    "filled-in-part": lambda e: replace(e, fill=replace(e.fill, qty=D(3))),
+    "expired-on-another-side": lambda e: _expired(e, D(-1)),
+    "expired-with-too-many": lambda e: _expired(e, D(5)),
+    "expired-with-none": lambda e: _expired(e, D(0)),
+    "expired-whole": lambda e: replace(e, state=BrokerState.EXPIRED),
+}
+
+
+@pytest.mark.parametrize("bad", FILLS)
+def test_4_an_end_that_does_not_fit_its_order_halts(bad: str) -> None:
+    made = full()
+    found, before = call(made, 4), call(made, 3).after
+    wrong = FILLS[bad](found.events.closed[0])
+    events = replace(found.events, closed=(wrong, found.events.closed[1]))
+    after_ = applied(before, events)
+    made.sim.put(key(4), encode(replace(found, events=events, after=after_)))  # type: ignore[attr-defined]
+    halts(made, "call 4 ends sim-o-1 with a fill that is not of it")
+
+
+def test_4_a_sale_that_ends_with_a_fill_of_nothing_halts() -> None:
+    made = full()
+    found, before = call(made, 4), call(made, 3).after
+    wrong = _expired(found.events.closed[1], D(0))
+    events = replace(found.events, closed=(found.events.closed[0], wrong))
+    after_ = applied(before, events)
+    made.sim.put(key(4), encode(replace(found, events=events, after=after_)))  # type: ignore[attr-defined]
+    halts(made, "call 4 ends sim-o-2 with a fill that is not of it")
+
+
 @pytest.mark.parametrize("bad", BAD)
 def test_4_a_call_that_is_not_one_halts(bad: str) -> None:
     made = full()
@@ -780,12 +945,33 @@ def test_4_a_swapped_call_halts() -> None:
     halts(made, "call 2 holds call 3 of sim-1")
 
 
-def test_4_a_bad_call_stored_under_a_running_process_halts_its_next_call() -> None:
+@pytest.mark.parametrize(
+    "read", ["positions", "open_orders", "orders", "lookup", "find_order", "cancel"]
+)
+def test_4_a_bad_call_stored_under_a_running_process_halts_its_next_call(read: str) -> None:
     made = full()
     made.sim.put(key(5), b"{}")  # type: ignore[attr-defined]
     for _ in range(2):
         with pytest.raises(Halt, match="sim-1's call 5 is not a canonical call"):
-            made.broker().positions()
+            CALLS[read](made.broker())
+
+
+def test_4_an_order_on_its_way_twice_under_one_id_halts() -> None:
+    made = world()
+    at = close_of(FULL) - timedelta(minutes=20)
+    planned = made.decide(at, made.orders(at, [(4, GLD)]))
+    made.faults = Faults({planned[0].client_order_id: Late(9)})
+    made.send(planned[0])
+    found = call(made, 2)
+    twice = replace(
+        found,
+        call=3,
+        after=replace(found.after, delayed=(*found.after.delayed, *found.after.delayed)),
+    )
+    made.sim.put(key(3), encode(twice))  # type: ignore[attr-defined]
+    made.restart(OTHER)
+    with pytest.raises(Halt, match="call 3 places ith-chan-.* a second time"):
+        made.broker().positions()
 
 
 def test_4_a_call_that_could_not_be_read_back_is_never_stored() -> None:
@@ -863,24 +1049,50 @@ CALLS: dict[str, Callable[[SimulatedBroker], object]] = {
 }
 
 
+class Watched:
+    """The log's lock, which says when a thread has asked for it while another holds it."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.asked = threading.Event()
+
+    def __enter__(self) -> None:
+        if not self._lock.acquire(blocking=False):
+            self.asked.set()
+            self._lock.acquire()
+
+    def __exit__(self, *given: object) -> None:
+        self._lock.release()
+
+
+def either(*events: threading.Event) -> None:
+    """Wait until one of the events is set."""
+    for _ in range(5000):
+        if any(event.is_set() for event in events):
+            return
+        time.sleep(0.001)
+    raise AssertionError("neither came")
+
+
 @pytest.mark.parametrize("read", CALLS)
 def test_4_two_threads_never_build_on_one_number(read: str) -> None:
     made = world()
     made.day(FULL, [(4, GLD)])
     made.clock.at += MICRO
+    made.log.lock = lock = Watched()  # type: ignore[assignment]
     entered, done = threading.Event(), threading.Event()
+    early: list[bool] = []
 
     def other() -> None:
         CALLS[read](made.broker())
         done.set()
 
-    early: list[bool] = []
-
     def hook(count: int, op: str, at: str) -> None:
         if op == "create" and not entered.is_set():
             entered.set()
             threading.Thread(target=other, daemon=True).start()
-            early.append(done.wait(0.1))
+            either(lock.asked, done)
+            early.append(done.is_set())
 
     made.sim.before = hook  # type: ignore[attr-defined]
     assert made.broker().positions().positions == {GLD: 4}
@@ -888,6 +1100,54 @@ def test_4_two_threads_never_build_on_one_number(read: str) -> None:
     # The second call waits for the first's create, and stores nothing of its own.
     assert early == [False]
     assert made.log.number == len(made.blobs()) == 3
+
+
+def test_4_a_cancel_holds_the_log_while_it_stores() -> None:
+    made = world()
+    made.day(FULL, [(4, GLD)], early=20)
+    made.log.lock = lock = Watched()  # type: ignore[assignment]
+    done, early = threading.Event(), []
+
+    def other() -> None:
+        made.broker().open_orders()
+        done.set()
+
+    def hook(count: int, op: str, at: str) -> None:
+        if op == "create":
+            threading.Thread(target=other, daemon=True).start()
+            either(lock.asked, done)
+            early.append(done.is_set())
+
+    made.sim.before = hook  # type: ignore[attr-defined]
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    assert done.wait(5)
+    assert early == [False]
+
+
+def test_4_a_price_that_is_slow_holds_no_cancel() -> None:
+    made = world()
+    made.day(FULL, [(4, GLD)], early=20)
+    at = close_of(after(FULL)) - timedelta(minutes=20)
+    (intent,) = made.decide(at, made.orders(at, [(5, USO)]), recover=False)
+    # A second path over the same log, whose read waits on a price.
+    result = result_key(DEPLOYMENT, made.run, at, DATA_STAGE)
+    waits, goes, done = threading.Event(), threading.Event(), threading.Event()
+
+    def hook(count: int, op: str, found: str) -> None:
+        if found == result and not waits.is_set():
+            waits.set()
+            assert goes.wait(5)
+
+    made.store.before = hook
+    threading.Thread(target=lambda: (made.broker().positions(), done.set()), daemon=True).start()
+    assert waits.wait(5)
+    other = made.broker()
+    assert other.cancel("sim-o-1").outcome is Outcome.REJECTED
+    assert other.cancel("sim-o-9").outcome is Outcome.REJECTED
+    assert not done.is_set()
+    goes.set()
+    assert done.wait(5)
+    assert made.broker().positions().positions == {GLD: 4}
 
 
 def test_4_two_orders_sent_at_once_take_two_numbers() -> None:
@@ -898,6 +1158,7 @@ def test_4_two_orders_sent_at_once_take_two_numbers() -> None:
     one = SimWorld(made.closes, sim_store=made.sim)
     one.log = made.log
     first, second = one.decide(at, one.orders(at, [(4, GLD), (5, USO)]), recover=False)
+    one.log.lock = lock = Watched()  # type: ignore[assignment]
     entered, done = threading.Event(), threading.Event()
     early: list[bool] = []
 
@@ -914,7 +1175,8 @@ def test_4_two_orders_sent_at_once_take_two_numbers() -> None:
         if op == "create" and not entered.is_set():
             entered.set()
             threading.Thread(target=other, daemon=True).start()
-            early.append(done.wait(0.2))
+            either(lock.asked, done)
+            early.append(done.is_set())
 
     made.sim.before = hook  # type: ignore[attr-defined]
     one.send(first)
@@ -980,26 +1242,62 @@ def test_5_fifty_decisions_twice_give_the_same_bytes(faults: str) -> None:
     assert sum(len(events.delayed) for events in calls) == (1 if faults == "late" else 0)
 
 
+def committed() -> SimWorld:
+    """A run that writes each kind of event, whose log tests/fixtures/simulated holds."""
+    made = world(6)
+    at = close_of(FULL) - timedelta(minutes=20)
+    names = [o.client_order_id for o in made.orders(at, [(1, GLD)] * 5)]
+    made.faults = Faults(
+        orders={
+            names[0]: FillPart(D("1.5")),
+            names[1]: Late(1),
+            names[2]: OrderFault.REJECT_LATER,
+            # It arrives after its close, so it is missed.
+            names[3]: Late(9),
+        },
+        events={
+            7: EditPosition(GLD, D(1)),
+            8: EditCash(D("-2.5")),
+            9: EditOrder("sim-o-1", D(6)),
+            10: ForeignOrder(USO, D(2)),
+        },
+    )
+    legs = [(4, GLD), (-5, USO), (3, GLD), (7, GLD)]
+    planned = made.decide(at, made.orders(at, legs), recover=False)
+    for intent in planned:
+        made.send(intent)
+    for _ in range(6):
+        made.broker().positions()
+    # A cancel under a clock that went back, so the blob's time and the clock's differ.
+    made.clock.at -= timedelta(seconds=30)
+    made.broker().cancel("sim-o-2")
+    made.decide(close_of(after(FULL)), recover=False)
+    for _ in range(2):
+        made.broker().positions()
+    return made
+
+
 def test_5_this_release_reads_and_writes_the_committed_log() -> None:
     """A shadow account's log outlives a release, so its bytes never change."""
-    made = world(faults=Faults(events={4: EditPosition(GLD, D(1)), 6: EditCash(D("-2.5"))}))
-    made.faults = replace(
-        made.faults,
-        orders={made.orders(close_of(FULL), [(1, GLD)])[0].client_order_id: FillPart(D("1.5"))},
-    )
-    made.day(FULL, [(4, GLD), (-5, USO)], recover=False)
-    for _ in range(4):
-        made.broker().positions()
-    made.decide(close_of(after(FULL)), recover=False)
-    made.broker().positions()
+    made = committed()
     stored = {p.name: p.read_bytes() for p in sorted(FIXTURES.glob("*.json"))}
     assert {k.rpartition("/")[2]: v for k, v in made.blobs().items()} == stored
     store = Wired({f"sim/{ACCOUNT}/{name}": data for name, data in stored.items()})
     log = SimulatedAccount.load(store, ACCOUNT, OTHER)
     log.catch_up()
     assert log.state == made.log.state
-    states = [o.state for o in log.orders.values()]
-    assert states == [BrokerState.EXPIRED, BrokerState.FILLED]
+    states = {o.state for o in log.orders.values()}
+    assert states == {
+        BrokerState.EXPIRED,
+        BrokerState.FILLED,
+        BrokerState.CANCELLED,
+        BrokerState.REJECTED,
+    }
+    calls = [decode(data, SimCall) for data in stored.values()]
+    assert any(c.clock != c.at for c in calls)
+    for kind in ("edits", "placed", "missed", "delayed", "closed"):
+        assert any(getattr(c.events, kind) for c in calls), kind
+    assert any(e.order is not None for c in calls for e in c.events.edits)
 
 
 # 8. Cost
@@ -1034,9 +1332,9 @@ def test_8_a_run_resumed_halfway_gives_the_account_of_one_that_was_not() -> None
         made.day(day, [(1 + n % 4, GLD), (-1 - n % 3, USO)] if n % 2 else [(-2, GLD), (1, USO)])
         if n == 50:
             # Call 1, the orders and fills of 49 decisions, the orders of the 50th, and then one
-            # read for each of this decision's four calls.
+            # read for each of this decision's four calls and each of the four closes it asked for.
             gets = [op for op, _ in made.sim.calls].count("get")  # type: ignore[attr-defined]
-            assert gets == 1 + 49 * 3 + 2 + 4
+            assert gets == 1 + 49 * 3 + 2 + 4 + 4
     made.decide(close_of(days[100]))
     made.agree()
     assert made.log.state == whole.log.state

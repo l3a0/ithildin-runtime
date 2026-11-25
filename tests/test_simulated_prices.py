@@ -84,6 +84,15 @@ def test_3_a_close_is_the_bar_of_that_session_and_none_where_there_is_none() -> 
     assert early.close(GLD, PRIOR) == 11
 
 
+def test_3_the_snapshot_named_is_the_one_read_where_a_later_capture_differed() -> None:
+    found = at(made := world())
+    old = stored(made)
+    later = BlobRef(old.outputs[0].key.replace(".json", ".attempt-2.json"), "e" * 64)
+    made.store.put(key(made), encode(replace(old, outputs=(*old.outputs, later))))
+    assert found.snapshot() == old.outputs[0]
+    assert found.close(GLD, FULL) == 12
+
+
 def test_3_a_quote_is_the_decisions_as_it_was_read_and_none_where_it_read_none() -> None:
     assert at(world()).quote(GLD) is None
     made = world()

@@ -300,7 +300,7 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them. That the rule allows it is part of the proposal below.
 
 ##### What a blob holds
 
@@ -367,11 +367,12 @@ classDiagram
     SimEvents o-- SimEdit
     SimEvents o-- SimOrder
     SimEvents o-- SimClose
+    SimEdit o-- SimOrder
     SimState o-- SimOrder
 ```
 
 1. `events` is what the call did: what a fault had someone do by hand, the orders the account took, the ones that arrived too late to take, the ones now on their way, and each order that ended. `priced_from` names the stored snapshot that gave a fill its price.
-2. `at` is the account's time, which never goes back, and `clock` the clock's own reading. They differ only on a cancel whose clock read earlier than the account's time, or no time.
+2. `at` is the account's time, which never goes back, and `clock` the clock's own reading. They differ only on a cancel whose clock read earlier than the account's time, or no UTC time.
 3. `after` is the account then. It holds no order that ended before, because a blob that carried every order would cost the square of the run's length.
 4. Call 1 opens the account flat with its cash, and names no writer and no time. Opening it again is the same bytes and is done. Nothing else opens an account, so a lost log never reads as a new one.
 
@@ -386,19 +387,20 @@ Every call first reads the log forward from the newest call it knows, and takes 
 | What it finds | What the call does |
 | --- | --- |
 | A blob whose events, applied to the account before it, give the account it holds | Takes it in |
-| A gap, a blob that is not canonical, or one that is not the call before it with its events applied | Halts, and so does every later call |
-| Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed |
+| A blob of a later format, one that is not canonical, or one that is not the call before it with its events applied, such as a fill that is not of its order | Halts, and so does every later call |
+| A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it meets a gap only through the first call of another |
+| Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed. One that lands after the close is an order the account took in time, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) halts on its fill where it had read that order as lost |
 | Its number holding these same bytes | The create is done, since its first answer was lost |
 | Its number holding another call, or a store that says the create raced another and did not land | Starts over on what it then reads, up to 100 times, and then raises with nothing changed |
 
-**A lost newest call is not seen here.** The log then reads as the account before it, and gives that call's order id to the next order. Two things find it: recover's comparison with the journal, which is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, and the journal's refusal of an order id it already holds. The bucket refuses a delete under `sim/`.
+**A lost newest call is not seen here.** The log then reads as the account before it. A lost fill comes again at the next call. A lost order's id goes to the next order, and two things find it: recover's comparison with the journal, which is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, and the journal's refusal of an order id it already holds. The bucket refuses a delete under `sim/`.
 
 The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
 
 That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). Its prices are four.
 
-1. Each call costs one read for the next number. On S3 a key that is not there reads so only to a role that may list the bucket with no limit on the prefix. To any other role it reads as access denied, and every call after a process's first fails.
-2. Two instances whose clocks differ by more than the time between their calls halt on the clock. One VM has one clock. Two VMs meet it, which the clock's bound has to hold below.
+1. Each call costs one read for the next number. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix. To any other role it reads as access denied, and every call fails.
+2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs can differ, so the clock's bound has to stay below that time.
 3. Nothing here keeps two processes from acting at once. The account's lease does, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
 4. A process that starts reads the whole log, in turn, and reports nothing to the receive loop while it does. Two orders a decision leave three blobs, as `tests/test_simulated_log.py` counts over 100 decisions, so the 1,461 decisions of acceptance test 1 leave at most 4,384. The journal's cold read has the same shape and more entries, and [#154](https://github.com/l3a0/ithildin-runtime/issues/154) holds both.
 

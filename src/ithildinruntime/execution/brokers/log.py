@@ -10,12 +10,13 @@ account` says what a blob holds. In short:
   from the one before it, whoever wrote it. So an answer the store lost, and a
   call of another process that takes turns on the account, are both in the next
   answer.
-- Only a create the store acknowledged moves what this process remembers. One
-  that finds its number taken has changed nothing, and its call starts over.
+- A create moves what this process remembers only once the store acknowledged it.
+  One that finds its number taken has changed nothing, and its call starts over.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from collections.abc import Mapping
@@ -78,7 +79,7 @@ class SimOrder:
 
     - `id` is the broker's, and `None` for one that has not arrived.
     - `session` is the session whose close it fills at, and `read_close` whether
-      the decision that sent it had read that close.
+      the decision that sent it had read a close of that session.
     """
 
     id: str | None
@@ -249,7 +250,8 @@ class SimulatedAccount:
     account: str
     store: BlobStore = field(repr=False)
     writer: str = field(repr=False)
-    # Held through a whole call, because the receive loop runs its handlers in threads.
+    # Held through a call's own part, because the receive loop runs its handlers in threads. No
+    # price is read while it is held.
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     # The newest call this process has taken in, and the account after it.
     number: int = 0
@@ -333,11 +335,13 @@ class SimulatedAccount:
             )
         self._listed = True
 
-    def append(self, events: SimEvents, now: datetime, clock: datetime | None) -> bool:
-        """Store one call's events, and say whether it was stored.
+    def append(
+        self, events: SimEvents, now: datetime, clock: datetime | None
+    ) -> type[StoreError] | None:
+        """Store one call's events, and give what took its number, or `None` once it is stored.
 
-        One whose number another call holds changed nothing, and its caller
-        reads forward and starts over. A store that does not answer raises
+        One whose number is taken changed nothing, and its caller reads forward
+        and starts over. A store that does not answer raises
         `BrokerUnavailable`, with nothing this process remembers changed, and
         the next call finds whether the blob landed.
         """
@@ -360,14 +364,14 @@ class SimulatedAccount:
             except KeyExists:
                 # These same bytes are this create's own, whose first answer was lost.
                 if _get(self.store, key) != data:
-                    return False
+                    return KeyExists
         except Conflict:
             # S3 says it raced another write and did not land.
-            return False
+            return Conflict
         except StoreError as error:
             raise BrokerUnavailable(_UNREACHED, error) from None
         self._keep(call)
-        return True
+        return None
 
     @property
     def account_now(self) -> SimState:
@@ -377,12 +381,15 @@ class SimulatedAccount:
 
     def _checked(self, number: int, data: bytes) -> SimCall:
         what = f"the simulated account {self.account}'s call {number}"
+        # A blob a later release wrote may hold fields this one cannot decode, and its halt
+        # should say so.
+        written = _written_format(data)
+        if written not in (None, SIM_FORMAT):
+            raise Halt(f"{what} has format {written}, which this release does not read")
         try:
             call = decode(data, SimCall)
         except CodecError as error:
             raise Halt(f"{what} is not a canonical call: {error}") from None
-        if call.format != SIM_FORMAT:
-            raise Halt(f"{what} has format {call.format}, which this release does not read")
         if (call.account, call.call) != (self.account, number):
             raise Halt(f"{what} holds call {call.call} of {call.account}")
         opening = number == _OPENING
@@ -400,12 +407,25 @@ class SimulatedAccount:
             return
         try:
             applied = after(self.account_now, events)
+            unended = after(self.account_now, replace(events, closed=()))
         except Halt as halt:
             raise Halt(f"{what}: {halt.reason}") from None
         if call.after != applied:
             raise Halt(f"{what} is not the call before it with its events applied")
         if self.at is not None and call.at is not None and call.at < self.at:
             raise Halt(f"{what} is at {call.at.isoformat()}, before the call before it")
+        waiting = {order.client_order_id for order in self.account_now.delayed}
+        for order in (*events.placed, *events.delayed):
+            if order.id in self.orders:
+                raise Halt(f"{what} places {order.id}, which it holds already")
+            if order.client_order_id in self.names - waiting or (
+                order.id is None and order.client_order_id in waiting
+            ):
+                raise Halt(f"{what} places {order.client_order_id} a second time")
+        opened = {order.id: order for order in unended.open_orders}
+        for close in events.closed:
+            if not _closes(opened[close.id], close):
+                raise Halt(f"{what} ends {close.id} with a fill that is not of it")
         for at, name in enumerate(self.new(events), start=len(self.orders) + 1):
             if name != f"sim-o-{at}":
                 raise Halt(f"{what} places {name}, not sim-o-{at}")
@@ -440,6 +460,31 @@ class SimulatedAccount:
 
 def _fills(events: SimEvents) -> list[Fill]:
     return [close.fill for close in events.closed if close.fill is not None]
+
+
+def _closes(order: SimOrder, close: SimClose) -> bool:
+    """Whether an end fits its order: its fill, if any, is of it and names its snapshot."""
+    fill = close.fill
+    if fill is None or close.priced_from is None:
+        return fill is None and close.priced_from is None
+    return (
+        (fill.broker_order_id, fill.client_order_id, fill.instrument)
+        == (order.id, order.client_order_id, order.instrument)
+        and fill.qty != 0
+        and (fill.qty > 0) == (order.qty > 0)
+        and fill.qty.copy_abs() <= order.qty.copy_abs()
+        and (close.state is BrokerState.FILLED) == (fill.qty == order.qty)
+    )
+
+
+def _written_format(data: bytes) -> int | None:
+    """The `format` a blob names, read before it is decoded."""
+    try:
+        parsed = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    found = parsed.get("format") if isinstance(parsed, dict) else None
+    return found if type(found) is int else None
 
 
 def _there(store: BlobStore, key: str) -> bytes | None:

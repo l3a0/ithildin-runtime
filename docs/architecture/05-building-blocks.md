@@ -244,8 +244,10 @@ never shares the paper account's lease.
    will. A fault changes an order as it enters, or what the account does, and
    none holds randomness. The account's own checks answer a repeated id, a wrong
    type and zero shares, and `reject` gives a fixed rejection.
-5. **It is reached as any broker is.** In `src/`, `OrderPath` alone calls it, so
-   each order a test sends meets the gate and the journal first.
+5. **It is reached as any broker is.** `OrderPath` alone submits to it, in `src/`
+   and in the tests, through a relay where a test needs the clock to move first,
+   as [a sweep of the source](#which-calls-reach-the-broker) holds. So each order
+   meets the gate and the journal first.
 
 #### What fills, and when
 
@@ -255,7 +257,7 @@ never shares the paper account's lease.
 2. **It fills whole at that session's official close**, at the first call after
    the close by the clock whose decision's snapshot holds that session's bar.
    Until then it is working, and it can be cancelled while the clock reads no
-   later than the close. Nothing here ends an order whose bar never comes, and
+   later than the close, as item 9 says. Nothing here ends an order whose bar never comes, and
    data halts only while that session is in the lookback.
 3. **The fill says what price it was given.** Its `at` is the session's close, its
    `received_at` is the clock's, and the log names the stored snapshot that
@@ -267,19 +269,22 @@ never shares the paper account's lease.
    rounding. A sale can open a short.
 5. **Any other order is rejected.** The day's market order gets its fill with
    [#155](https://github.com/l3a0/ithildin-runtime/issues/155).
-6. **A client order id of an order it took, or has on its way, is refused** with
+6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
 7. **It moves only forward.** A call whose clock reads before the log's newest
-   call, or before the decision its prices are of, halts.
-8. **A price it needs and cannot read halts the call.** An order past its close
-   needs one, and a result or a snapshot that is missing, stale or of another
-   decision halts every call but a cancel.
-9. **No check on an input stops a cancel.** A cancel reads no price, and leaves
-   every close to the next call that is no cancel. It is judged at the account's
-   time, which is the latest time any call has shown the account, so a clock that
-   went back moves nothing. The blob keeps the clock's own reading beside it.
-   The price is that a call stored under a clock that ran past the close has the
-   account refuse a cancel before the real one, as a broker would that had closed.
+   call, or before the decision its prices are of, halts, apart from those of
+   item 9.
+8. **A price it needs and cannot read halts the call**, apart from those of item
+   9. An order past its close needs one, and a result or a snapshot that is
+   missing, stale or of another decision gives none.
+9. **No clock and no price stops a cancel, or a read of the orders.** A cancel
+   reads no price, and leaves every close to the next call that is no cancel. It is
+   judged by the clock it reads, or by the log's newest call where the clock gives
+   no UTC time, and its blob keeps that reading beside the account's time.
+   `open_orders`, `orders`, `lookup` and `find_order`, which say what there is to
+   cancel, give the log as it stands where a clock or a price would halt them. The
+   price is that a clock that went back can cancel an order whose close had passed
+   and was not yet settled. A log that cannot be read halts these too.
 
 #### What a simulated fill leaves out
 
@@ -287,14 +292,18 @@ A result that quotes one of these fills as evidence names what it leaves out, as
 [A backtest names what it could not have traded](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
 asks.
 
-1. **The scale.** A fill is at the bar's close on the bar's own scale, so it is the
-   close as it traded only where the bar's basis is `raw`. USO's imported prices
-   before 2020-04-29 are eight times those that traded.
-2. **The cutoffs.** A live order or cancel past the broker's or the exchange's
+1. **The scale.** A fill is at the bar's close on the bar's own scale, which
+   `basis` does not state. The USO prices imported from Yahoo, 2012-04-10 to
+   2020-04-28, are eight times those that traded
+   ([A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series)).
+2. **The auction.** `official_close` never means the closing auction's print. The
+   bar the fill was priced from states its `venues`, and a consolidated close is
+   the last trade on any of them.
+3. **The cutoffs.** A live order or cancel past the broker's or the exchange's
    cutoff is refused, and this account takes both up to the close. `basis` says
    nothing of that. The order's `submitted_at` does.
-3. **Size.** A fill is whole whatever its size, and moves no price.
-4. **Terms it does not book.** Commission, borrow, interest, distributions, credit
+4. **Size.** A fill is whole whatever its size, and moves no price.
+5. **Terms it does not book.** Commission, borrow, interest, distributions, credit
    on a short's proceeds and buying power read as unknown, never as zero. A split
    is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
 
@@ -309,6 +318,7 @@ sequenceDiagram
     participant B as The account's log
     participant R2 as Shadow run 2, new VM
     R1->>S: submits an order that rests
+    S->>B: reads the log forward
     S->>B: stores a call that holds the order
     S-->>R1: answers that it is accepted
     Note over R1: The run ends

@@ -377,8 +377,8 @@ Nine more things set the shape.
    from. Data's first write wins. A halt is a blob at the same kind of key.
    The journal is the only numbered log. No component keeps an event log of its
    own, in SQLite or as numbered blobs, and the journal's entries do not sit
-   in SQLite rows. A simulated account's calls are numbered too, and they stand in
-   for a broker's own records rather than log what the platform did
+   in SQLite rows. This doc proposes, for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), that a simulated account's
+   numbered calls are no such log, because they stand in for a broker's own records
    ([The simulated broker's account](architecture/08-crosscutting-concepts.md#the-simulated-brokers-account)).
    This doc's reason for the shape is that only the journal records actions
    that cannot be repeated, so only the journal needs numbering.
@@ -462,7 +462,7 @@ Four stores sit outside every run, because they outlive any one run.
 
 1. marketlake's lake, which holds captured market data.
 2. The journal, one per broker account, which the book is replayed from. It
-   is the one numbered log of what the platform did, it has more than one writer, and each entry is
+   is the one numbered log, it has more than one writer, and each entry is
    stored before the step it records happens, which is how hard limit 4, that every order is journaled
    before it is sent, holds through the loss of the VM.
 3. A simulated account's orders and positions, as a log with one blob for each call

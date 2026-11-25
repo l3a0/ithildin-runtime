@@ -9,8 +9,9 @@ says, so no case here runs on another broker as it stands.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -260,6 +261,16 @@ def test_2_a_fill_names_the_snapshot_that_gave_its_price() -> None:
         assert fill.basis is FillBasis.SIGNAL_CLOSE
 
 
+def test_2_a_fill_at_an_official_close_names_its_snapshot_too() -> None:
+    made, _ = sent(early=20)
+    settled(made)
+    (close,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
+    assert close["fill"]["basis"] == "official_close"
+    at = close_of(after(FULL))
+    key = output_key(DEPLOYMENT, after(FULL).isoformat(), at, DATA_STAGE, SNAPSHOT_OUTPUT)
+    assert close["priced_from"] == {"key": key, "sha256": sha256_of(made.store.blobs[key])}
+
+
 @pytest.mark.parametrize(
     ("moved", "state"),
     [
@@ -494,7 +505,8 @@ READS = {
 }
 
 
-HALTING = sorted(set(READS) - {"cancel"})
+OF_ORDERS = ["open_orders", "orders", "lookup", "find_order"]
+HALTING = sorted(set(READS) - {"cancel", *OF_ORDERS})
 
 
 @pytest.mark.parametrize("call", HALTING)
@@ -526,15 +538,21 @@ def test_12_a_clock_before_the_decision_of_its_prices_halts(call: str) -> None:
     assert made.log.number == number
 
 
-@pytest.mark.parametrize(
-    "clock",
-    [timedelta(hours=-1), -MICRO, None],
-    ids=["an-hour-back", "a-microsecond-back", "no-utc-time"],
-)
-def test_12_no_clock_stops_a_cancel(clock: timedelta | None) -> None:
+NEW_YORK = timezone(timedelta(hours=-5))
+CLOCKS: dict[str, Callable[[datetime], object]] = {
+    "an-hour-back": lambda at: at - timedelta(hours=1),
+    "a-microsecond-back": lambda at: at - MICRO,
+    "no-offset": lambda at: at.replace(tzinfo=None),
+    "another-offset": lambda at: at.astimezone(NEW_YORK),
+    "no-time": lambda at: "20:40",
+}
+
+
+@pytest.mark.parametrize("clock", CLOCKS)
+def test_12_no_clock_stops_a_cancel(clock: str) -> None:
     made, _ = sent(early=20)
     at = made.clock.at
-    made.clock.at = at.replace(tzinfo=None) if clock is None else at + clock
+    made.clock.at = found = CLOCKS[clock](at)  # type: ignore[assignment]
     answer = made.broker().cancel("sim-o-1")
     assert answer.outcome is Outcome.ACCEPTED
     assert answer.order.state is BrokerState.CANCELLED
@@ -542,10 +560,13 @@ def test_12_no_clock_stops_a_cancel(clock: timedelta | None) -> None:
     (end,) = json.loads(made.blobs()["sim/sim-1/000000000003.json"])["events"]["closed"]
     assert end["at"] == "2026-11-03T20:40:00.000000Z"
     blob = json.loads(made.blobs()["sim/sim-1/000000000003.json"])
-    read = None if clock is None else (at + clock).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    read = found.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if clock.endswith("back") else None
     assert (blob["at"], blob["clock"]) == ("2026-11-03T20:40:00.000000Z", read)
     made.clock.at = at
     assert made.broker().open_orders().orders == ()
+    # A fresh process reads the blob back.
+    made.restart("d" * 32)
+    assert made.broker().lookup("sim-o-1").order.state is BrokerState.CANCELLED
 
 
 def test_12_a_clock_that_cannot_be_read_stops_no_cancel() -> None:
@@ -566,18 +587,50 @@ def test_12_a_cancel_on_an_account_just_opened_needs_a_clock() -> None:
     made.clock.at = close_of(FULL)
     assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
     made.clock.at = close_of(FULL).replace(tzinfo=None)
-    with pytest.raises(Halt, match="not a UTC time"):
+    with pytest.raises(Halt, match="sim-1's clock reads .*, no UTC time"):
         made.broker().cancel("sim-o-1")
 
 
-def test_12_a_clock_that_went_back_reopens_no_close() -> None:
-    made, _ = sent(early=20)
-    made.clock.at = close_of(FULL) + MICRO
-    # A call stored after the close, so the newest call's time is past it.
-    made.faults = Faults(events={2: EditCash(D(1))})
+def test_12_a_fast_clock_that_was_set_right_refuses_no_cancel() -> None:
+    """A cancel is judged by the clock it reads, whatever time an earlier call stored."""
+    made, _ = sent(early=20, faults=Faults(events={2: EditCash(D(1))}))
+    made.clock.at = close_of(FULL) + timedelta(minutes=30)
     made.broker().account()
-    made.clock.at = close_of(FULL) - timedelta(minutes=5)
     assert made.broker().cancel("sim-o-1").outcome is Outcome.REJECTED
+    made.clock.at = close_of(FULL) - timedelta(minutes=5)
+    assert made.broker().cancel("sim-o-1").outcome is Outcome.ACCEPTED
+    blob = json.loads(made.blobs()["sim/sim-1/000000000004.json"])
+    assert blob["at"] == "2026-11-03T21:30:00.000000Z"
+    assert blob["clock"] == "2026-11-03T20:55:00.000000Z"
+
+
+@pytest.mark.parametrize("call", OF_ORDERS)
+@pytest.mark.parametrize("why", ["clock", "decision", "price", "no-time"])
+def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str) -> None:
+    """A cancel is looked up first, so what stops a lookup stops the cancel."""
+    made, _ = sent(early=20)
+    at = made.clock.at
+    if why == "clock":
+        made.clock.at = at - MICRO
+    elif why == "no-time":
+        made.clock.at = at.replace(tzinfo=None)
+    else:
+        made.decide(close_of(after(FULL)), recover=False)
+        if why == "decision":
+            made.clock.at = at
+        else:
+            made.store.drop(result_key(DEPLOYMENT, made.run, made.at, DATA_STAGE))
+    with pytest.raises(Halt):
+        made.broker().positions()
+    number, broker = made.log.number, made.broker()
+    if call == "find_order":
+        held = broker.find_order(order(1, 4, at=at), LONG_AGO, {}).rows
+    else:
+        found = READS[call](broker)
+        held = getattr(found, "orders", (found,))
+    (one,) = [getattr(o, "order", o) for o in held]
+    assert (one.broker_order_id, one.state) == ("sim-o-1", BrokerState.WORKING)
+    assert made.log.number == number
 
 
 @pytest.mark.parametrize("why", ["no-result", "stale", "lost"])
@@ -602,7 +655,7 @@ def test_12_no_price_stops_a_cancel_of_another_order(why: str) -> None:
     made.store.calls.clear()
     answer = made.broker().cancel("sim-o-2")
     assert (answer.outcome, answer.order.state) == (Outcome.ACCEPTED, BrokerState.CANCELLED)
-    # It asks for no price at all, so a price store that is slow cannot hold it up.
+    # It asks for no price at all.
     assert all(key.startswith("sim/") for _, key in made.store.calls)
     assert [o.id for o in made.log.account_now.open_orders] == ["sim-o-1"]
     # The order past its own close is refused, as no cancel can undo a close.
@@ -612,7 +665,7 @@ def test_12_no_price_stops_a_cancel_of_another_order(why: str) -> None:
 def test_12_a_clock_that_reads_no_utc_time_halts() -> None:
     made, _ = sent()
     made.clock.at = close_of(FULL).replace(tzinfo=None)
-    with pytest.raises(Halt, match="not a UTC time"):
+    with pytest.raises(Halt, match="the simulated account sim-1's clock is .*, not a UTC time"):
         made.broker().positions()
 
 
