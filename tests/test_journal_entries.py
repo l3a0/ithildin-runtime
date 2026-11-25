@@ -551,6 +551,7 @@ def _committed() -> list[tuple[Record, datetime]]:
         missing_term=None,
         adding=True,
         worst_loss=Decimal("41.0000"),
+        stress_move=Decimal("0.20500000"),
         loss=LossReading(Decimal("12.5000"), Decimal("50.0000"), False, date(2026, 9, 30)),
         past=(),
     )

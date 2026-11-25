@@ -149,7 +149,7 @@ def decision(
 
 def verdict(name: str, approved: bool = True, book: int | None = None) -> VerdictEntry:
     limit = None if approved else Limit.IN_DOUBT
-    answer = Verdict(approved, limit, None, None, None, True, Decimal(1), LOSS, ())
+    answer = Verdict(approved, limit, None, None, None, True, Decimal(1), Decimal("0.2"), LOSS, ())
     return VerdictEntry(
         client_order_id=name,
         verdict=answer,
@@ -431,7 +431,8 @@ class Seeded:
             return BlobRef("runs/d/x.json", sha256_of(data))
 
         view = self._view
-        answer = Gate().check(order, view.book, SNAPSHOT, constraints, inputs, gates.DECISION)
+        gate = Gate(gates.fitting(constraints, inputs.caps))
+        answer = gate.check(order, view.book, SNAPSHOT, constraints, inputs, gates.DECISION)
         assert refuse <= (not answer.approved)
         entry = VerdictEntry(
             client_order_id=order.client_order_id,

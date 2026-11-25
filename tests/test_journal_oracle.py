@@ -126,7 +126,8 @@ def _checked_again(book: Book, checked: Checked) -> None:
     inputs = gates.inputs(
         caps=decode(entry.caps, HardCaps), valuation=valuation, stop=StopState(entry.stop)
     )
-    again = Gate().check(checked.intent, book, snapshot, constraints, inputs, entry.now)
+    records = gates.fitting(constraints, inputs.caps)
+    again = Gate(records).check(checked.intent, book, snapshot, constraints, inputs, entry.now)
     assert again == entry.verdict
     given = answer(
         checked.intent,
@@ -139,8 +140,10 @@ def _checked_again(book: Book, checked: Checked) -> None:
         inputs,
         entry.now,
         gates.CLOSE,
+        records,
     )
     said = entry.verdict
+    assert given.stress_move == Fraction(said.stress_move)
     assert (given.approved, given.limit, given.adding) == (
         said.approved,
         said.limit and said.limit.value,
