@@ -44,7 +44,7 @@ def test_core_exports_every_type_and_interface_part_a_names() -> None:
 
 
 def test_core_leaves_out_what_other_issues_build() -> None:
-    for name in ("Journal", "OrderPath", "Monitoring", "reconcile"):
+    for name in ("Journal", "OrderPath", "Monitoring"):
         assert not hasattr(core, name), name
 
 

@@ -19,6 +19,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from itertools import islice
 from types import MappingProxyType
 from typing import NamedTuple
@@ -56,17 +57,25 @@ from .entries import (
     SendingEntry,
     VerdictEntry,
     kind_of,
+    named,
     record_of,
-    shown,
 )
 from .orders import DOUBTFUL, ENDED, OPEN, Move, moved
 
-__all__ = ["Dispute", "View", "after", "empty"]
+__all__ = ["Dispute", "Repeat", "View", "after", "empty"]
 
 _ZERO = Decimal(0)
 # What a fill read twice must repeat. Every other field is one a second
 # endpoint may leave out or write another way.
 _CONTENT = ("fill_id", "broker_order_id", "instrument", "qty", "price", "at")
+
+
+class Repeat(StrEnum):
+    """What a fill the broker reports is to a view, going by its content."""
+
+    NEW = "new"
+    HELD = "held"
+    DIFFERS = "differs"
 
 
 class Dispute(NamedTuple):
@@ -192,6 +201,24 @@ class View:
     @property
     def fills(self) -> Mapping[str, Fill]:
         return _Upto(self._shared.fills, self.through.seq)
+
+    def repeats(self, fill: Fill) -> Repeat:
+        """Whether a fill is new, or one held, as applied or as a dispute, or differs from each.
+
+        Its content decides, as `_CONTENT` lists it. When it was received and
+        what a second endpoint leaves out do not.
+        """
+        first = self.fills.get(fill.fill_id)
+        if first is None:
+            return Repeat.NEW
+        if _same(fill, first) or any(_same(fill, dispute.fill) for dispute in self.disputes):
+            return Repeat.HELD
+        return Repeat.DIFFERS
+
+    def acknowledged(self, broker_order_id: str) -> OrderRecord | None:
+        """The order acknowledged under a broker's id, or `None` where there is none."""
+        name = _Upto(self._shared.brokers, self.through.seq).get(broker_order_id)
+        return None if name is None else self.orders[name]
 
     @property
     def book(self) -> Book:
@@ -456,35 +483,34 @@ def _ack(step: Step, record: AckEntry) -> None:
 def _fill(step: Step, record: FillEntry) -> None:
     seq, view, fill = step.seq, step.view, record.fill
     _require_read(step, record.read)
-    first = view.fills.get(fill.fill_id)
-    if first is not None:
-        # A repeat of the first, or of a dispute already held, changes nothing. One
-        # of a dispute that is past a fill's bounds halted before it came here.
-        if _same(fill, first) or any(_same(fill, dispute.fill) for dispute in view.disputes):
-            return
+    repeat = view.repeats(fill)
+    if repeat is Repeat.HELD:
+        # A repeat changes nothing. One of a dispute that is past a fill's bounds
+        # halted before it came here.
+        return
+    if repeat is Repeat.DIFFERS:
         raise Halt(
             f"entry {seq}'s fill {fill.fill_id} holds {_said(fill)}, and the one applied holds "
-            f"{_said(first)}"
+            f"{_said(view.fills[fill.fill_id])}"
         )
-    name = _Upto(view._shared.brokers, view.through.seq).get(fill.broker_order_id)
-    if name is None:
+    order = view.acknowledged(fill.broker_order_id)
+    if order is None:
         raise Halt(
             f"entry {seq}'s fill {fill.fill_id} is of the broker's order {fill.broker_order_id}, "
             "which no order was acknowledged under"
         )
-    order = view.orders[name]
-    intent = order.intent
+    intent, name = order.intent, order.intent.client_order_id
     filled = exact_total(f"the shares filled of {name}", (order.filled, fill.qty))
     move = Move.LAST_FILL if filled == intent.qty else Move.PART_FILL
     state = moved(seq, name, move, order.state)
     if fill.client_order_id not in (None, name):
         raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} names the order {shown(fill.client_order_id)}, and "
-            f"its broker's order is {name}'s"
+            f"entry {seq}'s fill {fill.fill_id} names another client order id than {name}, which "
+            "its broker's order is"
         )
     if fill.instrument != intent.instrument:
         raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} is in {shown(fill.instrument)}, and {name} is in "
+            f"entry {seq}'s fill {fill.fill_id} is in {named(fill.instrument)}, and {name} is in "
             f"{intent.instrument}"
         )
     if (fill.qty > 0) != (intent.qty > 0):
@@ -551,6 +577,6 @@ def _same(one: Fill, other: Fill) -> bool:
 
 def _said(fill: Fill) -> str:
     return (
-        f"{fill.qty} of {shown(fill.instrument)} at {fill.price} on the order "
+        f"{fill.qty} of {named(fill.instrument)} at {fill.price} on the order "
         f"{fill.broker_order_id}, filled {fill.at.isoformat()}"
     )

@@ -683,6 +683,9 @@ def test_12_a_cancel_on_an_account_just_opened_needs_a_clock() -> None:
     made.clock.at = close_of(FULL).replace(tzinfo=None)
     with pytest.raises(Halt, match="sim-1's clock reads .*, no UTC time"):
         made.broker().cancel("sim-o-1")
+    made.clock.now = lambda: 1 / 0  # type: ignore[assignment,method-assign,return-value]
+    with pytest.raises(Halt, match="sim-1's clock reads None, no UTC time"):
+        made.broker().cancel("sim-o-1")
 
 
 def test_12_a_fast_clock_that_was_set_right_refuses_no_cancel() -> None:
@@ -731,6 +734,13 @@ def test_12_no_clock_and_no_price_stops_a_read_of_the_orders(why: str, call: str
     (one,) = [getattr(o, "order", o) for o in held]
     assert (one.broker_order_id, one.state) == ("sim-o-1", BrokerState.WORKING)
     assert made.log.number == number
+    if call == "find_order":
+        # What it finds carries no time of its own.
+        return
+    came = found.received[0].at if call != "lookup" else held[0].received_at
+    # A good clock dates the answer, and the log's newest call does where the clock would halt.
+    assert came == (close_of(after(FULL)) if why == "price" else at)
+    assert made.log.at == at
 
 
 def test_3_an_order_whose_prices_cannot_be_read_is_in_doubt_and_not_held() -> None:
@@ -778,6 +788,9 @@ def test_12_a_read_of_the_orders_of_an_account_just_opened_needs_a_clock() -> No
     made.run, made.at = FULL.isoformat(), close_of(FULL)
     made.clock.at = close_of(FULL).replace(tzinfo=None)
     with pytest.raises(Halt, match="sim-1's clock reads .*, no UTC time"):
+        made.broker().open_orders()
+    made.clock.now = lambda: 1 / 0  # type: ignore[assignment,method-assign,return-value]
+    with pytest.raises(Halt, match="sim-1's clock reads None, no UTC time"):
         made.broker().open_orders()
 
 

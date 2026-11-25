@@ -354,6 +354,20 @@ class Storage:
         except CodecError as error:
             raise self._halt(f"{key} holds no decision result the codec reads: {error}") from None
 
+    def keep(self, key: str, data: bytes) -> BlobRef:
+        """Create `key` holding `data`, or leave the blob that stands there, and name which does.
+
+        It is for a file a second attempt goes on from rather than writes again,
+        such as the hard caps as a capturing stage read them. Nothing is held,
+        because the caller can make its own again or read the one that stands.
+        """
+        sha = sha256_of(data)
+        try:
+            stands = self._create(key, data, sha, False)
+        except _Deadline as late:
+            raise self._outage(f"S3 did not store {late.key}", late) from None
+        return BlobRef(key, stands or sha)
+
     def announce(self, key: str) -> bool:
         """Announce a stored blob again, once, and say whether the store took the call.
 
@@ -460,6 +474,15 @@ class Storage:
         if data is None:
             raise self._halt(f"{key} is missing")
         return data
+
+    def find_blob(self, key: str) -> bytes | None:
+        """The bytes at `key`, or `None` where it holds no blob.
+
+        It is for a file this stage may have stored in an earlier attempt. A
+        store that does not answer by the deadline halts, so an outage never
+        reads as a file that was not stored.
+        """
+        return self._read(key)
 
     def read_result(self, key: str, decision_at: datetime) -> DecisionResult | None:
         """The decision result at `key`, or `None` while the stage has written none.

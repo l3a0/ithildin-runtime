@@ -9,7 +9,7 @@ docs/architecture/05-building-blocks.md's `## Package layout and the import
 rule` draws that, and tests/test_import_rule.py holds it.
 """
 
-from .book import Dispute, View
+from .book import Dispute, Repeat, View
 from .chain import (
     FIRST_PREV_HASH,
     FIRST_SEQ,
@@ -29,6 +29,7 @@ __all__ = [
     "Dispute",
     "Journal",
     "NumberTaken",
+    "Repeat",
     "View",
     *_entries,
 ]

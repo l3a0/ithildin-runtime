@@ -12,11 +12,11 @@ named here too, because portfolio construction reads the forecast and no
 worker module imports another. So are cost's schedule, which it reads beside
 it, and the parts that begin an alpha and a cost stage's name. So are the risk
 stage and its constraints, which portfolio construction and execution read,
-execution's two stages and the three of recover's files risk and portfolio
-construction read, and the portfolio stage and its two files, which execution
-reads. So are the daily interval a bar is filed under and the word a price-kind
-field holds where its source states nothing, which data writes and the gate
-reads.
+execution's two stages, recover's capture of the broker and the three of its
+files risk and portfolio construction read, and the portfolio stage and its two
+files, which execution reads. So are the daily interval a bar is filed under and
+the word a price-kind field holds where its source states nothing, which data
+writes and the gate reads.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "ACCOUNT_OUTPUT",
     "ALPHA_COMPONENT",
     "BOOK_OUTPUT",
     "CAPS_OUTPUT",
@@ -59,6 +60,7 @@ RISK_STAGE = "risk"
 CONSTRAINTS_OUTPUT = "constraints"
 RECOVER_STAGE = "execution/recover"
 SEND_STAGE = "execution/send"
+ACCOUNT_OUTPUT = "account"
 BOOK_OUTPUT = "book"
 VALUATION_OUTPUT = "valuation"
 CAPS_OUTPUT = "caps"

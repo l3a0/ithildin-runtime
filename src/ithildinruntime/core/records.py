@@ -30,6 +30,7 @@ from .halt import Halt
 from .names import is_name, is_sha256
 
 __all__ = [
+    "AccountRead",
     "Ack",
     "Bar",
     "BarStatus",
@@ -37,7 +38,6 @@ __all__ = [
     "BlobHeader",
     "BlobRef",
     "Book",
-    "BrokerAccount",
     "BrokerOrder",
     "BrokerState",
     "BucketObject",
@@ -859,6 +859,31 @@ class RecordsRead(_BrokerRead):
 
 
 @dataclass(frozen=True)
+class AccountRead(_Record):
+    """The broker's four reads of one account, in the order they were made.
+
+    The fills are read last, so a fill that lands between two reads shows as a
+    difference and never as a match. `since` is the time they were asked from.
+    """
+
+    positions: PositionsRead
+    open_orders: OrdersRead
+    cash: CashRead
+    since: datetime
+    fills: FillsRead
+
+    @property
+    def reads(self) -> Mapping[str, PositionsRead | OrdersRead | CashRead | FillsRead]:
+        """Each read by the name of its broker call, in order."""
+        return {
+            "positions": self.positions,
+            "open_orders": self.open_orders,
+            "account": self.cash,
+            "fills": self.fills,
+        }
+
+
+@dataclass(frozen=True)
 class JournalAck(_Record):
     seq: int
     entry_hash: str
@@ -1081,14 +1106,6 @@ class CostSchedule(_Record):
             ),
             Decimal(0),
         )
-
-
-@dataclass(frozen=True)
-class BrokerAccount(_Record):
-    positions: Mapping[InstrumentId, Quantity]
-    open_orders: tuple[BrokerOrder, ...]
-    cash: Money
-    read_at: datetime
 
 
 @dataclass(frozen=True)

@@ -434,9 +434,9 @@ NAME = ONE.client_order_id
         (
             fill("new", "b1", 1, client_order_id="ith-x"),
             2,
-            "names the order 'ith-x', and its broker's order",
+            "names another client order id than",
         ),
-        (fill("new", "b1", 1, client_order_id=""), 2, "names the order '', and its broker's order"),
+        (fill("new", "b1", 1, client_order_id=""), 2, "names another client order id than"),
         (fill("new", "b2", 1), 2, "of the broker's order b2, which no order was"),
         (fill("new", "b1", 1), 3, "names entry 3, which is no read before it"),
         (fill("new", "b1", 1), 9, "names entry 9, which is no read before it"),

@@ -21,8 +21,8 @@ SOURCE = Path(__file__).resolve().parent.parent / "src" / "ithildinruntime"
 
 # Each name, and the modules under `src/ithildinruntime` that may use it.
 MAY_USE = {
-    # Data waits for its decision time before it reads or writes anything.
-    "wait_until": {"data/stage.py"},
+    # Data and recover each wait for the decision time before they read or write anything.
+    "wait_until": {"data/stage.py", "execution/recover.py"},
     # The wall clock waits on it. The loop's `_Progress` defines it.
     "wait_for_stop": {"adapters/clocks.py"},
     # `core` exports it, the wall clock raises it, and the loop catches it.

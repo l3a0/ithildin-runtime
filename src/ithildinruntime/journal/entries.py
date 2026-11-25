@@ -39,6 +39,7 @@ from ithildinruntime.core import (
     Verdict,
     decode,
     encode,
+    is_name,
     is_sha256,
 )
 
@@ -325,7 +326,8 @@ def _past_bounds(record: Record) -> Iterator[str]:
             if fill.qty == 0:
                 yield f"the fill {fill.fill_id} is for zero shares"
             if fill.correction_id is not None:
-                yield f"the fill {fill.fill_id} is the correction {shown(fill.correction_id)}"
+                # Nothing of the broker's text is said. A person reads it in the stored read.
+                yield f"the fill {fill.fill_id} carries a correction's id"
         case DisputedFillEntry(fill):
             # A dispute moves nothing, so it keeps what came, such as a fill
             # sent again for zero shares.
@@ -348,12 +350,19 @@ def _past_bounds(record: Record) -> Iterator[str]:
 def _broker_ids(*values: str) -> Iterator[str]:
     for value in values:
         if not _BROKER_ID.fullmatch(value):
-            yield f"{shown(value)} is not a broker's id"
+            yield "it names an id that is not a broker's id"
 
 
-def shown(value: str | None) -> str:
-    """The start of a value from outside, as a halt shows it."""
-    return repr(value and value[:_SHOWN])
+def shown(value: str) -> str:
+    """The start of a key, as a halt shows it."""
+    return repr(value[:_SHOWN])
+
+
+def named(instrument: object) -> str:
+    """An instrument as a halt shows it, where it is a name and no other text."""
+    if is_name(instrument) and len(str(instrument)) <= _SHOWN:
+        return repr(instrument)
+    return "an instrument whose name is none"
 
 
 def _blobs(*refs: BlobRef) -> Iterator[str]:

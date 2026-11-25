@@ -417,6 +417,15 @@ class Shared:
     called: set[int] = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def alarm(self, reason: str) -> str:
+        """Send one alarm, and say what a halt adds where it could not be sent."""
+        return _alarm(self.alerts, reason)
+
+    def outage(self, reason: str) -> Halt:
+        """A store that did not answer, alarmed here, since no halt blob could be stored either."""
+        reason = f"{reason}. The owner's step: {self.storage.owner_step}"
+        return Halt(f"{reason}{self.alarm(reason)}")
+
 
 class _Last(NamedTuple):
     """The last moment an order may go out, and what sets it."""
@@ -1104,9 +1113,7 @@ class OrderPath:
         raise Halt(f"{name} lost its number {_STARTS_OVER + 1} times")
 
     def _outage(self, reason: str) -> Halt:
-        """A store that did not answer, alarmed here, since no halt blob could be stored either."""
-        reason = f"{reason}. The owner's step: {self._shared.storage.owner_step}"
-        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
+        return self._shared.outage(reason)
 
     def _past(self, reading: LossReading) -> Halt:
         reason = (

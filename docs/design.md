@@ -626,6 +626,15 @@ capture wins. A capturing stage stores what it read before it judges it, and its
 derives every remaining output from it, never from a fresh read, and a
 fresh read that differs from the stored one is stored too, under its own
 attempt number, and named in the decision result rather than discarded.
+Recover's capture is the broker's positions, open orders, cash and fills, in
+one file, and it reads the hard caps as well. So a resumed recover also reads
+back each of the three files it derives, the caps it parsed, the book and the
+valuation, and builds only one that is missing
+([What a second attempt goes on from](architecture/06-runtime.md#what-a-second-attempt-goes-on-from)).
+The table also names the stages a stage **follows**, whose result for the
+decision before must be stored before it starts, a halt included. Recover
+follows the send stage. It reads no such result, so a stage it follows is no
+input of it.
 The price is that a decision resumed after marketlake restated its data
 trades on the first capture, wrong values included, and only the alarm on
 the second capture says so. Data's stage also judges that first capture
@@ -1115,7 +1124,7 @@ rerun from doubling anything. The first three follow, and the last two each have
    **When the takeover's own reads or writes fail.** A list read, a capture write or a takeover entry's journal write that fails halts new orders, and still serves every cancel whose own journal entry stores, apart from a plan's own. A store that stays down falls under [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) with no cancel sent, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the comparison then fails closed. Whatever ends that halt, no new order goes out until a list is stored and a takeover entry journaled, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how the next instance finds that takeover still owed.
 
    **Why an order's id never shifts.** A rerun in the same decision never plans again, so an order's id never shifts between attempts, and sends nothing more, as [Who takes over a dead send stage](#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says. The id is the platform's stamp, built from the strategy, the decision time and the order's place in the planned list, as `### Orders the platform did not send` says, so it is unique across the decisions of a day and the same on every rerun.
-3. Its account file names the journal entry it replayed through, and the
+3. Recover's `book.json` names the journal entry it replayed through, and the
    send stage's sync names the entry it synced through. Before it plans,
    execution halts if an entry that changes the book, and that neither its
    sync nor its own order loop wrote, lies past the entry its sync names.
@@ -1153,7 +1162,7 @@ second when it finds the off switch, which abandons only that
 strategy's orders and leaves the account's other strategies sending, since a strategy's off switch,
 `accounts/<account>/strategies/<strategy>/off.json`, stops one
 strategy without a deploy and never reads as a target of zero, as [Every
-change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. Until both leases are read, only a backtest runs, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. So a run the
+change can be undone or switched off](#every-change-can-be-undone-or-switched-off) asks. Until both leases are read, only a backtest runs, because [the execution worker](architecture/06-runtime.md#which-modes-build-a-broker) builds no broker in any other mode. So a run the
 supervisor has halted, a switch pulled mid-loop, or a lease another
 execution has taken over stops the next send, even when the message
 saying so is lost or unread.
@@ -1659,7 +1668,8 @@ switch handler in item 8, which stay this doc's proposal for [#10](https://githu
 4. **Stages that read the journal keep the plan's order.** Execution's two
    stages and monitoring's reconcile read a book the decision before
    changed, so a handler starts decision N of one of them only once the same
-   stage's result for decision N−1 is stored, a halt included. Every other
+   stage's result for decision N−1 is stored, a halt included. Recover also
+   follows the send stage, so it starts only once send's is stored. Every other
    stage reads only blobs keyed by its own decision, so its handlers may run
    decisions side by side.
 5. **A handler's failure stays in its item.** A handler that raises an error
@@ -2162,7 +2172,7 @@ Five rules keep a day of decisions safe.
 
          **Where V comes from.** V comes from the book the journal replays, valued at official closes, never from the broker's equity figure, so a broker's reporting error cannot raise the cap. A missing valuation halts, as any missing input does.
 
-         **Where V's parts live.** A `Valuation` holds V, its cash, its positions, their marks and the journal entry it replayed through. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that each decision's recover stage lists it as an output file, at the key architecture/08-crosscutting-concepts.md's `### File formats and keys` gives. Under the same proposal, the first recover of a session whose journal holds no `sending` entry stamped after the prior session's close builds it, and each later decision's recover lists a copy under its own decision. The book's cash comes from the journal, from each fill's amount and from outside entries for deposits, fees and dividends, and reconciliation compares it with the broker's reported cash as it compares positions. The broker's account activities read, Alpaca's `GET /v2/account/activities`, supplies each fee, dividend and deposit record, and each is journaled as an outside entry under the broker's own record id. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record the broker posts late is still fetched, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns how.
+         **Where V's parts live.** A `Valuation` holds V, its cash, its positions, their marks and the journal entry it replayed through. Each decision's recover stage lists it as an output file, at the key architecture/08-crosscutting-concepts.md's `### File formats and keys` gives. The first recover of a session, whose journal holds no `sending` entry stamped after the prior session's close, builds it, and each later decision's recover lists a copy under its own decision, which [#183](https://github.com/l3a0/ithildin-runtime/issues/183) builds. The book's cash comes from the journal, from each fill's amount and from outside entries for deposits, fees and dividends, and reconciliation compares it with the broker's reported cash as it compares positions. The broker's account activities read, Alpaca's `GET /v2/account/activities`, supplies each fee, dividend and deposit record, and each is journaled as an outside entry under the broker's own record id. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record the broker posts late is still fetched, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) owns how.
 
          **Which broker records explain a cash difference.** A closed list of the broker's record types says which may explain a cash difference. It holds broker fees, debit interest and dividends, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) writes the types with a range for each amount. An entry of a listed type explains its cash difference with no halt and no switch-off, on every account, because it comes from the broker's own record and changes no position. Its amount still passes the sane-range check of [Faults are expected](#faults-are-expected-and-the-platform-checks-itself-while-it-runs) against that type's range. Four cases halt.
 
@@ -2516,7 +2526,7 @@ The price is six things.
    holds that case, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46)
    holds the split record it waits on. Nor does this halt compare bars of two
    snapshots, such as a mark with a V worked out from an earlier one, which
-   [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds.
+   [#183](https://github.com/l3a0/ithildin-runtime/issues/183) holds.
 6. A lookback of one bar never halts on this, and a quote carries no series, so
    none is compared with the bar before it. The flag on a midpoint that moved past
    the spike multiple is the only check across the two, and it alerts and halts
@@ -4303,6 +4313,9 @@ This section lists every decision made on the project, oldest first, one heading
 8. The owner ruled that a halt on a quote with no bid or no ask holds a shadow or paper account too, which entry 7 left out. The owner's words were "Yes, hold it", to the question from round 8 of the review of [PR #168](https://github.com/l3a0/ithildin-runtime/pull/168). A live account is held by every cause already. The metric put to the owner was whether the next session starts from a V that hides a loss. A missing side gives no midpoint, so a held leg has no mark and the loss stop is not tested. Turned down: halting that decision alone, which would need a build that tells a missing side from one at zero. The price is one capture with a side missing stopping new orders until a person acts. The two things that follow in entry 7 follow of this fault too. [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build the hold. [#155](https://github.com/l3a0/ithildin-runtime/issues/155#issuecomment-7169742141) Governs: `### Rule 7: a halt is final for its decision` and `### A fill is measured from the decision, and a position depends on a market it does not control` in design.md, `### Who clears a halt` in architecture/06-runtime.md, the writing commands of what-a-person-runs.md, `##### Why a wide quote is a fault` in architecture/03-context-and-scope.md, `### Alarms on a fill and a quote` and `#### What a quote that fails its check stops` in halts-and-drills.md, and `### Risk engineer` in team-charter.md.
 9. The owner ruled that the first list of held-out windows leaves [#44](https://github.com/l3a0/ithildin-runtime/issues/44) for an issue of its own, [#171](https://github.com/l3a0/ithildin-runtime/issues/171). The owner was asked whether the list may leave that issue for its own, and answered "Yes, split it". The step that loads a window and the record of each load, which rule 5 already requires, go with it as proposals, and the home of the guard on marketlake's one query stays open there. The metric was whether a run could spend a window nobody wrote down. Turned down: leaving it there, on an issue labelled deferred, while the list is never deferred. The price is one more issue. [#44](https://github.com/l3a0/ithildin-runtime/issues/44#issuecomment-7170621338) Governs: rule 5 of `### A backtest is judged against its position bias, and a significance test is built where its null holds` and `### Rule 1: the replica before live` in design.md.
 
+10. The owner accepted that each decision's recover stage lists the account's `Valuation` as an output file, at a key of its own. The first recover of a session, whose journal holds no `sending` entry stamped after the prior session's close, builds it, and each later decision's recover lists a copy under its own decision. This is one of the four rows the first of five questions named, which the owner answered "Yes, all five". The metric was whether dropping the row would let an order out or lose an entry. Turned down: one output of the day's first recover alone. The price is one more output file a decision. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `### Strategies, schedules and decisions` in design.md and `##### When the session's valuation is built` in architecture/06-runtime.md.
+11. The owner accepted that each decision's recover stage also lists the book, and the hard caps as it read them from the owner's blob, as output files the risk and portfolio stages read, with the blob's key and SHA-256 in the caps file's header. It is another of those four rows. The metric was the same. Turned down: the risk stage reading the owner's blob, which the owner can rewrite between two attempts at one decision. The price is two more output files a decision, and that a cap the owner lowers after recover has run binds at the gate and not in the sizing. [#10](https://github.com/l3a0/ithildin-runtime/issues/10#issuecomment-7152667838) Governs: `### Rule 2: two kinds of stage, declared in one place` in design.md, `##### What a second attempt goes on from` in architecture/06-runtime.md and `##### What the risk stage reads and stores` in architecture/05-building-blocks.md.
+
 ## Considered and rejected
 
 Machinery that was considered and cut, pinned here with the reason. The point
@@ -4498,3 +4511,5 @@ once rather than re-argued.
 | Matching a segment against its object's user metadata | marketlake publishes nothing about that metadata. The SHA-256 S3 stored with the object is the digest its manifest records, and marketlake's reader checks the bytes against it |
 | A long marked at the bid and a short at the ask, or either at the last sale | The first reads the loss stop half a spread a share stricter and gives the mark a side, which sizing and the gate would have to agree on. A last sale can sit at either side and be minutes old. The midpoint is the decision price a fill's cost is measured from |
 | Refusing a row captured after the data worker's own clock, to catch a clock that runs slow | A backtest's clock reads the decision time over a folder that holds the whole day, so it would refuse what the cut at the decision already leaves out. [#134](https://github.com/l3a0/ithildin-runtime/issues/134) measures the clock instead |
+| One `Valuation` a day, an output of the first recover alone | A later decision's stage could not read it, because a reader refuses a file whose header names another decision. The owner accepted on 2026-11-25 one at each decision, at the price of one more output file |
+| The risk stage reading the owner's hard caps blob | The owner can rewrite it between two attempts at one decision, so a second attempt could write other bytes. The owner accepted on 2026-11-25 that recover stores the caps it read, at the price that a cap lowered after recover has run binds at the gate and not in the sizing |
