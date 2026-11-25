@@ -372,11 +372,11 @@ def test_3_the_decision_price_counts_towards_the_window() -> None:
     assert answer(CHAN, SERIES.early(OWN, 38)) == whole
 
 
-def test_3_a_midpoint_equal_to_the_closes_before_it_halts() -> None:
+def test_3_a_midpoint_equal_to_the_closes_before_it_halts(tmp_path) -> None:
     days = DAYS[DAYS.index(date(2011, 11, 17)) :][:7]
     series = made(days, (10, 11, 12, 13, 14, 14, 16), (38, 37, 13, 16, 19, 29, 26))
     assert isinstance(answer(SMALL, series.early(6, 6)), ForecastSet)
-    assert answer(SMALL, series.early(6, 6, (d(14), d(26)))) == (
+    assert halted(tmp_path, SMALL, series.early(6, 6, (d(14), d(26)))) == (
         f"strategy chan cannot fit a hedge ratio on {days[-1]}: GLD's last 3 prices are all 14"
     )
 

@@ -798,17 +798,29 @@ def basis(instrument, n: int) -> Snapshot:
     return leg(HAND_SNAPSHOT, instrument, bars)
 
 
-def newest_bars(*changes: dict[str, object]) -> Snapshot:
-    """The newest bar of each leg written once for each of `changes`, with those fields changed."""
-    held = HAND_SNAPSHOT
-    for instrument in (USO, GLD):
-        *earlier, newest = held.bars[instrument]["1d"]
-        bars = [*earlier, *(replace(newest, **one) for one in changes)]
-        held = leg(held, instrument, bars)
-    return held
+NEWEST_OF = {
+    "known-after-the-decision": (
+        {"knowable_at": CLOSE + timedelta(seconds=1)},
+        "{leg}'s bar for 2011-11-28 was knowable at 2011-11-28T21:00:01+00:00, after the decision "
+        "at 2011-11-28T21:00:00+00:00",
+    ),
+    "with-an-unstated-kind": (
+        {"price_kind": "unstated"},
+        "{leg}'s bar for 2011-11-28 has unstated price kind",
+    ),
+    "with-a-close-of-zero": (
+        {"close": d(0)},
+        "{leg}'s close for 2011-11-28 is 0, not above zero",
+    ),
+}
 
 
-NO_PRICE = "strategy chan has no price for 2011-11-28: USO"
+def newest_of(instrument, **changes: object) -> Snapshot:
+    *earlier, newest = HAND_SNAPSHOT.bars[instrument]["1d"]
+    return leg(HAND_SNAPSHOT, instrument, [*earlier, replace(newest, **changes)])
+
+
+NO_PRICE = "strategy chan has no price for 2011-11-28: "
 HALTS = {
     "a-leg-missing": (
         replace(HAND_SNAPSHOT, bars={USO: HAND_SNAPSHOT.bars[USO]}, status={USO: BarStatus.FRESH}),
@@ -912,22 +924,20 @@ HALTS = {
         "strategy chan decides on the session 2011-11-25, and the newest bar of USO and GLD is "
         "2011-11-28's",
     ),
-    "a-newest-bar-known-after-the-decision": (
-        newest_bars({"knowable_at": CLOSE + timedelta(seconds=1)}),
-        f"{NO_PRICE}'s bar for 2011-11-28 was knowable at 2011-11-28T21:00:01+00:00, after the "
-        "decision at 2011-11-28T21:00:00+00:00",
-    ),
-    "a-newest-bar-of-unstated-kind": (
-        newest_bars({"price_kind": "unstated"}),
-        f"{NO_PRICE}'s bar for 2011-11-28 has unstated price kind",
-    ),
-    "a-newest-bar-whose-close-is-zero": (
-        newest_bars({"close": d(0)}),
-        f"{NO_PRICE}'s close for 2011-11-28 is 0, not above zero",
-    ),
+    **{
+        f"a-newest-bar-of-{instrument}-{what}": (
+            newest_of(instrument, **changes),
+            NO_PRICE + reason.format(leg=instrument),
+        )
+        for instrument in (USO, GLD)
+        for what, (changes, reason) in NEWEST_OF.items()
+    },
     "two-newest-bars-of-one-session": (
-        newest_bars({}, {}),
-        f"{NO_PRICE} has 2 daily bars for 2011-11-28, not one",
+        replace(
+            HAND_SNAPSHOT,
+            bars={i: {"1d": (*by["1d"], by["1d"][-1])} for i, by in HAND_SNAPSHOT.bars.items()},
+        ),
+        f"{NO_PRICE}USO has 2 daily bars for 2011-11-28, not one",
     ),
     "a-decision-past-the-calendar": (
         replace(HAND_SNAPSHOT, decision_at=datetime(2050, 1, 3, 21, 0, tzinfo=UTC)),

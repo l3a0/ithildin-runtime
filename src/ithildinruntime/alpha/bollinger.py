@@ -64,9 +64,9 @@ each of these.
    snapshot holds neither a quote of the leg nor a bar of the decision's
    session, where it holds both, where the judge of a quote finds a fault or its
    older stamp is at or before the last session's close, where the decision
-   session's bar is there twice, states no price kind or has no close above zero,
-   and where a bar ended or was knowable after the decision. Data halts first on
-   most of these.
+   session's bar is there twice, leaves a price-kind field unstated or has no
+   close above zero, and where a bar ended or was knowable after the decision.
+   Data halts first on most of these.
 6. Fewer prices than the newest z-score reads.
 7. A window of `independent` prices that are all equal, where the slope has no
    value, and a band window whose spreads do not move, where the z-score has

@@ -251,7 +251,7 @@ signal reads the same price that sizes and values the position.
 | --- | --- |
 | A quote of the leg, as a decision at close−20 reads | The midpoint of its bid and ask, where [the judge of a quote](03-context-and-scope.md#how-a-quote-is-judged) finds no fault and its older stamp is later than the last session's close |
 | No quote, and a bar of the decision's own session, as a decision at the close reads | That bar's close |
-| Both, or neither | None, and the decision halts |
+| Both, neither, or a price `core.mark` refuses | None, and the decision halts |
 
 The newest bar is of the decision's own session or of the one before it, on both
 legs, and any other halts. Nothing asks which environment or time it is, so test
@@ -260,33 +260,30 @@ legs, and any other halts. Nothing asks which environment or time it is, so test
 The bid or the ask would need the side of the trade, which is what the model is
 deciding, and [design.md's register](../design.md#considered-and-rejected) says
 why the last sale is no mark. The price of the midpoint is that no order fills at
-it. This strategy sends market-on-close orders, and its cost terms are written
-zeros, so nothing charges the gap from the midpoint to the fill.
+it. This strategy's cost terms are written zeros, so no estimate carries the gap
+from the midpoint to a fill.
 
 [A decision that reads two kinds of price says
 so](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control),
 and a decision before the close reads two.
 
-**Table:** The kind, coverage and delay of each price the strategy reads
+**Table:** The kind, coverage and delay of each price the strategy is tested on and decides on
 
 | Price | Kind | Venues | Delay |
 | --- | --- | --- | --- |
 | The vintages it is tested on | Official close, as `data/price_kinds.csv` states of both files | Consolidated | None |
 | The recent vendor download of [Where bars come from](03-context-and-scope.md#where-bars-come-from) | What `data/price_kinds.csv` states of it. It states nothing until [#175](https://github.com/l3a0/ithildin-runtime/issues/175) | What the same row states | What the same row states |
 | The bars marketlake captures | What `data/price_kinds.csv` states of capture. It states nothing until [#174](https://github.com/l3a0/ithildin-runtime/issues/174) | What the same row states | What the same row states |
-| The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag has to say real time. The newest capture by the decision is read, about a minute before it at most while capture runs, and its stamps are held to a maximum age nobody writes until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) |
+| The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag has to say real time. Its stamps are held to [a maximum age](03-context-and-scope.md#when-the-age-is-measured), which nobody writes until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) |
 
 So at close−20 the newest hedge ratio and z-score mix one midpoint of each leg
-with closes, and every earlier one reads closes alone. What that mix and the
-twenty minutes before the close do to the unit is unmeasured on real quotes.
-[#176](https://github.com/l3a0/ithildin-runtime/issues/176) counts the sessions on
-which the two together change it.
+with closes, and every earlier one reads closes alone. What that does to the unit
+is unmeasured on real quotes, and
+[#176](https://github.com/l3a0/ithildin-runtime/issues/176) holds the measure.
 
-A midpoint is as traded, and nothing that halts compares its scale with the bars'.
-A split on the decision's own day therefore reads as a move, which only data's flag
-on a midpoint sees, as [A lookback that crosses a change of
-series](../design.md#a-lookback-that-crosses-a-change-of-series) says of a quote.
-[#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds the record of splits.
+A midpoint is as traded and carries no series, so [a change of scale between the
+bars and the quote](../design.md#a-lookback-that-crosses-a-change-of-series) can
+read as a move.
 
 ### What ends a position
 

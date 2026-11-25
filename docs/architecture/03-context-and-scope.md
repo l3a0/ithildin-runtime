@@ -524,8 +524,8 @@ is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
 closes, and the close−20 quote's midpoint stands where the backtest uses the session's
-close. That is the timing gap [How the four acceptance
-tests exercise it](10-quality.md#how-the-four-acceptance-tests-exercise-it) names, which shadow running
+close. That is the gap [How the four acceptance tests exercise
+it](10-quality.md#how-the-four-acceptance-tests-exercise-it) names first, which shadow running
 measures.
 
 ### Orders and the two outside switches
