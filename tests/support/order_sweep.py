@@ -14,9 +14,7 @@ It reads source with `ast` and reports two reaches.
 
 It catches the spellings tests/test_order_sweep.py plants, and others pass. It
 reads what is written, so no list of spellings is whole, such as a name put
-together at run time or a class bound to another name first. In a test handed a
-fake broker, the fake broker's refusals catch an order that reached it wrongly
-by any of them, apart from one whose gate or controls were replaced.
+together at run time or a class bound to another name first.
 """
 
 from __future__ import annotations
@@ -46,8 +44,9 @@ BY_TEXT = frozenset({"getattr", "methodcaller", "attrgetter", "getattr_static"})
 BY_TEXT |= {"getmembers", "__getattribute__"}
 IN_WORKERS = BY_TEXT | {"vars", "dir", "__dict__", "setattr"}
 # What only `account.py` and `order_path.py` may name, since each changes what the path does.
-INSIDE = frozenset({"Shared", "Unstored", "_shared", "_held", "record_of", "KINDS"})
-_SHARED = frozenset({"shared", "_shared"})
+INSIDE = frozenset({"Shared", "Unstored", "record_of", "KINDS"})
+# A part of the path or the account, by what it is read from, since each is an ordinary word.
+PARTS = {"cleared": {"shared", "_shared"}, "_shared": {"path", "account"}, "_held": {"path"}}
 # The classes whose methods nothing outside them replaces.
 WHOLE = frozenset({"OrderPath", "Account", "Controls", "Gate", "Unstored", "Journal"})
 
@@ -69,10 +68,8 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     ),
     (_PATH, "entry"): None,
     (_JOURNAL, "entry"): None,
-    (_PATH, "inside"): frozenset(
-        {"Shared", "Unstored", "_shared", "_held", "cleared", "record_of"}
-    ),
-    (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored", "_shared"}),
+    (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "record_of"}),
+    (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored"}),
     # The measurement a person runs, which reads the bars and holds no broker and no account.
     ("src/ithildinruntime/runtime/stress_move.py", "reach"): frozenset({"getattr", "vars"}),
 }
@@ -132,8 +129,8 @@ def found_in(source: str, where: str) -> Iterator[Hit]:
             match node:
                 case ast.Name(id=name) | ast.Attribute(attr=name) if name in INSIDE:
                     yield Hit(where, line, "inside", name)
-                case ast.Attribute(value=held, attr="cleared") if _last(held) in _SHARED:
-                    yield Hit(where, line, "inside", "cleared")
+                case ast.Attribute(value=held, attr=name) if _last(held) in PARTS.get(name, ()):
+                    yield Hit(where, line, "inside", name)
                 case ast.ImportFrom():
                     for named in _imported(node):
                         if named.rpartition(".")[2] in INSIDE:

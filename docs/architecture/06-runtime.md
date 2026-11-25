@@ -430,7 +430,7 @@ sequenceDiagram
         X->>F: reads the files the plan was made from
         X->>X: is it before the order's last moment?
         X->>J: replays the book
-        X->>F: has the loss stop not fired,<br/>and are the hard caps unchanged?
+        X->>F: has the loss stop not fired?
         X->>X: runs the risk gate check
         X->>J: journals the approval
         X->>J: journals the sending entry
@@ -441,6 +441,7 @@ sequenceDiagram
         X->>F: is the lease tag unchanged?
         X->>F: has the loss stop not fired?
         X->>F: is the strategy not off,<br/>and no halt of its stored?
+        X->>F: are the hard caps' limits unchanged?
         X->>X: is it before the order's last moment?
         X->>B: sends the order, with its client order id
         B-->>X: answers
@@ -539,7 +540,7 @@ flowchart TB
     end
     subgraph each["Send, once per order"]
         direction LR
-        b1["Steps 1 and 2<br/>take the lease, find the order in its plan"] --> b2["Steps 3 to 8<br/>journal, check, ask the risk gate"] --> b3["Step 9<br/>make the seven checks"] --> b4["Step 10<br/>send"] --> b5["Steps 11 and 12<br/>journal the answer, release the lease"]
+        b1["Steps 1 and 2<br/>take the lease, find the order in its plan"] --> b2["Steps 3 to 8<br/>journal, check, ask the risk gate"] --> b3["Step 9<br/>make the eight checks"] --> b4["Step 10<br/>send"] --> b5["Steps 11 and 12<br/>journal the answer, release the lease"]
     end
     subgraph finish["Finish, once per decision"]
         direction LR
@@ -590,7 +591,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
-6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop, and the hard caps again. A caps blob rewritten since step 2 halts.
+6. View the journal a second time, so the risk gate sees every order already approved, and then read the loss stop.
 7. Ask the risk gate, and journal its answer. A refusal ends the order there. One that read a loss past its stop, or a loss stop that stands or cannot be read, halts the decision too.
 8. Journal that it is sending.
 9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
@@ -598,9 +599,9 @@ Each order goes through the order path alone, and the journal gains a line befor
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
+A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an order another writer has moved, which is left as it is, and a store that takes no entry, where the halt names what the journal last showed. From step 8 on, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
 
-**Table:** The seven checks made right before the broker call
+**Table:** The eight checks made right before the broker call
 
 | Check | What it reads | Passes when |
 | --- | --- | --- |
@@ -610,7 +611,8 @@ A fault in steps 4 to 9 journals the order `Abandoned`. Two exceptions are an or
 | 4 | The decision's own send result | It is still empty |
 | 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
 | 6 | The loss stop | None has fired, and its state can be read |
-| 7 | The order's last moment, its market-on-close cutoff or its session's close | It has not passed |
+| 7 | The hard caps | Their limits are the ones the gate was handed |
+| 8 | The order's last moment, its market-on-close cutoff or its session's close | It has not passed |
 
 Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch never hides a halt. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
@@ -1102,7 +1104,7 @@ stateDiagram-v2
     [*] --> Intended: order manager plans it
     Intended --> Refused: risk gate refuses
     Intended --> Approved: risk gate approves
-    Intended --> Abandoned: a check before the gate fails, another writer<br/>takes the number of the verdict entry, or a restart
+    Intended --> Abandoned: a check before the gate fails, another writer<br/>takes the number of the verdict entry, the store<br/>does not take it, or a restart
     Intended --> Abandoned: the gate halts on an input,<br/>which halts the decision
     Approved --> Abandoned: a partner is refused, another writer takes the number<br/>of the sending entry, the store does not take it,<br/>or a restart comes before it
     Approved --> Sending: execution journals the sending entry
@@ -1116,7 +1118,7 @@ stateDiagram-v2
     Sending --> Abandoned: a check before the broker call fails,<br/>or the adapter proves nothing was sent
     note left of Abandoned
         A failed check on the switch, a run or account halt,
-        its own result key, the lease tag, the loss stop
+        its own result key, the lease tag, the loss stop, the hard caps
         or the order's last moment also halts.
         A switched-off strategy abandons without halting.
         A close reads the checks as design.md's

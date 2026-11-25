@@ -10,7 +10,7 @@ per order` gives the steps.
 2. The `intent` entry.
 3. The controls, apart from the order's last moment and the loss stop.
 4. The inputs the gate is handed, and the order's last moment.
-5. A second view, the loss stop's state, the hard caps again, and the gate.
+5. A second view, the loss stop's state, and the gate.
 6. The `verdict` entry.
 7. The `sending` entry.
 8. The private submit, which takes that entry's acknowledgement and nothing
@@ -36,9 +36,10 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from typing import NamedTuple
 
@@ -133,10 +134,13 @@ def quietly(report: Callable[[], None]) -> Callable[[], None]:
 
 
 def _alarm(alerts: Alerts, reason: str) -> str:
-    """Send one alarm, and say what a halt adds where it could not be sent."""
+    """Send one alarm, and say what a halt adds where it could not be sent.
+
+    Nothing an alert channel raises may stop what follows, such as an answer's entry.
+    """
     try:
         alerts.alarm(reason)
-    except Exception as error:
+    except BaseException as error:
         return f". The alarm could not be sent: {code_of(error)}"
     return ""
 
@@ -171,18 +175,14 @@ class Named:
 
 @dataclass(eq=False)
 class _Kept:
-    """One entry the journal has not taken, about an order the broker may have.
-
-    `unsent` holds each alarm about it that could not be sent, which is tried
-    again until it is, whether or not the entry is `stored`.
-    """
+    """One entry the journal has not taken, about an order the broker may have."""
 
     name: str
     record: Record
     at: datetime
     sent: str
-    stored: bool = False
-    unsent: list[str] = field(default_factory=list)
+    # What a halt adds where an alarm about this entry could not be sent.
+    added: str = ""
 
     @property
     def what(self) -> str:
@@ -193,7 +193,9 @@ class Unstored:
     """The entries an account owes its journal, kept in one place for every path.
 
     An order's fate is known here alone once the broker has answered, so an
-    entry stays until the journal takes it or shows that it already knows.
+    entry stays until the journal takes it or shows that it already knows. An
+    alarm about one that could not be sent waits in a queue of its own, which
+    each `settle` tries once through, and holds nothing up.
     """
 
     def __init__(
@@ -204,11 +206,12 @@ class Unstored:
         self._patience = patience
         self._owner_step = owner_step
         self._kept: list[_Kept] = []
+        self._alarms: deque[str] = deque()
         self._lock = threading.Lock()
 
     def names(self) -> tuple[str, ...]:
         with self._lock:
-            return tuple(kept.what for kept in self._kept if not kept.stored)
+            return tuple(kept.what for kept in self._kept)
 
     def put(
         self, name: str, record: Record, at: datetime, sent: str, report: Callable[[], None]
@@ -224,7 +227,7 @@ class Unstored:
         if isinstance(record, InDoubtEntry):
             self._say(kept, f"the order {name} is in doubt, {sent}: {record.reason}", report)
         try:
-            return self._settled(kept, self._store(kept, report, once=True))
+            return self._store(kept, report, once=True), kept.added
         except Exception as error:
             failed = _said(error)
             self._say(
@@ -235,41 +238,32 @@ class Unstored:
             )
             if isinstance(error, StoreError):
                 try:
-                    return self._settled(kept, self._store(kept, report))
+                    return self._store(kept, report), kept.added
                 except Exception as again:
                     failed = _said(again)
         raise Halt(
             f"the journal did not take {kept.what}: {failed}. It is kept and tried again before "
-            f"the next send{_unsent(kept)}"
+            f"the next send{kept.added}"
         )
 
     def settle(self, report: Callable[[], None]) -> None:
-        """Try each kept entry and each unsent alarm again, and halt naming each entry left."""
+        """Try each unsent alarm and each kept entry again, and halt naming each entry left."""
         with self._lock:
-            waiting = list(self._kept)
+            waiting, owed = list(self._kept), len(self._alarms)
+        for _ in range(owed):
+            # Taken one at a time, so another thread that settles sends none of them twice.
+            with self._lock:
+                reason = self._alarms.popleft() if self._alarms else None
+            if reason is not None:
+                self._alarm(reason, report)
         failing = []
         for kept in waiting:
-            for reason in list(kept.unsent):
-                if not _alarm(self._alerts, reason) and reason in kept.unsent:
-                    kept.unsent.remove(reason)
-                report()
             try:
-                if not kept.stored:
-                    self._store(kept, report)
+                self._store(kept, report)
             except Exception as error:
                 failing.append(f"the journal still does not take {kept.what}: {_said(error)}")
-            else:
-                self._settled(kept, None)
         if failing:
             raise Halt(". ".join(failing))
-
-    def _settled[S](self, kept: _Kept, state: S) -> tuple[S, str]:
-        """Let go of a stored entry, once each alarm about it was sent."""
-        with self._lock:
-            kept.stored = True
-            if not kept.unsent:
-                self._kept = [k for k in self._kept if k is not kept]
-        return state, _unsent(kept)
 
     def _store(self, kept: _Kept, report: Callable[[], None], once: bool = False) -> OrderState:
         """Append the entry until it lands, and return the state the order is in."""
@@ -291,7 +285,7 @@ class Unstored:
                 raise Halt(f"the journal holds no order {kept.name}")
             doubt = _doubted(kept)
             if _holds(order, own):
-                return order.state
+                return self._done(kept, order.state)
             if any(
                 tried(lambda s=e.seq: record_of(next(self._journal.read(after=s - 1)))) == doubt
                 for e in order.entries
@@ -300,15 +294,15 @@ class Unstored:
                 # An append whose answer was lost landed all the same.
                 if own is not doubt:
                     self._in_doubt(kept, report)
-                return order.state
+                return self._done(kept, order.state)
             if own is doubt and order.state not in _DOUBTFUL:
                 self._say(
                     kept,
                     f"the order {kept.name} was kept as in doubt, {kept.sent}, and the journal "
-                    f"shows it {order.state}, as the broker's {order.broker_order_id}",
+                    f"shows it {_now(order)}",
                     report,
                 )
-                return order.state
+                return self._done(kept, order.state)
             refused: list[str] = []
             for record in (own,) if own is doubt else (own, doubt):
                 try:
@@ -320,7 +314,7 @@ class Unstored:
                     break
                 if record is not own:
                     self._in_doubt(kept, report)
-                return after.orders[kept.name].state
+                return self._done(kept, after.orders[kept.name].state)
             else:
                 raise Halt(refused[0])
         raise Halt(f"other writers took {_NUMBERS} numbers in a row")
@@ -334,13 +328,28 @@ class Unstored:
         )
 
     def _say(self, kept: _Kept, reason: str, report: Callable[[], None]) -> None:
-        if _alarm(self._alerts, reason):
-            kept.unsent.append(reason)
+        if not self._alarm(reason, report):
+            kept.added = ". An alarm about it could not be sent"
+
+    def _alarm(self, reason: str, report: Callable[[], None]) -> bool:
+        """Send one alarm, or queue it, and say whether it was sent."""
+        sent = not _alarm(self._alerts, reason)
+        if not sent:
+            with self._lock:
+                self._alarms.append(reason)
         report()
+        return sent
+
+    def _done(self, kept: _Kept, state: OrderState) -> OrderState:
+        with self._lock:
+            self._kept = [k for k in self._kept if k is not kept]
+        return state
 
 
-def _unsent(kept: _Kept) -> str:
-    return ". An alarm about it could not be sent" if kept.unsent else ""
+def _now(order: OrderRecord) -> str:
+    """An order's state, with the broker's id where the journal holds one."""
+    broker = order.broker_order_id
+    return f"{order.state}" if broker is None else f"{order.state}, as the broker's {broker}"
 
 
 def _holds(order: OrderRecord, record: Record) -> bool:
@@ -386,6 +395,8 @@ class Shared:
     # Each `sending` entry's acknowledgement that no submit has taken, by its number, with
     # the order's name and its last moment.
     cleared: dict[int, _Cleared] = field(default_factory=dict)
+    # Each `sending` entry whose order the broker was called with, by its number.
+    called: set[int] = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -400,6 +411,7 @@ class _Cleared(NamedTuple):
     ack: JournalAck
     name: str
     last: _Last
+    caps: HardCaps
 
 
 class _Planned(NamedTuple):
@@ -421,6 +433,8 @@ class _Approved(NamedTuple):
 
     view: View
     last: _Last
+    order: OrderIntent
+    caps: HardCaps
 
 
 class _Answer(NamedTuple):
@@ -499,15 +513,23 @@ class OrderPath:
         except _Off as off:
             return self._not_sent(client_order_id, off.reason, went)
         except Exception as error:
-            # Nothing the submit raises comes after the broker's call but an interrupt.
-            self._unsent(client_order_id, _said(error), went)
-            raise
+            if ack.seq not in self._shared.called:
+                self._not_sent(client_order_id, _said(error), went)
+                raise
+            # The broker may have the order, whatever went wrong after its call.
+            answer = _Answer(found.order, went, went, None, error_name(error), None)
         record, sent = self._read(answer)
-        state, added = self._shared.unstored.put(
-            client_order_id, record, answer.at, sent, self._report
-        )
+        doubted = f"the order {client_order_id} is in doubt: {answer.halt}"
+        try:
+            state, added = self._shared.unstored.put(
+                client_order_id, record, answer.at, sent, self._report
+            )
+        except Halt as halt:
+            if answer.halt is None:
+                raise
+            raise Halt(f"{doubted}. {halt.reason}") from None
         if answer.halt is not None:
-            raise Halt(f"the order {client_order_id} is in doubt: {answer.halt}{added}")
+            raise Halt(f"{doubted}{added}")
         if state is OrderState.ABANDONED:
             raise Halt(f"the order {client_order_id} could not be sent to the broker{added}")
         if added:
@@ -607,7 +629,8 @@ class OrderPath:
             refused = BrokerUnavailable(name, error)
         else:
             self._report()
-            if isinstance(found, kind):
+            # The type alone is read, since an answer of another kind may say anything.
+            if issubclass(type(found), kind):
                 return found
             refused = BrokerUnavailable(name, type(found))
         # Raised outside the handler, so no broker's error is in its context.
@@ -662,8 +685,6 @@ class OrderPath:
             self._before(name, last)
             view = self._view(last.at)
             state, error = shared.controls.stop(shared.patience.tries(self._report, last.at))
-            if self._caps()[1] != caps_sha256:
-                raise Halt("the hard caps were rewritten since the order's send began")
             handed = GateInputs(caps=caps, valuation=inputs.valuation, stop=state, close_entry=None)
             now = shared.clock.now()
             verdict = shared.gate.check(order, view.book, inputs.snapshot, limits, handed, now)
@@ -691,7 +712,7 @@ class OrderPath:
             raise self._ended(name, halt.reason) if verdict.approved else halt
         if verdict.limit is Limit.STOP:
             raise Halt(f"the gate refused {name}: {_stop_reason(state, error)}")
-        return _Approved(view, last) if verdict.approved else OrderState.REFUSED
+        return _Approved(view, last, order, caps) if verdict.approved else OrderState.REFUSED
 
     def _planned(self, view: View, name: str) -> _Planned:
         """The order as the journal's `decision` entry holds it, which halts on one in no plan."""
@@ -735,6 +756,15 @@ class OrderPath:
         self._report()
         return parse_caps(data, account), sha256_of(data)
 
+    def _caps_now(self, tries: Tries) -> HardCaps:
+        """The hard caps, read among a submit's checks, whose tries they share."""
+        account = self._shared.account
+        try:
+            data = tries(lambda: self._shared.store.get(caps_key(account)))
+        except StoreError as error:
+            raise Halt(f"the hard caps could not be read again: {code_of(error)}") from None
+        return parse_caps(data, account)
+
     def _before(self, name: str, last: _Last) -> datetime:
         """The clock's time, which halts past the order's last moment."""
         now = self._shared.clock.now()
@@ -758,17 +788,18 @@ class OrderPath:
         except StoreError as error:
             # It may be stored, and only this call knows that nothing followed it.
             reason = f"the sending of {name} was not stored: {code_of(error)}"
-            self._unsent(name, reason, went)
+            self._not_sent(name, reason, went)
             raise Halt(reason) from None
         with self._shared.lock:
-            self._shared.cleared[ack.seq] = _Cleared(ack, name, approved.last)
+            self._shared.cleared[ack.seq] = _Cleared(ack, name, approved.last, approved.caps)
         return ack
 
     def _submit(self, ack: JournalAck) -> _Answer:
         """Call the broker for the order whose `sending` entry `ack` acknowledges.
 
-        It raises before the broker's call or not at all. An acknowledgement is
-        good for one call, so one that was used, swapped or made up halts. An
+        Nothing it raises comes after the broker's call but an interrupt, and
+        `called` says so whatever an adapter's answer does as it is read. An
+        acknowledgement is good for one call, so one that was used, swapped or made up halts. An
         error that ends the process leaves `sending` alone, which replays as an
         order in doubt.
         """
@@ -784,6 +815,7 @@ class OrderPath:
         found: object = None
         error = halted = None
         stopped = False
+        shared.called.add(ack.seq)
         try:
             found = self._broker.submit(order.intent)
         except KeyboardInterrupt:
@@ -824,10 +856,15 @@ class OrderPath:
             stopping = shared.controls.stopping(planned.where, tries, with_stop=True)
             if stopping is not None:
                 raise _stopped(stopping)
+            if self._caps_now(tries) != cleared.caps:
+                raise Halt(f"the hard caps' limits changed since the send of {name} began")
             if not tries.waited and shared.clock.monotonic() - began <= _PASS:
                 return order, self._before(name, cleared.last)
             if tries.over:
-                raise Halt(f"the checks of {name} were not all read in one pass by the deadline")
+                raise Halt(
+                    f"the checks of {name} were not all read in one pass by the deadline, with "
+                    f"no read tried again and none of a pass's {_PASS:g} seconds gone over"
+                )
 
     def _just_sending(self, view: View, cleared: _Cleared, tries: Tries) -> OrderRecord:
         """The order, which halts unless its newest entry is this `sending`, right after a yes.
@@ -857,18 +894,26 @@ class OrderPath:
     # Step 9
 
     def _read(self, answer: _Answer) -> tuple[Record, str]:
-        """The entry a broker's answer comes to, and whether the order was sent, in words."""
+        """The entry a broker's answer comes to, and whether the order was sent, in words.
+
+        It never raises, whatever an adapter's own kind of answer does as it is
+        read, because the order may be at the broker.
+        """
         try:
             return self._entry(answer)
-        except Exception as error:
+        except BaseException as error:
             reason = f"its answer could not be read: {error_name(error)}"
+        try:
             return self._doubt(answer, reason), answer.perhaps
+        except BaseException:
+            name = answer.order.client_order_id
+            return InDoubtEntry(name, reason, None, False, answer.at), answer.perhaps
 
     def _entry(self, answer: _Answer) -> tuple[Record, str]:
         name, ack = answer.order.client_order_id, answer.ack
         if answer.error is not None:
             return self._doubt(answer, f"the submit raised {answer.error}"), answer.perhaps
-        if not isinstance(ack, Ack):
+        if not issubclass(type(ack), Ack):
             return self._doubt(answer, f"the submit gave a {error_name(type(ack))}"), answer.perhaps
         raw, at, broker = ack.raw, ack.received_at, ack.broker_order_id
         sent = answer.perhaps
@@ -887,9 +932,10 @@ class OrderPath:
         elif contradicts := _contradicts(ack):
             reason = contradicts
         elif ack.outcome == Outcome.ACCEPTED and broker is not None:
-            return AckEntry(name, broker, raw, False, at), sent
+            return AckEntry(name, broker, raw, False, at.astimezone(UTC)), sent
         elif ack.outcome == Outcome.REJECTED:
             said = sent if broker is not None else f"sent at {answer.went.isoformat()}"
+            at = at.astimezone(UTC)
             entry = RejectedEntry(name, "the broker rejected it", raw, False, at)
             return entry, f"{said}, and rejected"
         elif ack.outcome == Outcome.NOT_SENT:
@@ -901,10 +947,12 @@ class OrderPath:
     def _doubt(self, answer: _Answer, reason: str) -> InDoubtEntry:
         """An order in doubt, with the bytes the broker sent where it sent any."""
         ack = answer.ack
-        raw = ack.raw if isinstance(ack, Ack) and isinstance(ack.raw, bytes) else None
-        at = ack.received_at if isinstance(ack, Ack) else None
+        answered = issubclass(type(ack), Ack)
+        raw = ack.raw if answered and isinstance(ack.raw, bytes) else None
+        at = ack.received_at if answered else None
         if not isinstance(at, datetime) or at.utcoffset() != timedelta(0):
             at = answer.at
+        at = at.astimezone(UTC)
         cut = raw is not None and len(raw) > RAW_LIMIT
         kept = raw[:RAW_LIMIT] if raw is not None else None
         return InDoubtEntry(answer.order.client_order_id, reason, kept, cut, at)
@@ -919,17 +967,13 @@ class OrderPath:
         except Exception:
             pass
         record = AbandonedEntry(name, _text(reason))
-        state, added = self._shared.unstored.put(name, record, at, "not sent", self._report)
-        if added:
-            raise Halt(f"the order {name} is {state}{added}")
-        return state
-
-    def _unsent(self, name: str, reason: str, at: datetime) -> None:
-        """`_not_sent`, where a halt over the entry says too why the order was not sent."""
         try:
-            self._not_sent(name, reason, at)
+            state, added = self._shared.unstored.put(name, record, at, "not sent", self._report)
         except Halt as halt:
             raise Halt(f"{reason}. {halt.reason}") from None
+        if added:
+            raise Halt(f"{reason}. The order {name} is {state}{added}")
+        return state
 
     # The journal
 
@@ -947,7 +991,7 @@ class OrderPath:
         """
         account, error, stopped = self._shared.account, None, False
         try:
-            same = self._broker.alias == account
+            same = bool(self._broker.alias == account)
         except KeyboardInterrupt:
             same, stopped = False, True
         except BaseException as raised:

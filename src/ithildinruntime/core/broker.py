@@ -16,8 +16,14 @@ _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,79}")
 
 
 def error_name(error: object) -> str:
-    """The name of an error's type, as code spells one, and never a sentence."""
-    name = error.__name__ if isinstance(error, type) else type(error).__name__
+    """The name of an error's type, as code spells one, and never a sentence.
+
+    It never raises, whatever an adapter's own kind of error does as it is read.
+    """
+    try:
+        name = error.__name__ if issubclass(type(error), type) else type(error).__name__
+    except BaseException:
+        return _word(None)
     return _word(name)
 
 
@@ -26,9 +32,13 @@ class BrokerUnavailable(Exception):
 
     def __init__(self, call: str, error: BaseException | type) -> None:
         self.call = _word(call)
-        named = isinstance(error, BrokerUnavailable)
-        # A subclass may hold any word there, or none.
-        self.error = _word(getattr(error, "error", None)) if named else error_name(error)
+        self.error = error_name(error)
+        if issubclass(type(error), BrokerUnavailable):
+            # A subclass may hold any word there, or none, or raise as it is read.
+            try:
+                self.error = _word(error.error)
+            except BaseException:
+                self.error = _word(None)
         super().__init__(f"the broker's {self.call} failed with {self.error}")
 
 

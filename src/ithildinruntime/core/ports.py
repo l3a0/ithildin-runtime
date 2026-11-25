@@ -154,7 +154,8 @@ class Broker(Protocol):
     `alias` names the account it trades, by the platform's alias and never by
     the broker's number. Every read and write returns its received bytes apart
     from the converted value. A read that fails raises `BrokerUnavailable`, and
-    an empty answer is returned only where the broker said none.
+    an empty answer is returned only where the broker said none. A `Halt` an
+    adapter raises reaches a person, so its reason holds no word of the broker's.
     """
 
     @property

@@ -678,8 +678,8 @@ def test_10_the_gates_answer_rebuilds_under_a_larger_stress_record() -> None:
     assert world.rebuilt() == 1
 
 
-def test_10_a_stress_record_that_holds_the_caps_to_more_halts_the_order() -> None:
-    """The records are the gate's, so what the path hands it meets the same halt."""
+def test_10_caps_held_to_no_stress_record_halt_the_order() -> None:
+    """The gate is built with the records, so what the path hands it is held to them."""
     halted(World(records=()), "stress")
 
 
@@ -893,7 +893,18 @@ class Bare(BrokerUnavailable):
         Exception.__init__(self, f"key {KEY}")
 
 
-@pytest.mark.parametrize("error", [Set(), Bare()])
+class Raising(BrokerUnavailable):
+    """A kind whose word raises as it is read."""
+
+    @property
+    def error(self) -> str:  # type: ignore[override]
+        raise RuntimeError(KEY)
+
+    def __init__(self) -> None:
+        Exception.__init__(self, f"key {KEY}")
+
+
+@pytest.mark.parametrize("error", [Set(), Bare(), Raising()])
 def test_11_a_kind_of_unavailable_of_an_adapters_own_names_no_word_of_it(error: Exception) -> None:
     world = World()
 
@@ -905,6 +916,38 @@ def test_11_a_kind_of_unavailable_of_an_adapters_own_names_no_word_of_it(error: 
         world.path().positions()
     assert str(raised.value) == "the broker's positions failed with Unnamed"
     assert not leaks(*told(raised.value))
+
+
+class Lazy:
+    """A proxy whose class cannot be asked for."""
+
+    @property
+    def __class__(self) -> type:  # type: ignore[override]
+        raise RuntimeError(KEY)
+
+
+class Unequal:
+    """An alias whose comparison is no answer."""
+
+    def __eq__(self, other: object) -> object:  # type: ignore[override]
+        return self
+
+    def __bool__(self) -> bool:
+        raise RuntimeError(KEY)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+def test_11_an_object_that_raises_as_it_is_examined_says_nothing() -> None:
+    world = World()
+    world.broker.reads["positions"] = Lazy
+    with pytest.raises(BrokerUnavailable, match="failed with Lazy") as raised:
+        world.path().positions()
+    assert not leaks(*told(raised.value))
+    world.broker.alias = Unequal()  # type: ignore[assignment]
+    with pytest.raises(Halt, match="alias could not be read: RuntimeError") as halt:
+        world.path().positions()
+    assert not leaks(*told(halt.value))
 
 
 def test_11_an_answer_that_raises_as_it_is_read_names_no_word_of_it() -> None:

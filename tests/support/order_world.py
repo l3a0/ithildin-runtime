@@ -478,7 +478,6 @@ class World:
             assert again.approved and said.approved, name
             assert again.adding == said.adding, name
             assert again.worst_loss == Fraction(said.worst_loss), name
-            assert again.stress_move == Fraction(said.stress_move), name
             assert again.loss == Fraction(said.loss.loss), name
             assert again.past == tuple(
                 (p.limit.value, Fraction(p.value), Fraction(p.bound)) for p in said.past

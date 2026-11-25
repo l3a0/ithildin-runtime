@@ -122,7 +122,10 @@ def test_3_each_way_around_is_caught(way: str) -> None:
 
 def test_3_an_ordinary_word_is_no_hit() -> None:
     """#156's clear of the loss stop, and a local of that name, are no part of the path."""
-    for source in ("cleared = read_stop(store)", "state.cleared = True", "stop.cleared()"):
+    for source in (
+        *("cleared = read_stop(store)", "state.cleared = True", "stop.cleared()"),
+        *("self._held = {}", "view._shared.lock", "self._shared = None"),
+    ):
         assert not list(found_in(source, IN_EXECUTION)), source
 
 

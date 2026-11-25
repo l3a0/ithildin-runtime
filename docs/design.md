@@ -492,7 +492,7 @@ apply it.
    decides again, and appends after it, as [The journal is the one numbered log](#rule-8-the-journal-is-the-one-numbered-log) says.
 3. **Every order** waits on a fetch of the broker's positions, open orders, cash and
    fills made at the start of execution's send stage, as [How a rerun never doubles anything](#rule-9-how-a-rerun-never-doubles-anything) says, and,
-   just before the broker call, on the kill switch, the strategy's off switch and halts, the run's and the account's halts, its own send-stage result key, the account's lease's tag, the loss stop and the order's last moment, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+   just before the broker call, on the kill switch, the strategy's off switch and halts, the run's and the account's halts, its own send-stage result key, the account's lease's tag, the loss stop, the hard caps and the order's last moment, as [What is checked right before a broker call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 4. **Every lease** is fetched before it is taken, and one another process
    holds, on this VM or another, is taken over only once it has gone
    unrenewed past its expiry and the margin for clock skew, as [Who takes over a lease](#rule-9-who-takes-over-a-lease) says.
@@ -1122,7 +1122,7 @@ rerun from doubling anything. The first three follow, and the last two each have
 ### Rule 9, fourth item: what is checked right before a broker call
 
 **Right before every submit**, after the order's `sending` entry
-is stored, execution checks seven things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop, whose state the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent. A control that stands stops the order, and so does one that could not be read, with the error's code in the reason. A read that has to be tried again, or that answers slowly, leaves the ones before it behind, and a switch pulled in the meantime must stop the order. So a pass counts only where no read was tried again and it took at most 5 seconds. Any other is made again whole, from a new view of the journal, until one counts or their shared deadline ends the order. The price is that a store whose reads come to more than 5 seconds a pass stops every order, where a pass on S3 is under a second. The numbers below name the checks. The two on the strategy are read after every other blob, so a switch never hides a halt.
+is stored, execution checks eight things. Each is read again there, after a first check ahead of the gate that leaves out the loss stop and the hard caps, which the gate is handed. Only a key that holds no blob, or an empty folder, reads as absent. A control that stands stops the order, and so does one that could not be read, with the error's code in the reason. A read that has to be tried again, or that answers slowly, leaves the ones before it behind, and a switch pulled in the meantime must stop the order. So a pass counts only where no read was tried again and it took at most 5 seconds. Any other is made again whole, from a new view of the journal, until one counts or their shared deadline ends the order. The price is that a store whose reads come to more than 5 seconds a pass stops every order, where a pass is ten reads. The numbers below name the checks. The two on the strategy are read after every other blob, so a switch never hides a halt.
 
 1. The kill switch is absent.
 2. The order's strategy is not switched off, and no strategy halt of its is unreleased, by this doc's proposal in [How a sort runs](halts-and-drills.md#how-a-sort-runs). As with [the kill
@@ -1140,7 +1140,8 @@ is stored, execution checks seven things. Each is read again there, after a firs
 5. The account's lease still carries the tag that the holder's own
    last take or renewal of it returned, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds the lease.
 6. The loss stop has not fired, and its state can be read.
-7. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. It is read last, and at that moment itself the order goes.
+7. The hard caps' limits are the ones the gate was handed, so a cap the owner lowers during a send stops that order.
+8. The order's last moment has not passed: the market-on-close cutoff for such an order, and its session's close for any other, since a broker may hold a later one for the next open. It is read last, and at that moment itself the order goes.
 
 Any one failing journals the
 order `Abandoned`, sends nothing, and halts the decision, except the
@@ -1174,7 +1175,7 @@ counted, and ends the clock on a cancel whose answer is lost, because only a fai
 nothing was sent. A plan's cancel
 skips the strategy's off switch, so a switched-off strategy's
 cancels still go out, and the replacement itself is a submit, which
-checks all seven. A cancel skips the risk gate's limits on purpose: every open
+checks all eight. A cancel skips the risk gate's limits on purpose: every open
 order is already counted at its worst case, so a cancel can only lower
 each counted limit.
 
@@ -2096,9 +2097,9 @@ Five rules keep a day of decisions safe.
    1. **Before every send, twice.** Execution reads the clock before it
       starts the order loop, before each order, and again after the order's
       `sending` entry is stored and immediately before the broker call, with the other checks in [what is checked right before a broker
-      call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past the cutoff is journaled `Abandoned`
+      call](#rule-9-fourth-item-what-is-checked-right-before-a-broker-call). An order past its last moment is journaled `Abandoned`
       and the decision halts. Inside the send stage, the retry deadline of a
-      write ahead of a send that S3 does not answer ends no later than the cutoff, so a slow write
+      write ahead of a send that S3 does not answer ends no later than that moment, so a slow write
       cannot carry a send past it.
    2. **A clock that cannot be trusted halts.** At the start of the send
       stage, execution compares the VM's clock with the broker's own clock,
