@@ -561,7 +561,8 @@ runs is on `main` first. `.github/workflows/lake-pin.yml` compares `main` with
 the pin after each merge here, by hand, and on GitHub's schedule ahead of each
 weekday's open. It reads marketlake's public repository with no credential. A
 difference fails its run, which names what differs and what it asks for. The run
-also fails where pyarrow here is not the pinned commit's.
+also fails where pyarrow here is not the pinned commit's, and where either side
+could not be read.
 
 **Table:** What differs from the pin, and what it asks for
 
@@ -570,7 +571,7 @@ also fails where pyarrow here is not the pinned commit's.
 | `SCHEMA_VERSION` is higher on marketlake's `main` | Raise the pin now, before the first session captured under that version, because the pinned reader refuses every row written under it |
 | The bytes of `src/lake/segment_join.py` on `main`, or pyarrow's version in its `uv.lock` | Wait until marketlake's deploy of the change is known, then raise, because nothing says which commit the capture host runs |
 | Both at once | Raise now, and take the rows read before a seal as possibly unequal to the sealed rows until the deploy |
-| pyarrow here is not the version in the pinned commit's own `uv.lock` | Set it to that version now, or to the raised commit's where a raise is due, because the two pins move together |
+| pyarrow here is not the version in the pinned commit's own `uv.lock` | Set it to that version now, or to the raised commit's where a rule says to raise now, because the two pins move together |
 | `SCHEMA_VERSION` is lower on `main` | Raise nothing, because a newer pin reads the older rows where the lake's schema-version ledger holds their version |
 
 The check is no pull request check, because marketlake moving must not turn an

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import errno
 import os
 import re
 import subprocess
@@ -78,7 +79,7 @@ NO_RAISE = (
 )
 MATCH_PIN = (
     "Rule: set pyarrow here to the version at the commit this repository pins now, or at the "
-    "raised one where a raise is due. The two pins move in one pull request."
+    "raised one where a rule says to raise now. The two pins move in one pull request."
 )
 
 
@@ -218,7 +219,8 @@ class Remote:
             # `file` is for the tests. ssh would read the machine's own keys.
             "GIT_ALLOW_PROTOCOL": "https:file",
         }
-        self._git("init", "--quiet", "--bare", ".")
+        # The format GitHub's repositories have, whatever git's own default is.
+        self._git("init", "--quiet", "--bare", "--object-format=sha1", ".")
 
     def _git(self, *args: str) -> bytes:
         try:
@@ -294,9 +296,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{UNREAD}: {error}")
         return 2
     except Exception as error:  # Any other failure is a side unread, so never a pass or a raise.
-        # The operating system's own words name no path and hold none of marketlake's text.
-        said = getattr(error, "strerror", None) or ""
-        print(f"{UNREAD}: {type(error).__name__} {said}".rstrip())
+        # A name and a code, which hold no path and none of marketlake's text.
+        code = errno.errorcode.get(getattr(error, "errno", None), "")
+        print(f"{UNREAD}: {type(error).__name__} {code}".rstrip())
         return 2
     for line in said:
         print(f"- {line}")

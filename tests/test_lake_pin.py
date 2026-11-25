@@ -1,4 +1,4 @@
-"""The check that marketlake's `main` says the pin is due a raise, for #131.
+"""The check that marketlake's `main`, or pyarrow here, differs from the pin, for #131.
 
 Each case builds a small git repository in place of marketlake's, whose pinned
 commit holds short stand-ins for the three files the script reads, and runs the
@@ -85,7 +85,7 @@ class Marketlake:
     def __init__(self, root: Path) -> None:
         self.root = root
         root.mkdir()
-        _git(root, "init", "--quiet", "--initial-branch=main")
+        _git(root, "init", "--quiet", "--initial-branch=main", "--object-format=sha1")
         self.pin = self.commit(PINNED)
 
     def commit(self, files: Files) -> str:
@@ -247,6 +247,7 @@ def test_each_rule_says_what_to_do() -> None:
     assert "wait to raise the pin until marketlake's deploy" in script.WAIT
     assert "raise nothing" in script.NO_RAISE
     assert "set pyarrow here to the version at the commit this repository pins" in script.MATCH_PIN
+    assert "raised one where a rule says to raise now" in script.MATCH_PIN
 
 
 def _mispinned(here: str, pinned: str) -> list[str]:
@@ -343,13 +344,16 @@ TWO_PYARROWS = PINNED["uv.lock"] + '\n[[package]]\nname = "pyarrow"\nversion = "
         ({JOURNAL: "SCHEMA_VERSION = 0\n"}, "assigns no one integer"),
         ({JOURNAL: "SCHEMA_VERSION = 10000\n"}, "assigns no one integer"),
         ({JOURNAL: f"SCHEMA_VERSION = {'9' * 5000}\n"}, "does not parse"),
-        ({JOURNAL: f"X = {'-' * 100_000}2\n"}, "says nothing of the pin"),
+        ({JOURNAL: f"SCHEMA_VERSION = 2\nX = {'-' * 100_000}2\n"}, "says nothing of the pin"),
         ({JOURNAL: b"#" * (script.FILE_BYTES + 1)}, "is past 8000000 bytes"),
         ({JOIN: b"#" * (script.FILE_BYTES + 1)}, "is past 8000000 bytes"),
         ({"uv.lock": b"#" * (script.FILE_BYTES + 1)}, "is past 8000000 bytes"),
         ({"uv.lock": None}, "uv.lock is not at"),
-        ({"uv.lock": b"\xff"}, "says nothing of the pin: UnicodeDecodeError"),
-        ({"uv.lock": f"x = {'[' * 100_000}"}, "says nothing of the pin"),
+        ({"uv.lock": b"\xff"}, "says nothing of the pin: UnicodeDecodeError\n"),
+        (
+            {"uv.lock": f"x = {'[' * 100_000}{']' * 100_000}\n{PINNED['uv.lock']}"},
+            "says nothing of the pin",
+        ),
         ({"uv.lock": _locked("1" * 33)}, "names no version of pyarrow"),
         ({"uv.lock": "not = toml = at all"}, "is no uv lock"),
         ({"uv.lock": "version = 1\n"}, "is no uv lock"),
@@ -438,7 +442,7 @@ def test_a_remote_that_never_answers_is_no_pass(
 def test_a_fetch_starts_no_maintenance(
     lock: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run on GitHub lost its answer to git's detached maintenance, which kept writing."""
+    """A run on GitHub likely lost its answer to git's detached maintenance, still writing."""
     calls = tmp_path / "calls"
     stand_in = tmp_path / "bin"
     stand_in.mkdir()
@@ -475,7 +479,7 @@ def test_a_lock_that_is_not_there_is_no_pass(
 ) -> None:
     code, out = _run(tmp_path / "absent.lock", capsys)
     assert code == 2
-    assert "says nothing of the pin: FileNotFoundError No such file or directory\n" in out
+    assert "says nothing of the pin: FileNotFoundError ENOENT\n" in out
 
 
 @pytest.mark.parametrize("form", ["option", "ssh", "ext"])

@@ -1,8 +1,9 @@
-# Says when the marketlake commit pyproject.toml pins is due a raise.
+# Says when marketlake's main, or pyarrow here, differs from the marketlake commit
+# pyproject.toml pins.
 #
 # scripts/check_lake_pin.py compares marketlake's main with the pin and fails the run
 # where one of three things moved, or where pyarrow here is not the pinned commit's,
-# naming it and the rule that applies. A red run is not always a raise to make now: a
+# naming it and the rule that applies, or where a side could not be read. A red run is not always a raise to make now: a
 # change to the join or to pyarrow alone waits until marketlake's deploy is known, and the
 # run stays red until then. So a red run's own text is what says whether a higher version
 # has arrived meanwhile.

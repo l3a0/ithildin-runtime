@@ -7,9 +7,10 @@ marketlake's README publishes `lake.unsealed` in its `Read an unsealed day`, and
 there it names `lake.loader`'s `LoadError`, `is_reader_file`, `latest_entries` and
 `lake.journal.SCHEMA_VERSION`. Every other name, `load_bars` among them, is relied
 on by its docstring at the pinned commit. A test of a published name holds what
-the README states, with a planted case or more of each, so a change it allows
-passes. One goes further and holds that a damaged quarantine ledger is refused.
-marketlake's own suite covers the reader's checks beyond these cases.
+the README states, with a planted case or more of each check the reader makes of
+a row, so a change it allows passes. One goes further and holds that a damaged
+quarantine ledger is refused. marketlake's own suite covers the reader's checks
+beyond these cases.
 
 1. `lake.loader.load_bars`, its `LoadError` family and the columns it returns.
 2. `lake.paths.is_reader_file`, and `lake.paths.parse_bars_rel`, which inverts
@@ -391,16 +392,15 @@ def test_unsealed_a_row_that_cannot_be_cut_is_refused_and_never_dropped(
     ],
     ids=lambda changes: "{} {}".format(*next(iter(changes.items()))),
 )
-def test_unsealed_a_row_the_door_judges_wrong_is_refused_whenever_it_landed(
+def test_unsealed_a_row_of_another_ticker_day_or_version_is_refused_whenever_it_landed(
     tmp_path: Path, changes: dict[str, str | int | None]
 ) -> None:
-    """The planted row landed after `at`, and the read still refuses, by its segment."""
+    """The planted row sits behind a good one and landed after `at`, and the read refuses."""
     good = lakes.quote_row("GLD", MINUTES[0])
-    first, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good)
-    late = {**lakes.quote_row("GLD", MINUTES[2]), **changes}
-    rel, other = lakes.quotes_segment(tmp_path, "GLD", MINUTES[2], late)
+    late = {**good, "fetch_end_ts": (MINUTES[0] + 2 * SECOND).isoformat(), **changes}
+    rel, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], good, late)
     with pytest.raises(UnsealedRefused) as raised:
-        _read(tmp_path, {first: digest, rel: other}, MINUTES[0] + SECOND)
+        _read(tmp_path, {rel: digest}, MINUTES[0] + SECOND)
     assert raised.value.segment == rel
 
 
