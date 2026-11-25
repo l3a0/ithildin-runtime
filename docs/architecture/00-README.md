@@ -81,5 +81,5 @@ Each diagram names its level in the [C4 model](https://c4model.com/) in the sent
 
 | Page | What it holds |
 | --- | --- |
-| [what-a-person-runs.md](../what-a-person-runs.md) | The command line tool, its commands, and how a person goes from an alarm to a command |
+| [what-a-person-runs.md](../what-a-person-runs.md) | The command line tool, its commands, how a person goes from an alarm to a command, and the command that measures a stress move |
 | [halts-and-drills.md](../halts-and-drills.md) | The steps of a sort, every alarm and its drill, and the drills with no alarm |

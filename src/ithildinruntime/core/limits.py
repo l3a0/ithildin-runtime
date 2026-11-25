@@ -72,7 +72,7 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     blob = _json(data)
     written = blob.get("format")
     if type(written) is not int or written != _FORMAT:
-        raise Halt(f"the caps blob's format is {_shown(written)}, not {_FORMAT}")
+        raise Halt(f"the caps blob's format is {shown(written)}, not {_FORMAT}")
     if blob.get("account") != account:
         # What was found there is never shown, since it could be a broker's number.
         raise Halt(f"the caps blob does not name the account {account!r}")
@@ -82,10 +82,10 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     if absent := sorted(_FIELDS - set(limits)):
         raise Halt(f"the caps blob holds no {absent[0]}")
     if unknown := sorted(set(limits) - _FIELDS):
-        raise Halt(f"the caps blob holds {_shown(unknown[0])}, which this release does not read")
+        raise Halt(f"the caps blob holds {shown(unknown[0])}, which this release does not read")
     vintage = limits["stress_vintage"]
     if not is_sha256(vintage):
-        raise Halt(f"the caps blob's stress_vintage is {_shown(vintage)}, not a SHA-256")
+        raise Halt(f"the caps blob's stress_vintage is {shown(vintage)}, not a SHA-256")
     caps = HardCaps(
         max_order_qty=_shares("max_order_qty", limits),
         max_position=_shares("max_position", limits),
@@ -113,14 +113,7 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
     The tighter of two maxima or two loss stops is the smaller, and of two
     cutoffs the larger number of minutes, which is the earlier time.
     """
-    if not isinstance(constraints, Constraints):
-        raise Halt("the constraints are missing")
-    if not isinstance(caps, HardCaps):
-        raise Halt("the hard caps are missing")
-    check_constraints(constraints)
-    _check_caps(caps)
-    if extra := sorted(set(constraints.max_position) - set(caps.max_position)):
-        raise Halt(f"the constraints limit {extra[0]}, which the hard caps do not")
+    check_pair(constraints, caps)
     if not isinstance(valuation, Valuation):
         raise Halt("the valuation is missing")
     value = valuation.value
@@ -143,6 +136,18 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
         loss_stop=min(constraints.loss_stop, caps.loss_stop),
         moc_cutoff=max(constraints.moc_cutoff, caps.moc_cutoff),
     )
+
+
+def check_pair(constraints: Constraints, caps: HardCaps) -> None:
+    """Halt naming the first field of `constraints` or `caps` that no limit could be read from."""
+    if not isinstance(constraints, Constraints):
+        raise Halt("the constraints are missing")
+    if not isinstance(caps, HardCaps):
+        raise Halt("the hard caps are missing")
+    check_constraints(constraints)
+    _check_caps(caps)
+    if extra := sorted(set(constraints.max_position) - set(caps.max_position)):
+        raise Halt(f"the constraints limit {extra[0]}, which the hard caps do not")
 
 
 def require_current(caps: HardCaps, valuation: Valuation, decision_at: datetime) -> None:
@@ -203,7 +208,7 @@ def _check_caps(caps: HardCaps) -> None:
             f"{caps.stress_high}"
         )
     if not is_sha256(caps.stress_vintage):
-        raise Halt(f"{where} stress_vintage is {_shown(caps.stress_vintage)}, not a SHA-256")
+        raise Halt(f"{where} stress_vintage is {shown(caps.stress_vintage)}, not a SHA-256")
     if type(caps.stress_through) is not date:
         raise Halt(f"{where} stress_through is {caps.stress_through!r}, not a date")
     age = _integer(f"{where} stress_max_age_days", caps.stress_max_age_days)
@@ -245,7 +250,7 @@ def _check_shared(source: Constraints | HardCaps, where: str) -> None:
         if count < 0:
             raise Halt(f"{where} {name} is {count}, below zero")
         if count >= INT_LIMIT:
-            raise Halt(f"{where} {name} is {_shown(count)}, past what a record can hold")
+            raise Halt(f"{where} {name} is {shown(count)}, past what a record can hold")
 
 
 def _not_negative(what: str, value: object) -> None:
@@ -269,7 +274,7 @@ def _json(data: bytes) -> dict[str, object]:
             data.decode("utf-8"), object_pairs_hook=_once, parse_constant=_no_constant
         )
     except (UnicodeDecodeError, ValueError, RecursionError) as error:
-        raise Halt(f"the caps blob is not JSON: {_shown(str(error))}") from error
+        raise Halt(f"the caps blob is not JSON: {shown(str(error))}") from error
     if not isinstance(parsed, dict):
         raise Halt("the caps blob is not a JSON object")
     return parsed
@@ -279,12 +284,13 @@ def _once(pairs: list[tuple[str, object]]) -> dict[str, object]:
     found: dict[str, object] = {}
     for key, value in pairs:
         if key in found:
-            raise Halt(f"the caps blob holds {_shown(key)} twice")
+            raise Halt(f"the caps blob holds {shown(key)} twice")
         found[key] = value
     return found
 
 
-def _shown(value: object) -> str:
+def shown(value: object) -> str:
+    """A refused value as a halt shows it, which is never long and never a huge int."""
     if isinstance(value, int) and abs(value) >= INT_LIMIT:
         return "a huge int"
     text = repr(value)
@@ -297,11 +303,11 @@ def _no_constant(text: str) -> None:
 
 def _decimal(name: str, value: object) -> Decimal:
     if not isinstance(value, str) or not _PLAIN.fullmatch(value):
-        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a decimal written as a string")
+        raise Halt(f"the caps blob's {name} is {shown(value)}, not a decimal written as a string")
     try:
         return from_received(value)
     except CodecError as error:
-        raise Halt(f"the caps blob's {name} cannot be read: {_shown(str(error))}") from error
+        raise Halt(f"the caps blob's {name} cannot be read: {shown(str(error))}") from error
 
 
 def _shares(name: str, limits: Mapping[str, object]) -> dict[InstrumentId, Decimal]:
@@ -314,23 +320,23 @@ def _shares(name: str, limits: Mapping[str, object]) -> dict[InstrumentId, Decim
             not instrument.isprintable()
             or not 0 < len(instrument.strip()) == len(instrument) <= _SHOWN
         ):
-            raise Halt(f"the caps blob's {name} names {_shown(instrument)}, no instrument")
+            raise Halt(f"the caps blob's {name} names {shown(instrument)}, no instrument")
     return {InstrumentId(i): _decimal(f"{name} of {i}", v) for i, v in value.items()}
 
 
 def _whole(name: str, limits: Mapping[str, object]) -> int:
     value = limits[name]
     if type(value) is not int:
-        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a JSON integer")
+        raise Halt(f"the caps blob's {name} is {shown(value)}, not a JSON integer")
     if abs(value) >= INT_LIMIT:
-        raise Halt(f"the caps blob's {name} is {_shown(value)}, past what a record can hold")
+        raise Halt(f"the caps blob's {name} is {shown(value)}, past what a record can hold")
     return value
 
 
 def _day(name: str, limits: Mapping[str, object]) -> date:
     value = limits[name]
     if not isinstance(value, str) or not _DATE.fullmatch(value):
-        raise Halt(f"the caps blob's {name} is {_shown(value)}, not a date")
+        raise Halt(f"the caps blob's {name} is {shown(value)}, not a date")
     try:
         return date.fromisoformat(value)
     except ValueError as error:

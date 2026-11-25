@@ -115,15 +115,18 @@ def sized(
     config = parse_strategy(
         gates.CHAN, f'instruments = ["GLD", "USO"]\n[portfolio]\ngross = {g}\n'.encode()
     )
+    limits = limits or gates.constraints()
+    owners = replace(aged(day), share_step=step)
     return size(
         config,
         (gates.CHAN,),
         forecast or day.forecast,
         snapshot or day.snapshot,
         gates.book(),
-        limits or gates.constraints(),
-        replace(aged(day), share_step=step),
+        limits,
+        owners,
         day.valuation,
+        gates.fitting(limits, owners),
     )
 
 
@@ -188,15 +191,17 @@ def ask(
     book: Shares, orders: Shares, day: Day, limits: Constraints, snapshot: Snapshot | None = None
 ) -> list[Verdict]:
     """The gate's verdict on each order, in the order given, with the approved ones open."""
+    owners = aged(day)
+    gate = Gate(gates.fitting(limits, owners))
     asked, verdicts = [], []
     for n, (instrument, qty) in enumerate(orders.items()):
         intent = gates.order(qty, instrument, name=f"new-{n}")
-        verdict = Gate().check(
+        verdict = gate.check(
             intent,
             gates.book({gates.CHAN: book}, asked),
             snapshot or day.snapshot,
             limits,
-            gates.inputs(caps=aged(day), valuation=day.valuation),
+            gates.inputs(caps=owners, valuation=day.valuation),
             day.snapshot.decision_at,
         )
         verdicts.append(verdict)

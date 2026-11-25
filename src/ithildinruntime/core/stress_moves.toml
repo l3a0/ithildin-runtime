@@ -1,0 +1,4 @@
+# The measured stress move of each strategy, one [[record]] for each strategy
+# and vintage. `core/stress.py` reads it, and
+# `python -m ithildinruntime.runtime.stress_move` prints each record. A record is
+# never removed or changed. One found wrong gains `withdrawn` with the reason.

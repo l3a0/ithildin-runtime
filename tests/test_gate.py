@@ -59,6 +59,7 @@ from tests.support.gates import (
     order,
     quoted,
     snapshot,
+    stress_record,
     utc,
     valuation,
 )
@@ -73,9 +74,10 @@ def refusal(world: World) -> tuple[Limit | None, Decimal | None, Decimal | None]
     return verdict.limit, verdict.value, verdict.bound
 
 
-def test_the_gate_is_a_risk_gate_that_holds_nothing() -> None:
-    gate: core.RiskGate = Gate()
-    assert vars(gate) == {}
+def test_the_gate_is_a_risk_gate_that_keeps_its_records_alone() -> None:
+    records = (stress_record(),)
+    gate: core.RiskGate = Gate(records)
+    assert vars(gate) == {"_records": records}
     world = World()
     assert world.check() == world.check()
 
@@ -1353,6 +1355,90 @@ def test_a_verdict_reads_back_from_its_bytes() -> None:
     ):
         verdict = world.check()
         assert core.decode(core.encode(verdict), core.Verdict) == verdict
+
+
+# The hold to the stress records.
+
+M = d("0.2")
+OWN = stress_record(stress_move=M)
+RAISED = stress_record(vintage="c" * 64, stress_move=d("0.4"))
+NOT_HELD: dict[str, tuple[object, str]] = {
+    "the-readers-halt": (Halt("stress_moves.toml is missing"), "^stress_moves.toml is missing$"),
+    "no-records": ((), "there is no stress record"),
+    "another-vintage": (
+        (stress_record(vintage="c" * 64),),
+        "stress_vintage is a+, of no record of chan",
+    ),
+    "withdrawn": ((stress_record(withdrawn="mistyped"),), "withdrawn: mistyped"),
+    "other-legs": ((stress_record(instruments=(GLD,)),), "do not both name USO"),
+    "another-last-session": (
+        (stress_record(through=date(2026, 10, 29)),),
+        "stress_through is 2026-10-30",
+    ),
+    "a-move-below": ((stress_record(stress_move=d("0.20000001")),), "stress_move is 0.2, below"),
+    "past-stress-high": ((OWN, replace(RAISED, stress_move=d("0.7"))), "stress_high is 0.6"),
+}
+
+
+@pytest.mark.parametrize("name", NOT_HELD)
+def test_the_hold_halts_each_order_and_never_the_loss(name: str) -> None:
+    records, why = NOT_HELD[name]
+    world = World(book=book({CHAN: {GLD: 10}}, cash=1000)).held_to(loss_stop=d(50)).losing(51)
+    assert world.at(records=(OWN,)).check().limit is Limit.LOSS_STOP
+    broken = world.at(records=records)
+    with pytest.raises(Halt, match=why):
+        broken.check()
+    # An order that names no strategy would be refused, and the halt comes first.
+    with pytest.raises(Halt, match=why):
+        broken.at(intent=order(1, strategy="")).check()
+    assert broken.loss() == world.at(records=(OWN,)).loss()
+    assert (broken.loss().loss, broken.loss().past) == (51, True)
+
+
+def test_the_loss_says_past_under_caps_that_name_no_record() -> None:
+    world = World(book=book(cash=940)).given(valuation=valuation(1000)).held_to(loss_stop=d(50))
+    unnamed = world.at(records=(OWN,)).capped(stress_vintage="f" * 64)
+    assert unnamed.loss() == world.loss() and unnamed.loss().past
+    with pytest.raises(Halt, match="stress_vintage is f+, of no record"):
+        unnamed.check()
+
+
+def test_a_raised_record_binds_the_net_cap_and_the_worst_loss() -> None:
+    """The share is 0.5 and V 1,000, so the net cap is 2,500 at 0.2 and 1,250 at 0.4."""
+    world = World(intent=order(1000), book=book(cash=1000), snapshot=snapshot({GLD: 2, USO: 1}))
+    world = world.given(valuation=valuation(1000))
+    for records in ((OWN, RAISED), (RAISED, OWN)):
+        verdict = world.at(records=records).check()
+        assert (verdict.limit, verdict.value, verdict.bound) == (Limit.MAX_NET, 2000, 1250)
+        assert (verdict.worst_loss, verdict.stress_move) == (800, d("0.4"))
+    for records in (
+        (OWN,),
+        (OWN, replace(RAISED, withdrawn="x")),
+        (OWN, replace(RAISED, strategy=OTHER)),
+    ):
+        verdict = world.at(records=records).check()
+        assert verdict.approved and verdict.worst_loss == 400
+        assert verdict.stress_move == d("0.2")
+
+
+def test_a_third_leg_no_measurement_read_halts() -> None:
+    three = {GLD: LOOSE, USO: LOOSE, SPY: LOOSE}
+    world = World(
+        intent=order(49, SPY), snapshot=snapshot({GLD: 1, USO: 1, SPY: 1}), records=(OWN,)
+    )
+    world = world.capped(max_position=three, max_order_qty=three)
+    with pytest.raises(Halt, match="do not both name SPY"):
+        world.held_to(max_position=three, max_order_qty=three).check()
+
+
+def test_the_caps_own_halts_come_before_the_records() -> None:
+    with pytest.raises(Halt, match="the hard caps' share is"):
+        World(records=()).capped(share=d(2)).check()
+    with pytest.raises(Halt, match="the valuation is missing"):
+        World(records=()).given(valuation=None).check()
+    # A V that is not above zero comes after the records.
+    with pytest.raises(Halt, match="there is no stress record"):
+        World(records=()).given(valuation=valuation(0)).check()
 
 
 # A quote as the mark. Every figure is made up.

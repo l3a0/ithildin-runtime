@@ -15,7 +15,7 @@ from datetime import datetime
 from fractions import Fraction
 from itertools import chain, combinations
 
-from ithildinruntime.core import GateInputs, OrderIntent, Snapshot
+from ithildinruntime.core import GateInputs, OrderIntent, Snapshot, StressRecord
 
 Cases = list[dict[str, Fraction]]
 
@@ -41,6 +41,7 @@ class Answer:
     missing_term: str | None
     adding: bool
     worst_loss: Fraction | None
+    stress_move: Fraction
     loss: Fraction
     loss_bound: Fraction
     loss_past: bool
@@ -64,6 +65,7 @@ def answer(
     inputs: GateInputs,
     now: datetime,
     close: datetime,
+    records: tuple[StressRecord, ...],
 ) -> Answer:
     caps, v = inputs.caps, _f(inputs.valuation.value)
     prices = {
@@ -72,6 +74,13 @@ def answer(
         else _f(max(by["1d"], key=lambda b: b.session).close)
         for i, by in snapshot.bars.items()
     }
+
+    # The largest of the caps' own move and of every record of the strategy whose leg it limits.
+    move = _f(caps.stress_move)
+    for r in records:
+        same = r.strategy == constraints.strategy and r.leg in constraints.max_position
+        if same and not r.withdrawn and _f(r.stress_move) > move:
+            move = _f(r.stress_move)
 
     def start(strategy: str | None) -> dict[str, Fraction]:
         found = dict.fromkeys(prices, Fraction(0))
@@ -116,7 +125,7 @@ def answer(
         "max_gross": min(_f(constraints.max_gross), _f(caps.max_gross)),
         "max_net": min(
             _f(constraints.max_net),
-            Fraction(math.floor(_f(caps.share) * v / _f(caps.stress_move) * 10**4), 10**4),
+            Fraction(math.floor(_f(caps.share) * v / move * 10**4), 10**4),
         ),
     }
     every = cases(None, [*opens, intent], [])
@@ -145,7 +154,7 @@ def answer(
             (
                 max(abs(c[k]) for c in cases(intent.strategy, [*mine, intent], []))
                 * prices[k]
-                * _f(caps.stress_move)
+                * move
                 for k in prices
             ),
             Fraction(0),
@@ -192,6 +201,7 @@ def answer(
         missing_term="position" if named and named[0] == "position" else None,
         adding=adding,
         worst_loss=worst,
+        stress_move=move,
         loss=_half_even(loss, 4),
         loss_bound=_half_even(stop, 4),
         loss_past=loss > stop,
