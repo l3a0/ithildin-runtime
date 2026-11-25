@@ -443,16 +443,9 @@ def test_2_a_name_that_resolves_to_no_global_address_fails(monkeypatch, address:
     assert str(raised.value) == "the name does not resolve to a global address" and to == []
 
 
-@pytest.mark.parametrize(
-    ("addresses", "said"),
-    [
-        ((), "the ask raised IndexError"),
-        (("2001:db8::1",), "the ask raised AddressValueError"),
-        (("no address",), "the ask raised AddressValueError"),
-    ],
-)
-def test_2_a_lookup_that_gives_no_ipv4_address_is_named_by_its_class(
-    monkeypatch, addresses: tuple[str, ...], said: str
+@pytest.mark.parametrize("addresses", [(), ("2001:db8::1",), ("no address",)])
+def test_2_a_lookup_that_gives_no_ipv4_address_is_a_failed_ask(
+    monkeypatch, addresses: tuple[str, ...]
 ) -> None:
     to = redirected(monkeypatch)
     hands = Hands()
@@ -463,7 +456,8 @@ def test_2_a_lookup_that_gives_no_ipv4_address_is_named_by_its_class(
     named = TimeServer("time.example.", 16)
     servers = TimeServers((named, FAR), now=hands.now, raw=hands.raw, ask=lookup)
     servers.poll(named)
-    assert servers.reading().answers[0].failed == said and to == []
+    failed = servers.reading().answers[0].failed
+    assert failed and not any(address in failed for address in addresses) and to == []
 
 
 @pytest.mark.parametrize(

@@ -569,7 +569,7 @@ A machine's clock drifts, and nothing on the machine can see it. The clock dates
 
 [Both smear a leap second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html), meaning each spreads it out rather than jumping, so they agree through one. An ask that fails is asked again after 2 seconds, then 4, doubling up to the server's own interval.
 
-Each process that judges the clock asks for itself, on one thread per server, and keeps each server's last answer in memory. The code that does this is the sampler, `TimeServers` in `adapters/time_servers.py`. So no handler waits on the network, and a name lookup that hangs holds up neither the other server nor the order path. A process starts its threads before it takes work, waits a short bound for both answers before its first decision, holds no cancel on that wait, and stops the threads as it ends. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds the entry points that do so. [Who judges the clock](#who-judges-the-clock-and-who-records-it) names the processes.
+Each process that judges the clock asks for itself, on one thread per server, and keeps each server's last answer in memory. The code that does this is the sampler, `TimeServers` in `adapters/time_servers.py`. So no handler waits on the network, and a name lookup that hangs holds up neither the other server nor the order path. No cancel waits on a first answer. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and [#165](https://github.com/l3a0/ithildin-runtime/issues/165) hold when each process starts its threads, waits for a first answer and stops them. [Who judges the clock](#who-judges-the-clock-and-who-records-it) names the processes.
 
 #### How one answer is read
 
@@ -623,9 +623,9 @@ A reading reads the raw clock, the wall clock and the raw clock again, and moves
 | The answer is older than `SYNC_BOUND`, 300 seconds | The server, the age, the bound, and why the newest ask to end failed, or that none has ended since |
 | The offset, taken as positive, plus its error is past `CLOCK_BOUND`, one second | The server, the offset, whether the clock is slow or fast, the error and the bound |
 
-At a bound is no fault. An ask that hangs or a thread that dies after a failed ask still shows that failure, so a reason cannot tell a stuck thread from a server that stays out. A reading with no answers at all, which a history clock gives, is a fault where the run measures its clock and none where it does not, as [Who judges the clock](#who-judges-the-clock-and-who-records-it) says.
+At a bound is no fault. An ask that hangs or a thread that dies after a failed ask still shows that failure, so a reason cannot tell a stuck thread from a server that stays out. A reading with no answers at all, which a history clock gives, is none only where the run was told it does not measure its clock, as [Who judges the clock](#who-judges-the-clock-and-who-records-it) says.
 
-This doc proposes two things here for [#134](https://github.com/l3a0/ithildin-runtime/issues/134). The bound on an answer's age is 300 seconds, about four asks of the slower server. And both servers have to be fresh and within the bound, so there is no vote to win. While the other server's answers arrive, a forged or broken answer can only halt. With the other's answers withheld, a forged one can hide what neither of the machine's clocks shows, such as a pause of the virtual machine, until that server's last answer is 300 seconds old.
+This doc proposes two things here for [#134](https://github.com/l3a0/ithildin-runtime/issues/134). The bound on an answer's age is 300 seconds, about four asks of the slower server. And both servers have to be fresh and within the bound, so there is no vote to win. A forged or broken answer from one can only halt, apart from hiding what neither of the machine's clocks shows, such as a pause of the virtual machine, until the other server's next answer, or for 300 seconds without one. Both forged hide any fault.
 
 #### Who judges the clock, and who records it
 
@@ -639,20 +639,20 @@ This doc proposes two things here for [#134](https://github.com/l3a0/ithildin-ru
 
 Until [#165](https://github.com/l3a0/ithildin-runtime/issues/165) is built, nothing checks the clock between data's read and a submit. A later capture whose own clock is past a bound halts nothing in data, because the first capture counts. It raises the alarm that names the difference, and the check [#165](https://github.com/l3a0/ithildin-runtime/issues/165) holds is what stops an order then. The receive loop judges no clock, because it serves cancels and the stages that read no clock, and a halt there would stop both.
 
-Whether a run measures its clock is `measured`, which data's handler takes with no default. Shadow, paper and live hand it true, so a history clock wired into a trading run halts. A backtest, the first run over past sessions and the command that measures a stress move hand it false. A replay of a recorded session hands `HistoryClock` the readings that session recorded, passes the `measured` that session passed, and the one rule judges them as it did then. Those readings are data's, one a decision.
+Whether a run measures its clock is `measured`, which data's handler takes with no default. Shadow, paper and live hand it true, so a history clock wired into a trading run halts. A backtest, the first run over past sessions and the command that measures a stress move hand it false. A replay of a recorded session hands `HistoryClock` the readings that session recorded, passes the `measured` that session passed, and the one rule judges them as it did then. Those readings are data's, each from the capture that counts for its decision.
 
 #### What nothing here can see
 
 1. A pause of the virtual machine that stops both of its clocks, until the next answer. That is about 17 seconds with both servers answering, about 65 with the public one alone, and up to the 300 seconds of `SYNC_BOUND` with neither.
 2. An error common to both of Amazon's servers. The comparison with the broker's clock, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) holds, is the check that is not Amazon's, and shadow has no broker.
-3. A pause of just over 1 to under 2 seconds where the paths to both servers are slow. The simulation on [#134](https://github.com/l3a0/ithildin-runtime/issues/134)'s plan, which no test holds, left one unfaulted for most of `SYNC_BOUND`, with the true error under 2 seconds.
-4. A step of the clock inside data's read. The reading judges the clock as the read ended, so the step shows only as the gap between `quotes_read_at` and the reading's `read_at`.
+3. A pause of a little over a second where the paths to both servers are slow. The simulation on [#134](https://github.com/l3a0/ithildin-runtime/issues/134)'s plan, which no test holds, left one unfaulted for most of `SYNC_BOUND`, with the true error under 2 seconds.
+4. A step of the clock inside data's read that leaves it right by the end. The reading judges the clock as the read ended, and a stamp the read took before the step is wrong.
 
 #### What measuring the clock costs
 
 The price is seven things.
 
-1. Two threads in each instance of three components, six processes on slice 1's one machine and nine across a cluster. An environment sends 33.8 asks a minute to the link-local server and 8.4 to the public one while every ask is answered, and more while they fail. AWS allows [1,024 packets a second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-ec2-ntp.html) to its link-local services together, and no page of its read here states a limit for the public one.
+1. Two threads in each instance of three components, six processes on slice 1's one machine and nine across a cluster. At nine processes an environment sends at most 33.8 asks a minute to the link-local server and 8.4 to the public one while every ask is answered, and more while they fail. AWS allows [1,024 packets a second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-ec2-ntp.html) to its link-local services together, and no page of its read here states a limit for the public one.
 2. A reply of 48 bytes that nothing authenticates, parsed in the process that holds the broker key.
 3. Outbound UDP 123 and DNS, for the public server. Its address comes from a lookup nothing authenticates, so the rule that lets it out reaches any address unless [#32](https://github.com/l3a0/ithildin-runtime/issues/32) can pin the server's.
 4. A 300-second outage of either server, or of DNS for the public one, halts. Each halt is final for its decision, its exits included. Nobody has measured how often that happens, so shadow reports it first, on [#166](https://github.com/l3a0/ithildin-runtime/issues/166).

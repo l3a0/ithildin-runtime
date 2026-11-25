@@ -205,7 +205,7 @@ def _half(us: int) -> int:
 
 @dataclass(frozen=True)
 class _State:
-    """What one server last said, how its newest ask failed, and when it is next due."""
+    """What one server last said, how its newest ask to end failed, and when it is next due."""
 
     due: int | None = None
     pause: int = 0

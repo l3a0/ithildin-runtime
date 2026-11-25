@@ -409,7 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
-  idea is a person's panic button that cuts risk (L994). Also owns the halts on the clock's offset from each time server and on the age of each server's last answer. Holds the rule for what a halt
+  idea is a person's panic button that cuts risk (L994). Also owns the halts on the clock's offset from each time server, on the age of each server's last answer, on no answer and on no time server asked. Holds the rule for what a halt
   and the kill switch cancel and keep at the broker, per the design doc. No clock or cutoff reading stops a sort's adding cancel or a pair-keeping cancel, so a clock that failed its check holds neither back. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
