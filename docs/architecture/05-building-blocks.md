@@ -103,7 +103,7 @@ flowchart TB
     exec_send --> outcome --> mon_report
 
     subgraph adapters["Adapters, which each worker's entry point builds"]
-        lakesrc["Read-only bucket<br/>marketlake's S3 bucket, or a folder holding its lake"]
+        lakesrc["Two read-only buckets<br/>marketlake's lake and its live segments,<br/>in S3 or in two folders"]
         clock["History clock or wall clock"]
         timer["Timer<br/>reads wall time and a monotonic clock, and tests fake it"]
         broker["Simulated or paper broker"]
@@ -112,7 +112,7 @@ flowchart TB
         queue["Queue<br/>SQS, or a named pipe fed by the memory-backed folder"]
     end
 
-    lakesrc -. "Bucket, read through data's mirror" .-> data
+    lakesrc -. "Bucket, the lake read through data's mirror" .-> data
     clock -. "Clock" .-> data
     timer -. "Timer, for deadlines" .-> sup
     timer -. "Timer, for deadlines" .-> mon_report
@@ -168,10 +168,10 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | A folder holding marketlake's lake, the bars a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
-| Shadow | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until the data source holds the official close at the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten | The shadow environment's bucket, with the shadow journal | Sent |
-| Paper | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
-| Live | marketlake's S3 bucket, captured bars, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
+| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market order at the decision quote, a buy at the ask and a sell at the bid, and a market-on-close order at the official close | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until the data source holds the official close at the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten | The shadow environment's bucket, with the shadow journal | Sent |
+| Paper | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
+| Live | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
 which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless [#114](https://github.com/l3a0/ithildin-runtime/issues/114) lifts that halt. Shadow
@@ -203,7 +203,7 @@ flowchart LR
 [design.md](../design.md#one-runtime) names the three adapters that change what a
 strategy sees:
 
-1. The data source's bucket, a folder in a backtest and marketlake's S3 bucket otherwise.
+1. The data source's two buckets, folders in a backtest and two prefixes of marketlake's S3 bucket otherwise.
 2. The clock.
 3. The broker.
 
@@ -320,7 +320,15 @@ classDiagram
         +dict flags
         +list segments
         +dict ledgers
+        +dict rows
+        +list faults
+        +datetime or None quotes_read_at
         +require_fresh(needed)
+    }
+    class Segment {
+        +str key
+        +str version
+        +str sha256
     }
     class SpikeFlag {
         +date session
@@ -332,14 +340,26 @@ classDiagram
     }
     class Quote {
         +InstrumentId instrument
-        +datetime at
-        +Decimal bid
-        +Decimal ask
-        +Decimal last
-        +str vendor_stamp
-        +datetime fetched_at
-        +bool realtime
-        +int volume
+        +Decimal or None bid
+        +Decimal or None ask
+        +Decimal or None last
+        +int or None volume
+        +datetime or None bid_at
+        +datetime or None ask_at
+        +datetime or None last_at
+        +datetime or None fetched_at
+        +datetime captured_at
+        +bool or None realtime
+        +str or None status
+        +str price_kind
+        +str last_kind
+        +str venues
+        +str volume_counted
+        +str normal_status
+        +int or None max_age
+        +Decimal or None max_spread_share
+        +dict received
+        +list excess_places
     }
     class Basket {
         +dict legs
@@ -675,6 +695,7 @@ classDiagram
 
     Snapshot o-- Bar
     Snapshot o-- Quote
+    Snapshot o-- Segment
     Snapshot o-- SpikeFlag
     Bar --> Instrument
     Quote --> Instrument
@@ -848,7 +869,8 @@ classDiagram
     }
     class Bucket {
         <<Protocol>>
-        +read(key) BucketObject
+        +list(prefix) list
+        +read(key, version) BucketObject
     }
     class BucketObject {
         +str key
@@ -1081,7 +1103,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `volume` | The volume, or `None` where marketlake holds none, as on both Chan vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. A reader takes a field that holds no word as `unstated` too. The data module copies the four fields into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored. `Quote`'s fields are [#100](https://github.com/l3a0/ithildin-runtime/issues/100)'s.
+A bar also names each price's kind, the venues it covers and any delay from its source, and its volume how it was counted, in `price_kind`, `venues`, `delay` and `volume_counted`, with a field no source states recorded as `unstated` unless an owner's ruling that the contract's `read_from` names states it, as the rule that [a recorded price states what kind of price it is](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) requires. A reader takes a field that holds no word as `unstated` too. The data module copies the four fields into each bar from its price-kind contract, `data/price_kinds.csv`, a tracked file that is dated and only ever added to, so a later row never changes what a recorded bar says. A needed bar of `unstated` kind halts the decision once its snapshot is stored.
 
 `vintage_id` and `first_seen` come from the data engineer's duty, in [the charter](../team-charter.md), to store when each value became available (*Inside the Black Box*, Kindle location L3884). `end` and `interval` let one daily bar and minute bars of the same instrument sit side by side, keyed in a snapshot by instrument and interval.
 
@@ -1091,18 +1113,42 @@ The data source applies one rule in every mode: `snapshot(decision_at)` returns 
 
 1. A minute bar's `end` is marketlake's `bar_ts` plus its interval.
 2. A daily bar's `end` is its session's close from the calendar.
-3. A captured bar's knowable time is marketlake's `fetch_ts`, when the request left, and a stamp with no stated zone halts the decision. `fetch_end_ts`, when the answer arrived, is kept beside it, and [#100](https://github.com/l3a0/ithildin-runtime/issues/100) decides again which of the two counts when it first reads captured days.
+3. A captured bar's knowable time is marketlake's `fetch_end_ts`, when the answer arrived, because that is the earliest the platform could have held it. A captured bar with none halts the decision, and so does a stamp with no stated zone. `fetch_ts`, when the request left, is kept beside it. A daily bar is fetched the evening before the decision that reads it, so no daily decision turns on which of the two counts.
 4. An imported bar's knowable time is its `end`, even where its row carries fetch stamps. A vintage records only `source_as_of`, the date its source recorded the whole series, which is 2012-04-10 for both Chan vintages and 2026-11-22 for both Yahoo files. Read as the knowable time, it would leave no bar of a vintage recorded after its sessions knowable before any past decision, so a backtest over recorded history could never run. A backtest over imported rows states that assumption and names `source_as_of` as the date after which the vintage can carry corrections. USO's Yahoo prices before 2020-04-29 are eight times those that traded and its volume an eighth, as USO's row in `data/price_kinds.csv` states, on a factor in effect only from 2020-04-29. So a backtest there holds an eighth as many shares as the same dollars bought then. A per-share cost reads an eighth of what it was, a share cap binds late, and a share of the volume is unchanged. `adjusted` does not say the scale, because Chan's bars read `adjusted` too.
 
 ##### What a quote and a snapshot's flags carry
 
-A `Quote` keeps the vendor's stamp as received, the capture time, whether the quote was real time, and its volume, which [#16](https://github.com/l3a0/ithildin-runtime/issues/16) asks for.
+A `Quote` is one row of one capture, with what it was read under. `core.quote_faults` judges it, as [How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) says, and nothing in the record is judged.
 
-A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A flag from the contradiction rule halts the decision once its snapshot is stored, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar.
+**Table:** A quote's fields
+
+| Field | What it holds |
+| --- | --- |
+| `bid`, `ask`, `last` | The price as received, or `None` where it was null, not finite or past the codec's digits |
+| `volume` | The session's volume so far, or `None` where it was null or past the codec's integer |
+| `bid_at`, `ask_at`, `last_at` | The UTC instant of Schwab's own stamp on each price, or `None` where the stamp is null or no instant |
+| `fetched_at`, `captured_at` | When the request left and when the response landed, by the capture host's clock. The first is `None` where its stamp is null or no instant, and nothing reads it to decide |
+| `realtime`, `status` | Schwab's flag and its security status, or `None` |
+| `price_kind`, `last_kind`, `venues`, `volume_counted`, `normal_status` | Copied from the data module's quote-kind contract, `data/quote_kinds.csv`, a tracked file under the price-kind contract's rules. `price_kind` is the bid's and the ask's. It ships with no row, so every live quote halts until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) adds the first |
+| `max_age`, `max_spread_share` | The maximum age in seconds and the maximum spread as a share of the midpoint that its strategies write, or `None` |
+| `received` | Every column of the row by name, as text, a float as its shortest form and a null as `None` |
+| `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
+
+A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built with two. Five more of its fields say what its decision read of an unsealed day.
+
+1. `provisional` is true exactly when the decision read segments.
+2. `segments` names each segment opened, by key, the bucket's version and the SHA-256 the bucket stored with it.
+3. `rows` holds every other row marketlake's reader returned, as text, whether or not the decision halts, because the gate can refuse a quote after the snapshot is stored.
+4. `faults` holds each reason the read of the quotes failed, in order.
+5. `quotes_read_at` is the data worker's clock after the bucket's last answer, and `None` exactly when `provisional` is false.
+
+The data module's file format is 2. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
+
+A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A bar's flag from the contradiction rule halts the decision once its snapshot is stored, a quote's adds no halt to the judge's, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 
-A snapshot is the set of bars one decision read, each pointing at the partition that holds it. A module calls `require_fresh(needed)` before reading, naming each instrument it needs and the intervals it reads of it, such as the daily bar. It raises `Halt` when any of them is absent from the snapshot or missing or stale. It also halts when any other instrument the snapshot holds is not fresh or holds no bar. So the default when something is absent is to stop, even when Data left an instrument or an interval out rather than marking it missing.
+A snapshot is the set of bars and quotes one decision read, each bar pointing at the partition that holds it. A module calls `require_fresh(needed)` before reading, naming each instrument it needs and the intervals it reads of it, such as the daily bar. It raises `Halt` when any of them is absent from the snapshot or missing or stale. It also halts when any other instrument the snapshot holds is not fresh or holds no bar. So the default when something is absent is to stop, even when Data left an instrument or an interval out rather than marking it missing.
 
 #### Only `OrderPath` holds a `Broker`
 
@@ -1271,7 +1317,7 @@ A refusal names the first of these that applies, so the same order always names 
 
 `OrderPath` replays the book from the journal just before each check. So the gate counts every order already approved or sending, including those of an earlier attempt, each at its worst case for each limit. The order being checked is not yet in that book, and one whose id already is halts, because checking it would resend it.
 
-Each instrument has one price, its **mark**, the newest daily bar's close, through `core.mark`. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its bar is later than V's session and no later than the decision's. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position, as [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured) says. `core.mark` halts on any daily bar of the instrument that ends or was knowable after the decision. It also calls `Snapshot.require_fresh()`, so once any instrument is priced, one that is not fresh halts.
+Each instrument has one price, its **mark**, through `core.mark`. It is the midpoint of the instrument's quote where the snapshot holds one, and its newest daily bar's close where it holds none. The day's loss is measured from V, the account's valuation at the prior session's closes, so a mark halts unless its price is of a session later than V's and no later than the decision's, and unless a quote's older stamp is later than V's close. A quote captured today can carry a stamp at or before it, under a maximum age longer than the night, and a book marked there would read no loss. The mark holds this and not the judge of a quote. A stamp later that evening passes, and how old one may be is its strategy's written maximum. A quote beside a bar of the decision's session halts, because nothing says which of the two is the mark. The gate judges the quote as of its own `now`, as [When the age is measured](03-context-and-scope.md#when-the-age-is-measured) says. `core.mark` halts on any daily bar of the instrument that ends or was knowable after the decision. It also calls `Snapshot.require_fresh()`, so once any instrument is priced, one that is not fresh halts.
 
 ##### What each limit compares
 
@@ -1437,7 +1483,7 @@ A halt in data's result or in recover's is passed on. Every other halt the handl
 1. A `[risk]` section that is absent, leaves a field out, holds one the form lacks, names other instruments than the strategy's in a table, or holds a value `core` refuses. The check runs at each decision, so a bad section stops this stage and never the worker's start.
 2. An input with no result or one storage refuses, a result that lists one of the four files other than once, a file storage refuses or that holds other than one entry, and a snapshot of another decision.
 3. Caps or a valuation that `core.tighten` refuses, caps [the stress records do not hold](#how-the-caps-are-held-to-the-stress-moves-record), a V of any session but the one before the decision's, and a stress move past its age. A file of records that cannot be read halts each decision, and never the worker's start.
-4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that holds a position or has an open order.
+4. A book the snapshot cannot mark, for each instrument with a position or an open order, because no limit in dollars can be read for it. Its quote is judged at the decision time, because the stage reads no clock.
 5. Two strategies in one deployment, because what scope each one's limits take is not decided.
 6. A write storage refuses, such as constraints already stored with other bytes.
 
@@ -1635,7 +1681,7 @@ A halt in any input is passed on, the first in the order the stage reads them. E
 6. An instrument the strategy holds shares of, or has an open order in, that the forecast does not name. This doc proposes that for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), because a target of zero there would sell a position nobody forecast.
 7. A leg that is not a finite number, or a basket whose legs are all zero.
 8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, caps [the stress records do not hold](#how-the-caps-are-held-to-the-stress-moves-record), a share step of another form than the ten, and a leg no limit names.
-9. A leg `core.mark` cannot price. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision here, where the book is flat, and at the risk stage where it holds anything.
+9. A leg `core.mark` cannot price, its quote judged at the decision time.
 10. A share count, of the target or before any limit, too large for a record to hold.
 11. A held direction sized to zero shares in every leg.
 12. A write storage refuses, such as a target already stored with other bytes.
@@ -1770,7 +1816,7 @@ An arrow means "may import". The diagram draws four rules.
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `moves`, `largest_move` and `stress_vintage`, which measure the stress move and name the bars it read, the tracked stress records and their reader, and `hold_to_record`, which holds the caps to them, because the gate, the risk model and portfolio construction each call it;
-   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, `quote_faults`, `require_quote` and `midpoint`, the one judge of a quote and the price read of one, with `CLOCK_BOUND`, the bound added to every age, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
    - `reconcile`, the one comparison of a book with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.

@@ -23,6 +23,7 @@ from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     BOOK_OUTPUT,
     CAPS_OUTPUT,
+    CLOCK_BOUND,
     CONSTRAINTS_OUTPUT,
     FORECAST_OUTPUT,
     PORTFOLIO_STAGE,
@@ -98,12 +99,14 @@ from tests.support.gates import (
     d,
     fitting,
     order,
+    quoted,
     snapshot,
     stress_record,
     valuation,
 )
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
+from tests.support.quotes import MAX_AGE
 from tests.test_risk import (
     DEPLOYMENT,
     MOVES,
@@ -980,7 +983,7 @@ def test_5_a_share_step_of_another_form_halts(direction, written, shown) -> None
 @pytest.mark.parametrize(
     ("marked", "reason"),
     [
-        # Before #100 every close−20 decision halts here, even from flat.
+        # A close−20 decision that read no quote halts here, even from flat.
         (
             snapshot(MARKS, day=PRIOR),
             "GLD has no mark: its newest bar is for 2026-11-02, not later than 2026-11-02",
@@ -995,6 +998,27 @@ def test_5_a_share_step_of_another_form_halts(direction, written, shown) -> None
 )
 def test_5_a_leg_with_no_price_halts(direction, marked, reason) -> None:
     assert refused(direction=direction, marked=marked) == reason
+
+
+TICK = timedelta(microseconds=1)
+EDGE = DECISION - timedelta(seconds=MAX_AGE) + CLOCK_BOUND
+# Sides whose midpoints are the marks every hand figure here is worked out at.
+SIDES = {GLD: ("99.5", "100.5"), USO: ("49.75", "50.25")}
+
+
+@DIRECTIONS
+def test_5_a_decision_is_sized_at_the_midpoints_of_its_quotes(direction) -> None:
+    """The bid, the ask, the last sale and the bar's close are each another price."""
+    assert sized(direction, marked=quoted(SIDES)) == sized(direction)
+
+
+@DIRECTIONS
+def test_5_a_quote_is_judged_at_the_decision_time(direction) -> None:
+    at_edge = quoted(SIDES, ask_at=EDGE)
+    assert sized(direction, marked=at_edge) == sized(direction)
+    late = quoted(SIDES, ask_at=EDGE - TICK)
+    reason = refused(direction=direction, marked=late)
+    assert reason.startswith("GLD's quote cannot be read: its ask has the stamp")
 
 
 def test_5_a_decision_at_the_close_is_sized_as_one_before_it() -> None:

@@ -69,7 +69,10 @@ def answer(
 ) -> Answer:
     caps, v = inputs.caps, _f(inputs.valuation.value)
     prices = {
-        i: _f(max(by["1d"], key=lambda b: b.session).close) for i, by in snapshot.bars.items()
+        i: (_f(quote.bid) + _f(quote.ask)) / 2
+        if (quote := snapshot.quotes.get(i)) is not None
+        else _f(max(by["1d"], key=lambda b: b.session).close)
+        for i, by in snapshot.bars.items()
     }
 
     # The largest of the caps' own move and of every record of the strategy whose leg it limits.

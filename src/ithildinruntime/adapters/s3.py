@@ -12,12 +12,14 @@ gives. Any answer not listed here, and no answer at all, is
 
 - 412 PreconditionFailed is `KeyExists` on a create and `StaleTag` on a
   rewrite.
-- 404 NoSuchKey is `BlobMissing` on a read or a rewrite. Any other 404, such
-  as NoSuchBucket, and any 404 on a create or a listing, is
-  `StoreUnavailable`, because a missing bucket says nothing about the key. A
-  lookup's reply carries no code, so `head` reads every 404 as `BlobMissing`,
-  a missing bucket included, and the storage contract retries a lookup that
-  follows a refused create rather than trusting it.
+- 404 NoSuchKey is `BlobMissing` on a read or a rewrite, and so is 404
+  NoSuchVersion, which only the read-only bucket can meet, because only its
+  read names a version. Any other 404, such as NoSuchBucket, and any 404 on a
+  create or a listing, is `StoreUnavailable`, because a missing bucket says
+  nothing about the key. A lookup's reply carries no code, so `head` reads
+  every 404 as `BlobMissing`, a missing bucket included, and the storage
+  contract retries a lookup that follows a refused create rather than trusting
+  it.
 - BadDigest, or a checksum S3 says is invalid, is `ChecksumMismatch`.
 - 409 ConditionalRequestConflict, a conditional write racing another, is
   `Conflict`, a kind of `StoreUnavailable`, so a create is tried again and
@@ -59,7 +61,7 @@ __all__ = ["S3Store"]
 R = TypeVar("R")
 
 _EXISTS = {"PreconditionFailed"}
-_MISSING_KEY = {"NoSuchKey", "404", "NotFound"}
+_MISSING_KEY = {"NoSuchKey", "NoSuchVersion", "404", "NotFound"}
 _DIGEST = {"BadDigest"}
 
 

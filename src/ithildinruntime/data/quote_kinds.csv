@@ -1,0 +1,10 @@
+# The quote-kind contract: what each source states about its quotes.
+# Rows are only ever added, each dated by `added`. A row that states what an earlier
+# row left `unstated`, or corrects it, is a new row with a later `added` date, which
+# supersedes the earlier row on the sessions both cover. Two rows of one source added
+# on one date never cover the same session. A field the source does not state reads
+# `unstated`, and so does a session outside its row's span, the last session included,
+# which is always written. `price_kind` is the bid's and the ask's, and `normal_status`
+# the security status of an instrument that trades normally. `read_from` says what the
+# row was read from. tests/test_data_files.py pins every row.
+added,source,first_session,last_session,price_kind,last_kind,venues,volume_counted,normal_status,read_from

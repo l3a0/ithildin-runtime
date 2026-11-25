@@ -31,9 +31,9 @@ from ithildinruntime.core import (
     value_book,
     worth,
 )
-from tests.core_samples import sample
 from tests.support.gates import (
     CHAN,
+    DECISION,
     GLD,
     OTHER,
     PRIOR,
@@ -48,11 +48,13 @@ from tests.support.gates import (
     snapshot,
     utc,
 )
+from tests.support.quotes import quote
 
 TICK = timedelta(microseconds=1)
 OPEN = TABLE.session(TODAY).open
 # A bar that ended and was known long before any decision here.
 LONG_AGO = {"end": utc(2026, 11, 1), "knowable_at": utc(2026, 11, 1)}
+AT = DECISION
 MARKS = snapshot({GLD: "100.5", USO: 10}, prior={GLD: 99, USO: 11})
 
 
@@ -80,8 +82,8 @@ def _status(instrument: InstrumentId, status: BarStatus) -> Snapshot:
 
 
 def test_the_mark_is_the_newest_daily_bars_close() -> None:
-    assert mark(MARKS, GLD, PRIOR) == d("100.5")
-    assert mark(_with(tuple(reversed(MARKS.bars[GLD]["1d"]))), GLD, PRIOR) == d("100.5")
+    assert mark(MARKS, GLD, PRIOR, AT) == d("100.5")
+    assert mark(_with(tuple(reversed(MARKS.bars[GLD]["1d"]))), GLD, PRIOR, AT) == d("100.5")
 
 
 FOUR = {
@@ -178,8 +180,8 @@ MARK_HALTS: dict[str, tuple[Snapshot, str]] = {
         for said in ("unstated", "", " ", None)
     },
     "a-quote": (
-        replace(MARKS, quotes={GLD: replace(sample(core.Quote), instrument=GLD)}),
-        "GLD has a quote, and no rule says which of its prices is the mark",
+        replace(MARKS, quotes={GLD: quote(GLD, 1, 1, AT)}),
+        "GLD has a quote and a bar for 2026-11-03, and nothing says which is the mark",
     ),
 }
 
@@ -190,11 +192,11 @@ def test_5_a_bar_of_the_session_a_decision_opens_is_read_at_its_open() -> None:
     at_open = replace(
         at_open, bars={GLD: {"1d": (replace(old, **LONG_AGO), new)}}, status={GLD: BarStatus.FRESH}
     )
-    assert mark(at_open, GLD, PRIOR) == d("100.5")
+    assert mark(at_open, GLD, PRIOR, AT) == d("100.5")
     assert value_book(book({CHAN: {GLD: 1}}, cash=0), at_open, TODAY).value == d("100.5")
     early = replace(at_open, decision_at=OPEN - TICK)
     for read in (
-        lambda: mark(early, GLD, PRIOR),
+        lambda: mark(early, GLD, PRIOR, AT),
         lambda: value_book(book({CHAN: {GLD: 1}}), early, PRIOR),
     ):
         with pytest.raises(Halt, match="after the decision's session 2026-11-02"):
@@ -205,24 +207,24 @@ def test_5_a_bar_of_the_session_a_decision_opens_is_read_at_its_open() -> None:
 def test_5_the_mark_halts_naming_the_instrument(name: str) -> None:
     broken, reason = MARK_HALTS[name]
     with pytest.raises(Halt, match=reason):
-        mark(broken, GLD, PRIOR)
+        mark(broken, GLD, PRIOR, AT)
 
 
 def test_5_two_bars_of_one_session_halt() -> None:
     twice = _with((*MARKS.bars[GLD]["1d"], MARKS.bars[GLD]["1d"][1]))
     with pytest.raises(Halt, match="GLD has 2 daily bars for 2026-11-03, not one"):
-        mark(twice, GLD, PRIOR)
+        mark(twice, GLD, PRIOR, AT)
 
 
 def test_5_a_mark_is_later_than_the_session_it_is_compared_with() -> None:
-    assert mark(MARKS, GLD, date(2026, 11, 2)) == d("100.5")
+    assert mark(MARKS, GLD, date(2026, 11, 2), AT) == d("100.5")
     with pytest.raises(Halt, match="not later than 2026-11-03"):
-        mark(MARKS, GLD, TODAY)
+        mark(MARKS, GLD, TODAY, AT)
 
 
 def test_another_instruments_quote_does_not_hold_this_one() -> None:
-    beside = replace(MARKS, quotes={USO: replace(sample(core.Quote), instrument=USO)})
-    assert mark(beside, GLD, PRIOR) == d("100.5")
+    beside = replace(MARKS, quotes={USO: quote(USO, 1, 1, AT)})
+    assert mark(beside, GLD, PRIOR, AT) == d("100.5")
 
 
 # The issue's own example: long 100 with a working sale of 30, and a sale of 90 to check.
