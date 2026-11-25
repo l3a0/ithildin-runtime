@@ -322,6 +322,8 @@ class Journal:
             if not _ENTRY_NAME.fullmatch(name):
                 raise Halt(f"journal {self._account}: {key} is not an entry's key")
             number = int(name[:12])
+            if number <= seq:
+                raise Halt(f"journal {self._account}: the listing returned {key} after entry {seq}")
             if number == seq + 1:
                 data = self._get(key)
             else:

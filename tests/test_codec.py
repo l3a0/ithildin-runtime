@@ -470,3 +470,10 @@ def test_text_that_is_no_unicode_is_refused_both_ways(escaped: str) -> None:
     data = b'{"raw":{"data":"%s","encoding":"utf-8"},"value":null}' % escaped.encode()
     with pytest.raises(core.CodecError, match="raw holds text that is no Unicode"):
         core.decode(data, kind)
+
+
+@pytest.mark.parametrize("data", ["*", "\u00e9", "YQ", "Y Q=="])
+def test_a_body_that_is_no_base64_is_refused(data: str) -> None:
+    body = json.dumps({"raw": {"data": data, "encoding": "base64"}, "value": None}).encode()
+    with pytest.raises(core.CodecError, match="raw is not base64"):
+        core.decode(body, core.BrokerRead)

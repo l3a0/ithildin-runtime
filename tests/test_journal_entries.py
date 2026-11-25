@@ -683,7 +683,9 @@ FROZEN = {
 
 @pytest.mark.parametrize("kind", FROZEN, ids=lambda kind: kind.__name__)
 def test_3_no_member_of_an_enumeration_an_entry_holds_is_renamed(kind: type) -> None:
-    assert {member.value for member in kind} == set(FROZEN[kind].split()), "add the new one above"
+    assert {member.value for member in kind} == set(FROZEN[kind].split()), (
+        "none may be renamed or removed, and a new one is added above"
+    )
 
 
 def test_3_every_enumeration_an_entry_can_hold_is_frozen_above() -> None:

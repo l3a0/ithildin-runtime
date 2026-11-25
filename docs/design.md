@@ -1505,10 +1505,11 @@ The price is five things.
    lets reconciliation explain in shadow or on paper.
 2. Each `Ack` entry carries the broker's order id and the order's details,
    one more mapping replay has to keep right.
-3. The stamp's length limit, whether Alpaca refuses a repeated client order
-   id, which its order reference does not say, and specific lot
-   identification need confirming on Alpaca's live account, which is the owner's
-   at the live gate, as [#153](https://github.com/l3a0/ithildin-runtime/issues/153) lists.
+3. The stamp's length limit and specific lot identification need confirming
+   on Alpaca's live account, which is the owner's at the live gate, as [#153](https://github.com/l3a0/ithildin-runtime/issues/153)
+   lists. Alpaca's order reference does not say whether it refuses a repeated
+   client order id, and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) leaves a repeated id on the paper account to
+   the owner to test.
    Nothing in the design rests on the refusal of a repeated id. It is a second line of
    defence to test, because the platform never resends an order and settles
    doubt by lookup.

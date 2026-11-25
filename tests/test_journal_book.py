@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     OrderState,
     OrderType,
     StoreUnavailable,
+    encode,
     journal_entry_key,
 )
 from ithildinruntime.journal import (
@@ -1257,7 +1258,7 @@ def test_7_an_entry_a_listing_missed_is_read_by_its_own_key() -> None:
 
 
 @pytest.mark.parametrize("gone", [(1,), (4,), (6,), (4, 5), (2, 6)])
-def test_7_an_entry_that_is_not_stored_is_a_gap_whatever_the_listing_shows(gone: tuple) -> None:
+def test_7_an_entry_that_is_neither_listed_nor_stored_is_a_gap(gone: tuple) -> None:
     made, _ = at("Acknowledged")
     store = Torn(made._store.blobs)
     for number in gone:
@@ -1265,6 +1266,82 @@ def test_7_an_entry_that_is_not_stored_is_a_gap_whatever_the_listing_shows(gone:
     store.missed = [gone]
     with pytest.raises(Halt, match=f"entry {gone[0]} is missing, and the next key is entry"):
         Journal(store, ACCOUNT).view()
+
+
+@pytest.mark.parametrize("extra", [0, 1, 3, 7])
+def test_7_a_key_that_comes_after_its_own_number_halts_at_every_view(extra: int) -> None:
+    made, _ = at("Acknowledged")
+
+    class Extra(Memory):
+        def list(self, prefix: str, after: str | None) -> list[str]:
+            return [*super().list(prefix, after), journal_entry_key(ACCOUNT, extra)]
+
+    store = Extra(made._store.blobs)
+    journal = Journal(store, ACCOUNT)
+    for _ in range(3):
+        with pytest.raises(Halt, match=f"the listing returned .*{extra}.json after entry 7"):
+            journal.view()
+
+
+def test_7_a_key_numbered_zero_halts_before_any_entry_is_read() -> None:
+    made, _ = at("Acknowledged")
+    store = Memory(made._store.blobs)
+    store.create(journal_entry_key(ACCOUNT, 0), b"{}", "")
+    journal = Journal(store, ACCOUNT)
+    for _ in range(3):
+        with pytest.raises(Halt, match="the listing returned .*000000.json after entry 0"):
+            journal.view()
+    with pytest.raises(Halt, match="000000.json after entry 0"):
+        journal.view(through=3)
+    assert store.gets == 0
+
+
+def test_7_an_entry_read_by_its_own_key_is_checked_as_a_listed_one_is() -> None:
+    made, _ = at("Acknowledged")
+    key = journal_entry_key(ACCOUNT, 4)
+    good = made._store.blobs[key]
+    for bad, match in (
+        (good.replace(b'"seq":4', b'"seq": 4'), "not a canonical"),
+        (good.replace(b'"seq":4', b'"seq":5'), "key of entry 4 holds seq 5"),
+        (good.replace(b'"format":1', b'"format":2'), "format 2"),
+        (encode(dataclasses.replace(next(made.read(after=3)), prev_hash="f" * 64)), "prev_hash"),
+        (made._store.blobs[journal_entry_key(ACCOUNT, 3)], "key of entry 4 holds seq 3"),
+    ):
+        store = Torn(made._store.blobs | {key: bad})
+        store.missed = [(4,)]
+        with pytest.raises(Halt, match=match):
+            Journal(store, ACCOUNT).view()
+
+
+def test_7_each_entry_of_a_gap_of_two_is_checked_against_the_one_before_it() -> None:
+    made, _ = at("Acknowledged")
+    for number in (2, 3):
+        entry = next(made.read(after=number - 1))
+        bad = encode(dataclasses.replace(entry, prev_hash="f" * 64))
+        store = Torn(made._store.blobs | {journal_entry_key(ACCOUNT, number): bad})
+        store.missed = [(2, 3)]
+        with pytest.raises(Halt, match=f"entry {number}'s prev_hash does not match"):
+            Journal(store, ACCOUNT).view()
+
+
+def test_7_a_store_that_does_not_answer_for_a_missed_entry_is_no_gap() -> None:
+    made, _ = at("Acknowledged")
+
+    class Quiet(Torn):
+        quiet = 1
+
+        def get(self, key: str) -> bytes:
+            if self.quiet and key == journal_entry_key(ACCOUNT, 4):
+                self.quiet = 0
+                raise StoreUnavailable(key, "no answer")
+            return super().get(key)
+
+    store = Quiet(made._store.blobs)
+    store.missed = [(4,)]
+    journal = Journal(store, ACCOUNT)
+    with pytest.raises(StoreUnavailable, match="no answer"):
+        journal.view()
+    assert shown(journal.view()) == shown(made.view())
 
 
 def test_7_no_view_ends_short_of_an_entry_its_listing_showed() -> None:

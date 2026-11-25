@@ -21,7 +21,6 @@ canonical encoding of what it parsed.
 from __future__ import annotations
 
 import base64
-import binascii
 import dataclasses
 import json
 import re
@@ -476,6 +475,7 @@ def _read_body(value: object, where: str) -> bytes:
     if form == _BASE64:
         try:
             return base64.b64decode(data, validate=True)
-        except binascii.Error as error:
+        except ValueError as error:
+            # `binascii.Error` is one, and text that is not ASCII raises the plain one.
             raise CodecError(f"{where} is not base64") from error
     raise CodecError(f"{where} names an encoding {form!r} the codec does not know")
