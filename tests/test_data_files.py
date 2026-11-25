@@ -52,10 +52,39 @@ _SPLIT = {
     "gld": "",
     "uso": " after Yahoo's factor of 8 for USO's one-for-eight reverse split of 2020",
 }
+_IMPORTED = (
+    "owner's ruling of 2026-11-24 on #137 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7152659296. "
+    "l3a0/marketlake#1025 pins the file at sha256 {sha} and sets its later years beside two other "
+    "vendors. Its closes equal Chan's on all 1500 sessions from 2006-04-26 to 2012-04-09{split} "
+    "and the owner's ruling of 2026-11-22 on #5 gave the kind of Chan's as Yahoo's.{scale} "
+    "Consolidated is measured from 2025 on and inferred before it. Yahoo publishes no statement "
+    "of its close so official close is the usual meaning of a Yahoo close for a US ETF"
+)
+_SHA = {
+    "gld": "b6675ed455acf0174854377f8a51061fb18c0b1bf0a9a0f7632ac557b6fcb4f9",
+    "uso": "72bb286f57f637c9ef517b98631a68f7e8f2d7869af4935441b555b11f60d561",
+}
+_SCALE = {
+    "gld": "",
+    "uso": (
+        " Prices and volume before 2020-04-29 are on the scale after that split: prices are "
+        "eight times those that traded and volume is divided by eight."
+    ),
+}
+_COUNTED = {
+    "gld": "consolidated in shares to the nearest hundred",
+    "uso": "consolidated in shares to the nearest hundred before its source's split adjustment",
+}
 KIND_ROWS = [
     f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
     f"official close,consolidated,none,consolidated in hundreds of shares,"
     f"{_YAHOO.format(split=_SPLIT[name], volume=_VOLUME[name])}"
+    for name in ("gld", "uso")
+] + [
+    f"2026-11-25,yahoo:{name}_daily_yahoo_2026-11-22.csv,2012-04-10,2026-09-03,"
+    f"official close,consolidated,none,{_COUNTED[name]},"
+    f"{_IMPORTED.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
     for name in ("gld", "uso")
 ]
 
@@ -80,6 +109,34 @@ def test_every_row_held_when_it_was_added_is_still_there_unchanged(
 def test_both_files_load() -> None:
     assert len(load_master().rows) == len(MASTER_ROWS)
     assert len(load_price_kinds().rows) == len(KIND_ROWS)
+
+
+CHAN = "quantitative-trading:data/inputdata_etf/{}.csv"
+YAHOO = "yahoo:{}_daily_yahoo_2026-11-22.csv"
+NOTHING = Kind("unstated", "unstated", "unstated", "unstated")
+
+
+@pytest.mark.parametrize("name", ["gld", "uso"])
+@pytest.mark.parametrize(
+    ("source", "before", "first", "last", "after"),
+    [
+        (CHAN, date(2006, 4, 25), date(2006, 4, 26), date(2012, 4, 9), date(2012, 4, 10)),
+        (YAHOO, date(2012, 4, 9), date(2012, 4, 10), date(2026, 9, 3), date(2026, 9, 4)),
+    ],
+)
+def test_a_session_on_each_side_of_each_rows_edges_reads_the_kind_it_should(
+    name: str, source: str, before: date, first: date, last: date, after: date
+) -> None:
+    """Item 4 of the acceptance of #137, whose rows the owner's two rulings state."""
+    kinds, own = load_price_kinds(), source.format(name)
+    counted = "consolidated in hundreds of shares" if source == CHAN else _COUNTED[name]
+    stated = Kind("official close", "consolidated", "none", counted)
+    assert [kinds.kind(own, day) for day in (before, first, last, after)] == [
+        NOTHING,
+        stated,
+        stated,
+        NOTHING,
+    ]
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"
