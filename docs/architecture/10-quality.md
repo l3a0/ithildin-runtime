@@ -25,8 +25,8 @@ Chan's script assumes. The paper run
 trades that close too, with market-on-close orders, so both fill at the same
 price. The two still decide at different times. Test 1's deployment decides
 at the close, on the imported daily bars, through a simulated account whose
-cutoff is the close, because a close−20 decision there would see only the day
-before's close and shift every signal a session. The paper deployment
+cutoff is the close, because a close−20 decision there would halt: data reads a
+quote of each leg inside a session, and the vintages hold none. The paper deployment
 decides at close−20, because no live decision can read a close that has not
 happened. Test 1 checks the engine against Chan's timing. A backtest of the
 deployed close−20 schedule needs minute history at that minute that the imported
@@ -36,8 +36,9 @@ needs whole shares, while test 1's account holds billionths of a share. So the
 two runs differ in two ways.
 
 1. **Timing of the signal.** The paper decision computes its signal on the
-   price at close−20, twenty minutes before the close the backtest's signal
-   uses, and a price that moves in those minutes can flip the unit.
+   quote's midpoint at close−20, another kind of price and twenty minutes before
+   the close the backtest's signal uses, and a price that moves in those minutes
+   can flip the unit.
 2. **Rounding.** Portfolio construction rounds each leg toward zero to the
    account's share step, so a whole-share leg is off by less than one share.
    Whole shares miss the replication's pins, by 1.56e-3 on the APR and 4.99e-3
@@ -73,6 +74,7 @@ package.
 | The marketlake pin with its reader of an unsealed day, the pyarrow pin, the contract tests of both and the check that the pin differs | [#131](https://github.com/l3a0/ithildin-runtime/issues/131) |
 | Bollinger band alpha model, the signal records, `Signal` and `ForecastSet`, the checks `Basket` and `Forecast` make, the form of each strategy's alpha section | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`' share caps by instrument, `HardCaps`, the caps blob's reader and the tightening of both, `Verdict`, `LossReading` and the contradictions they reject, the mark, the exposure and the valuation, which `core` holds once for every reader, the risk gate that implements `RiskGate`, the loss reading, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
+| The decision price, the newest price of each leg the alpha model reads, through `core.mark` | [#114](https://github.com/l3a0/ithildin-runtime/issues/114) |
 | The risk model `LimitRisk`, the `[risk]` section of a strategy's file, and the risk stage, which writes each decision's `Constraints`, with the steps `core` gives every model's stage | [#115](https://github.com/l3a0/ithildin-runtime/issues/115) |
 | The form of each strategy's data section, and data's settings built from it | [#110](https://github.com/l3a0/ithildin-runtime/issues/110) |
 | The stress move's calculation, `Verdict.stress_move`, the command that prints a record, the records' file and reader, and the hold of the caps to them by the gate, the risk model and portfolio construction | [#116](https://github.com/l3a0/ithildin-runtime/issues/116) |

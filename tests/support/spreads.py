@@ -1,4 +1,4 @@
-"""Snapshots of two legs' daily bars, for the alpha model's tests.
+"""Snapshots of two legs' daily bars and quotes, for the alpha model's tests.
 
 Every price here is written in a test or drawn from a seeded generator. None is
 a vendor's.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from ithildinruntime.core import (
@@ -22,11 +22,13 @@ from ithildinruntime.core import (
     load_sessions,
     parse_strategy,
 )
-from tests.support.quotes import NONE_READ
+from tests.support.quotes import NONE_READ, quote, read_at
 
 GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
 TABLE = load_sessions()
 DAYS = sorted(TABLE.sessions)
+EARLY = timedelta(minutes=20)
+HALF_SPREAD = Decimal("0.01")
 READ_AT = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 
 # Chan's own settings, as `chan_bollinger.toml` states them.
@@ -76,10 +78,10 @@ def bar(instrument: InstrumentId, day: date, close: Decimal, basis: str = "adjus
         knowable_at=ended,
         source="a test",
         source_as_of=None,
-        price_kind="unstated",
-        venues="unstated",
-        delay="unstated",
-        volume_counted="unstated",
+        price_kind="official close",
+        venues="consolidated",
+        delay="none",
+        volume_counted="consolidated in shares",
         excess_places=(),
     )
 
@@ -120,6 +122,17 @@ class Series:
         """What a decision at session `n`'s close reads, `lookback` sessions back."""
         window = slice(max(0, n - lookback + 1), n + 1)
         return snapshot(self.gld[window], self.uso[window])
+
+    def early(self, n: int, lookback: int, mids: tuple[Decimal, Decimal] | None = None) -> Snapshot:
+        """What a decision at close−20 of session `n` reads: `lookback` bars before it, and quotes.
+
+        Each quote's midpoint is the session's own close, unless `mids` gives GLD's and USO's.
+        """
+        at = TABLE.session(self.gld[n].session).close - EARLY
+        window = slice(max(0, n - lookback), n)
+        pairs = zip((GLD, USO), mids or (self.gld[n].close, self.uso[n].close), strict=True)
+        quotes = {i: quote(i, mid - HALF_SPREAD, mid + HALF_SPREAD, at) for i, mid in pairs}
+        return snapshot(self.gld[window], self.uso[window], at, quotes=quotes, **read_at(at))
 
 
 def made(days: Sequence[date], gld: Sequence[object], uso: Sequence[object]) -> Series:
