@@ -39,6 +39,7 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.PastLimit,
     core.LossReading,
     core.Sizing,
+    core.Segment,
 ]
 
 
@@ -128,6 +129,9 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             fields["bars"] = {bar.instrument: {bar.interval: (bar, bar)}}
             quote = sample(core.Quote, depth=depth + 1)
             fields["quotes"] = {quote.instrument: quote}
+        if hint is core.Snapshot:
+            # A snapshot that read no quotes is not provisional, and says when it read none.
+            fields["provisional"] = not empty
         return hint(**fields)
     if isinstance(hint, type) and issubclass(hint, Enum):
         return list(hint)[-1]

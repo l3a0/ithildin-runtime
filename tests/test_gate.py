@@ -8,15 +8,17 @@ limit counts. Figures here are made up and small enough to check by hand.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, localcontext
+from decimal import ROUND_CEILING, Decimal, localcontext
 
 import pytest
 
 from ithildinruntime import core
 from ithildinruntime.core import (
+    CLOCK_BOUND,
     Bar,
     BarStatus,
     Book,
@@ -29,10 +31,11 @@ from ithildinruntime.core import (
     Snapshot,
     StopState,
     TimeInForce,
+    mark,
+    quote_faults,
     value_book,
 )
 from ithildinruntime.risk import Gate
-from tests.core_samples import sample
 from tests.support.gates import (
     CENT,
     CHAN,
@@ -54,11 +57,13 @@ from tests.support.gates import (
     inputs,
     moc,
     order,
+    quoted,
     snapshot,
     stress_record,
     utc,
     valuation,
 )
+from tests.support.quotes import MAX_AGE, quote
 
 TICK = timedelta(microseconds=1)
 ENTRY = JournalEntry(seq=1, format=1, built_at=DECISION, body={"kind": "close"}, prev_hash="0" * 64)
@@ -595,7 +600,7 @@ def _early_leg(snap: Snapshot) -> Snapshot:
 
 
 def _quoted(snap: Snapshot) -> Snapshot:
-    return replace(snap, quotes={USO: replace(sample(core.Quote), instrument=USO)})
+    return replace(snap, quotes={USO: quote(USO, 1, 1, DECISION)})
 
 
 def _unfrozen(made: Book, corrections: object) -> Book:
@@ -714,7 +719,7 @@ HALTS: dict[str, tuple[Callable[[World], World], str]] = {
     ),
     "a-held-leg-with-a-quote": (
         lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_quoted(w.snapshot)),
-        "USO has a quote",
+        "USO has a quote and a bar for 2026-11-03",
     ),
     "a-bar-after-the-decision": (
         lambda w: w.at(book=book({CHAN: {USO: 10}}), snapshot=_early_leg(w.snapshot)),
@@ -1009,7 +1014,7 @@ LEG_HALTS: dict[str, tuple[Callable[[Snapshot], Snapshot], str]] = {
         lambda s: _newest(s, knowable_at=DECISION + TICK),
         "USO's bar for 2026-11-03 was knowable at 2026-11-03T20:40:00.000001",
     ),
-    "quoted": (lambda s: _quoted(s), "USO has a quote"),
+    "quoted": (lambda s: _quoted(s), "USO has a quote and a bar for 2026-11-03"),
     "stale": (
         lambda s: replace(s, status={**s.status, USO: BarStatus.STALE}),
         "USO stale for the session",
@@ -1434,3 +1439,174 @@ def test_the_caps_own_halts_come_before_the_records() -> None:
     # A V that is not above zero comes after the records.
     with pytest.raises(Halt, match="there is no stress record"):
         World(records=()).given(valuation=valuation(0)).check()
+
+
+# A quote as the mark. Every figure is made up.
+
+AGED = DECISION - timedelta(seconds=59) + timedelta(seconds=MAX_AGE) - CLOCK_BOUND
+
+
+def legs(
+    gld: tuple[object, object] = (100, 100),
+    uso: tuple[object, object] = (10, 10),
+    **changes: object,
+) -> Snapshot:
+    """Close−20 with a quote of each leg. `changes` are GLD's quote's own."""
+    made = quoted({GLD: gld, USO: uso})
+    return replace(made, quotes={**made.quotes, GLD: replace(made.quotes[GLD], **changes)})
+
+
+def quoted_world(**changes: object) -> World:
+    return World(book=book({CHAN: {GLD: 10}}), snapshot=legs(**changes))  # type: ignore[arg-type]
+
+
+ORDERS = {
+    "adding": order(1),
+    "reducing": order(-1),
+    "a person's, adding": order(1, strategy=""),
+    "a person's, reducing": order(-1, strategy=""),
+}
+
+
+def test_4_a_held_leg_is_valued_at_its_midpoint() -> None:
+    world = quoted_world(gld=("99.9999", "100.0002"))
+    middle = d("100.00005")
+    valued = world.given(valuation=valuation(world.book.cash + 10 * middle + 3))
+    assert valued.loss().loss == 3
+    assert world.check().worst_loss == rounded_up(11 * middle * d("0.2"))
+
+
+def rounded_up(value: Decimal) -> Decimal:
+    return value.quantize(CENT, ROUND_CEILING)
+
+
+@pytest.mark.parametrize("name", ORDERS)
+@pytest.mark.parametrize(("step", "halts"), [(-TICK, False), (timedelta(0), False), (TICK, True)])
+def test_4_a_quote_past_its_age_when_its_order_is_checked_halts_it(
+    name: str, step: timedelta, halts: bool
+) -> None:
+    """Good at the decision, and the gate measures the age at its own `now`."""
+    world = quoted_world().at(intent=ORDERS[name])
+    assert mark(world.snapshot, GLD, PRIOR, DECISION) == 100
+    world.check()
+    late = world.at(now=AGED + step)
+    if not halts:
+        late.check()
+        late.loss()
+        return
+    for read in (late.check, late.loss):
+        with pytest.raises(Halt, match="GLD's quote cannot be read: its ask has the stamp"):
+            read()
+
+
+@pytest.mark.parametrize("name", ORDERS)
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        ({"price_kind": "unstated"}, "GLD's quote is of unstated price kind"),
+        ({"realtime": False}, "its realtime flag"),
+        ({"status": "Halted"}, "its status is 'Halted'"),
+        ({"max_age": None}, "a maximum age of None"),
+        ({"bid": None}, "its bid is None"),
+        ({"captured_at": DECISION + TICK}, "it was captured at"),
+    ],
+)
+def test_4_a_quote_with_a_fault_halts_every_order_and_the_loss_reading(
+    name: str, change: dict, said: str
+) -> None:
+    # A snapshot's quotes share one capture, so the other leg has no quote here.
+    made = legs()
+    made = replace(made, quotes={GLD: replace(made.quotes[GLD], **change)})
+    world = World(book=book({CHAN: {GLD: 10}}), snapshot=made, intent=ORDERS[name])
+    for read in (world.check, world.loss):
+        with pytest.raises(Halt, match=re.escape(said)):
+            read()
+
+
+@pytest.mark.parametrize(
+    ("ask", "halts"), [("119.9999", False), ("120", False), ("120.0001", True)]
+)
+def test_4_a_spread_past_its_written_share_halts(ask: str, halts: bool) -> None:
+    """Of 80 by 120, the spread of 40 is 0.4 of the midpoint exactly."""
+    world = quoted_world(gld=("80", ask), max_spread_share=d("0.4"))
+    if not halts:
+        world.check()
+        world.loss()
+        return
+    for intent in ORDERS.values():
+        with pytest.raises(Halt, match="further apart than the written 0.4 of their midpoint"):
+            world.at(intent=intent).check()
+    with pytest.raises(Halt, match="further apart"):
+        world.loss()
+
+
+def test_4_a_wide_quote_halts_rather_than_hide_a_loss_past_the_stop() -> None:
+    """Long 5, in a market that fell to 60 by 60.1 and is shown as 60 by 140."""
+    long = book({CHAN: {GLD: 5}}, cash=500)
+    narrow = World(book=long, snapshot=legs(gld=(60, "60.1")), intent=order(1))
+    narrow = narrow.held_to(loss_stop=d(100)).given(valuation=valuation("1000"))
+    assert narrow.loss().loss == d("199.75")
+    assert narrow.check().limit is Limit.LOSS_STOP
+    wide = narrow.at(snapshot=legs(gld=(60, 140)))
+    for read in (wide.check, wide.loss):
+        with pytest.raises(Halt, match="further apart"):
+            read()
+    # With no bound on the spread the midpoint of 100 reads no loss, and the order goes out.
+    blind = narrow.at(snapshot=legs(gld=(60, 140), max_spread_share=d("0.999")))
+    assert blind.loss().loss == 0 and blind.check().approved
+
+
+@pytest.mark.parametrize("name", ORDERS)
+def test_4_a_quote_captured_after_the_decision_halts_however_late_the_gate_reads_it(
+    name: str,
+) -> None:
+    """The judge is handed the decision time beside `now`, and not `now` for both."""
+    after = DECISION + timedelta(seconds=5)
+    made = quoted({GLD: (100, 100), USO: (10, 10)}, bid_at=after, ask_at=after, captured_at=after)
+    world = World(book=book({CHAN: {GLD: 10}}), snapshot=made, intent=ORDERS[name])
+    late = world.at(now=DECISION + timedelta(seconds=10))
+    for read in (late.check, late.loss):
+        with pytest.raises(Halt, match="it was captured at 2026-11-03T20:40:05"):
+            read()
+
+
+@pytest.mark.parametrize("name", ORDERS)
+def test_4_a_quote_stamped_at_or_before_the_close_v_was_valued_at_halts(name: str) -> None:
+    """A book marked there would read no loss, however far the market has moved since."""
+    closed = TABLE.session(PRIOR).close
+    old = legs(bid_at=closed, ask_at=closed, max_age=86_400)
+    world = World(book=book({CHAN: {GLD: 10}}), snapshot=old, intent=ORDERS[name])
+    for read in (world.check, world.loss):
+        with pytest.raises(Halt, match="GLD has no mark: its quote's older stamp is 2026-11-02T21"):
+            read()
+    after = closed + TICK
+    later = world.at(snapshot=legs(bid_at=after, ask_at=after, max_age=86_400))
+    worth = later.book.cash + 10 * 100
+    assert later.given(valuation=valuation(worth + 3)).loss().loss == 3
+    later.check()
+
+
+def test_4_from_flat_one_aged_leg_halts_its_own_order_and_not_its_partners() -> None:
+    made = legs()
+    old = replace(made.quotes[USO], bid_at=made.quotes[USO].bid_at - TICK)
+    world = World(snapshot=replace(made, quotes={**made.quotes, USO: old}), now=AGED)
+    assert world.at(intent=order(1, GLD)).check().approved
+    with pytest.raises(Halt, match="USO's quote cannot be read: its bid has the stamp"):
+        world.at(intent=order(1, USO)).check()
+
+
+@pytest.mark.parametrize("factor", [d(100), d("0.01")])
+def test_7_a_price_wrong_by_100_times_on_both_sides_is_refused_on_a_share_cap(
+    factor: Decimal,
+) -> None:
+    """It passes data's check, since the two sides agree, so a cap in shares is what holds."""
+    wrong = (100 * factor, d("100.0001") * factor)
+    made = legs(gld=wrong)
+    assert quote_faults(made.quotes[GLD], DECISION, DECISION) == ()
+    world = World(snapshot=made, intent=order(6)).capped(max_position={GLD: d(5), USO: d(5)})
+    verdict = world.check()
+    assert (verdict.approved, verdict.adding, verdict.limit) == (False, True, Limit.MAX_POSITION)
+    assert world.at(intent=order(5)).check().approved
+    one_side = legs(gld=(100, 100 * factor))
+    with pytest.raises(Halt, match="further apart|below its bid"):
+        world.at(snapshot=one_side).check()

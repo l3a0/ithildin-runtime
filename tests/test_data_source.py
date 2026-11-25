@@ -37,7 +37,14 @@ from ithildinruntime.core import (
     mark,
     value_book,
 )
-from ithildinruntime.data import DataSettings, LakeSource, Mirror, source, spikes
+from ithildinruntime.data import (
+    DataSettings,
+    LakeSource,
+    Mirror,
+    QuoteLimits,
+    source,
+    spikes,
+)
 from ithildinruntime.data.reference import (
     CAPTURE_SOURCE,
     Kind,
@@ -55,6 +62,8 @@ DAYS = sorted(TABLE.sessions)
 LAST = lakes.LAST_SESSION
 FIRST = lakes.FIRST_SESSION
 READ_AT = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
+# Written maxima, made up, which let a decision inside its session be read.
+LIMITS = {i: QuoteLimits(90, Decimal("0.02")) for i in (GLD, USO)}
 
 
 def close(day: date) -> datetime:
@@ -105,14 +114,17 @@ class Counting:
         self.refuse: dict[str, Exception] = {}
         self.on_read: dict[str, object] = {}
 
-    def read(self, key: str) -> BucketObject:
+    def list(self, prefix: str) -> list[str]:
+        return self.bucket.list(prefix)
+
+    def read(self, key: str, version: str | None = None) -> BucketObject:
         self.reads.append(key)
         if key in self.refuse:
             raise self.refuse[key]
         hook = self.on_read.pop(key, None)
         if hook is not None:
             hook()  # type: ignore[operator]
-        return self.bucket.read(key)
+        return self.bucket.read(key, version)
 
 
 def settings(**changes) -> DataSettings:
@@ -122,6 +134,7 @@ def settings(**changes) -> DataSettings:
         first_sessions={GLD: FIRST, USO: FIRST},
         stale_lag=1,
         spike_multiple=Decimal(100),
+        quotes={},
     )
     return replace(made, **changes)
 
@@ -129,12 +142,16 @@ def settings(**changes) -> DataSettings:
 def make(bucket_root: Path, tmp_path: Path, bucket=None, **changes) -> LakeSource:
     kinds = changes.pop("kinds", None)
     master = changes.pop("master", None)
+    quote_kinds = changes.pop("quote_kinds", None)
+    live = changes.pop("live", None) or FolderBucket(bucket_root.with_name("no-live"))
     return LakeSource(
         Mirror(bucket or FolderBucket(bucket_root), tmp_path / "mirror"),
         settings(**changes),
+        live=live,
         clock=Clock(),
         timer=Timer(),
         kinds=kinds,
+        quote_kinds=quote_kinds,
         master=master,
     )
 
@@ -331,6 +348,9 @@ def _stored(bars, flags=None, status=None):  # type: ignore[no-untyped-def]
         flags or {},
         (),
         {},
+        {},
+        (),
+        None,
     )
 
 
@@ -713,14 +733,15 @@ def test_3_a_bar_is_in_a_decision_only_once_its_session_closed(
     lake: Path, tmp_path: Path, minutes: int, holds: bool
 ) -> None:
     at = close(LAST) + timedelta(minutes=minutes)
-    snap = make(lake, tmp_path).read(at).snapshot
+    snap = make(lake, tmp_path, quotes=LIMITS).read(at).snapshot
     for instrument in (GLD, USO):
         assert (snap.bars[instrument]["1d"][-1].session == LAST) is holds
         assert snap.status[instrument] is BarStatus.FRESH
 
 
 def test_3_close_minus_20_reads_through_the_session_before(lake: Path, tmp_path: Path) -> None:
-    snap = make(lake, tmp_path).read(close(LAST) - timedelta(minutes=20)).snapshot
+    at = close(LAST) - timedelta(minutes=20)
+    snap = make(lake, tmp_path, quotes=LIMITS).read(at).snapshot
     assert snap.bars[GLD]["1d"][-1].session == before(LAST)
     assert len(snap.bars[GLD]["1d"]) == 40
 
@@ -753,10 +774,34 @@ def test_4_a_fetch_stamp_with_no_zone_halts(lake: Path, tmp_path: Path) -> None:
         make(lake, tmp_path).read(close(LAST) + timedelta(days=1))
 
 
-def test_4_a_captured_bar_with_no_fetch_stamp_halts(lake: Path, tmp_path: Path) -> None:
-    lakes.captured(lake, "USO", LAST, fetch_ts=None)
-    with pytest.raises(Halt, match="captured with no fetch stamp"):
+@pytest.mark.parametrize("started", [None, "2012-04-09T22:00:00+00:00"])
+def test_4_a_captured_bar_with_no_fetch_end_halts(
+    lake: Path, tmp_path: Path, started: str | None
+) -> None:
+    lakes.captured(lake, "USO", LAST, fetch_ts=started, fetch_end_ts=None)
+    with pytest.raises(Halt, match="captured with no fetch_end_ts, so it has no knowable time"):
         make(lake, tmp_path).read(close(LAST))
+
+
+@pytest.mark.parametrize("started", [True, False], ids=["started", "no-start"])
+@pytest.mark.parametrize(("after_end", "holds"), [(-1, False), (0, True), (1, True)])
+def test_4_a_captured_bar_is_known_from_the_end_of_its_fetch_and_not_the_start(
+    lake: Path, tmp_path: Path, after_end: int, holds: bool, started: bool
+) -> None:
+    start, end = (close(LAST) + timedelta(hours=2, seconds=s) for s in (0, 7))
+    lakes.captured(
+        lake,
+        "USO",
+        LAST,
+        fetch_ts=start.isoformat() if started else None,
+        fetch_end_ts=end.isoformat(),
+    )
+    snap = make(lake, tmp_path).read(end + timedelta(microseconds=after_end)).snapshot
+    newest = snap.bars[USO]["1d"][-1]
+    assert (newest.session == LAST) is holds
+    if holds:
+        assert newest.knowable_at == newest.fetched_end_at == end
+        assert newest.fetched_at == (start if started else None)
 
 
 def test_4_an_imported_bar_with_fetch_stamps_is_known_from_its_end(
@@ -827,9 +872,9 @@ def test_5_a_session_missing_inside_the_lookback_reads_missing_and_is_never_fill
 def test_every_bar_data_reads_is_one_the_gate_will_value(lake: Path, tmp_path: Path) -> None:
     """`core.mark` values each bar data reads, one that ends at the decision included."""
     for at in (close(LAST), close(LAST) - timedelta(minutes=20), close(LAST) + timedelta(days=1)):
-        snap = make(lake, tmp_path).read(at).snapshot
+        snap = make(lake, tmp_path, quotes=LIMITS).read(at).snapshot
         newest = snap.bars[GLD]["1d"][-1]
-        assert mark(snap, GLD, before(newest.session, 1)) == newest.close
+        assert mark(snap, GLD, before(newest.session, 1), at) == newest.close
         assert value_book(_holding(), snap, newest.session).value == newest.close
 
 

@@ -188,17 +188,27 @@ def partition_key(ticker: str, day: date) -> str:
     return f"bars/ticker={ticker}/freq=1d/date={day.isoformat()}.parquet"
 
 
-def captured(root: Path, ticker: str, day: date, *, fetch_ts: str | None, **prices: float) -> str:
+def captured(
+    root: Path,
+    ticker: str,
+    day: date,
+    *,
+    fetch_ts: str | None,
+    fetch_end_ts: str | None = "fetch_ts",
+    **prices: float,
+) -> str:
     """Rewrite one session's partition as marketlake writes a captured one, and record it.
 
     A captured partition carries no provenance keys, which `load_bars` reads as
     `origin` captured and `basis` raw. Its row keeps the imported row's other
-    values, with `fetch_ts` and any price given here replaced.
+    values, with the two fetch stamps and any price given here replaced. The end
+    of the fetch is its start unless a test gives one.
     """
     key = partition_key(ticker, day)
     table = pq.read_table(root / key)
     row = table.to_pylist()[0]
-    row.update(fetch_ts=fetch_ts, fetch_end_ts=fetch_ts, **prices)
+    ended = fetch_ts if fetch_end_ts == "fetch_ts" else fetch_end_ts
+    row.update(fetch_ts=fetch_ts, fetch_end_ts=ended, **prices)
     schema = table.schema.remove_metadata()
     out = pa.Table.from_pylist([row], schema=schema)
     sink = pa.BufferOutputStream()

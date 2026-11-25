@@ -352,7 +352,7 @@ Most alarms on shadow and paper need no writing command at all. A missing bar th
 The writing commands are for the cases the platform cannot resolve alone:
 
 - a book that disagrees with the broker
-- the causes that hold a shadow or paper account, which [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) names: an order the platform did not send and a snapshot that cannot be stored or confirmed
+- the causes that hold a shadow or paper account, which [A halt is final for its decision](design.md#rule-7-a-halt-is-final-for-its-decision) names: an order the platform did not send, a snapshot that cannot be stored or confirmed, a price of unstated kind and a quote that fails its age and status check
 - a kill switch
 - a fired loss stop
 - a halt of all trading that waits for a person, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says

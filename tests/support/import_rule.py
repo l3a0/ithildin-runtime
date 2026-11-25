@@ -100,6 +100,8 @@ ALLOWED: dict[str, frozenset[str]] = {
 LIBRARIES: dict[str, str] = {
     "boto3": "adapters",
     "botocore": "adapters",
+    # botocore leaves some of its errors as they are.
+    "urllib3": "adapters",
     "lake": "data",
     # What marketlake's files are read with, so a second reader of them would
     # import it.

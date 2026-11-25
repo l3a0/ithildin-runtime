@@ -79,6 +79,7 @@ __all__ = [
     "Quote",
     "Rate",
     "RestartRecord",
+    "Segment",
     "SendOutcome",
     "Signal",
     "Sizing",
@@ -168,7 +169,9 @@ class Bar(_Record):
       as received, each beside its UTC instant, and `None` where marketlake
       holds none, as on the Chan vintages.
     - `knowable_at` is the time the bar could first have been known. For a
-      captured bar it is `fetched_at`. For an imported bar it is `end`, because
+      captured bar it is `fetched_end_at`, when the response landed, the
+      earliest moment the platform could have held it. For an imported bar it
+      is `end`, because
       a vintage records only `source_as_of`, the date its source recorded the
       whole series, so a bar of a vintage recorded after its sessions can carry
       corrections made up to that date.
@@ -213,7 +216,7 @@ class Bar(_Record):
 class SpikeFlag(_Record):
     """A price the data module flags as wrong, beside the price it was judged against.
 
-    The price stays in its bar as received. `rule` names the check that
+    The price stays in its bar or its quote as received. `rule` names the check that
     flagged it, and `note` says what the check could not weigh, such as a
     volume the source never stated.
     """
@@ -228,15 +231,65 @@ class SpikeFlag(_Record):
 
 @dataclass(frozen=True)
 class Quote(_Record):
+    """One instrument's quote as a capture cycle recorded it, with the maxima it was read under.
+
+    Data fills it from one row of marketlake's, and `core.quote_faults` judges
+    it. Nothing here is judged.
+
+    - `bid`, `ask` and `last` stay as received, and are `None` where the row
+      held null, a value that is not finite, or one past the codec's digits.
+      `excess_places` names each that carries more places than `Price` declares.
+    - `volume` is `None` where the row held null or a count past the codec's.
+    - `bid_at`, `ask_at` and `last_at` are the UTC instants of the vendor's own
+      stamp on each price, and `None` where a stamp is null or no instant.
+    - `fetched_at` is when the request went out and `captured_at` when its
+      response landed, both by the capture host's clock. Every quote of one
+      cycle shares one `captured_at`.
+    - `realtime` is the vendor's flag and `status` its security status.
+    - `price_kind`, which is the bid's and the ask's, `last_kind`, `venues`,
+      `volume_counted` and `normal_status` come from the data module's
+      quote-kind contract when the quote is read, and read `unstated` where the
+      contract states nothing.
+    - `max_age`, in seconds, and `max_spread_share`, as a share of the
+      midpoint, are the maxima its strategies write, or `None` where none does.
+    - `received` holds every column of the row by name, as text, a float as its
+      `repr` and a null as `None`.
+    """
+
     instrument: InstrumentId
-    at: datetime
     bid: Price | None
     ask: Price | None
     last: Price | None
-    vendor_stamp: str
-    fetched_at: datetime
-    realtime: bool
     volume: int | None
+    bid_at: datetime | None
+    ask_at: datetime | None
+    last_at: datetime | None
+    fetched_at: datetime | None
+    captured_at: datetime
+    realtime: bool | None
+    status: str | None
+    price_kind: str
+    last_kind: str
+    venues: str
+    volume_counted: str
+    normal_status: str
+    max_age: int | None
+    max_spread_share: Statistic | None
+    received: Mapping[str, str | None]
+    excess_places: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Segment(_Record):
+    """One capture segment a decision opened: its lake-relative key, version and SHA-256.
+
+    `sha256` is the digest the bucket stored with that version, which
+    marketlake's reader checked the download against.
+    """
+
+    key: str
+    version: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -247,6 +300,15 @@ class Snapshot(_Record):
     stay as received. `ledgers` maps each marketlake ledger the read relied
     on, by its key in the lake, to the SHA-256 of the bytes read, and keeps no
     row of it.
+
+    - `provisional` is true exactly when the decision read capture segments,
+      whatever they held, because marketlake had not sealed the day.
+    - `segments` names each segment opened.
+    - `rows` maps an instrument to every row marketlake's reader returned that
+      is not its quote's own, in the form of `Quote.received`.
+    - `faults` holds each reason the read of the quotes failed, in order.
+    - `quotes_read_at` is the data worker's clock after the read's last answer
+      from the bucket, and `None` exactly when `provisional` is false.
     """
 
     decision_at: datetime
@@ -255,14 +317,26 @@ class Snapshot(_Record):
     status: Mapping[InstrumentId, BarStatus]
     provisional: bool
     flags: Mapping[InstrumentId, tuple[SpikeFlag, ...]]
-    segments: tuple[str, ...]
+    segments: tuple[Segment, ...]
     ledgers: Mapping[str, str]
+    rows: Mapping[InstrumentId, tuple[Mapping[str, str | None], ...]]
+    faults: tuple[str, ...]
+    quotes_read_at: datetime | None
 
     def __post_init__(self) -> None:
         super().__post_init__()
         for instrument, quote in self.quotes.items():
             if quote.instrument != instrument:
                 raise ValueError(f"a {quote.instrument} quote is filed under {instrument}")
+        # A spread priced across two captures is a price nobody saw.
+        if len(captures := {quote.captured_at for quote in self.quotes.values()}) > 1:
+            named = ", ".join(sorted(at.isoformat() for at in captures))
+            raise ValueError(f"a snapshot's quotes are of one capture, not of {named}")
+        if (self.quotes_read_at is None) is bool(self.provisional):
+            raise ValueError(
+                f"a snapshot with provisional {self.provisional} has quotes_read_at "
+                f"{self.quotes_read_at!r}"
+            )
         for instrument, by_interval in self.bars.items():
             for interval, bars in by_interval.items():
                 for bar in bars:
