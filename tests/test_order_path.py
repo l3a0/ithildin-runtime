@@ -2286,14 +2286,17 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
         assert any("which was not sent" in alarm for alarm in world.alarms.sent)
 
 
+@pytest.mark.parametrize("heals", [False, True])
 @pytest.mark.parametrize("error", [RuntimeError("no time"), SystemExit("no time")])
-def test_7_a_clock_that_fails_after_the_sending(error: BaseException) -> None:
+def test_7_a_clock_that_fails_after_the_sending(error: BaseException, heals: bool) -> None:
     """An ordinary error still journals what was not sent, and any other is left to replay."""
     world = World()
     account = world.account()
     plain = world.clock.now
 
     def broken() -> datetime:
+        if heals:
+            world.clock.now = plain  # type: ignore[method-assign]
         raise error
 
     def after(number: int, op: str, key: str) -> None:
@@ -2307,6 +2310,8 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException) -> None:
     left = OrderState.ABANDONED if isinstance(error, Exception) else OrderState.SENDING
     assert world.state() is left and world.submits == 0
     assert account.unstored() == ()
+    # An `abandoned` written with no clock takes the time its `sending` was built.
+    assert {e.built_at for e in world.reader().read()} <= {AT, NOW}
 
 
 @pytest.mark.parametrize("create", range(4))

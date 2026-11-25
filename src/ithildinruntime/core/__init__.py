@@ -51,6 +51,8 @@ from .ports import *  # noqa: F403
 from .ports import __all__ as _ports
 from .queue import *  # noqa: F403
 from .queue import __all__ as _queue
+from .quotes import *  # noqa: F403
+from .quotes import __all__ as _quotes
 from .records import *  # noqa: F403
 from .records import __all__ as _records
 from .sessions import (
@@ -129,6 +131,7 @@ __all__ = [
     *_limits,
     *_ports,
     *_queue,
+    *_quotes,
     *_records,
     *_storage,
     *_stress,

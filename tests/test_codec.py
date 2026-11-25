@@ -286,8 +286,11 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
                 ),
             )
         },
-        segments=("s3://x",),
+        segments=(core.Segment("journal/x.arrows", "v1", "0" * 64),),
         ledgers={"a": "b"},
+        rows={InstrumentId("USO"): ({"bid": "60.5", "ask": None},)},
+        faults=("a reason",),
+        quotes_read_at=AT,
     )
     back = decode(encode(value), core.Snapshot)
     assert back == value
@@ -384,20 +387,23 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
         (b'{"entry_hash":"a","seq":"1"}', core.JournalAck, "a string where an int is"),
         (b"[]", core.JournalAck, "a list where a record is"),
         (
-            b'{"decision_at":"2026-11-02T20:40:00.000000Z","segments":{},"bars":{},'
-            b'"flags":{},"ledgers":{},"provisional":true,"quotes":{},"status":{}}',
+            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
+            b'"ledgers":{},"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
+            b'"segments":{},"status":{}}',
             core.Snapshot,
             "an object where a list is",
         ),
         (
-            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","flags":{},"ledgers":{},'
-            b'"provisional":true,"quotes":{},"segments":[],"status":{"USO":"rotten"}}',
+            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
+            b'"ledgers":{},"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
+            b'"segments":[],"status":{"USO":"rotten"}}',
             core.Snapshot,
             "a status no BarStatus names",
         ),
         (
-            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","flags":{},"ledgers":[],'
-            b'"provisional":true,"quotes":{},"segments":[],"status":{}}',
+            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
+            b'"ledgers":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
+            b'"segments":[],"status":{}}',
             core.Snapshot,
             "a list where a mapping is",
         ),

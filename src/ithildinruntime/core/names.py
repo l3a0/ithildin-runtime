@@ -45,6 +45,7 @@ __all__ = [
     "VALUATION_OUTPUT",
     "is_name",
     "is_sha256",
+    "is_unstated",
 ]
 
 DATA_STAGE = "data"
@@ -84,3 +85,8 @@ def is_name(value: object) -> bool:
 def is_sha256(value: object) -> bool:
     """Whether `value` is a SHA-256 written as 64 lower case hex digits."""
     return isinstance(value, str) and _SHA256.fullmatch(value) is not None
+
+
+def is_unstated(said: object) -> bool:
+    """Whether a field holds no word, or the one that says its source states nothing."""
+    return not isinstance(said, str) or said.strip() in ("", UNSTATED)

@@ -29,7 +29,7 @@ from ithildinruntime.core import (
     parse_strategy,
     result_key,
 )
-from ithildinruntime.data import DataSettings, data_settings, source
+from ithildinruntime.data import DataSettings, QuoteLimits, data_settings, source
 from ithildinruntime.data.spikes import MOVE
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_handler
 from ithildinruntime.runtime.loop import Item, ReceiveLoop, Table
@@ -83,6 +83,7 @@ def test_1_chans_file_holds_the_ruled_settings() -> None:
         first_sessions={GLD: date(2006, 4, 26), USO: date(2006, 4, 26)},
         stale_lag=0,
         spike_multiple=Decimal(10),
+        quotes={},
     )
     assert type(made.spike_multiple) is Decimal and str(made.spike_multiple) == "10"
 
@@ -185,7 +186,7 @@ def test_2_each_least_value_passes(name: str, value: str, read: object) -> None:
 def test_2_every_setting_is_a_key_a_file_writes_and_none_has_a_default() -> None:
     """A setting outside the files would move no hash."""
     fields = dataclasses.fields(DataSettings)
-    assert {f.name for f in fields} == {"instruments", *KEYS}
+    assert {f.name for f in fields} == {"instruments", "quotes", *KEYS}
     assert all(f.default is f.default_factory is dataclasses.MISSING for f in fields)
 
 
@@ -201,6 +202,118 @@ def test_2_a_check_of_the_settings_own_halts_too(monkeypatch: pytest.MonkeyPatch
     assert caught.value.reason == (
         "data's settings from a.toml, b.toml are refused: a check the reader does not make"
     )
+
+
+# 2. The quote maxima, which are made up.
+
+QUOTES = "[data.quotes]\nmax_age_seconds = 90\nmax_spread_share = 0.02\n"
+QUOTED = GOOD + QUOTES.encode()
+NINETY = QuoteLimits(90, Decimal("0.02"))
+
+
+def test_2_the_quote_maxima_hold_for_every_instrument_the_file_lists() -> None:
+    made = data_settings([parsed("s", QUOTED)])
+    assert made.quotes == {GLD: NINETY, USO: NINETY}
+    assert type(made.quotes[GLD].max_age) is int
+    assert str(made.quotes[GLD].max_spread_share) == "0.02"
+
+
+def test_2_a_file_with_no_quote_table_or_a_blank_one_writes_no_maximum() -> None:
+    assert data_settings([parsed("s")]).quotes == {}
+    assert data_settings([parsed("s", GOOD + b"[data.quotes]\n")]).quotes == {}
+
+
+@pytest.mark.parametrize("name", ["max_age_seconds", "max_spread_share"])
+def test_2_one_quote_maximum_without_the_other_halts_naming_it(name: str) -> None:
+    (line,) = [row for row in QUOTES.splitlines(keepends=True) if row.startswith(name)]
+    reason = refused(edit(QUOTED, line, ""))
+    assert reason.endswith(f"states no quotes.{name} beside the other")
+
+
+def test_2_a_quote_key_this_form_lacks_halts_naming_it() -> None:
+    reason = refused(QUOTED + b"max_size = 1\nage = 2\n")
+    assert reason.endswith("holds quotes.age, max_size, which this form does not have")
+
+
+@pytest.mark.parametrize("bad", ["1", '"x"', "true", "[1]"])
+def test_2_quotes_that_are_no_table_halt(bad: str) -> None:
+    data = edit(GOOD, "lookback = 20\n", f"lookback = 20\nquotes = {bad}\n")
+    assert "has quotes = " in refused(data) and "which is not a table" in refused(data)
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "9", "true", "90.0", '"90"', str(2**53)])
+def test_2_a_maximum_age_out_of_bounds_halts(bad: str) -> None:
+    reason = refused(edit(QUOTED, "seconds = 90", f"seconds = {bad}"))
+    assert "has under quotes a maximum age of " in reason
+    assert reason.endswith(f"not a whole number of seconds from 10 to below {2**53}")
+
+
+@pytest.mark.parametrize("bad", ["0", "1", "0.0", "1.0", "-0.5", "true", '"0.5"'])
+def test_2_a_maximum_spread_out_of_bounds_halts(bad: str) -> None:
+    reason = refused(edit(QUOTED, "share = 0.02", f"share = {bad}"))
+    assert "has under quotes a maximum spread of " in reason
+    assert reason.endswith("which is not a decimal above 0 and below 1")
+
+
+@pytest.mark.parametrize(("age", "share"), [("10", "0.0001"), (str(2**53 - 1), "0.9999")])
+def test_2_each_least_and_most_quote_maximum_passes(age: str, share: str) -> None:
+    data = edit(edit(QUOTED, "seconds = 90", f"seconds = {age}"), "0.02", share)
+    assert data_settings([parsed("s", data)]).quotes[GLD] == QuoteLimits(int(age), Decimal(share))
+
+
+SPY_GLD = b"""instruments = ["SPY", "GLD"]
+[data]
+lookback = 20
+stale_lag = 1
+spike_multiple = 7
+[data.first_sessions]
+SPY = 1993-01-29
+GLD = 2006-04-26
+"""
+
+
+def test_3_strategies_that_share_an_instrument_and_agree_on_its_maxima_build() -> None:
+    made = data_settings([parsed("a", QUOTED), parsed("b", SPY_GLD + QUOTES.encode())])
+    assert made.quotes == {i: NINETY for i in ("GLD", "USO", "SPY")}
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "said"),
+    [
+        ("seconds = 90", "seconds = 91", "91 seconds and 0.02"),
+        ("0.02", "0.03", "90 seconds and 0.03"),
+        ("0.02", "0.020", "90 seconds and 0.020"),
+        (QUOTES, "", "no maximum"),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_3_strategies_that_share_an_instrument_and_differ_on_its_maxima_halt(
+    old: str, new: str, said: str, reverse: bool
+) -> None:
+    other = edit(SPY_GLD + QUOTES.encode(), old, new)
+    made = [parsed("a", QUOTED), parsed("b", other)]
+    with pytest.raises(Halt) as caught:
+        data_settings(reversed(made) if reverse else made)
+    assert "different values of [data] quotes for GLD" in caught.value.reason
+    assert caught.value.reason.endswith(f": a writes 90 seconds and 0.02, b writes {said}")
+
+
+def test_3_strategies_that_share_no_instrument_keep_their_own_maxima() -> None:
+    other = one_of("SPY", 27) + b"[data.quotes]\nmax_age_seconds = 45\nmax_spread_share = 0.5\n"
+    made = data_settings([parsed("a", QUOTED), parsed("b", other), parsed("c", one_of("QQQ", 26))])
+    assert made.quotes == {
+        GLD: NINETY,
+        USO: NINETY,
+        "SPY": QuoteLimits(45, Decimal("0.5")),
+    }
+
+
+@pytest.mark.parametrize("name", tracked())
+def test_1_every_tracked_strategys_quote_maxima_are_whole_or_absent(name: str) -> None:
+    """The values are the owner's, on #133, and a file holds both or neither."""
+    (strategy,) = load_strategies(STRATEGIES, [name])
+    quotes = data_settings([strategy]).quotes
+    assert set(quotes) in (set(), set(strategy.instruments))
 
 
 # 3. Several strategies.
@@ -300,6 +413,7 @@ def handles(lake: Path, where: Path, *strategies, store: Path | None = None):
     """The entry point's handler for these strategies, over a store in a folder."""
     return data_handler(
         bucket=FolderBucket(lake),
+        live=FolderBucket(lake.with_name("no-live")),
         mirror=where / "mirror",
         storage=Storage(
             FolderStore(store or where / "store"),
@@ -524,6 +638,7 @@ def test_7_a_refused_section_halts_each_decision_through_the_loop(
     clock = Waited()
     handler = data_handler(
         bucket=FolderBucket(lake),
+        live=FolderBucket(lake.with_name("no-live")),
         mirror=tmp_path / "mirror",
         storage=store,
         clock=clock,

@@ -73,6 +73,7 @@ from tests.support.order_world import (
     last,
     order,
 )
+from tests.support.quotes import read_at
 
 ID = order(1, 2).client_order_id
 DAY = timedelta(days=1)
@@ -240,10 +241,28 @@ def _sha(world: World, key: str) -> str:
 def _changed(world: World, name: str) -> tuple:
     """The same file with one figure changed, as a stage rerun into the folder would leave it."""
     return {
-        "snapshot": (replace(world.snapshot, provisional=True),),
+        "snapshot": (replace(world.snapshot, **read_at(AT)),),
         "constraints": (gates.constraints(max_open_orders=99),),
         "valuation": (gates.valuation(CASH, replayed_through=0),),
     }[name]
+
+
+@pytest.mark.parametrize("late", [0, 60])
+def test_5_a_quote_is_judged_at_the_time_of_the_check_and_not_of_the_decision(late: int) -> None:
+    """Its age and the gate's answer are read on the clock the path hands the gate."""
+    sides = {gates.GLD: (1, 1), gates.USO: (1, 1)}
+    world = World(snapshot=gates.quoted(sides, at=AT))
+
+    def after(number: int, op: str, key: str) -> None:
+        if key == entry_key(ACCOUNT, 4):
+            world.clock.at += timedelta(seconds=late)
+
+    world.store.after = after
+    if late:
+        halted(world, "GLD's quote cannot be read")
+        assert world.kinds() == ["intent", "abandoned"]
+    else:
+        assert world.send() is OrderState.ACKNOWLEDGED and world.rebuilt() == 1
 
 
 @pytest.mark.parametrize("name", FILES)

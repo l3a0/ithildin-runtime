@@ -34,7 +34,7 @@ import tempfile
 import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import NoReturn, TextIO
@@ -114,6 +114,7 @@ def measure(
     def read(legs: Sequence[InstrumentId], last: date, lookback: int) -> Reading:
         reading = _read(
             held,
+            bucket,
             replace(
                 settings,
                 instruments=tuple(legs),
@@ -209,19 +210,24 @@ def _spans(
 
 def _read(
     mirror: Mirror,
+    bucket: Bucket,
     settings: DataSettings,
     last: date,
     kinds: PriceKinds,
     clock: Clock,
     timer: Timer,
 ) -> Reading:
-    """One read at the open of the session after `last`, or a halt on any reason it holds."""
+    """One read just before the session after `last` opens, or a halt on any reason it holds.
+
+    A read inside a session reads its quotes too, which this measures nothing of.
+    """
     table = load_sessions()
     after = [day for day in table.sessions if day > last]
     if not after:
         raise Halt(f"the session table holds no session after {last.isoformat()}")
-    source = LakeSource(mirror, settings, clock=clock, timer=timer, kinds=kinds)
-    reading = source.read(table.session(min(after)).open)
+    # It reads no quote, so the bucket of segments is never asked for one.
+    source = LakeSource(mirror, settings, live=bucket, clock=clock, timer=timer, kinds=kinds)
+    reading = source.read(table.session(min(after)).open - timedelta(microseconds=1))
     if reading.halts:
         raise Halt("; ".join(reading.halts))
     return reading

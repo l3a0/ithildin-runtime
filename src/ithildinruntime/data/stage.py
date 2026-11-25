@@ -22,12 +22,14 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote, segment or provisional mark, or says that a capture holds other
-   than one snapshot, that the first capture is no snapshot the codec reads,
-   or that only the read time differs, as on a
-   redelivery after a crash. It names no cause beyond that, because the
-   same difference can come from a restatement by marketlake, a nightly
-   upload or a redeploy.
+   quote, segment, row, fault or provisional mark, or says that a capture holds
+   other than one snapshot, that the first capture is no snapshot the codec
+   reads, or that only the read time differs, as on a redelivery after a crash.
+   Where only the segments and their rows differ, the later capture names one
+   the first lacks, and every segment both name kept its version and SHA-256,
+   it says so, and that a later listing adds them where it names all the first does.
+   It names no cause beyond that, because the same difference can come from a
+   restatement by marketlake, a nightly upload or a redeploy.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
@@ -36,12 +38,13 @@ things, in order.
    configuration hashes.
    That read is the alarm's single try, so one failed read of the first
    capture halts its decision. A missing or stale instrument, a bar of
-   unstated kind, a bar whose prices contradict each other, or two
-   consecutive bars of one instrument that are of two series, and on a
+   unstated kind, a bar whose prices contradict each other, two
+   consecutive bars of one instrument that are of two series, a fault in the
+   read of the quotes, or a quote that is absent or cannot be read, and on a
    redelivery each case `data.source.judge` lists, ends the decision with a
    halt as data's result that names the stored snapshot, as
-   hard limit 3 asks. A close past the written multiple, or below its bar's
-   low, halts nothing. Its flag stays in the stored snapshot beside the
+   hard limit 3 asks. A close or a midpoint past the written multiple, or a
+   close below its bar's low, halts nothing. Its flag stays in the stored snapshot beside the
    price, monitoring alerts the owner, which #11 builds, and the decision
    trades on the price as it arrived.
 5. **It returns the result**, which the loop stores last. The result lists
@@ -83,7 +86,7 @@ __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 STAGE = DATA_STAGE
 SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
-_FORMAT = 1
+_FORMAT = 2
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 
 
@@ -128,7 +131,7 @@ class DataStage:
         if isinstance(source, Halt):
             # Decisions run side by side, and a raised exception gains its own traceback.
             raise Halt(source.reason)
-        reading = source.read(at)
+        reading = source.read(at, report)
         report()
         header = BlobHeader(
             format=_FORMAT,
@@ -238,13 +241,40 @@ def differences(first: bytes, later: bytes) -> str:
     snapshot = []
     if _without_read_time(a.bars) != _without_read_time(b.bars):
         snapshot.append("bars")
-    for name in ("status", "flags", "ledgers", "quotes", "segments", "provisional"):
+    for name in (
+        "status",
+        "flags",
+        "ledgers",
+        "quotes",
+        "segments",
+        "rows",
+        "faults",
+        "provisional",
+    ):
         if getattr(a, name) != getattr(b, name):
             snapshot.append(name)
     named = ", ".join(header + snapshot)
     if not named:
         return "Only the read time differs, as on a redelivery after a crash"
+    if not header and set(snapshot) <= {"segments", "rows"}:
+        return f"These differ: {named}{_listings(a, b)}"
     return f"These differ: {named}"
+
+
+def _listings(a: Snapshot, b: Snapshot) -> str:
+    """What two captures' segments say of two listings of one prefix, where nothing else differs.
+
+    It names a cause only where the later capture holds all the first does. A
+    longer listing moves the newest five on, and so drops the oldest, which
+    reads here as a segment that left the bucket does.
+    """
+    one = {segment.key: segment for segment in a.segments}
+    two = {segment.key: segment for segment in b.segments}
+    added, gone = two.keys() - one.keys(), one.keys() - two.keys()
+    if not added or any(one[key] != two[key] for key in one.keys() & two.keys()):
+        return ""
+    kept = "very segment both captures name kept its version and SHA-256"
+    return f". E{kept}" if gone else f". A later listing adds them, and e{kept}"
 
 
 def _without_read_time(bars: object) -> object:

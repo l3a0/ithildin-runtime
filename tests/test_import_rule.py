@@ -316,6 +316,7 @@ def test_a_worker_from_the_loop_or_the_supervisor_fails(tmp_path: Path, importer
     [
         ("import boto3\n", "adapters", "data.reader"),
         ("from botocore.exceptions import ClientError\n", "adapters", "runtime.workers"),
+        ("from urllib3.exceptions import HTTPError\n", "adapters", "data.reader"),
         ("import lake.read\n", "data", "alpha.model"),
         ("from alpaca.trading.client import TradingClient\n", "brokers", "execution.order_path"),
         ("import alpaca_trade_api\n", "brokers", "runtime.ithildin.main"),
@@ -375,18 +376,13 @@ def test_data_importing_a_named_part_of_marketlake_passes(tmp_path: Path, module
 
 
 def test_the_data_package_imports_marketlake_only_where_the_rule_allows() -> None:
-    """The submodules `data` imports today, so a new one is a change to the rule.
-
-    #100's read of an unsealed day is the first to import `lake.unsealed`, and
-    its build takes the name out of `unread` below.
-    """
-    unread = {"lake.unsealed"}
+    """The submodules `data` imports today, so a new one is a change to the rule."""
     found = set()
     for path in (SOURCE / "data").rglob("*.py"):
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith(("from lake", "import lake")):
                 found.add(line.split()[1])
-    assert found == set(LAKE_SUBMODULES) - unread
+    assert found == set(LAKE_SUBMODULES)
 
 
 def test_core_imports_only_the_standard_library_and_rfc8785(tmp_path: Path) -> None:

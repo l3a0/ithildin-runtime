@@ -24,6 +24,7 @@ from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     BOOK_OUTPUT,
     CAPS_OUTPUT,
+    CLOCK_BOUND,
     CONSTRAINTS_OUTPUT,
     RECOVER_STAGE,
     RISK_STAGE,
@@ -80,12 +81,14 @@ from tests.support.gates import (
     caps,
     d,
     order,
+    quoted,
     snapshot,
     stress_record,
     valuation,
 )
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
+from tests.support.quotes import MAX_AGE
 from tests.test_data_source import Timer
 from tests.test_storage_contract import Alarms
 
@@ -138,7 +141,7 @@ EXPECTED = Constraints(
 # A decision that holds both legs, with a bar later than V's session for each.
 HELD = book({"chan": {GLD: 2, USO: -3}})
 MARKED = snapshot({GLD: 380, USO: 75})
-# The same decision before #100, whose newest bar is the session V was valued at.
+# The same decision with no quote, whose newest bar is the session V was valued at.
 SEALED = snapshot({GLD: 380, USO: 75}, at=DECISION, day=PRIOR)
 
 
@@ -171,6 +174,28 @@ def limits(
 
 
 # The model
+
+TICK = timedelta(microseconds=1)
+EDGE = DECISION - timedelta(seconds=MAX_AGE) + CLOCK_BOUND
+
+
+@pytest.mark.parametrize(("older", "fine"), [(timedelta(0), True), (TICK, False)])
+def test_1_a_held_instruments_quote_is_judged_at_the_decision_time(older, fine) -> None:
+    """The stage reads no clock, so a quote good at the decision is good here however late."""
+    made = quoted({GLD: (380, 380), USO: (75, 75)}, bid_at=EDGE - older)
+    if fine:
+        assert limits(marked=made) == EXPECTED
+        return
+    with pytest.raises(Halt, match="GLD's quote cannot be read: its bid has the stamp"):
+        limits(marked=made)
+
+
+def test_1_a_held_instrument_with_a_fault_in_its_quote_halts() -> None:
+    made = quoted({GLD: (380, 380), USO: (75, 75)}, price_kind="unstated")
+    with pytest.raises(Halt, match="GLD's quote is of unstated price kind"):
+        limits(marked=made)
+    # From flat nothing is marked, and the quote is data's to halt on.
+    assert limits(held=book(), marked=made) == EXPECTED
 
 
 def test_1_the_limits_are_the_tighter_of_the_strategys_and_the_caps() -> None:
@@ -1026,7 +1051,7 @@ def test_3_a_file_that_is_listed_and_missing_halts(tmp_path, name) -> None:
     ids=["held", "an-open-order"],
 )
 def test_3_a_held_instrument_with_no_mark_halts_the_stage(tmp_path, held) -> None:
-    """Before #100 a close−20 decision that holds a position halts here, ahead of the gate."""
+    """A close−20 decision that holds a position and read no quote halts here, ahead of the gate."""
     storage = store(tmp_path)
     inputs = write_data(storage, SEALED) | write_recover(
         storage, {**RECOVERED, BOOK_OUTPUT: (Book, (held,))}

@@ -143,7 +143,7 @@ flowchart LR
     sup -->|"1 plan"| d1
     d1 -->|"2.1 event"| queue
     queue -->|"2.2 event"| data
-    lake -->|"3.1 bars"| data
+    lake -->|"3.1 bars and quotes"| data
     d2 -->|"3.2 instrument ids"| data
     data -->|"4 snapshot"| d1
     secret -->|"5 broker key"| exec
@@ -187,7 +187,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 9.4 lease | The VM into storage | A holder that lost the lease rewrites it | Among the runtime's roles, only execution's rewrites an account's lease, a take on the tag it read and a renewal or a release on the tag its own last write returned, so a stale holder's write is refused. Execution creates one only where an absent lease allows it, and the bucket refuses every delete there |
 | 7.2, 8.1, 9.1, 13.1, 13.2 reads | Storage into the VM | A component acts on a changed blob | Each read checks the SHA-256 its result or header lists, the journal also chains by hash, and a mismatch halts |
 | 2.1, 2.2 event | Storage to a component's queue | A forged or lost event starts or starves a step | An event only wakes a component, which reads the stored blob itself, and a missing result alarms past its bound |
-| 3.1 bars | marketlake's account into the VM | Bars are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
+| 3.1 bars and quotes | marketlake's account into the VM | Bars or quotes are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
 | 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again as each order's send begins. It reads them once more, with the other controls, right before each broker call, and an unreadable control halts |
@@ -205,7 +205,7 @@ The security master is the table that maps each ticker to the platform's own ins
 | --- | --- | --- |
 | Only execution talks to the broker | An order sent around the gate, or a fill nobody journaled entering the book | 6, 10, 11 |
 | The current book comes from the journal | The broker's view quietly replacing the platform's record | 6, 7.1, 7.2, 9.3 |
-| Bars reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
+| Bars and quotes reach the models only after they are recorded | A model acting on a number nobody can read back | 3.1, 4, 8.1 |
 
 #### Only execution talks to the broker
 
@@ -255,9 +255,9 @@ flowchart LR
 
 A disagreement at an execution step halts trading rather than quietly replacing the platform's record, and one at monitoring's check alarms.
 
-#### Bars reach the models only after they are recorded
+#### Bars and quotes reach the models only after they are recorded
 
-A number nobody can read back cannot be checked later. So a model never reads a feed directly, and the data worker records which bars it read first. Every number a model acted on can then be read back, from the snapshot for what the decision read, and from marketlake for the bars. Captured market data is the first of the three things [design.md](../design.md#premise) says cannot be recovered, and marketlake is where it is kept.
+A number nobody can read back cannot be checked later. So a model never reads a feed directly, and the data worker records which bars and quotes it read first. Every number a model acted on can then be read back, from the snapshot for what the decision read, and from marketlake for the bars. Captured market data is the first of the three things [design.md](../design.md#premise) says cannot be recovered, and marketlake is where it is kept.
 
 The figure below is a C4 dynamic diagram.
 
@@ -299,7 +299,7 @@ flowchart LR
 
 | Phase | Who acts | What it produces | What stops it |
 | --- | --- | --- | --- |
-| 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
+| 1. Read the data and recover | Data and execution, with monitoring checking beside them | A snapshot of the bars and quotes read, and a book that agrees with the broker | Missing or stale data, or a book the broker disagrees with |
 | 2. Decide | The alpha, risk and cost models, then portfolio construction | The target portfolio, within this decision's limits | A halt in any input, which each worker passes on, or one of its own |
 | 3. Send | Execution, then monitoring | Orders at the broker, the decision's report and the heartbeat's ping | A failed check, a refused order or an order in doubt |
 | After the close | Execution, then the supervisor | A result on each open order, then the run's stop | A read that fails or runs late, which pages the owner, or a difference, which halts and pages |
@@ -360,7 +360,7 @@ sequenceDiagram
     F-->>P: sends an event for the plan
     X->>F: each instance runs its Startup checks, read only,<br/>before it plans or sends
     Note over V,M: Phase 1, read the data, then recover
-    D->>F: stores the snapshot, naming each bar read,<br/>and data's decision result
+    D->>F: stores the snapshot, naming each bar and quote read,<br/>and data's decision result
     F-->>X: sends an event for data's result
     X->>B: asks about orders in doubt,<br/>reads fills since the last decision
     B-->>X: returns each lookup's answer<br/>and fills since the last decision
@@ -499,7 +499,7 @@ sequenceDiagram
 
 A run that starts on a book the broker disagrees with would trade the wrong difference. So this phase ends in a comparison, and a difference halts.
 
-1. **Data reads the bars.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, and records which ones it read before any model sees them.
+1. **Data reads the bars and the quotes.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, then, for a decision inside its session, one capture's quote of each, and records which ones it read before any model sees them.
 2. **Execution waits for that snapshot,** so it reads the broker at the decision's own time.
 3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
 4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
@@ -599,7 +599,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
 12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
 
-A fault in steps 4 to 9 journals the order `Abandoned`. Three exceptions are an order another writer has moved, which is left as it is, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
+A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an order another writer has moved, which is left as it is, an `Abandoned` that loses its number six times, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `verdict`, the `sending` and a check at the submit ends by the order's last moment, and the order is stopped there however long another read took.
 
 **Table:** The eight checks made right before the broker call
 
@@ -745,7 +745,8 @@ The charter gives the risk engineer the halt on stale data, and the lag a
 sealed daily bar may have is 0 sessions. A decision at close−20 reads the bar of
 the session before, and one at the close reads that session's own, so any lag
 is a session that should be there and is not. Data applies that rule, and
-[#100](https://github.com/l3a0/ithildin-runtime/issues/100) says how old a quote may be.
+[How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) says how
+old a quote may be.
 
 An empty answer halts the same way. If the alpha model writes a forecast file
 with no entries and no "trade nothing" mark, portfolio construction halts rather
@@ -790,9 +791,9 @@ sequenceDiagram
         X->>F: stores a halt as that decision's send result,<br/>if none is stored
         X->>F: releases the account's lease
     and
-        D->>ML: are the segments up to the decision time<br/>in marketlake?
-        ML-->>D: answers that they are not there yet
-        D->>F: stores a halt as data's result, reason "data not ready"
+        D->>ML: lists the day's segments and reads the newest
+        ML-->>D: answers with no row captured by the decision
+        D->>F: stores the snapshot, then a halt as data's result,<br/>naming each prefix and what it listed
     end
     F-->>X: sends an event: data's result is a halt
     X->>F: stores halts as execution's recover and send results,<br/>naming data's, without sending
@@ -807,9 +808,9 @@ The restart runs the same first phase as any trading day.
 1. On starting, execution settles the order the dead worker left half-sent, by
    asking the broker about it rather than sending it again, and halts that old
    decision, as [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
-2. Data finds the segments up to the decision time not yet in marketlake and
-   halts, so execution's recover stage, which waits for data's result, halts
-   too.
+2. Data finds no row captured by the decision time in the segments marketlake
+   has uploaded, stores its snapshot and halts, so execution's recover stage,
+   which waits for data's result, halts too.
 
 The order in which the processes come up no longer matters. Execution may
 start before data, as it does here, but it sends only what a target
@@ -866,12 +867,12 @@ A day's loss past a set limit has to end new trading for the account, and a pric
 
 The day's loss is the account's valuation at the prior session's official closes, V, less the book's cash and each position at its mark. A fee counts as a loss. So does a fall on an ex-dividend date, and the payment, journaled on a later session, then hides that session's loss by its size. That gap stays open. Massive's dividend records, at its `/stocks/v1/dividends` endpoint, read on 2026-11-24, held none for GLD or USO and some for SPY, which the shadow run on [#16](https://github.com/l3a0/ithildin-runtime/issues/16) reads.
 
-The mark is the newest daily bar's close, through `core.mark`, which portfolio construction sizes with too. Six gaps halt rather than read as no loss.
+The mark is the midpoint of the instrument's quote, or its newest daily bar's close where the snapshot holds no quote of it, through `core.mark`, which portfolio construction sizes with too. A split on the decision's own day leaves V and the bars before it and the quote after it, and only the flag on a midpoint that moved sees that, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds. Six gaps halt rather than read as no loss.
 
 1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.
-3. A held instrument, or one with an open order, has no bar later than V's session, or has one of a session later than the decision's or one that ends or was knowable after the decision. Until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) adds the day's own price, that halts every close−20 decision that checks an order or holds a position.
-4. An instrument's price is missing, stale, of unstated kind or not above zero, or the snapshot holds a quote for it, until [#100](https://github.com/l3a0/ithildin-runtime/issues/100) says which of a quote's prices is read. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
+3. A held instrument, or one with an open order, has no quote and no bar later than V's session, or has a bar of a session later than the decision's or one that ends or was knowable after the decision.
+4. An instrument's price is missing, stale, of unstated kind or not above zero, or its quote has any fault [How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) lists, or its quote's older stamp is at or before V's close, or it has a quote beside a bar of the decision's session. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
 5. Something other than the platform's own fills or a broker record [on the closed list](../design.md#strategies-schedules-and-decisions) moved the book's cash or a position after the valuation, such as a deposit or a person's override.
 6. A position was corrected after V's session closed, whether or not V was built since, such as by a split's restatement. Marked at that session's close, the restated position would hide a loss.
 
@@ -1217,6 +1218,7 @@ stateDiagram-v2
         data missing, stale or not ready,
         a price that contradicts itself,
         a price of unstated kind,
+        a quote that fails its check,
         a lookback that crosses a change of series,
         a journal that does not replay,
         a fill in dispute,
@@ -1281,7 +1283,7 @@ Both pass through `Reporting`, so a halted or failed decision still writes its r
 
 ### Who clears a halt
 
-A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send and a snapshot that cannot be stored or confirmed. So on shadow and paper a price the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
+A halt is final for its decision, which is this doc's choice. The owner or the operator clears it, and only the owner clears a live account's halt. Clearing never reruns the decision. The next decision starts fresh, and it halts again while the kill switch is set, the cause is still there, or the journal holds an open halt whose cause holds the account. On live every cause holds the account until the owner clears it, and on shadow and paper only the causes the account's hard caps name do, which are an order the platform did not send, a snapshot that cannot be stored or confirmed, and the two halts [A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control) keeps until a person clears them, a price of unstated kind and a quote that fails its age and status check, which [#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build. So on shadow and paper a bar the contradiction rule flags, or a lookback that crosses a change of series, halts only its own decision and needs no one to clear it. A halt for a book that disagrees with the broker also stays open there until a person clears it. Where that rule lives is a proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
 ### When the run stops
 

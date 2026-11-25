@@ -34,9 +34,10 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.data import DataStage, LakeSource, Mirror, differences, spikes
 from ithildinruntime.data.reference import PriceKinds
-from ithildinruntime.runtime.data_worker import DATA_ROW, data_bucket, data_handler
+from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
+from tests.support.quotes import quote
 from tests.test_data_source import FIRST, LAST, Clock, Timer, before, close, settings, unlist
 from tests.test_data_spikes import bar
 from tests.test_storage_contract import Alarms
@@ -81,6 +82,7 @@ def stage(lake: Path, tmp_path: Path, clock=None, **changes) -> tuple[DataStage,
     source = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror"),
         settings(**changes),
+        live=FolderBucket(lake.with_name("no-live")),
         clock=clock,
         timer=Timer(),
     )
@@ -283,6 +285,7 @@ def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> Da
     source = LakeSource(
         Mirror(FolderBucket(lake), tmp_path / "mirror-again"),
         settings(**changes),
+        live=FolderBucket(lake.with_name("no-live")),
         clock=clock,
         timer=Timer(),
         kinds=kinds,
@@ -380,7 +383,11 @@ def test_18_a_redelivery_halts_on_a_capture_that_holds_other_than_one_snapshot(
     made, storage, _ = stage(lake, tmp_path, clock=Ticking())
     clean = (
         LakeSource(
-            Mirror(FolderBucket(lake), tmp_path / "clean"), settings(), clock=Clock(), timer=Timer()
+            Mirror(FolderBucket(lake), tmp_path / "clean"),
+            settings(),
+            live=FolderBucket(lake.with_name("no-live")),
+            clock=Clock(),
+            timer=Timer(),
         )
         .read(close(LAST))
         .snapshot
@@ -541,8 +548,10 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
         ("quotes",),
         ("provisional",),
         ("ledgers",),
-        ("segments",),
+        ("rows",),
+        ("faults",),
         ("bars", "ledgers"),
+        ("segments", "faults"),
         ("status", "ledgers"),
         ("flags", "segments"),
     ],
@@ -553,27 +562,30 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
         BlobHeader,
         InstrumentId,
         OutputFile,
-        Quote,
+        Segment,
         SpikeFlag,
         encode_output,
     )
 
     hashes = {"chan_bollinger": "c" * 64}
     header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
     gld = InstrumentId("GLD")
     flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
-    quote = Quote(gld, close(LAST), None, None, Decimal(1), "v", close(LAST), True, None)
+    two = close(LAST) + timedelta(minutes=1)
     values = {
         "status": {gld: BarStatus.STALE},
         "flags": {gld: (flag,)},
-        "quotes": {gld: quote},
+        "quotes": {gld: quote(gld, 1, 2, close(LAST))},
         "provisional": True,
         "ledgers": {"manifest.jsonl": "e" * 64},
-        "segments": ("lake-live/a.jsonl",),
+        "segments": (Segment("journal/a.arrows", "v1", "e" * 64),),
+        "rows": {gld: ({"bid": "1.0", "ask": None},)},
+        "faults": ("a reason",),
         "bars": {gld: {"1d": (bar(0, "100"),)}},
     }
-    changed = dataclasses.replace(base, **{name: values[name] for name in names})
+    read = {"quotes_read_at": two} if "provisional" in names else {}
+    changed = dataclasses.replace(base, **{name: values[name] for name in names}, **read)
 
     def encoded(snap: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,), False))
@@ -597,14 +609,14 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
 
     hashes = {"chan": "c" * 64}
     first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
     later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
     elif change == "one hash":
         later = dataclasses.replace(first, config_hashes={"chan": "d" * 64})
     elif change == "format":
-        later = dataclasses.replace(first, format=2)
+        later = dataclasses.replace(first, format=3)
     else:
         later = dataclasses.replace(first, release="r2")
     if change == "release and flags":
@@ -628,7 +640,7 @@ def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {})
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
 
     def holding(n: int) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,) * n, False))
@@ -763,7 +775,7 @@ def test_a_stop_while_datas_stage_waits_reads_and_stores_nothing(
 
     made, _, alarms = stage(lake, tmp_path, clock=Stopping())
     reads: list[datetime] = []
-    made._source.read = reads.append
+    made._source.read = lambda at, report: reads.append(at)
     with pytest.raises(Stopped):
         made(Item(close(LAST), "data"), Reports())
     assert reads == []
@@ -821,14 +833,58 @@ def test_the_entry_point_adds_datas_row_as_a_capturing_stage_with_no_inputs() ->
     Table((DATA_ROW,))
 
 
-def test_a_backtest_reads_a_folder_and_every_other_mode_reads_s3(tmp_path: Path) -> None:
-    assert isinstance(data_bucket(Mode.BACKTEST, folder=tmp_path), FolderBucket)
+def test_a_backtest_reads_two_folders_and_every_other_mode_two_prefixes(tmp_path: Path) -> None:
+    for root, key in (("lake", "manifest.jsonl"), ("lake-live", "journal/x.arrows")):
+        path = tmp_path / root / key
+        path.parent.mkdir(parents=True)
+        path.write_bytes(root.encode())
+    lake, live = data_buckets(Mode.BACKTEST, folder=tmp_path / "lake")
+    assert isinstance(lake, FolderBucket) and isinstance(live, FolderBucket)
+    assert lake.read("manifest.jsonl").data == b"lake"
+    assert live.list("journal/") == ["journal/x.arrows"]
+    assert live.read("journal/x.arrows").data == b"lake-live"
     for mode in (Mode.SHADOW, Mode.PAPER, Mode.LIVE):
-        assert isinstance(data_bucket(mode, client=object(), bucket="marketlake"), S3Bucket)
-        with pytest.raises(ValueError):
-            data_bucket(mode, folder=tmp_path)
-    with pytest.raises(ValueError):
-        data_bucket(Mode.BACKTEST, client=object(), bucket="marketlake")
+        buckets = data_buckets(mode, client=object(), bucket="marketlake", prefix="a/lake")
+        assert all(isinstance(b, S3Bucket) for b in buckets)
+        assert [b._root for b in buckets] == ["a/lake/", "a/lake-live/"]
+
+
+def test_a_missing_folder_beside_the_lake_lists_nothing(tmp_path: Path) -> None:
+    (tmp_path / "lake").mkdir()
+    assert data_buckets(Mode.BACKTEST, folder=tmp_path / "lake").live.list("journal/") == []
+
+
+S3 = {"client": object(), "bucket": "marketlake", "prefix": "lake"}
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        *({k: v for k, v in S3.items() if k != missing} for missing in S3),
+        S3 | {"prefix": ""},
+        S3 | {"bucket": ""},
+        S3 | {"folder": "/lake"},
+        {"folder": "/lake"},
+    ],
+)
+def test_every_mode_but_a_backtest_names_a_client_a_bucket_and_a_prefix(wrong: dict) -> None:
+    for mode in (Mode.SHADOW, Mode.PAPER, Mode.LIVE):
+        with pytest.raises(ValueError, match="through a client, its name and its prefix"):
+            data_buckets(mode, **wrong)
+
+
+@pytest.mark.parametrize(
+    "wrong", [S3, {}, {"folder": "/lake", "prefix": "lake"}, {"folder": "/lake", "client": 1}]
+)
+def test_a_backtest_names_a_folder_alone(wrong: dict) -> None:
+    with pytest.raises(ValueError, match="from a folder, and only that"):
+        data_buckets(Mode.BACKTEST, **wrong)
+
+
+@pytest.mark.parametrize("folder", [".", "..", "a/..", "/"])
+def test_a_folder_with_no_name_has_none_beside_it(folder: str) -> None:
+    with pytest.raises(ValueError, match="names no folder"):
+        data_buckets(Mode.BACKTEST, folder=folder)
 
 
 def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_datas_header(
@@ -843,6 +899,7 @@ def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_dat
         _, storage, _ = stage(lake, tmp_path / name)
         handler = data_handler(
             bucket=FolderBucket(lake),
+            live=FolderBucket(tmp_path / "no-live"),
             mirror=tmp_path / name / "mirror",
             storage=storage,
             clock=Clock(),
@@ -874,6 +931,7 @@ def test_the_entry_points_handler_reads_through_the_bucket_it_is_given(
     made, storage, _ = stage(lake, tmp_path)
     handler = data_handler(
         bucket=FolderBucket(lake),
+        live=FolderBucket(tmp_path / "no-live"),
         mirror=tmp_path / "other-mirror",
         storage=storage,
         clock=Clock(),

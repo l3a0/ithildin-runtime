@@ -8,6 +8,11 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [How the model knows which unit it holds](01-introduction-and-goals.md#how-the-model-knows-which-unit-it-holds)
 
+## Prices in Context and scope
+
+- [Why no decision waits for a listing to fill](03-context-and-scope.md#why-no-decision-waits-for-a-listing-to-fill)
+- [Which stamp dates a quote](03-context-and-scope.md#which-stamp-dates-a-quote)
+
 ## Prices in Building blocks
 
 - [What each call returns, and what is journaled first](05-building-blocks.md#what-each-call-returns-and-what-is-journaled-first)

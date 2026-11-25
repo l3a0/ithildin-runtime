@@ -731,7 +731,8 @@ def test_3_a_split_in_captured_bars_is_listed_and_a_read_across_the_seam_is_blin
     assert "source" not in ran.out.split("series = [")[1].splitlines()[2]
     whole = LakeSource(
         Mirror(FolderBucket(root), tmp_path / "mirror"),
-        DataSettings((GLD, USO), len(days), {}, 0, Decimal(10)),
+        DataSettings((GLD, USO), len(days), {}, 0, Decimal(10), {}),
+        live=FolderBucket(root.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
         kinds=made.KINDS,

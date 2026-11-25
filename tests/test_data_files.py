@@ -1,7 +1,7 @@
-"""The data module's two files that only grow, pinned row by row.
+"""The data module's three files that only grow, pinned row by row.
 
 Acceptance test 20 on #5. CI's checkout holds no history to compare with, so
-each row the security master and the price-kind contract held when it was
+each row the security master and the two kind contracts held when it was
 added is written here by hand. Editing or removing a row fails the test, and
 adding one means adding it here too.
 """
@@ -17,9 +17,13 @@ from ithildinruntime.core import Halt, InstrumentId
 from ithildinruntime.data.reference import (
     MASTER,
     PRICE_KINDS,
+    QUOTE_KINDS,
+    QUOTE_SOURCE,
     Kind,
+    QuoteKind,
     load_master,
     load_price_kinds,
+    load_quote_kinds,
 )
 
 MASTER_ROWS = [
@@ -59,6 +63,9 @@ KIND_ROWS = [
     for name in ("gld", "uso")
 ]
 
+# #133 adds the first, and until then every live quote halts.
+QUOTE_ROWS: list[str] = []
+
 
 HEAD = "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
 
@@ -68,7 +75,9 @@ def _data_rows(path: Path) -> list[str]:
     return [line for line in lines if not line.startswith("#")][1:]
 
 
-@pytest.mark.parametrize(("path", "pinned"), [(MASTER, MASTER_ROWS), (PRICE_KINDS, KIND_ROWS)])
+@pytest.mark.parametrize(
+    ("path", "pinned"), [(MASTER, MASTER_ROWS), (PRICE_KINDS, KIND_ROWS), (QUOTE_KINDS, QUOTE_ROWS)]
+)
 def test_every_row_held_when_it_was_added_is_still_there_unchanged(
     path: Path, pinned: list[str]
 ) -> None:
@@ -77,9 +86,10 @@ def test_every_row_held_when_it_was_added_is_still_there_unchanged(
     assert len(rows) == len(pinned), f"a row was added to {path.name}, so pin it here too"
 
 
-def test_both_files_load() -> None:
+def test_every_file_loads() -> None:
     assert len(load_master().rows) == len(MASTER_ROWS)
     assert len(load_price_kinds().rows) == len(KIND_ROWS)
+    assert len(load_quote_kinds().rows) == len(QUOTE_ROWS)
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"
@@ -139,3 +149,103 @@ def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent
     path.write_text(f"{head}\n2026-11-22,s,2020-01-02,2020-12-31,close,all,none,,x\n")
     with pytest.raises(Halt, match="leaves a field empty"):
         load_price_kinds(path)
+
+
+# The quote-kind contract.
+
+QUOTE_HEAD = (
+    "added,source,first_session,last_session,price_kind,last_kind,venues,volume_counted,"
+    "normal_status,read_from"
+)
+STATED = "two sides,a sale,all,shares,Normal,x"
+SILENT = QuoteKind(*["unstated"] * 5)
+SAID = QuoteKind("two sides", "a sale", "all", "shares", "Normal")
+
+
+def quote_kinds(tmp_path: Path, *rows: str, head: str = QUOTE_HEAD):
+    path = tmp_path / "quotes.csv"
+    path.write_text("\n".join([head, *rows]) + "\n")
+    return load_quote_kinds(path)
+
+
+def quote_row(
+    added: str = "2026-11-25",
+    source: str = QUOTE_SOURCE,
+    first: str = "2026-01-02",
+    last: str = "2026-12-31",
+    stated: str = STATED,
+) -> str:
+    return f"{added},{source},{first},{last},{stated}"
+
+
+def test_the_quote_source_is_marketlakes() -> None:
+    assert QUOTE_SOURCE == "marketlake:quotes"
+
+
+def test_a_quote_kind_is_stated_from_its_first_session_to_its_last(tmp_path: Path) -> None:
+    made = quote_kinds(tmp_path, quote_row())
+    for day, kind in (
+        (date(2026, 1, 1), SILENT),
+        (date(2026, 1, 2), SAID),
+        (date(2026, 12, 31), SAID),
+        (date(2027, 1, 1), SILENT),
+    ):
+        assert made.kind(day) == kind
+
+
+def test_another_sources_row_states_nothing_of_a_quote(tmp_path: Path) -> None:
+    assert (
+        quote_kinds(tmp_path, quote_row(source="marketlake:capture")).kind(date(2026, 6, 1))
+        == SILENT
+    )
+
+
+def test_two_quote_rows_added_on_one_date_that_cover_a_session_are_refused(tmp_path: Path) -> None:
+    with pytest.raises(Halt, match="row 2 covers a session another row of marketlake:quotes"):
+        quote_kinds(tmp_path, quote_row(), quote_row(first="2026-12-31", last="2027-06-01"))
+    apart = quote_kinds(tmp_path, quote_row(), quote_row(first="2027-01-01", last="2027-06-01"))
+    assert apart.kind(date(2027, 1, 1)) == SAID
+
+
+def test_a_later_quote_row_supersedes_an_earlier_one_where_both_cover(tmp_path: Path) -> None:
+    made = quote_kinds(
+        tmp_path,
+        quote_row(),
+        quote_row(added="2026-11-26", first="2026-06-01", stated="other,a sale,all,shares,OK,x"),
+    )
+    assert made.kind(date(2026, 5, 31)) == SAID
+    assert made.kind(date(2026, 6, 1)) == QuoteKind("other", "a sale", "all", "shares", "OK")
+
+
+@pytest.mark.parametrize(
+    ("row", "said"),
+    [
+        (quote_row(last=""), "row 1 holds '', which is no date"),
+        (quote_row(first=""), "row 1 holds '', which is no date"),
+        (quote_row(first="2027-01-01"), "row 1 ends before it starts"),
+        (quote_row(source=""), "row 1 leaves a field empty"),
+        *(
+            (quote_row(stated=",".join(cut)), "row 1 leaves a field empty")
+            for cut in (
+                ["" if n == gone else f for n, f in enumerate(STATED.split(","))]
+                for gone in range(5)
+            )
+        ),
+    ],
+)
+def test_a_quote_row_that_is_not_whole_is_refused(tmp_path: Path, row: str, said: str) -> None:
+    with pytest.raises(Halt, match=said):
+        quote_kinds(tmp_path, row)
+
+
+def test_an_unstated_field_of_each_kind_reads_as_itself(tmp_path: Path) -> None:
+    for n in range(5):
+        stated = ["unstated" if n == m else f for m, f in enumerate(STATED.split(","))]
+        made = quote_kinds(tmp_path, quote_row(stated=",".join(stated))).kind(date(2026, 6, 1))
+        assert made == QuoteKind(*stated[:5])
+
+
+@pytest.mark.parametrize("head", [HEAD, QUOTE_HEAD.replace("last_kind,", ""), QUOTE_HEAD + ",y"])
+def test_a_quote_file_with_another_header_is_refused(tmp_path: Path, head: str) -> None:
+    with pytest.raises(Halt, match="has the header"):
+        quote_kinds(tmp_path, head=head)
