@@ -763,6 +763,15 @@ def test_5_a_count_past_what_a_record_holds_halts() -> None:
         assert reason.startswith(
             "chan's size before any limit in USO cannot be recorded at 9 places"
         )
+    # Under limits as large, the target itself is past a record at a step of a billionth.
+    vast_caps = {i: d("1e30") for i in (GLD, USO)}
+    owners = replace(CAPS, max_order_qty=vast_caps, max_position=vast_caps, max_gross=d("1e30"))
+    limits = constraints(
+        max_order_qty=vast_caps, max_position=vast_caps, max_gross=d("1e30"), max_net=d("1e30")
+    )
+    worth = valuation("1e30", cash=d("1e30"))
+    reason = refused(**given, limits=limits, owners=owners, v=worth, step=NINE)
+    assert reason.startswith("chan's target in USO cannot be recorded at 9 places")
 
 
 @DIRECTIONS
