@@ -21,7 +21,7 @@ dependencies = [
     # marketlake's uv.lock holds at the commit above, which its capture host
     # installs, and a row read before the seal equals the seal's only while the
     # two match. So it moves in the pull request that moves that commit, and
-    # .github/dependabot.yml leaves its version alone.
+    # .github/dependabot.yml proposes no version update of it.
     "pyarrow==25.0.1",
     "rfc8785==0.1.4",
 ]

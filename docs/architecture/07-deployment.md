@@ -551,7 +551,11 @@ digest that fails.
   beside that commit to the version marketlake's `uv.lock` holds at it, which
   the capture host installs. A row read before the seal equals the sealed row
   only while the two match, so the two pins move in one pull request and
-  Dependabot leaves pyarrow's version alone.
+  Dependabot proposes no version update of pyarrow.
+- Dependabot alerts and security updates are on, so a hole published in any
+  pinned dependency raises an alert, and a pull request where a fixed version
+  exists. The price is a pull request the pins can refuse, which for pyarrow
+  waits for marketlake.
 
 #### What says the marketlake pin is due a raise
 

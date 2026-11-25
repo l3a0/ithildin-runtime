@@ -17,9 +17,9 @@ updates:
     # with the marketlake commit in pyproject.toml and never on its own. The
     # weekly group would move it with no word of marketlake in its title. Every
     # version update is listed rather than the name alone, because GitHub's
-    # docs say update types leave security updates alone. This repository has
-    # alerts and security updates switched off, so until they are on, nothing
-    # here says that a hole in pyarrow was published.
+    # docs say update types leave security updates alone, which are on here. One
+    # for pyarrow is red on the contract test of the version, and waits for
+    # marketlake to move.
     ignore:
       - dependency-name: pyarrow
         update-types:
