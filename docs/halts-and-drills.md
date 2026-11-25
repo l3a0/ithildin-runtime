@@ -252,7 +252,7 @@ Each row halts one strategy's alpha stage for its decision and leaves its positi
 #### Drill for an order or fill the platform did not send
 
 1. A simulated broker that reports an unstamped order, a stamped fill with no `sending` entry, a fill past its order's quantity, an open order and a fill on a `Lost` order and a liquidation, each expected to be journaled as received, to halt every later decision until cleared, and, while resting, to be cancelled by a switch pull.
-2. Repeat, once the platform has a record of splits, with a split an outside entry explains in full, expecting the halt released in shadow and on paper, and with the setting a live account holds, and with that setting absent or unreadable, each expecting the halt to stay until the owner clears it.
+2. Repeat with an assignment, and, once the platform has a record of splits, with a split, that an outside entry explains in full, expecting the halt released in shadow and on paper, and with the setting a live account holds, and with that setting absent or unreadable, each expecting the halt to stay until the owner clears it.
 
 #### Drill for a strategy switched off
 

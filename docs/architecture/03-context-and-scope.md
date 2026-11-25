@@ -520,8 +520,8 @@ sweep, still checked against that session's 16:15 quote, rather than serve a
 provisional bar. So the close−20 decision reads the previous session's official bar
 through `load_bars`, and [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run reads the previous session's
 official close the same way. That bar
-is Schwab's daily candle as fetched at the session's own 18:30 sweep. A bar
-marketlake fetches later than that sweep halts the next close−20 decision as stale. A
+is Schwab's daily candle as fetched at the session's own 18:30 sweep. A bar that has not
+landed by the next close−20 decision halts it as stale. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
 closes, and the close−20 quote's midpoint stands where the backtest uses the session's

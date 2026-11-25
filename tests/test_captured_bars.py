@@ -150,6 +150,14 @@ def decide(
     return Decided(data, snapshot, alpha, forecast)
 
 
+@pytest.fixture(scope="module")
+def unsplit(lake: Path, tmp_path_factory: pytest.TempPathFactory) -> Forecast:
+    """What the same decision forecasts on the lake with no split planted."""
+    found = decide(lake, tmp_path_factory.mktemp("unsplit"), DAY).forecast
+    assert found is not None
+    return found
+
+
 def sessions(snapshot: Snapshot, leg: InstrumentId) -> list[date]:
     return [bar.session for bar in snapshot.bars[leg]["1d"]]
 
@@ -217,22 +225,34 @@ EFFECTIVE = {"the-second-bar": 59, "a-middle-bar": 30, "the-newest-bar": 1, "the
 RATIOS = {"two-for-one": Decimal(2), "one-for-eight": Decimal("0.125")}
 
 
-def read_as_a_move(found: Decided, leg: InstrumentId, planted: Mapping[date, Decimal]) -> None:
+def read_as_a_move(
+    found: Decided, leg: InstrumentId, planted: Mapping[date, Decimal], unsplit: Forecast
+) -> None:
     """The stored bars and the forecast read the planted closes, with no split undone."""
     assert [b.close for b in found.snapshot.bars[leg]["1d"]] == [planted[d] for d in WINDOW]
+    # Every mark of a captured bar is taken off, so a model that undid a split by one would differ.
     adjusted = {
-        i: {"1d": tuple(replace(b, basis="adjusted") for b in by["1d"])}
+        i: {
+            "1d": tuple(
+                replace(
+                    b, basis="adjusted", origin="imported", source="made up", volume_counted="x"
+                )
+                for b in by["1d"]
+            )
+        }
         for i, by in found.snapshot.bars.items()
     }
-    expected = BollingerSpread(TRACKED).forecast(replace(found.snapshot, bars=adjusted))
+    held = replace(found.snapshot, bars=adjusted, flags={})
+    expected = BollingerSpread(TRACKED).forecast(held)
     assert found.forecast == expected.forecasts[0]
+    assert found.forecast != unsplit
 
 
 @pytest.mark.parametrize("ratio", RATIOS.values(), ids=RATIOS)
 @pytest.mark.parametrize("back", EFFECTIVE.values(), ids=EFFECTIVE)
 @pytest.mark.parametrize("ticker", ["GLD", "USO"])
 def test_3_a_split_in_the_window_is_flagged_and_the_decision_forecasts(
-    lake: Path, tmp_path: Path, ticker: str, back: int, ratio: Decimal
+    lake: Path, tmp_path: Path, ticker: str, back: int, ratio: Decimal, unsplit: Forecast
 ) -> None:
     mine = lakes.copy_lake(lake, tmp_path / "split", ((WINDOW[0], WINDOW[-1]),))
     days = [*WINDOW, DAY]
@@ -249,12 +269,17 @@ def test_3_a_split_in_the_window_is_flagged_and_the_decision_forecasts(
     assert (flag.session, flag.rule) == (effective, MOVE)
     assert list(found.snapshot.flags) == [leg]
     read_as_a_move(
-        found, leg, {d: split[d] if d >= effective else c for d, c in WALKS[ticker].items()}
+        found,
+        leg,
+        {d: split[d] if d >= effective else c for d, c in WALKS[ticker].items()},
+        unsplit,
     )
 
 
-def test_3_a_split_too_small_to_flag_is_read_with_no_flag(lake: Path, tmp_path: Path) -> None:
-    """The flag is no check on every split, which docs/design.md's rule 6 says."""
+def test_3_a_split_too_small_to_flag_is_read_with_no_flag(
+    lake: Path, tmp_path: Path, unsplit: Forecast
+) -> None:
+    """The flag is no check on every split, as docs/design.md's rule on splits says."""
     mine = lakes.copy_lake(lake, tmp_path / "split", ((WINDOW[0], WINDOW[-1]),))
     template = mine / lakes.partition_key("USO", WINDOW[0])
     for day in WINDOW[30:]:
@@ -266,7 +291,7 @@ def test_3_a_split_too_small_to_flag_is_read_with_no_flag(lake: Path, tmp_path: 
     assert found.snapshot.flags == {}
     small = {d: (c / Decimal("1.1")).quantize(Decimal("0.01")) for d, c in WALKS["USO"].items()}
     planted = {d: small[d] if d in WINDOW[30:] else c for d, c in WALKS["USO"].items()}
-    read_as_a_move(found, USO, planted)
+    read_as_a_move(found, USO, planted, unsplit)
 
 
 # 4. A change of series

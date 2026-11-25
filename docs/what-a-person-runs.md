@@ -409,9 +409,9 @@ uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy 
 
 1. Append what the command printed to `src/ithildinruntime/core/stress_moves.toml`. Never change or remove a record that is there, apart from [withdrawing one](#withdraw-a-record).
 2. Fill in each flag's empty `what`, which says what the flagged price was. The reader refuses a record with one empty.
-3. Where the record's `series` hold captured bars, stop the commit and take it to the owner until a record of splits covers them, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 8 builds. A split there reads as a move, so one missed can make m larger, or smaller where it offsets a real move. A captured series has the `basis` `raw`, the move rule misses some splits in one, and marketlake's action ledger lists none of GLD or USO.
+3. Where the record's `series` hold captured bars, stop the commit and take it to the owner until a record of splits covers them, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 8 builds. A split there reads as a move, so one missed can make m larger, or smaller where it offsets a real move. A captured series has the `basis` `raw`, and the move rule misses some splits in one. While it stops, the older record's age keeps running.
 4. Read each move under `left_out`, which m does not count. Where a source holds both its sides, compare it with m.
-5. A captured series at step 3, or a move at step 4 that is at or above m or that no source measures, stops the commit and goes to the owner.
+5. A move at step 4 that is at or above m, or that no source measures, stops the commit and goes to the owner.
 6. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
 
 #### Raise the stress move

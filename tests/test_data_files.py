@@ -23,6 +23,7 @@ from ithildinruntime.data.reference import (
     QUOTE_KINDS,
     QUOTE_SOURCE,
     Kind,
+    KindRow,
     MasterRow,
     PriceKinds,
     QuoteKind,
@@ -229,9 +230,20 @@ def unnamed(kinds: PriceKinds, master: SecurityMaster) -> set[tuple[str, date]]:
     return found
 
 
+def captured_row() -> KindRow:
+    """The row added on 2026-11-25, which a later renewal leaves as it is."""
+    (row,) = [
+        r
+        for r in load_price_kinds().rows
+        if r.source == CAPTURE_SOURCE and r.added == date(2026, 11, 25)
+    ]
+    return row
+
+
 def test_every_instrument_a_capture_row_states_the_kind_of_is_one_its_evidence_names() -> None:
-    kinds, master = load_price_kinds(), load_master()
-    assert unnamed(kinds, master) == set()
+    master = load_master()
+    assert unnamed(load_price_kinds(), master) == set()
+    kinds = PriceKinds((captured_row(),))
     # A fifth ticker would inherit the row.
     fifth = MasterRow(date(2026, 12, 1), InstrumentId("IWM"), "IWM", date(2027, 3, 31), None)
     early = replace(fifth, id=InstrumentId("IAU"), ticker="IAU", first_session=date(2026, 9, 8))
@@ -245,12 +257,24 @@ def test_every_instrument_a_capture_row_states_the_kind_of_is_one_its_evidence_n
 
 
 def test_a_later_capture_row_names_the_instruments_it_states_on_its_own() -> None:
-    kinds, master = load_price_kinds(), load_master()
-    (row,) = [r for r in kinds.rows if r.source == CAPTURE_SOURCE]
+    row, master = captured_row(), load_master()
+    span = date(2027, 1, 4), date(2027, 3, 26)
     later = replace(
-        row, added=date(2027, 3, 1), read_from="made up. Its evidence is of GLD and SPY alone"
+        row,
+        added=date(2027, 3, 1),
+        first_session=span[0],
+        last_session=span[1],
+        read_from="made up. Its evidence is of GLD and SPY alone. No bar of USO was compared.",
     )
-    assert {i for i, _ in unnamed(PriceKinds((*kinds.rows, later)), master)} == {"USO", "QQQ"}
+    found = unnamed(PriceKinds((row, later)), master)
+    assert {i for i, _ in found} == {"USO", "QQQ"}
+    assert {day for _, day in found} == {
+        d for d in load_sessions().sessions if span[0] <= d <= span[1]
+    }
+    # A new id that takes a named ticker is not named itself.
+    alias = MasterRow(date(2026, 12, 1), InstrumentId("ALIAS"), "GLD", date(2026, 12, 1), None)
+    aliased = replace(master, rows=(*master.rows, alias))
+    assert ("ALIAS", date(2026, 12, 1)) in unnamed(PriceKinds((row,)), aliased)
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"

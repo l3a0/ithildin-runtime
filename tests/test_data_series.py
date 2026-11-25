@@ -149,7 +149,7 @@ CAPTURED = "raw from no source as of no date"
 
 
 def test_1_a_basis_marketlake_does_not_know_halts(one_lake: Path, tmp_path: Path) -> None:
-    """marketlake's refusal of one is the only guard, since the alpha model reads any basis."""
+    """marketlake's refusal is the only guard on a window that is all of one unknown basis."""
     lake = copied(one_lake, tmp_path)
     made.of_series(lake, "USO", SEAM, basis="half-adjusted")
     with pytest.raises(Halt, match="half-adjusted"):
