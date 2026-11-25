@@ -351,7 +351,7 @@ def test_unsealed_captured_by_makes_the_doors_own_cut(tmp_path: Path) -> None:
         captured_by(table, landed.replace(tzinfo=None))
     for column in ("fetch_end_ts", "row_kind"):
         with pytest.raises(UnsealedRefused):
-            captured_by(table.drop_columns([column]), landed)
+            captured_by(table.slice(0, 1).drop_columns([column]), landed)
 
 
 @pytest.mark.parametrize(
