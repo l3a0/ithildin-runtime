@@ -29,7 +29,7 @@ from typing import NamedTuple
 from .codec import CodecError, from_received, places
 from .exact import exact_total, finite, quotient
 from .halt import Halt
-from .limits import check_pair
+from .limits import check_pair, shown
 from .names import is_name, is_sha256
 from .records import Bar, Constraints, HardCaps, InstrumentId
 from .sessions import load_sessions
@@ -276,25 +276,32 @@ def stress_vintage(bars: Mapping[InstrumentId, Sequence[Bar]]) -> str:
 def load_records(path: Path) -> tuple[StressRecord, ...]:
     """The records in `path`, or a halt naming the file, the record and the key it refuses."""
     try:
-        document = tomllib.loads(path.read_bytes().decode("utf-8"), parse_float=Decimal)
+        data = path.read_bytes()
     except FileNotFoundError:
         raise Halt(f"{path.name} is missing") from None
     except OSError as error:
         raise Halt(f"{path.name} cannot be read: {type(error).__name__}") from None
+    try:
+        return _records(path.name, tomllib.loads(data.decode("utf-8"), parse_float=Decimal))
     except (ValueError, ArithmeticError, RecursionError) as error:
-        # `tomllib` lets through what a number too large or too many brackets raise.
-        raise Halt(f"{path.name} is not TOML: {type(error).__name__}: {error}") from None
+        # `tomllib` lets through what a number too large or too many brackets raise, and an
+        # int of too many digits raises once a halt shows it.
+        why = f"{type(error).__name__}: {shown(str(error))}"
+        raise Halt(f"{path.name} cannot be read as TOML: {why}") from None
+
+
+def _records(name: str, document: Mapping[str, object]) -> tuple[StressRecord, ...]:
     if unknown := sorted(set(document) - {"record"}):
-        raise Halt(f"{path.name} holds {unknown[0]}, which this release does not read")
+        raise Halt(f"{name} holds {shown(unknown[0])}, which this release does not read")
     written = document.get("record", [])
     if not isinstance(written, list):
-        raise Halt(f"{path.name} holds record as a {type(written).__name__}, not a list")
-    records = tuple(_record(f"{path.name} record {n}", r) for n, r in enumerate(written, 1))
+        raise Halt(f"{name} holds record as a {type(written).__name__}, not a list")
+    records = tuple(_record(f"{name} record {n}", r) for n, r in enumerate(written, 1))
     seen: dict[tuple[object, ...], int] = {}
     for n, record in enumerate(records, 1):
         key = (record.strategy, record.vintage)
         if key in seen:
-            raise Halt(f"{path.name} record {n} has the strategy and vintage of record {seen[key]}")
+            raise Halt(f"{name} record {n} has the strategy and vintage of record {seen[key]}")
         seen[key] = n
     return records
 
@@ -316,7 +323,7 @@ def _record(where: str, value: object) -> StressRecord:
     fields = {name: table.read(name, form) for name, form in _PLAIN.items()}
     if fields["leg"] not in fields["instruments"]:
         # The hold counts a record by its leg, so a mistyped one would drop its move.
-        raise Halt(f"{where}'s leg is {fields['leg']!r}, which is none of its instruments")
+        raise Halt(f"{where}'s leg is {shown(fields['leg'])}, which is none of its instruments")
     series = tuple(
         LegSeries(
             t.read("instrument", _leg),
@@ -328,6 +335,12 @@ def _record(where: str, value: object) -> StressRecord:
             "series", {"instrument", "first", "last", "basis"}, {"source", "source_as_of"}
         )
     )
+    ends = {}
+    for run in series:
+        ends[run.instrument] = max(run.last, ends.get(run.instrument, run.last))
+    if ends != dict.fromkeys(fields["instruments"], fields["through"]):
+        # The hold takes `through` as the vintage's last session, which the age halt counts from.
+        raise Halt(f"{where}'s series do not end at its through for each of its instruments")
     left_out = tuple(
         LeftOut(
             t.read("instrument", _leg),
@@ -367,7 +380,7 @@ class _Table:
         if missing := sorted(must - set(value)):
             raise Halt(f"{where} holds no {missing[0]}")
         if unknown := sorted(set(value) - must - (may or set())):
-            raise Halt(f"{where} holds {unknown[0]}, which this release does not read")
+            raise Halt(f"{where} holds {shown(unknown[0])}, which this release does not read")
         self._where, self._value = where, value
 
     def read(self, key: str, form):
@@ -377,13 +390,13 @@ class _Table:
         value = self._value[key]
         found = form(value)
         if found is None:
-            raise Halt(f"{self._where}'s {key} is {value!r}, not {_FORMS[form]}")
+            raise Halt(f"{self._where}'s {key} is {shown(value)}, not {_FORMS[form]}")
         return found
 
     def tables(self, key: str, must: set[str], may: set[str] | None = None) -> list[_Table]:
         value = self._value[key]
         if not isinstance(value, list):
-            raise Halt(f"{self._where}'s {key} is {value!r}, not a list of tables")
+            raise Halt(f"{self._where}'s {key} is {shown(value)}, not a list of tables")
         return [_Table(f"{self._where}'s {key} {n}", v, must, may) for n, v in enumerate(value, 1)]
 
 
@@ -500,7 +513,6 @@ def hold_to_record(constraints: Constraints, caps: HardCaps, records: StressReco
     largest = max(
         (r for r in records if r.counts_for(strategy, legs)),
         key=lambda r: r.stress_move,
-        default=record,
     )
     if largest.stress_move > caps.stress_high:
         raise Halt(

@@ -661,7 +661,7 @@ def test_the_loop_stores_the_target_a_raised_record_leaves(tmp_path) -> None:
     ("written", "why"),
     [
         (None, "moves.toml is missing"),
-        ("x = 1\n", "moves.toml holds x, which this release does not read"),
+        ("x = 1\n", "moves.toml holds 'x', which this release does not read"),
         ("", "there is no stress record, so none holds the hard caps' stress_vintage"),
     ],
     ids=["absent", "bad", "empty"],
@@ -1905,6 +1905,7 @@ OF_SECOND = (
 
 
 def test_7_two_strategies_each_get_one_target_sized_as_if_alone(tmp_path) -> None:
+    """The files' form alone, since no real vintage is of two strategies' legs."""
     storage = store(tmp_path)
     wrote = write(storage, PAIR, TWO)
     result = run(handler(storage, TWO))

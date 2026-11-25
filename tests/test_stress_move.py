@@ -6,8 +6,10 @@ import errno
 import hashlib
 import io
 import os
+import subprocess
+import sys
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from fractions import Fraction
 from math import ceil
@@ -27,6 +29,7 @@ from ithildinruntime.core import (
 from ithildinruntime.data import DataSettings, LakeSource, Mirror, spike_flags
 from ithildinruntime.data.mirror import MANIFEST
 from ithildinruntime.data.reference import PriceKinds
+from ithildinruntime.data.spikes import MOVE
 from ithildinruntime.runtime import stress_move
 from tests.support import lake as lakes
 from tests.support import made_lake as made
@@ -170,11 +173,6 @@ def test_3_the_record_of_two_series_is_the_one_worked_by_hand(lake: Path, tmp_pa
         )
     )
     manifest = hashlib.sha256((lake / "manifest.jsonl").read_bytes()).hexdigest()
-    flags = "".join(
-        line + "\n"
-        for line in ran.out.splitlines()
-        if line.startswith("    { instrument") and "what" in line
-    )
     assert (
         ran.out
         == f"""\
@@ -194,7 +192,7 @@ series = [
 {series}]
 left_out = [
 {left}]
-flagged = {"[]" if not flags else f"[{chr(10)}{flags}]"}
+flagged = []
 manifest = "{manifest}"
 measured_on = 2026-11-22
 """
@@ -343,7 +341,11 @@ PLACED = {
     "a-through-of-no-date": (("--through", "soon"), "'soon' is no date"),
     "a-through-of-another-form": (("--through", "20120515"), "'20120515' is no date"),
     "no-through": ((), "--through"),
-    "a-through-the-table-ends-at": (("--through", "2099-01-02"), "outside the session table"),
+    "a-through-the-table-ends-at": (
+        ("--through", str(made.DAYS[-1]), "--seam", SEAM.isoformat()),
+        f"the session table holds no session after {made.DAYS[-1]}",
+    ),
+    "a-through-past-the-table": (("--through", "2099-01-02"), "outside the session table"),
     **{
         name: (("--through", "2012-05-15", *(a for s in seams for a in ("--seam", s))), why)
         for name, seams, why in (
@@ -502,12 +504,13 @@ def _no_ledger(lake: Path) -> None:
     (lake / lakes.QUARANTINE).unlink()
 
 
-BROKEN: dict[str, Callable[[Path], None]] = {
-    "unreadable": _unreadable,
-    "torn": _torn,
-    "torn-inside": _torn_line,
-    "corrupt": _corrupt,
-    "no-ledger": _no_ledger,
+BAD_KEY = lakes.partition_key("USO", DAYS[3])
+BROKEN: dict[str, tuple[Callable[[Path], None], str]] = {
+    "unreadable": (_unreadable, f"Too many levels of symbolic links: '<lake>/{BAD_KEY}'"),
+    "torn": (_torn, "manifest.jsonl does not end in a newline"),
+    "torn-inside": (_torn_line, "manifest.jsonl cannot be read: TornLedger: <mirror>/roots/"),
+    "corrupt": (_corrupt, "Could not open Parquet input source '<mirror>/roots/"),
+    "no-ledger": (_no_ledger, "quarantine.jsonl is a reader file the bucket does not hold"),
 }
 
 
@@ -515,8 +518,83 @@ BROKEN: dict[str, Callable[[Path], None]] = {
 def test_3_a_broken_lake_is_refused_on_one_line_naming_no_folder(
     lake: Path, tmp_path: Path, name: str
 ) -> None:
-    BROKEN[name](lake)
-    refused(Ran(tmp_path, lake, *ARGS), "", tmp_path)
+    broke, why = BROKEN[name]
+    broke(lake)
+    refused(Ran(tmp_path, lake, *ARGS), why, tmp_path)
+
+
+def test_3_the_mirror_is_removed_after_a_run_and_after_a_refusal(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held = tmp_path / "held"
+    held.mkdir()
+    monkeypatch.setattr("tempfile.tempdir", str(held))
+    assert Ran(tmp_path, lake, *ARGS).code == 0 and list(held.iterdir()) == []
+    _corrupt(lake)
+    assert Ran(tmp_path, lake, *ARGS).code == 1 and list(held.iterdir()) == []
+
+
+def test_3_a_lake_that_is_a_link_to_itself_names_no_folder(tmp_path: Path) -> None:
+    loop = tmp_path / "My Lakes" / "loop"
+    loop.parent.mkdir()
+    loop.symlink_to(loop)
+    ran = Ran(tmp_path, loop, *ARGS)
+    refused(ran, "<lake>", tmp_path)
+    assert "Lakes" not in ran.err
+
+
+def test_3_a_record_stdout_cannot_hold_is_refused_on_one_line(
+    lake: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    held = io.BytesIO()
+    monkeypatch.setattr(stress_move, "_toml", lambda record: "é\n")
+    out, err = io.TextIOWrapper(held, encoding="ascii"), io.StringIO()
+    Ran(tmp_path, lake, *ARGS)
+    code = stress_move.main(
+        ["--lake", str(lake), "--strategy", "chan", *ARGS],
+        kinds=made.KINDS,
+        records=tmp_path / "moves.toml",
+        strategies=tmp_path / "the-strategies",
+        out=out,
+        err=err,
+    )
+    out.flush()
+    assert (code, held.getvalue()) == (1, b"")
+    assert err.getvalue().startswith("stress_move: UnicodeEncodeError")
+    assert err.getvalue().count("\n") == 1
+
+
+def test_3_a_run_by_hand_dates_the_record_by_the_machines_clock_in_utc(
+    lake: Path, tmp_path: Path
+) -> None:
+    """The entry point's own clock, where no test hands one in."""
+    Ran(tmp_path, lake, *ARGS)
+    out = io.StringIO()
+    before = datetime.now(UTC).date()
+    code = stress_move.main(
+        ["--lake", str(lake), "--strategy", "chan", *ARGS],
+        kinds=made.KINDS,
+        records=tmp_path / "moves.toml",
+        strategies=tmp_path / "the-strategies",
+        out=out,
+    )
+    assert code == 0
+    measured = record(out.getvalue(), tmp_path).measured_on
+    assert before <= measured <= datetime.now(UTC).date()
+
+
+def test_3_the_command_exits_nonzero_on_a_refusal(tmp_path: Path) -> None:
+    """As what-a-person-runs.md gives it, on a folder that holds no lake."""
+    ran = subprocess.run(
+        [
+            *(sys.executable, "-m", "ithildinruntime.runtime.stress_move"),
+            *("--lake", str(tmp_path), "--strategy", "chan_bollinger", "--through", "2012-04-09"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert (ran.returncode, ran.stdout) == (1, "")
+    assert ran.stderr == "stress_move: manifest.jsonl is not in the bucket\n"
 
 
 def test_3_a_file_nobody_may_read_is_refused(lake: Path, tmp_path: Path) -> None:
@@ -534,7 +612,7 @@ def test_3_an_absent_strategy_file_lake_or_record_file_is_refused(
 ) -> None:
     refused(Ran(tmp_path, lake, *ARGS, strategy="nobody"), "strategy nobody has no", tmp_path)
     refused(Ran(tmp_path, tmp_path / "elsewhere", *ARGS), "manifest.jsonl", tmp_path)
-    refused(Ran(tmp_path, lake, *ARGS, records="x = 1\n"), "moves.toml holds x", tmp_path)
+    refused(Ran(tmp_path, lake, *ARGS, records="x = 1\n"), "moves.toml holds 'x'", tmp_path)
 
 
 def test_3_any_other_exception_is_refused(
@@ -563,7 +641,11 @@ def test_3_a_record_below_any_of_the_strategys_says_so_above_it(lake: Path, tmp_
     plain = Ran(tmp_path, lake, *ARGS).out
     vintage = record(plain, tmp_path).vintage
     withdrawn = earlier + 'withdrawn = "x"\n'
-    narrower = earlier.replace('instruments = ["GLD", "USO"]', 'instruments = ["USO"]')
+    narrower = "".join(
+        line
+        for line in earlier.replace('["GLD", "USO"]', '["USO"]').splitlines(keepends=True)
+        if '{ instrument = "GLD"' not in line or "basis" not in line
+    )
     for other in (earlier, withdrawn, narrower):
         ran = Ran(tmp_path, lake, *ARGS, records=other)
         which = "the withdrawn record" if other is withdrawn else "the record"
@@ -608,6 +690,12 @@ def test_3_a_split_in_captured_bars_is_listed_and_a_read_across_the_seam_is_blin
     days = made.days(first, date(2026, 11, 20))
     split = days[days.index(seam) + 8]
     walks = {"GLD": made.walk(days, 1, 300.0), "USO": made.walk(days, 2, 70.0)}
+    # A rise of 15% in GLD before the seam, which the move rule flags as well.
+    rose = days[days.index(seam) - 9]
+    walks["GLD"] = {
+        d: (c * Decimal("1.15")).quantize(Decimal("0.01")) if d >= rose else c
+        for d, c in walks["GLD"].items()
+    }
     captured = {
         t: {
             d: (c * 8 / (2 if t == "USO" and d >= split else 1)).quantize(Decimal("0.01"))
@@ -624,9 +712,11 @@ def test_3_a_split_in_captured_bars_is_listed_and_a_read_across_the_seam_is_blin
     ran = Ran(tmp_path, root, "--through", str(days[-1]), "--seam", str(seam), first=first)
     assert ran.err == ""
     made_record = record(ran.out, tmp_path)
-    (flag,) = made_record.flagged
-    assert (flag.instrument, flag.session, flag.field) == (USO, split, "close")
-    assert 'what = ""' in ran.out
+    assert [(f.instrument, f.session, f.field, f.rule) for f in made_record.flagged] == [
+        (GLD, rose, "close", MOVE),
+        (USO, split, "close", MOVE),
+    ]
+    assert ran.out.count('what = ""') == 2
     assert (made_record.leg, made_record.stress_move > Decimal("0.4")) == (USO, True)
     assert made_record.series[-1].series == ("raw", None, None)
     assert "source" not in ran.out.split("series = [")[1].splitlines()[2]

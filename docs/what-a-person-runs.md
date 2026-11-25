@@ -402,26 +402,28 @@ uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy 
 
 1. `--through` is the last session, and `--seam` a session a new series starts on, given once for each in order. Each leg's start comes from the strategy's own file, and no option changes it.
 2. A run takes minutes, and longer the more partitions the lake lists.
-3. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. The line names no folder of the machine.
+3. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. The line names the lake's folder, the mirror's and the checkout's by a word for each.
 4. A comment line above the record names each record of the strategy that is larger, or whose move this run did not count. Read why before committing the new one.
 
 #### Commit a record
 
-1. Append what the command printed to `src/ithildinruntime/core/stress_moves.toml`. Never change or remove a record that is there.
+1. Append what the command printed to `src/ithildinruntime/core/stress_moves.toml`. Never change or remove a record that is there, apart from [withdrawing one](#withdraw-a-record).
 2. Fill in each flag's empty `what`, which says what the flagged price was. The reader refuses a record with one empty.
-3. Where the record's `series` hold captured bars, read marketlake's action ledger for a split in their span. A split there reads as a move, and the flag misses some, so a split missed makes m larger than it was.
-4. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
+3. Where the record's `series` hold captured bars, read marketlake's action ledger for a split in their span. A split there reads as a move, so one missed can make m larger, or smaller where it offsets a real move. The flag misses some, and judges nothing in a span of three bars or fewer.
+4. Read each move under `left_out`. Where a source holds both its sides, check that it is below m. Where none does, say in the pull request that nothing measured it.
+5. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
 
 #### Raise the stress move
 
-A larger record binds as soon as the release that carries it runs, whatever the caps hold. It stops binding if that release is rolled back or the record is withdrawn, and the net cap then grows with nothing halted. So the owner writes the caps in two steps.
+A larger record binds as soon as the release that carries it runs, whatever the caps hold. It stops binding if that release is rolled back or the record is withdrawn, and the net cap then grows with nothing halted. So the owner takes three steps, the first two before the release that carries the record runs.
 
-1. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. The caps allow that before the release runs as well as after. Raise `stress_high` in the same write where the new m is above it, because every order halts under the new release until then.
-2. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back.
+1. Compare the dollars of each held leg with the net cap the new m gives. Where one is over it, the gate can refuse both exits of the pair once m is raised, until the target, a cap, V or the prices move. [#158](https://github.com/l3a0/ithildin-runtime/issues/158) holds what the owner may do about a position then.
+2. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
+3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back.
 
 #### Withdraw a record
 
-A change that withdraws a record adds `withdrawn` with the reason, and says what the owner's caps hold before it merges. Caps that name the withdrawn record halt every order once the release runs, so the owner first moves them to another record.
+A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand and moves the caps to another record where they name this one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
 
 ### Set up the test environment
 

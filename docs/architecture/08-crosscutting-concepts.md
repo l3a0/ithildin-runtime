@@ -476,7 +476,7 @@ A blob that cannot be read halts every order, naming what is wrong: bytes that a
 
 Each measurement of a strategy's stress move is one `[[record]]` table of `core/stress_moves.toml`, a tracked file the release carries. A record is never removed or changed, so `tests/test_stress.py` pins every one by hand. One found wrong gains `withdrawn` with the reason, and no longer counts toward the largest m.
 
-A record is named by its strategy and its vintage, which is the SHA-256 of the bars the measurement read. The hash is over one UTF-8 line for each bar, in order of instrument and then of session. A line holds the instrument, the session, the partition's key and the partition's SHA-256, joined by tabs and ended by a newline. The bucket's version is left out, so a run on the bucket and one on a copy agree. The lines name the legs, so the vintage fixes them. The record holds no price, because the source's terms keep its bytes out of this repository.
+A record is named by its strategy and its vintage, which is the SHA-256 of the bars the measurement read. The hash is over one UTF-8 line for each bar, in order of instrument and then of session. A line holds the instrument, the session, the partition's key and the partition's SHA-256, joined by tabs and ended by a newline. The bucket's version is left out, so a run on the bucket and one on a copy agree. The lines name the legs, so the vintage fixes them. The record keeps the hash and not the lines, so it can confirm which partitions a run read and cannot list them. The record holds no price, because the source's terms keep its bytes out of this repository.
 
 **Table:** Each key of a record, what it holds and who reads it
 
@@ -488,21 +488,22 @@ A record is named by its strategy and its vintage, which is the SHA-256 of the b
 | `stress_move` | m, a decimal string of eight places | The hold and the command |
 | `leg`, `moved_from`, `moved_to` | The move that set m | The hold reads `leg`, and the command all three |
 | `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person |
-| `series` | A table for each series of each leg: `instrument`, `first`, `last`, `basis`, and `source` and `source_as_of` where the bars have them | A person |
+| `series` | A table for each series of each leg: `instrument`, `first`, `last`, `basis`, and `source` and `source_as_of` where the bars have them | A person, and the reader its `instrument` and `last` |
 | `left_out` | A table for each move left out: `instrument`, `sessions` (1 or 2), `moved_from`, `moved_to` | A person |
 | `flagged` | A table for each flag the read raised: `instrument`, `session`, `field`, `rule`, and `what`, which the person who commits the record fills in | A person |
 | `manifest`, `measured_on` | The SHA-256 of the manifest the run read, and the run's date | A person |
 | `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold |
 
-The reader refuses each of these as a halt naming the file, the record and the key, and nothing of the folder it sits in.
+The reader refuses each of these as a halt naming the file, and the record and the key where the fault is in one. No halt names the folder the file sits in.
 
 1. A file that is absent or is not TOML.
 2. A key it does not know, or one left out.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
-5. Two records of one strategy and vintage.
+5. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
+6. Two records of one strategy and vintage.
 
-Each entry point takes the file's path and hands on the records or the halt. The price is that a partition marketlake rewrote with the same close makes a new vintage, whose record has to be measured again.
+The risk and portfolio workers' entry points take the file's path and hand on the records or the halt. The price is that a partition marketlake rewrote with the same close makes a new vintage, whose record has to be measured again.
 
 [How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured) and [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record) say what writes a record and what reads it.
 

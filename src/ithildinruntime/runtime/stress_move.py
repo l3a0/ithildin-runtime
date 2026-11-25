@@ -17,7 +17,8 @@ and each `--seam` a session a new series starts on. How it reads, in order.
    leaves nothing out on it.
 
 On any refusal it writes one line to stderr, nothing to stdout, and exits
-nonzero. No line names the lake's folder, the mirror's or the checkout's.
+nonzero. The line names the lake's folder, the mirror's and the checkout's by a
+word for each.
 docs/what-a-person-runs.md says when to run it and what to check in what it
 prints.
 """
@@ -356,15 +357,14 @@ def main(
     err: TextIO | None = None,
 ) -> int:
     timer = _SystemTimer()
-    hidden = {strategies: "<strategies>", records.parent: "<core>", _CHECKOUT: "<checkout>"}
+    hidden = {_CHECKOUT: "<checkout>"}
     try:
         given = _arguments(argv)
-        lake = given.lake.resolve()
+        lake = given.lake.absolute()
         hidden[lake] = "<lake>"
         with tempfile.TemporaryDirectory() as folder:
-            mirror = Path(folder).resolve()
+            mirror = Path(folder)
             hidden[mirror] = "<mirror>"
-            hidden[Path(folder)] = "<mirror>"
             (strategy,) = load_strategies(strategies, [given.strategy])
             text = measure(
                 FolderBucket(lake),
@@ -377,11 +377,11 @@ def main(
                 clock=clock or WallClock(timer),
                 timer=timer,
             )
+        print(text, end="", file=out or sys.stdout)
     except Exception as error:
         said = error.reason if isinstance(error, Halt) else f"{type(error).__name__}: {error}"
         print(f"stress_move: {_one_line(said, hidden)}", file=err or sys.stderr)
         return 1
-    print(text, end="", file=out or sys.stdout)
     return 0
 
 
@@ -390,11 +390,14 @@ _ABSOLUTE = re.compile(r"(?<![\w.>/])/[^\s'\":,]+")
 
 
 def _one_line(said: str, hidden: Mapping[Path, str]) -> str:
-    """The reason on one line, with each folder of this machine replaced by what it is."""
+    """The reason on one line, with each folder the command knows replaced by a word for it.
+
+    Any other absolute path it recognises is left out too.
+    """
     for path in sorted(hidden, key=lambda p: len(str(p)), reverse=True):
-        for form in {str(path), str(path.absolute()), str(path.resolve())}:
-            if len(form) > 1:
-                said = said.replace(form, hidden[path])
+        # A lake at the machine's root would otherwise be every slash.
+        if len(str(path)) > 1:
+            said = said.replace(str(path), hidden[path])
     return " ".join(_ABSOLUTE.sub("<path>", said).split())
 
 

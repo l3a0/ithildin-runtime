@@ -151,6 +151,7 @@ def fitted(config: StrategyConfig, owners: HardCaps = CAPS) -> tuple[StressRecor
         stress_record(
             strategy=config.name,
             instruments=tuple(sorted(config.instruments)),
+            leg=max(config.instruments),
             vintage=owners.stress_vintage,
             through=owners.stress_through,
         ),
@@ -1393,7 +1394,7 @@ def test_the_loop_stores_the_limits_a_raised_record_leaves(tmp_path) -> None:
     ("text", "why"),
     [
         (None, "moves.toml is missing"),
-        ("x = 1\n", "moves.toml holds x, which this release does not read"),
+        ("x = 1\n", "moves.toml holds 'x', which this release does not read"),
         ("", "there is no stress record, so none holds the hard caps' stress_vintage"),
     ],
     ids=["absent", "bad", "empty"],

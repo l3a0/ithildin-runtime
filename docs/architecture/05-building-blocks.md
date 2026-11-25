@@ -1202,7 +1202,7 @@ The third sketch draws both on one instance's share.
 
 #### The risk gate holds no state of its own
 
-The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. Every check is handed what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, does the reading.
+The gate keeps nothing from one check to the next, and reads no store, no clock and no mode. It is built with the stress records, which its release carries. Every check is handed the rest of what it weighs, and the diagram shows where its inputs come from, as the parts below describe. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, does the reading.
 
 The figure below is a C4 component diagram.
 
@@ -1218,6 +1218,7 @@ flowchart LR
     caps["The hard caps blob,<br/>which only the owner can write"]
     v["The session's valuation file"]
     stop["The loss stop's records"]
+    records["The stress records,<br/>which the release carries"]
     gate["The risk gate's check"]
     verdict["A Verdict"]
     halt["A halt naming the input"]
@@ -1232,6 +1233,7 @@ flowchart LR
     caps -->|"core.parse_caps reads it before each check,<br/>and halts on a field it refuses"| inputs
     v -->|"OrderPath reads the file's Valuation"| inputs
     stop -->|"OrderPath reads the stop's state before each check"| inputs
+    records -->|"the gate is built with them<br/>and holds the caps to them"| gate
     gate -->|"an input is absent, stale or invalid"| halt
     gate -->|"every input is sound, and the tighter<br/>of each limit and its cap applies"| verdict
 ```
@@ -1249,7 +1251,7 @@ flowchart LR
 
 `OrderPath` reads the loss stop's state and hands it to the gate, as [What happens when the stop fires](06-runtime.md#what-happens-when-the-stop-fires) says. For a close it reads the entry from the journal, and any confirmation from the owner's record, never from the order or a caller, under the rule that a broker's own trade closes the whole position ([A fill is measured from the decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)). The gate refuses every order handed a close entry until [#117](https://github.com/l3a0/ithildin-runtime/issues/117) reads one, and that issue places the owner's confirmation, which no field holds yet.
 
-Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
+Every argument of `check` is journaled with its verdict, by value, by hash, or for the book by the entry it was replayed through, so that the verdict can be computed again. The stress records are no argument, so the verdict carries `stress_move`, the one the check used, which the caps in the entry may not hold. The `verdict` entry and [the view through the entry before it](#a-view-is-one-reading-of-the-journal) are that form, and [#143](https://github.com/l3a0/ithildin-runtime/issues/143) journals it.
 
 ##### What halts and what refuses
 
@@ -1318,7 +1320,7 @@ An order either adds or only reduces, as `core.classify` says, under [What may g
 
 ##### Where the limits come from
 
-Each limit has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
+The caps are first held to the stress record they name, as [How the caps are held to the stress move's record](#how-the-caps-are-held-to-the-stress-moves-record) says. Each limit then has two sources, and the tighter applies: the constraints the risk model writes for a strategy, and the hard caps only the owner can write, in the form [The hard caps blob](08-crosscutting-concepts.md#the-hard-caps-blob) gives. The risk stage stores the tighter, as [The risk model writes each decision's limits](#the-risk-model-writes-each-decisions-limits) says, and the gate takes the tighter again itself, through `core.tighten`. So no `Constraints` can loosen a cap the gate is handed. `OrderPath`, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds, reads the blob just before each check, so a cap the owner lowers binds at the next one.
 
 `core.tighten` first checks every field of both sources. Each must be present, finite and of the sign the field expects, and its caller halts otherwise, naming the source and the field. Nine checks go further.
 
@@ -1337,7 +1339,7 @@ Each limit has two sources, and the tighter applies: the constraints the risk mo
 | The pair | The one that applies |
 | --- | --- |
 | A maximum | The smaller maximum |
-| The net cap, where the hard caps' is the share of V over the stress move, rounded down | The smaller |
+| The net cap, where the hard caps' is the share of V over the stress move its record leaves, rounded down | The smaller |
 | The loss stop | The smaller loss |
 | The cutoff | The earlier cutoff, which is the larger number of minutes |
 
@@ -1345,13 +1347,13 @@ The price is that a limit is set in two places.
 
 ##### How the stress move is measured
 
-`core/stress.py` holds the calculation, which reads bars and no store. A move over n sessions is |C(t+n) − C(t)| ÷ C(t), where C is a leg's close. It is one division that rounds up at eight places, so the rounding never raises the net cap. The stress move, **m**, is the largest move over two sessions across the legs, and the largest over one session is recorded beside it. Moves are compared as rounded, and a tie goes to the earliest date and then to the first leg by name.
+`core/stress.py` holds the calculation, which reads bars and no store. A move over n sessions is |C(t+n) − C(t)| ÷ C(t), where C is a leg's close. It is one division that rounds up at eight places, so the rounding never raises the net cap. The prices carry float noise of their own, which is left standing. The stress move, **m**, is the largest move over two sessions across the legs, and the largest over one session is recorded beside it. Moves are compared as rounded, and a tie goes to the earliest date and then to the first leg by name.
 
-1. **No move crosses a change of series**, which [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) defines. Every bar from the move's first to its last is of one series, and each move left out is listed. Two series can be on two scales, and a step of eight left in would read as a move of about 7.0.
+1. **No move crosses a change of series**, which [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) defines. Every bar from the move's first to its last is of one series, and each move left out is listed. Two series can be on two scales, and a step of eight left in would read as a move of about 7.0. The price is that a move of the market across the change is in no m, so whoever commits a record reads each one left out.
 2. **Legs may begin on different sessions and end on one.** A leg cut to a younger one's start can lose the move that sets m.
-3. **It halts**, naming the leg and the session, on a session missing or repeated, a close at or below zero, a leg with no bar or with no move left, legs whose last sessions differ, and an m of zero.
+3. **It halts**, naming what is wrong, on a session missing or repeated, a close at or below zero, a leg with no bar or with no move left, legs whose last sessions differ, and an m of zero.
 
-m can read less than one session did. Over the Chan vintages USO sets m at 17.98%, from 2008-12-30 to 2009-01-02, while GLD's largest one-session move, 11.29% on 2008-09-17, is larger than its largest two-session one, 10.19%. These figures are exploratory, and `tests/test_stress.py` pins them. [#138](https://github.com/l3a0/ithildin-runtime/issues/138) asks the owner whether m reads one-session moves.
+A leg can move further in one session than in two, so m can read less than one session did. Over the Chan vintages, 2006-04-26 to 2012-04-09, GLD's largest one-session move, 11.29% on 2008-09-17, is larger than its largest two-session one, 10.19%. USO still sets m at 17.98%, from 2008-12-30 to 2009-01-02, above both. These figures are exploratory, and `tests/test_stress.py` pins them. [#138](https://github.com/l3a0/ithildin-runtime/issues/138) asks the owner whether m reads one-session moves.
 
 The command `python -m ithildinruntime.runtime.stress_move` reads the bars and prints one record, and [Measure a stress move](../what-a-person-runs.md#measure-a-stress-move) says how to run it. It reads through `data.LakeSource`, the read every decision makes, in three steps.
 
@@ -1393,12 +1395,14 @@ It gives back the caps with m the largest of their own and of every record that 
 
 The gate's `loss` does not hold the caps. The day's loss reads no m, and a record arrives by a merge or a rollback rather than by the owner's hand. Held there, a decision past the loss stop would read no loss and write no stop, and trading would start again once the record was repaired. `check` halts every order meanwhile.
 
-The price is four things.
+The price is six things.
 
-1. **A raised record binds at once, and a release rolled back or a withdrawal releases it at once.** The net cap then grows with nothing halted. So on a raise the owner writes the caps' own `stress_move` up to it, as [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) says, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) alerts while the held m is above the caps' own.
+1. **A raised record binds at once, and a release rolled back or a withdrawal releases it at once.** The net cap then grows with nothing halted. So the owner writes the caps' own `stress_move` up to a raise before its release runs, as [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) says, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) alerts while the held m is above the caps' own.
 2. **A release rolled back past the record the caps name halts every order**, as one rolled back past a new cap does.
-3. **A backtest reads a move its past could not have known.** A last session after a decision passes, because test 1's decisions run from 2006 to 2012. A result run under such a record names its last session and how many orders the cap refused, is labelled exploratory, and says it read a move after its decisions.
+3. **A backtest can read a move its past could not have known.** A last session after a decision passes, because test 1's decisions run from 2006 to 2012, and a larger record binds whichever one the caps name. A result run while a record that counts ends after its first decision names each such record's last session and the m it was held to. It says how many sizings were cut by `max_gross` or `max_net`, how many halted at zero shares and how many orders `max_net` refused, because a larger m can shrink a target and leave no order to refuse. It is labelled exploratory, and says it read a move after its decisions.
 4. **The caps hold one vintage for an account.** Two strategies of other legs never share a vintage, so each strategy the named record is not of halts. With the smaller m's record named, the gate alone would approve that strategy's order against a book that holds the larger's leg. What stops that is the risk stage's halt on two strategies. So the change that lifts it says which record the caps name, with that case in its test.
+5. **A larger record can refuse both exits of a pair already held.** A pair cut to the older cap can be past the new one, and closing either leg first then widens net. [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) has the owner look first.
+6. **A leg the strategy holds and the constraints do not limit counts at the m of the legs they do**, whatever its own record holds. Portfolio construction halts on a held leg its forecast does not name, so no order forms.
 
 #### The risk model writes each decision's limits
 
@@ -1770,6 +1774,7 @@ An arrow means "may import". The diagram draws four rules.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**
+   - The command that [measures a stress move](#how-the-stress-move-is-measured) lives there, in `runtime.stress_move`, because it reads through `data` and `adapters`.
    - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
    - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports nothing from `ithildinruntime` but `core`, so the supervisor reaches no worker module through it.
    - The table that declares each stage's kind and inputs, and the function that generates the routes from it, live in `runtime.loop` beside the loop, because the supervisor reads the table too. Each worker's entry point adds its own stage's row. The `Route` type and its key matcher live in `core`, because the folder adapter matches routes to deliver its events.

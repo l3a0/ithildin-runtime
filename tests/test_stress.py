@@ -1,6 +1,7 @@
 """The stress move's calculation, the vintage's hash, the record and the hold, as #116 names.
 
-Every figure is made up but Chan's, whose vintages the test lake fetches.
+Every figure is made up but Chan's, whose vintages the test lake fetches. Chan's are
+exploratory, measured over 2006-04-26 to 2012-04-09.
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
+import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -262,7 +264,14 @@ def test_1_the_chan_vintages_give_the_figures_the_issue_names(vintages: Path) ->
     size, named, moved_from, moved_to = found(both)
     assert (f"{size:.4f}", named) == ("0.1798", USO)
     assert (moved_from, moved_to) == (date(2008, 12, 30), date(2009, 1, 2))
-    assert f"{largest_move({GLD: gld}, 2).move.size:.4f}" == "0.1019"
+    alone = largest_move({GLD: gld}, 2).move
+    assert (f"{alone.size:.4f}", alone.moved_from, alone.moved_to) == (
+        "0.1019",
+        date(2008, 9, 15),
+        date(2008, 9, 17),
+    )
+    # A larger one than GLD's two-session move, and a smaller one than m.
+    assert largest_move(both, 1).move.leg == GLD
     one = largest_move({GLD: gld}, 1)
     assert (f"{one.move.size:.4f}", one.move.moved_to) == ("0.1129", date(2008, 9, 17))
     later = {i: [b for b in held if b.session >= date(2009, 4, 27)] for i, held in both.items()}
@@ -370,6 +379,10 @@ one_session = "0.11290000"
 one_session_leg = "GLD"
 one_session_on = 2008-09-17
 series = [
+    {{ instrument = "GLD", first = 2006-04-26, last = 2012-04-09, basis = "adjusted", \
+source = "o", source_as_of = 2012-04-10 }},
+    {{ instrument = "GLD", first = 2012-04-10, last = 2026-10-30, basis = "adjusted", \
+source = "s", source_as_of = 2026-11-22 }},
     {{ instrument = "USO", first = 2006-04-26, last = 2026-10-30, basis = "adjusted", \
 source = "s", source_as_of = 2026-11-22 }},
 ]
@@ -393,7 +406,7 @@ def test_4_a_record_reads_field_by_field(tmp_path: Path) -> None:
     assert (made.strategy, made.instruments, made.vintage) == ("chan", (GLD, USO), VINTAGE)
     assert made.through == date(2026, 10, 30)
     assert (made.stress_move, made.one_session) == (d("0.1798"), d("0.1129"))
-    assert made.series[0].series == ("adjusted", "s", date(2026, 11, 22))
+    assert made.series[1].series == ("adjusted", "s", date(2026, 11, 22))
     assert made.left_out == (LeftOut(USO, 1, date(2012, 4, 9), date(2012, 4, 10)),)
     assert made.flagged[0].what == "a real move" and made.withdrawn is None
     (gone,) = read(tmp_path, SAMPLE + 'withdrawn = "mistyped"\n')
@@ -434,8 +447,8 @@ def put(old: str, new: str) -> str:
 
 
 BAD = {
-    "an-unknown-key": (SAMPLE + "x = 1\n", "record 1 holds x, which"),
-    "a-top-level-key": ("x = 1\n" + SAMPLE, "moves.toml holds x, which"),
+    "an-unknown-key": (SAMPLE + "x = 1\n", "record 1 holds 'x', which"),
+    "a-top-level-key": ("x = 1\n" + SAMPLE, "moves.toml holds 'x', which"),
     "record-of-no-list": ("[record]\nx = 1\n", "holds record as a dict, not a list"),
     "a-record-of-no-table": ("record = [1]\n", "record 1 is a int, not a table"),
     "a-name": (put('strategy = "chan"', 'strategy = "a/b"'), "record 1's strategy is"),
@@ -459,7 +472,10 @@ BAD = {
     "a-flag-of-no-what": (put("a real move", ""), "1's flagged 1's what is ''"),
     "a-flag-of-a-blank-what": (put("a real move", "  "), "1's flagged 1's what is"),
     "a-flag-with-no-rule": (put(', rule = "r"', ""), "flagged 1 holds no rule"),
-    "a-left-out-unknown": (put("moved_to = 2012-04-10", "moved_to = 2012-04-10, x = 1"), "holds x"),
+    "a-left-out-unknown": (
+        put("moved_to = 2012-04-10", "moved_to = 2012-04-10, x = 1"),
+        "holds 'x'",
+    ),
     "left-out-of-no-list": (
         put(
             'left_out = [{ instrument = "USO", sessions = 1, moved_from = 2012-04-09, '
@@ -473,13 +489,17 @@ BAD = {
     "a-flag-with-no-field": (put('field = "close", ', ""), "flagged 1 holds no field"),
     "an-old-key": (
         put("through =", "start = 2006-04-26\nthrough ="),
-        "record 1 holds start, which",
+        "record 1 holds 'start', which",
     ),
     "two-of-one-vintage-on-other-legs": (
-        SAMPLE + SAMPLE.replace('["GLD", "USO"]', '["USO"]'),
+        SAMPLE
+        + re.sub('    { instrument = "GLD".*\\n', "", SAMPLE.replace('"GLD", "USO"', '"USO"')),
         "record 2 has the strategy and vintage of record 1",
     ),
-    "a-series-of-no-basis": (put('basis = "adjusted", ', ""), "series 1 holds no basis"),
+    "a-series-of-no-basis": (
+        put('2012-04-09, basis = "adjusted", ', "2012-04-09, "),
+        "series 1 holds no basis",
+    ),
     "a-manifest": (put("b" * 64, "b"), "1's manifest is"),
     "a-leg-of-none-of-its-instruments": (
         put('leg = "USO"\nmoved', 'leg = "SPY"\nmoved'),
@@ -489,25 +509,57 @@ BAD = {
         put('leg = "USO"\nmoved', 'leg = "uso"\nmoved'),
         "record 1's leg is 'uso', which is none of its instruments",
     ),
+    "a-through-after-its-series": (
+        put("through = 2026-10-30", "through = 2026-11-02"),
+        "record 1's series do not end at its through for each",
+    ),
+    "a-series-that-ends-before-its-through": (
+        put(
+            '"USO", first = 2006-04-26, last = 2026-10-30',
+            '"USO", first = 2006-04-26, last = 2026-10-29',
+        ),
+        "record 1's series do not end at its through for each",
+    ),
+    "a-leg-of-no-series": (
+        put('{ instrument = "USO", first', '{ instrument = "GLD", first'),
+        "record 1's series do not end at its through for each",
+    ),
+    "a-series-of-no-leg": (
+        put('{ instrument = "USO", first', '{ instrument = "SPY", first'),
+        "record 1's series do not end at its through for each",
+    ),
     "a-leading-zero": (put('"0.17980000"', '"00.17980000"'), "1's stress_move is"),
     "a-number-past-any-decimal": (
         put('"0.17980000"', "1e9999999999999999999"),
-        "moves.toml is not TOML: InvalidOperation",
+        "moves.toml cannot be read as TOML: InvalidOperation",
     ),
     "a-number-of-too-many-digits": (
         put('"0.17980000"', "9" * 5000),
-        "moves.toml is not TOML: ValueError",
+        "moves.toml cannot be read as TOML: ValueError",
     ),
+    "a-hex-number-too-long-to-show": (
+        put("through = 2026-10-30", "through = 0x" + "f" * 5000),
+        "record 1's through is a huge int, not a date",
+    ),
+    "a-list-of-one-too-long-to-show": (
+        put("through = 2026-10-30", "through = [0x" + "f" * 5000 + "]"),
+        "moves.toml cannot be read as TOML: ValueError",
+    ),
+    "a-text-of-many-characters": (
+        put("through = 2026-10-30", f'through = "{"x" * 10_000}"'),
+        "record 1's through is 'xxxx",
+    ),
+    "a-key-of-many-characters": (f"{'x' * 10_000} = 1\n" + SAMPLE, "moves.toml holds 'xxxx"),
     "brackets-past-any-depth": (
         "x = " + "[" * 100_000,
-        "moves.toml is not TOML: RecursionError",
+        "moves.toml cannot be read as TOML: RecursionError",
     ),
     "an-empty-withdrawn": (SAMPLE + 'withdrawn = ""\n', "1's withdrawn is ''"),
     "two-of-one-vintage": (
         SAMPLE + SAMPLE.replace("0.17980000", "0.20000000"),
         "record 2 has the strategy and vintage of record 1",
     ),
-    "not-toml": ("[[record]\n", "moves.toml is not TOML"),
+    "not-toml": ("[[record]\n", "moves.toml cannot be read as TOML: TOMLDecodeError"),
 }
 
 
@@ -518,16 +570,21 @@ def test_4_each_refusal_names_the_file_the_record_and_the_key(tmp_path: Path, na
         read(tmp_path, text)
     assert caught.value.reason.startswith("moves.toml")
     assert str(tmp_path) not in caught.value.reason
+    # The reason is stored and sent.
+    assert len(caught.value.reason) < 300
 
 
 def test_4_a_file_that_is_absent_unreadable_or_not_utf8_halts(tmp_path: Path) -> None:
     with pytest.raises(Halt, match="^moves.toml is missing$"):
         load_records(tmp_path / "moves.toml")
+    (tmp_path / "loop.toml").symlink_to(tmp_path / "loop.toml")
+    with pytest.raises(Halt, match="^loop.toml cannot be read: OSError$"):
+        load_records(tmp_path / "loop.toml")
     with pytest.raises(Halt, match="^moves.toml cannot be read: IsADirectoryError$"):
         (tmp_path / "moves.toml").mkdir()
         load_records(tmp_path / "moves.toml")
     (tmp_path / "bad.toml").write_bytes(b"\xff")
-    with pytest.raises(Halt, match="^bad.toml is not TOML"):
+    with pytest.raises(Halt, match="^bad.toml cannot be read as TOML: UnicodeDecodeError"):
         load_records(tmp_path / "bad.toml")
 
 

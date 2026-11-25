@@ -69,7 +69,7 @@ def refusal(world: World) -> tuple[Limit | None, Decimal | None, Decimal | None]
     return verdict.limit, verdict.value, verdict.bound
 
 
-def test_the_gate_is_a_risk_gate_that_holds_nothing() -> None:
+def test_the_gate_is_a_risk_gate_that_keeps_its_records_alone() -> None:
     records = (stress_record(),)
     gate: core.RiskGate = Gate(records)
     assert vars(gate) == {"_records": records}
@@ -1431,3 +1431,6 @@ def test_the_caps_own_halts_come_before_the_records() -> None:
         World(records=()).capped(share=d(2)).check()
     with pytest.raises(Halt, match="the valuation is missing"):
         World(records=()).given(valuation=None).check()
+    # A V that is not above zero comes after the records.
+    with pytest.raises(Halt, match="there is no stress record"):
+        World(records=()).given(valuation=valuation(0)).check()
