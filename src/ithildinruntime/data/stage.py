@@ -26,10 +26,10 @@ things, in order.
    other than one snapshot, that the first capture is no snapshot the codec
    reads, or that only the read time differs, as on a redelivery after a crash.
    Where only the segments and their rows differ, the later capture names one
-   the first lacks, every segment both name kept its version and SHA-256, and
-   each one only the first names is older than all the later one opened, it says
-   a later listing adds them. It names no cause beyond that, because the same difference can come
-   from a restatement by marketlake, a nightly upload or a redeploy.
+   the first lacks, and every segment both name kept its version and SHA-256,
+   it says a later listing adds them, or how many of them each capture lacks.
+   It names no cause beyond that, because the same difference can come from a
+   restatement by marketlake, a nightly upload or a redeploy.
 4. **It judges the snapshot that counts.** That is the read just made, unless
    an earlier capture of the decision is stored, in which case it is that
    first capture, because every later stage reads it. A first capture that
@@ -256,30 +256,30 @@ def differences(first: bytes, later: bytes) -> str:
     named = ", ".join(header + snapshot)
     if not named:
         return "Only the read time differs, as on a redelivery after a crash"
-    if not header and _added_by_a_listing(a, b, snapshot):
-        return (
-            f"These differ: {named}. A later listing adds them, and every segment both captures "
-            "name kept its version and SHA-256"
-        )
+    if not header and set(snapshot) <= {"segments", "rows"}:
+        return f"These differ: {named}{_listings(a, b)}"
     return f"These differ: {named}"
 
 
-def _added_by_a_listing(a: Snapshot, b: Snapshot, differ: Sequence[str]) -> bool:
-    """Whether a later listing of the same segments explains what differs, and nothing else does.
+def _listings(a: Snapshot, b: Snapshot) -> str:
+    """What two captures' segments say of two listings of one prefix, where nothing else differs.
 
-    A longer listing moves the newest five on, so it can drop the oldest the
-    first capture opened. One dropped from any other place is gone from the bucket.
+    It names a cause only where the later capture holds all the first does. A
+    longer listing moves the newest five on, and so drops the oldest, which
+    reads here as a segment that left the bucket does.
     """
-    if not set(differ) <= {"segments", "rows"}:
-        return False
     one = {segment.key: segment for segment in a.segments}
     two = {segment.key: segment for segment in b.segments}
-    if not two.keys() - one.keys() or any(one[k] != two[k] for k in one.keys() & two.keys()):
-        return False
-    opened: dict[str, str] = {}
-    for key in sorted(two):
-        opened.setdefault(key.rpartition("/")[0], key)
-    return all(key < opened.get(key.rpartition("/")[0], "") for key in one.keys() - two.keys())
+    added, gone = two.keys() - one.keys(), one.keys() - two.keys()
+    if not added or any(one[key] != two[key] for key in one.keys() & two.keys()):
+        return ""
+    kept = "every segment both captures name kept its version and SHA-256"
+    if not gone:
+        return f". A later listing adds them, and {kept}"
+    return (
+        f". The later capture names {len(added)} segments the first does not and lacks {len(gone)} "
+        f"that it does, and {kept}"
+    )
 
 
 def _without_read_time(bars: object) -> object:

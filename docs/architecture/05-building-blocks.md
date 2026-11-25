@@ -1144,7 +1144,7 @@ A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built 
 
 The data module's file format is 2. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
 
-A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A flag from the contradiction rule halts the decision once its snapshot is stored, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
+A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A bar's flag from the contradiction rule halts the decision once its snapshot is stored, a quote's adds no halt to the judge's, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
 
 #### `Snapshot.require_fresh()` is how a module refuses a gap
 

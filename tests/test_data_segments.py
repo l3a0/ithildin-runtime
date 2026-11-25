@@ -660,11 +660,40 @@ def test_2_a_segment_with_no_version_or_no_stored_sha256_is_a_fault(
     assert [s.key for s in read.segments] == [key_of("GLD", 1)]
 
 
-def test_2_a_listing_with_no_answer_is_tried_once_more(reader: Reader) -> None:
+def test_2_a_first_failure_is_kept_beside_whatever_ends_the_second_try(reader: Reader) -> None:
+    key = key_of("USO", 1)
+    quiet = StoreUnavailable(key, "no answer")
+    torn = (
+        (BlobMissing(key, "404 NoSuchVersion"), "is listed and the bucket holds none: 404 NoSuch"),
+        (lambda got: replace(got, sha256=None), "has no stored SHA-256 in the bucket"),
+        (None, "was refused by marketlake's reader: UnsealedRefused"),
+    )
+    for answer, said in torn:
+        for ticker in ("GLD", "USO"):
+            reader.capture(ticker, [1])
+        for seen in (reader.live.reads, reader.live.events, reader.live.lists):
+            seen.clear()
+        reader.live.plant[key] = [quiet] + ([answer] if answer else [])
+        if answer is None:
+            path = reader.live_root / key
+            path.write_bytes(path.read_bytes()[:-8])
+        (reason,) = reader.read().faults
+        assert reason.startswith(
+            f"{key} failed twice. First it could not be downloaded: StoreUnavailable: {key}: no "
+            f"answer, and then it {said}"
+        )
+
+
+def test_2_a_listing_with_no_answer_is_tried_once_more(
+    reader: Reader, caplog: pytest.LogCaptureFixture
+) -> None:
     reader.both([1])
     reader.live.plant[PREFIX[USO]] = [StoreUnavailable(PREFIX[USO], "no answer: timed out")]
-    assert captured(reader.read()) == landed(1)
+    with caplog.at_level(logging.WARNING):
+        assert captured(reader.read()) == landed(1)
     assert reader.live.lists == [PREFIX[GLD], PREFIX[USO], PREFIX[USO]]
+    (line,) = [r.getMessage() for r in caplog.records]
+    assert line.startswith(f"data lists {PREFIX[USO]} once more, because: StoreUnavailable")
 
 
 def test_2_a_listing_refused_twice_is_a_fault_with_the_answer_and_opens_nothing(
@@ -831,31 +860,44 @@ def test_2_a_column_of_another_type_is_a_fault_naming_it_and_its_row_is_kept(
     assert key in {s.key for s in read.segments}
 
 
-@pytest.mark.parametrize("kind", [pa.timestamp("s"), pa.duration("s")], ids=str)
-def test_2_a_value_python_cannot_hold_keeps_its_row_as_text(
-    reader: Reader, kind: pa.DataType
+FAR = pa.array([0, None, 10**15], pa.int64()).cast(pa.timestamp("s"))
+FAR_LISTS = pa.ListArray.from_arrays([0, 1, 2, 3], FAR)
+
+
+@pytest.mark.parametrize("held", [FAR, FAR_LISTS], ids=lambda h: str(h.type))
+@pytest.mark.parametrize("name", ["vendor_quote_ts", "not_published"])
+def test_2_a_value_python_cannot_hold_is_noted_and_every_row_and_other_value_is_kept(
+    reader: Reader, held: pa.Array, name: str
 ) -> None:
     schema = journal.schema_for(journal.QUOTES_SURFACE)
-    place = schema.get_field_index("vendor_quote_ts")
-    retyped = schema.set(place, pa.field("vendor_quote_ts", kind))
+    place = schema.get_field_index(name)
+    field = pa.field(name, held.type)
+    retyped = schema.append(field) if place < 0 else schema.set(place, field)
     reader.capture("GLD", [1])
-    value = pa.scalar(10**15, pa.int64()).cast(kind)
     minute = AT - MINUTE
-    row = lakes.quote_row("USO", minute, vendor_quote_ts=None)
-    table = pa.Table.from_pylist([row], schema=retyped)
-    held = pa.chunked_array([pa.array([10**15], pa.int64()).cast(kind)])
-    table = table.set_column(place, retyped.field(place), held)
+    stamps = [landed(n).isoformat() for n in (3, 2, 1)]
+    rows = [lakes.quote_row("USO", minute, bid=60.0 + n) for n in range(3)]
+    plain = [{**row, "fetch_end_ts": at} for row, at in zip(rows, stamps, strict=True)]
+    table = pa.Table.from_pylist([r | {name: None} for r in plain], schema=retyped)
+    place = retyped.get_field_index(name)
+    table = table.set_column(place, field, pa.chunked_array([held]))
     path = reader.live_root / key_of("USO", 1)
     with journal.SegmentWriter(path, retyped) as writer:
         writer.write_cycle(table)
     read = reader.read()
-    assert value.is_valid
-    assert read.faults == (
-        f"USO on {DAY} has vendor_quote_ts as {kind}, and marketlake publishes string",
-    )
-    assert kept(read) == {"GLD": 1, "USO": 1}
-    assert read.rows[USO][0]["vendor_quote_ts"]
-    assert read.rows[USO][0]["bid"] == "60.0"
+    if name == "not_published":
+        assert captured(read) == landed(1)
+        assert read.quotes[USO].received[name] == f"a {held.type} that cannot be read"
+        first, second = read.rows[USO]
+    else:
+        assert read.faults == (
+            f"USO on {DAY} has {name} as {held.type}, and marketlake publishes string",
+        )
+        first, second, third = read.rows[USO]
+        assert third[name] == f"a {held.type} that cannot be read"
+    assert [first["bid"], second["bid"]] == ["60.0", "61.0"]
+    assert "1970" in first[name]
+    assert second[name] == (None if held is FAR else "[None]")
 
 
 @pytest.mark.parametrize("name", UNCHECKED)

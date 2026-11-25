@@ -67,7 +67,7 @@ class FolderBucket:
                 at = Path(here).relative_to(self._root).as_posix()
                 found.extend(name if at == "." else f"{at}/{name}" for name in names)
         except OSError as error:
-            raise StoreUnavailable(prefix, f"{type(error).__name__}: {error}") from None
+            raise StoreUnavailable(prefix, _answer(error)) from None
         return sorted((key for key in found if key.startswith(prefix)), key=os.fsencode)
 
     def read(self, key: str, version: str | None = None) -> BucketObject:
@@ -77,7 +77,7 @@ class FolderBucket:
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             raise BlobMissing(key, "no such file in the folder") from None
         except OSError as error:
-            raise StoreUnavailable(key, f"{type(error).__name__}: {error}") from None
+            raise StoreUnavailable(key, _answer(error)) from None
         sha = sha256_of(data)
         if version not in (None, sha):
             raise BlobMissing(key, f"the folder holds version {sha}, not {version}")
@@ -148,6 +148,11 @@ def _parts(key: str) -> tuple[str, ...]:
     if not key or key.startswith("/") or any(p in ("..", ".") for p in parts) or "\\" in key:
         raise ValueError(f"{key!r} is not a key in the bucket")
     return parts
+
+
+def _answer(error: OSError) -> str:
+    """The file system's answer, without the path, which a stored reason would carry."""
+    return f"{type(error).__name__}: {error.strerror}"
 
 
 def _raise(error: OSError) -> None:

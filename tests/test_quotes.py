@@ -459,6 +459,11 @@ def test_5_a_quote_of_the_session_it_is_compared_with_is_no_mark() -> None:
 CLOSED = TABLE.session(PRIOR).close
 
 
+def test_5_the_stamp_is_held_to_the_close_of_the_session_it_is_compared_with() -> None:
+    between = replace(GOOD, bid_at=CLOSED - timedelta(hours=1), max_age=100_000)
+    assert mark(quoted({GLD: between}), GLD, BEFORE, DECISION) == d("100.25")
+
+
 @pytest.mark.parametrize("older", ["bid", "ask"])
 @pytest.mark.parametrize(("step", "marks"), [(-TICK, False), (timedelta(0), False), (TICK, True)])
 def test_5_a_quote_stamped_at_or_before_the_close_v_was_valued_at_is_no_mark(

@@ -98,8 +98,8 @@ def mark(snapshot: Snapshot, instrument: InstrumentId, after: date, now: datetim
                 f"{instrument} has no mark: its quote is for {today.isoformat()}, not later than "
                 f"{after.isoformat()}"
             )
-        # A quote captured today can carry a stamp of the session V was valued at, under a
-        # maximum age longer than the night, and a book marked there would read no loss.
+        # A quote captured today can carry a stamp at or before V's close, under a maximum age
+        # longer than the night, and a book marked there would read no loss.
         stamp, closed = min(quote.bid_at, quote.ask_at), load_sessions().session(after).close  # type: ignore[type-var]
         if stamp <= closed:
             raise Halt(

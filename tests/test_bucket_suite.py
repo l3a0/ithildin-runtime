@@ -268,8 +268,23 @@ def test_a_folder_that_cannot_be_read_is_unavailable_and_never_empty(
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr("os.scandir", refuse)
-    with pytest.raises(StoreUnavailable, match="journal/: PermissionError"):
+    with pytest.raises(StoreUnavailable, match="^journal/: PermissionError: Permission denied$"):
         bucket.list("journal/")
+
+
+def test_a_file_that_cannot_be_read_is_unavailable_and_names_no_path(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    from ithildinruntime.adapters import FolderBucket
+
+    def refuse(self):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_bytes", refuse)
+    with pytest.raises(StoreUnavailable, match="^a/b: PermissionError: Permission denied$"):
+        FolderBucket(tmp_path).read("a/b")
 
 
 def _refusing(operation: str, code: str, status: int) -> S3Bucket:

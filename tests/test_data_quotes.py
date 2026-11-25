@@ -722,19 +722,13 @@ def test_31_what_a_later_listing_does_and_does_not_explain(
     for change in ({"version": "v9"}, {"sha256": "1" * 64}):
         moved = replace(snap, segments=(replace(first, **change), *rest, added))
         assert two(snap, moved) == "These differ: segments"
-    # A longer listing moves the newest five on, which drops the oldest, and nothing else does.
-    gld = [s for s in snap.segments if "ticker=GLD/" in s.key]
-    uso = [s for s in snap.segments if "ticker=USO/" in s.key]
-    newer = [replace(s, key=s.key.replace("seg-", "seg-9")) for s in (gld[-1], uso[-1])]
-    moved = replace(snap, segments=(*gld[1:], newer[0], *uso[1:], newer[1]))
-    assert explained in two(snap, moved)
-    for gone in (
-        (gld[0], *uso, newer[1]),
-        (gld[0], newer[0], *uso, newer[1]),
-        (*gld, *uso[:1]),
-        (*uso, newer[1]),
-    ):
-        assert two(snap, replace(snap, segments=gone)) == "These differ: segments"
+    # A longer listing moves the newest five on, and reads as a segment that left does.
+    moved = replace(snap, segments=(*snap.segments[1:], added))
+    assert two(snap, moved) == (
+        "These differ: segments. The later capture names 1 segments the first does not and lacks 1 "
+        "that it does, and every segment both captures name kept its version and SHA-256"
+    )
+    assert two(snap, replace(snap, segments=snap.segments[1:])) == "These differ: segments"
     later = replace(snap, quotes_read_at=snap.quotes_read_at + MINUTE)
     assert two(snap, later) == "Only the read time differs, as on a redelivery after a crash"
 

@@ -304,29 +304,21 @@ loses none of another's rows.
 | A segment that cannot be written into the decision's lake root, such as on a full disk | A halt naming the segment | The machine's operator |
 | A published column of another type than marketlake publishes. One that is absent reads as null | A halt naming it | A release |
 | No security master row for the day, or two rows of `data/quote_kinds.csv` for it | A halt naming the instrument or the source | A release |
-| No segment listed, no row by the decision, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, and each instrument's newest capture | The next decision, or the configuration where the prefix is wrong |
+| No segment listed, no row by the decision, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, and each instrument's newest capture | The next decision |
 | Two rows of one instrument at the capture taken | A halt naming the instrument | The next decision |
 
 Data's stage ends its own decision on each of these. [A fill is measured from the
 decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
 says which halts hold an account until a person clears them, and
-[#155](https://github.com/l3a0/ithildin-runtime/issues/155) builds that hold and
-says which of these answers take it.
+[#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build
+that hold.
 
-**Table:** What a stored reason says of each way the quotes can be missing
-
-| What happened | What the reason shows |
-| --- | --- |
-| A grant is missing | The answer S3 gave, a 403, with the prefix or the key |
-| Capture or the upload stopped partway through the day for every instrument | Every quote refused on its age, with a capture time as old as the stamp |
-| Schwab's stamp froze while capture went on | A quote refused on its age, with a capture time under a minute old |
-| Capture or the upload stopped for one instrument | No capture every instrument has, with the newest capture of each |
-| Capture never started, the upload never ran, or the configured prefix is wrong | No segment listed under one or every prefix |
-
-Two pairs read alike, because the bucket holds the same objects. A capture that
-stopped and an upload that stopped differ only in what marketlake's own capture
-host reports. A prefix that is wrong and a day that has not started differ only in
-the configuration.
+A reason says what the bucket held, and not why. A missing grant shows S3's 403. A
+quote refused on its age shows its capture time beside its stamp, so a stamp that
+froze while capture went on reads apart from rows that stopped. The rest looks the
+same from here: capture that stopped, capture that wrote only gap markers and an
+upload that stopped leave the same objects, and marketlake's own capture host says
+which it was.
 
 #### What is checked before deciding
 

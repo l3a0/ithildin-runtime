@@ -114,6 +114,8 @@ _PLACES = places(Quote, "bid")
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MICROSECOND = timedelta(microseconds=1)
 _SECOND = 1_000_000
+# What pyarrow raises for a value Python has no form of.
+_UNREADABLE = (ValueError, OverflowError, pa.ArrowException)
 
 
 @dataclass(frozen=True)
@@ -143,7 +145,7 @@ class QuoteRead:
     - `read_at` is the clock after the bucket's last answer.
     - `listed` counts the segments listed, and `cycle_age` is how long before
       the decision the newest capture every instrument has was made, or `None`
-      where they share none.
+      where the read found none.
     """
 
     quotes: Mapping[InstrumentId, Quote]
@@ -257,6 +259,7 @@ class _Walk:
             except StoreError as error:
                 if last:
                     raise _Fault(f"{prefix} could not be listed: {_said(error)}") from None
+                log.warning("data lists %s once more, because: %s", prefix, _said(error))
             except ValueError as error:
                 raise _Fault(f"{prefix} could not be listed: {_said(error)}") from None
             finally:
@@ -325,7 +328,7 @@ class _Walk:
         got = self._got(key, None)
         for what, value in (("version", got.version), ("stored SHA-256", got.sha256)):
             if value is None:
-                raise _Fault(f"{key} has no {what} in the bucket")
+                raise self._fault(key, f"has no {what} in the bucket")
         self._write(key, got.data)
         self.segments[key] = Segment(key, got.version, got.sha256)  # type: ignore[arg-type]
 
@@ -334,7 +337,8 @@ class _Walk:
             try:
                 return self._live.read(key, version)
             except BlobMissing as error:
-                raise _Fault(f"{key} is listed and the bucket holds none: {error.answer}") from None
+                said = f"is listed and the bucket holds none: {error.answer}"
+                raise self._fault(key, said) from None
             except StoreError as error:
                 self._once_more(key, f"could not be downloaded: {_said(error)}")
             except ValueError as error:
@@ -345,9 +349,15 @@ class _Walk:
     def _once_more(self, key: str, said: str) -> None:
         """Let one segment be downloaded again, once."""
         if key in self._again:
-            raise _Fault(f"{key} failed twice. First it {self._again[key]}, and then it {said}")
+            raise self._fault(key, said)
         self._again[key] = said
         log.warning("data downloads %s once more, because it %s", key, said)
+
+    def _fault(self, key: str, said: str) -> _Fault:
+        """What ends the read at one segment, with what its first try met where it had two."""
+        if (first := self._again.get(key)) is None:
+            return _Fault(f"{key} {said}")
+        return _Fault(f"{key} failed twice. First it {first}, and then it {said}")
 
     def _write(self, key: str, data: bytes) -> None:
         path = self._root.joinpath(*key.split("/"))
@@ -381,8 +391,10 @@ class _Walk:
             except UnsealedRefused as error:
                 key = error.segment
                 said = f"was refused by marketlake's reader: {_said(error)}"
-                if key not in self.segments or not isinstance(error, SegmentAbsent):
+                if key not in self.segments:
                     raise _Fault(f"{key or where} {said}") from None
+                if not isinstance(error, SegmentAbsent):
+                    raise self._fault(key, said) from None
             except OSError as error:
                 # Its text can hold an absolute path, and this goes into a stored reason.
                 raise _Fault(f"{where} could not be read: {type(error).__name__}") from None
@@ -451,18 +463,23 @@ def _said(error: Exception) -> str:
 
 
 def _values(column: pa.ChunkedArray) -> list[Any]:
-    """One column's values, as text where Python cannot hold one, so no row is ever lost.
+    """One column's values, with a note in place of one Python cannot hold, so no row is lost.
 
     marketlake's reader leaves most columns' types alone, and a retyped one can
-    hold a value past any of Python's, such as a time past its last year.
+    hold a value past any of Python's, such as a time past its last year. The
+    segment it came from is named by its version and SHA-256.
     """
     try:
         return column.to_pylist()
-    except (ValueError, OverflowError, pa.ArrowException):
-        try:
-            return column.cast(pa.string()).to_pylist()
-        except (ValueError, OverflowError, pa.ArrowException):
-            return [f"a {column.type} that cannot be read"] * len(column)
+    except _UNREADABLE:
+        return [_value(scalar) for scalar in column]
+
+
+def _value(scalar: pa.Scalar) -> Any:
+    try:
+        return scalar.as_py()
+    except _UNREADABLE:
+        return f"a {scalar.type} that cannot be read"
 
 
 def _instant(text: object) -> datetime | None:
