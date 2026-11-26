@@ -10,8 +10,8 @@ the rules. A firing is kept three ways, and each alone reads as fired.
    `core.Storage.hold_create` writes and holds through an outage, so the
    receive loop keeps the process alive until S3 stores it.
 
-`complete` writes whichever part is missing, at each settle of the order path
-and at the worker's last settle. It
+`complete` writes whichever part is missing, at the order path's settle before
+each send, hold, ask and loss, and at the worker's last settle. It
 deletes nothing, since no worker deletes, and writes no clear. Only the
 `ithildin stop clear` command (#203) clears a firing.
 """

@@ -691,7 +691,7 @@ SHA-256, the release's digest and the hash of each strategy's configuration the 
 checks each input's SHA-256 against the header that named it and halts on
 a mismatch. Nothing irreversible rests on an upstream blob alone: execution
 journals the whole target portfolio it acts on, in a journal entry, before
-its first send. Apart from the map above, data's snapshot file at every format before the first release that runs a worker in an environment, which no environment holds, and execution's recover and send files at format 2 and the journal's four kinds for a broker's record and what the platform did not send, which no environment holds either, each release writes only formats
+its first send. Apart from the map above, data's snapshot file at every format before the first release that runs a worker in an environment, which no environment holds, and execution's recover and send files at format 2 and the journal's four kinds for a broker's record and what the platform did not send, its kind for an order given up as lost and the loss stop's three kinds, which no environment holds either, each release writes only formats
 the release before it can read, so pinning back to the release before still reads what storage
 holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
 as it dies. The host that runs it, systemd on the VM today, records the
