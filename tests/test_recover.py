@@ -963,6 +963,20 @@ def test_2_a_row_kept_as_unmatched_pages_once_across_two_decisions() -> None:
     assert len(world.alarms.sent) == paged
 
 
+def test_2_an_outage_after_an_order_that_could_not_be_settled_keeps_that_order_s_cause() -> None:
+    world = planned_pair(*SENT, ("intent", 2))
+
+    def find_order(*args):
+        world.store.refuse(("*", "journal/"))
+        raise TimeoutError("PKFAKEKEY")
+
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=find_order)))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert f"the order list that maps {ONE} could not be read" in reason
+    assert "Nothing more is settled" in reason and "PKFAKEKEY" not in reason
+
+
 def test_2_an_order_that_cannot_be_settled_does_not_stop_the_next_one() -> None:
     world = planned_pair(*SENT, ("intent", 2))
     world.faults = Faults(reads={("orders", 1): ReadFault.FAILS})
