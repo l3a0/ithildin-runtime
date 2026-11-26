@@ -50,7 +50,7 @@ from ithildinruntime.execution.send import OUTCOME_OUTPUT
 from ithildinruntime.journal import Journal, VerdictEntry, record_of
 from ithildinruntime.portfolio.sizing import size
 from tests.support import fake_broker, gates
-from tests.support.fake_broker import FakeBroker
+from tests.support.fake_broker import FakeBroker, Refused
 from tests.support.relay_broker import CheckedBroker, RelayBroker
 from tests.support.send_world import CHAN, EXECUTION, SendWorld, strategy
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT, FULL, GLD, USO, after, close_of
@@ -229,9 +229,25 @@ def test_a_checked_broker_reaches_a_simulated_broker_alone() -> None:
     mine = Mine(made.log, made.clock, object(), Faults())  # type: ignore[arg-type]
     fake = FakeBroker(lambda: made.store.blobs, ACCOUNT, made.at)
     for wrong in (fake, RelayBroker(made.broker(), lambda: None), mine):
-        with pytest.raises(TypeError, match="simulated broker alone"):
+        with pytest.raises(TypeError, match="a checked broker reaches"):
             CheckedBroker(lambda: made.store.blobs, ACCOUNT, made.at, to=wrong)  # type: ignore[arg-type]
-    fake_broker.made.clear()
+
+
+def test_a_checked_broker_keeps_each_call_it_does_not_forward_as_a_refusal() -> None:
+    # The order path turns any error a broker raises into one of its own, so the refusal kept
+    # is what fails a test through tests/conftest.py's fixture, whatever caught the error. A
+    # cancel and a search refuse through the same `_unforwarded`, and the order sweep keeps any
+    # test from naming those two calls, so the order list and the clock stand for all four.
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    broker = CheckedBroker(lambda: made.store.blobs, ACCOUNT, made.at, to=made.broker())
+    with pytest.raises(Refused, match="reads the order list"):
+        broker.orders(made.at)
+    with pytest.raises(Refused, match="reads the clock"):
+        broker.clock()
+    with pytest.raises(Refused, match="reads the order list"):
+        fake_broker.check()
+    assert len(broker.take_refusals()) == 2
 
 
 def test_no_order_of_a_day_reaches_the_broker_but_as_its_journal_and_plan_say() -> None:
@@ -418,9 +434,11 @@ def test_a_price_wrong_100_times_sends_no_order_past_a_share_cap(leg, factor, st
 @pytest.mark.parametrize("start", ["flat", "held"])
 def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start) -> None:
     # The target sizing would give at GLD's price 100 times low, had no cap cut it: 400 /
-    # (3 × 1.01 + 5 × 20) baskets, each leg rounded to the nearest share. The gross cap reads
-    # the price, so it is fooled: 12 × 1.01 + 19 × 20 = 392.12 is inside 1,000, where 12 × 101
-    # alone is past it. The gate's share caps, which read no price, are what stop it.
+    # (3 × 1.01 + 5 × 20) baskets, each leg rounded to the nearest share. The gate refuses the
+    # first leg, GLD, whose gross it counts with what is held: 12 shares at 1.01 from flat, and
+    # 5 USO at 20 beside them from held, so 12.12 or 112.12, inside a gross cap of 1,000. At
+    # GLD's true close of 101 the same order is past it, so the cap reads the price and is
+    # fooled. The gate's share caps, which read no price, are what stop it.
     made = SendWorld(_priced(GLD, Decimal("0.01"), DAYS[1]), strategies=(SIZED,))
     made.constraints = gates.constraints(
         max_order_qty=TRUE, max_position=TRUE, max_gross=Decimal(1000)
@@ -439,10 +457,14 @@ def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start)
     assert f"the gate refused {first} on max_order_qty" in result.halt.reason
     assert made.submits()[before:] == []
     assert made.states()[first] == "Refused" and made.states()[second] == "Abandoned"
-    # The gate read GLD at its wrong price, so its gross figure is inside the cap.
+    # The gate read GLD at its wrong price, so its gross figure is inside the cap, and the same
+    # shares at GLD's true close are past it.
     refusal = verdicts(made)[first][-1]
     assert refusal.limit is Limit.MAX_ORDER_QTY
     assert Limit.MAX_GROSS not in [p.limit for p in refusal.past]
+    held_uso = abs(made.view().book.positions_by_strategy.get(CHAN, {}).get(USO, 0))
+    true_gross = 12 * SIDES_CLOSES[GLD][DAYS[1]] + held_uso * SIDES_CLOSES[USO][DAYS[1]]
+    assert true_gross > made.constraints.max_gross, true_gross
     assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
 
 
