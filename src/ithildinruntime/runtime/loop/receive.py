@@ -32,8 +32,9 @@ How the loop runs, in order.
    today it wakes a check and is deleted. #10 and #11 add the handlers that
    act on those events, and until then no component may rely on hearing one.
 4. **A stage that keeps the plan's order starts decision N only once its own
-   result for decision N−1 is stored**, a halt included. Every other stage
-   starts any decision whose inputs are stored, side by side.
+   result for decision N−1 is stored**, a halt included, and one that follows
+   other stages only once each of theirs is. Every other stage starts any
+   decision whose inputs are stored, side by side.
 5. **The loop holds a message while its handler works.** It extends the
    message's visibility while the handler runs, deletes it once the result is
    stored, and returns at once a message it has no free handler for.
@@ -789,7 +790,7 @@ class ReceiveLoop:
         for own in self._stages:
             if stage in own.inputs:
                 items.append(Item(at, own.name))
-            if own.keeps_order and own.name == stage:
+            if own.keeps_order and own.name == stage or stage in own.follows:
                 following = self._index[at] + 1
                 if following < len(self._decisions):
                     items.append(Item(self._decisions[following], own.name))
@@ -821,12 +822,10 @@ class ReceiveLoop:
             if self._is_stored(item.stage, item.decision_at):
                 return "stored"
             index = self._index[item.decision_at]
-            if (
-                stage.keeps_order
-                and index > 0
-                and not self._is_stored(item.stage, self._decisions[index - 1])
-            ):
-                return "waiting"
+            before = (item.stage, *stage.follows) if stage.keeps_order else stage.follows
+            for name in before if index > 0 else ():
+                if not self._is_stored(name, self._decisions[index - 1]):
+                    return "waiting"
             for name in stage.inputs:
                 if not self._is_stored(name, item.decision_at):
                     return "waiting"

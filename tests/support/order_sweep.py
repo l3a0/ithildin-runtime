@@ -80,6 +80,10 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     (_JOURNAL, "entry"): None,
     (_PATH, "inside"): frozenset({"Shared", "Unstored", "cleared", "called", "record_of"}),
     (_ACCOUNT, "inside"): frozenset({"Shared", "Unstored"}),
+    # The one file that builds a broker, by the mode.
+    ("src/ithildinruntime/runtime/execution_worker.py", "import"): frozenset(
+        {"Faults", "SimulatedAccount", "StoredPrices", "SimulatedBroker"}
+    ),
     # The measurement a person runs, which reads the bars and holds no broker and no account.
     ("src/ithildinruntime/runtime/stress_move.py", "reach"): frozenset({"getattr", "vars"}),
 }

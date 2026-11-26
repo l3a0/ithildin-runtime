@@ -710,6 +710,47 @@ def test_a_blob_with_a_reader_of_its_own_is_read_or_halts(spec: StoreSpec) -> No
     assert len(alarms.reasons) == 1
 
 
+def test_a_blob_that_may_be_absent_is_found_or_is_none(spec: StoreSpec) -> None:
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    key = core.output_key("ci", RUN, AT, "execution/recover", "book")
+    assert storage.find_blob(key) is None
+    flaky.create(key, b"{ }", sha256_of(b"{ }"))
+    assert storage.find_blob(key) == b"{ }"
+    # A store that does not answer never reads as a blob that is absent.
+    flaky.down = True
+    with pytest.raises(Halt, match="S3 did not answer a read of runs/ci"):
+        storage.find_blob(key)
+    assert len(alarms.reasons) == 1
+
+
+def test_a_file_kept_is_stored_or_leaves_the_one_that_stands(spec: StoreSpec) -> None:
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    key = core.output_key("ci", RUN, AT, "execution/recover", "book")
+    first = BlobRef(key, sha256_of(b"first"))
+    # A reply that was lost is this call's own write, and so is the same bytes again.
+    flaky.lose = True
+    assert storage.keep(key, b"first") == first
+    assert storage.keep(key, b"first") == first
+    # Other bytes leave the first, and are no capture this process holds or alarms on.
+    assert storage.keep(key, b"second") == first
+    assert storage.find_blob(key) == b"first"
+    assert (storage.unstored(), alarms.reasons) == ((), [])
+
+
+def test_a_file_s3_will_not_take_halts_with_the_owners_step_and_is_not_held(
+    spec: StoreSpec,
+) -> None:
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    flaky.down = True
+    with pytest.raises(Halt, match="S3 did not store runs/ci") as halted:
+        storage.keep(core.output_key("ci", RUN, AT, "execution/recover", "book"), b"first")
+    assert OWNER_STEP in halted.value.reason
+    assert alarms.reasons == [halted.value.reason] and storage.unstored() == ()
+
+
 def test_a_reader_halts_when_s3_does_not_answer_a_read(spec: StoreSpec) -> None:
     flaky = Flaky(spec.open())
     storage, _, alarms = _storage(flaky)

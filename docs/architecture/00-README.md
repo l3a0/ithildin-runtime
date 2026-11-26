@@ -22,7 +22,7 @@ passes everything to the others through files, so a failure stays inside one
 process and every input and output can be read afterwards. So the diagrams draw one worker per module, each a process the host keeps running and the supervisor only messages, rather than one program calling each module in turn. The platform
 is an event pipeline with a queue per component: each component listens for events on its queue, and an event reaches a component's queue whenever there is something new for it. The event is S3's own notification of the write, with no polling of storage, apart from one narrow read of monitoring's that catches a lost event for a switch-off or a halt. S3 hands that notification to EventBridge, AWS's event router, which copies it to SQS, AWS's queue service, where the worker waits for it. Every file is a blob in S3, written once at a key
 fixed by the run, the stage and the decision, and the VM keeps no state.
-The journal is the one numbered log.
+The journal is the one numbered log of what the platform did, and the one other numbered log is a simulated account's calls, which only the simulated broker's adapter reads.
 [design.md](../design.md#processes-and-files)'s `## Processes and files` carries
 the rules the workers follow.
 

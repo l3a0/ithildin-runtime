@@ -56,11 +56,11 @@ erDiagram
     ACCOUNT_FILE {
         string key
         string sha256
-        datetime read_at
         string positions
         string open_orders
         decimal cash
-        int replayed_through
+        datetime since
+        string fills
     }
     VINTAGE {
         string id
@@ -219,7 +219,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 3. [The security master](#the-security-master) holds `INSTRUMENT`.
 4. [The journal](#the-journal) holds `JOURNAL_ENTRY`.
 5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
-6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions, in a form this doc proposes for [#144](https://github.com/l3a0/ithildin-runtime/issues/144).
+6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions.
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
 8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place is not yet written.
 
@@ -247,8 +247,8 @@ Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OU
 
 | Blobs | Can they be regenerated? |
 | --- | --- |
-| A deterministic component's blobs | Yes, from marketlake, the journal, the hard caps as recover stored them, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and the code |
-| Data's snapshots, execution's account files, the hard caps as recover read them, by the same proposal, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
+| A deterministic component's blobs | Yes, from marketlake, the journal, the hard caps as recover stored them, and the code |
+| Data's snapshots, execution's account files, the hard caps as recover read them, the send stage's broker reads, a takeover's broker order list and the order list that maps an order in doubt | No. They capture what was true at the moment, so all are recorded data |
 | The restart records the host's stop handler writes | No, but they are diagnostics rather than recorded data. They are kept as long as the operator sets, as design.md's `### Data has a cost, except the data that cannot be recaptured` says. The price is that a record not yet uploaded when its VM is lost is lost with it |
 | A backtest's blobs | Yes. They sit in a memory-backed folder and vanish when it ends, because a backtest can be regenerated |
 
@@ -260,7 +260,7 @@ The security master holds `INSTRUMENT`. It is a small committed file, `src/ithil
 
 #### The journal
 
-The journal holds `JOURNAL_ENTRY`. It is the one numbered log: one per broker account, outside every run, because the book is replayed from it across runs.
+The journal holds `JOURNAL_ENTRY`. It is the one numbered log of what the platform did: one per broker account, outside every run, because the book is replayed from it across runs.
 
 Each entry is a blob at a key fixed by the account and its sequence number, and an account's first entry is number 1. It holds these, so the entry itself is the record.
 
@@ -284,7 +284,7 @@ Only execution, monitoring, the supervisor and the `ithildin` tool may import th
 
 `Journal.record` is the one way any of them adds an entry, as [Nothing is stored that a replay would refuse](05-building-blocks.md#nothing-is-stored-that-a-replay-would-refuse) says. S3's refusal of an existing key is what keeps two of them from taking one number. `record` halts, storing nothing, on an entry the fold refuses or one that does not chain to the stored entry before it, and it never renumbers an entry. Where the key holds the same bytes, the append is the writer's own earlier attempt and is done, and where it holds other bytes, `record` raises `NumberTaken`. That refusal is two writers racing for a number, so it raises none of the alarms on a create-only write whose stored bytes differ. The writer that is refused then views the journal again, decides its step again, and takes the next number. An order's `intent` starts over, its `verdict` or `sending` that lost its number ends the order `abandoned`, and the entry after a broker's answer is appended until it lands, as [Send, once per order](06-runtime.md#send-once-per-order) says.
 
-Who may write which kind is held by two things, and neither is the bucket's grant, which admits a key under `journal/<account>/` whatever the body says. Only `record` adds an entry in this code, and `tests/test_order_sweep.py` shows, in the spellings its tests plant, that only the order path names six of the kinds an order moves by: `intent`, `verdict`, `sending`, `ack`, `in_doubt` and `abandoned`. A `rejected` and an `expired` are recorded by the recover stage too ([#145](https://github.com/l3a0/ithildin-runtime/issues/145)), and a fill by it alone. [What a journal entry's body holds](#what-a-journal-entrys-body-holds-and-how-a-retry-is-recognised) names each kind's writer. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds the question of what a prefix grant cannot limit.
+Who may write which kind is held by two things, and neither is the bucket's grant, which admits a key under `journal/<account>/` whatever the body says. Only `record` adds an entry in this code, and `tests/test_order_sweep.py` shows, in the spellings its tests plant, that only the order path names six of the kinds an order moves by: `intent`, `verdict`, `sending`, `ack`, `in_doubt` and `abandoned`. A `rejected` and an `expired` are recorded by the recover stage too, through `Account.record`, which takes no kind of the path's own but `rejected`, and a fill by it alone. [What a journal entry's body holds](#what-a-journal-entrys-body-holds-and-how-a-retry-is-recognised) names each kind's writer. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds the question of what a prefix grant cannot limit.
 
 Changing an entry would break the link from the entry after it. Beside that link, the bucket does four things, so an edit cannot hide.
 
@@ -301,7 +301,7 @@ Decision reports hold `RUN` and `REPORT`. A `REPORT` is the report monitoring wr
 
 #### The simulated broker's account
 
-A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them. That the rule allows it is part of the proposal below.
+A simulated account is a log of calls. Each call that changed the account stores one blob before it returns, outside every run, and a read that changed nothing stores none. The calls are numbered, and they are not an event log of the platform's, which [Processes and files](../design.md#processes-and-files) rules out beside the journal. They stand where a broker's own records stand: only the simulated broker's adapter reads them, and no book is replayed from them.
 
 ##### What a blob holds
 
@@ -398,7 +398,7 @@ Every call first reads the log forward from the newest call it knows, and takes 
 
 The simulated broker's adapter reads and writes it through a `BlobStore` the entry point hands it, so execution's own outputs are the same whichever broker it holds. Backtest and shadow use the same form, so an order still resting when a shadow run ends is there in the next run, or on a new VM. Each simulated account has its own lease and kill switch, so a backtest never shares the paper account's.
 
-That the account is kept in this form is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling). Its prices are four.
+This form has four prices.
 
 1. Each call costs one read for the next number, and one more for each close it asks for, since it lets the log go to read one. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix, as `infra/test/bootstrap/roles.tf` says of the test role. To any other role it reads as access denied, and every call fails. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each role's grant.
 2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs inside [the clock's bound](03-context-and-scope.md#what-halts-on-a-reading) can differ by up to twice it, so twice the bound has to stay below that time.
@@ -701,7 +701,7 @@ A switch already pulled makes `switch_pull` say so rather than journal it twice.
 
 Every key below sits in its environment's bucket, as [Four environments](07-deployment.md#four-environments) says. Deployments and accounts appear by the alias the release's table gives them, never by a broker's account number.
 
-A create-only write that S3 refuses, whose stored SHA-256 differs from the writer's, alarms, as [Every alarm and its drill](../halts-and-drills.md#every-alarm-and-its-drill) lists. For a capturing stage, data's snapshot and execution's recover stage, the differing capture is also stored at the next attempt number, by `core`'s key builder for that row, and named in the decision result, so a second read of a source that may not come again is kept rather than discarded.
+A create-only write that S3 refuses, whose stored SHA-256 differs from the writer's, alarms, as [Every alarm and its drill](../halts-and-drills.md#every-alarm-and-its-drill) lists. Recover's caps, book and valuation are the exception: a second attempt goes on from the one that stands, with no alarm, and halts where it differs from what that attempt may differ by, as [What a second attempt goes on from](06-runtime.md#what-a-second-attempt-goes-on-from) says. For a capturing stage, data's snapshot and execution's recover stage, the differing capture is also stored at the next attempt number, by `core`'s key builder for that row, and named in the decision result, so a second read of a source that may not come again is kept rather than discarded.
 
 **Table:** The key each store writes under
 
@@ -712,8 +712,9 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's forecast and its signal records, risk's constraints, portfolio construction's target and the record of how it was sized, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
-| The account's `Valuation`, an output of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
-| The reconciled `Book`, and the `HardCaps` as recover parsed them, which the risk and portfolio stages read, two outputs of each decision's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | `runs/<deployment>/<run>/<decision>/execution/recover/book.json`, `runs/<deployment>/<run>/<decision>/execution/recover/caps.json` |
+| The broker's account as recover read it, an `AccountRead`, the recover stage's capture | `runs/<deployment>/<run>/<decision>/execution/recover/account.json` |
+| The account's `Valuation`, an output of each decision's recover stage | `runs/<deployment>/<run>/<decision>/execution/recover/valuation.json` |
+| The reconciled `Book`, and the `HardCaps` as recover parsed them, which the risk and portfolio stages read, two outputs of each decision's recover stage. The caps file's header names the owner's blob by its key and SHA-256 | `runs/<deployment>/<run>/<decision>/execution/recover/book.json`, `runs/<deployment>/<run>/<decision>/execution/recover/caps.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A takeover's broker order list, a capture named by the journaled takeover entry, whose form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json` |

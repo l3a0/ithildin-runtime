@@ -766,7 +766,7 @@ def test_4_a_lost_call_before_the_newest_halts(number: int) -> None:
 
 
 def test_4_a_lost_newest_call_reads_as_the_account_before_it() -> None:
-    """The log cannot see it. Recover's compare with the journal can, which is #145's."""
+    """The log cannot see it. Recover's comparison does, in tests/test_recover.py."""
     made = full()
     made.sim.drop(key(4))  # type: ignore[attr-defined]
     made.restart(OTHER)

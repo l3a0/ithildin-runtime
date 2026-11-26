@@ -103,7 +103,7 @@ flowchart TB
     class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_time,tb_account,tb_vm,tb_exec boundary
 ```
 
-In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. Flow 16 runs on threads of each process's own, whether or not a decision is under way. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. That execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. Flow 16 runs on threads of each process's own, whether or not a decision is under way. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. Execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5.
 
 The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 
@@ -200,7 +200,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 3.1 bars and quotes | marketlake's account into the VM | Bars or quotes are changed, withheld or stale | Only the data worker's role reads them, read only, each object's SHA-256 is checked, and a missing, stale or quarantined input halts |
 | 5 broker key | Storage into execution | The key leaks to another process | Only execution's role reads it, it stays in memory and is never mounted, and a key has no withdrawal route |
 | 6, 11 broker answers | Alpaca into execution | An answer is lost, or shows an order the platform did not send | A lookup settles doubt, reconciliation compares the journal with the broker, and an unmatched order or fill halts |
-| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, as this doc proposes for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), and again as each order's send begins. It reads them once more, with the other controls, right before each broker call, and an unreadable control halts |
+| 7.4, 9.2 controls | Storage into execution | A switch or a halt is missed, or a cap is | Execution reads the hard caps in its recover stage, for the risk model and portfolio construction, and again as each order's send begins. It reads them once more, with the other controls, right before each broker call, and an unreadable control halts |
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
@@ -336,8 +336,6 @@ Alpaca [rejects a market-on-close order](https://docs.alpaca.markets/docs/orders
 also checks the cutoff again just before each broker call, and keeps a pair
 whole by cancelling an accepted leg whose partner fails. The session's official daily bar arrives at marketlake's 18:30 sweep that evening. Monitoring then reports how far the decision's price and the fills sat from it.
 
-That the recover stage reads the hard caps, and stores the book, the hard caps as read and the session's valuation for the risk model and portfolio construction, is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
-
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
@@ -373,13 +371,16 @@ sequenceDiagram
     Note over V,M: Phase 1, read the data, then recover
     D->>F: stores the snapshot, naming each bar and quote read,<br/>and data's decision result
     F-->>X: sends an event for data's result
-    X->>B: asks about orders in doubt,<br/>reads fills since the last decision
-    B-->>X: returns each lookup's answer<br/>and fills since the last decision
-    X->>J: journals each lookup's answer and each fill
-    X->>B: reads positions, open orders, cash<br/>and the broker's records
-    B-->>X: returns positions, open orders, cash<br/>and the broker's records
-    X->>J: journals each record as an outside entry
-    X->>F: stores the account file, naming<br/>the journal entry it replayed through
+    X->>B: asks about orders in doubt, which #35;147 builds
+    B-->>X: returns each lookup's answer
+    X->>J: journals each lookup's answer
+    X->>B: reads positions, open orders, cash and<br/>the broker's records, then the fills,<br/>from before any not yet journaled
+    B-->>X: returns positions, open orders, cash,<br/>the broker's records and the fills
+    X->>F: stores the account file as read
+    X->>J: journals the account file's hash, each new fill<br/>and each record as an outside entry, which #35;151 builds
+    X->>B: looks up each order it no longer lists
+    B-->>X: returns how each one ended
+    X->>J: journals each one that expired or was rejected
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>F: reads the hard caps blob
     X->>F: stores the reconciled book, the hard caps as read,<br/>the session's valuation and execution's recover result
@@ -512,12 +513,78 @@ sequenceDiagram
 A run that starts on a book the broker disagrees with would trade the wrong difference. So this phase ends in a comparison, and a difference halts.
 
 1. **Data reads the bars and the quotes.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, then, for a decision inside its session, one capture's quote of each, and records which ones it read before any model sees them.
-2. **Execution waits for that snapshot,** so it reads the broker at the decision's own time.
-3. **Execution catches up.** It settles any order a crash left in doubt, and journals the fills that arrived since the last decision. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison.
-4. **Execution lays out both sides.** It writes the strategies' books, replayed from the journal, beside the broker's positions, open orders and cash.
-5. **Execution compares them,** position by position, order by order and cash against cash, and each stamped order's filled quantity against the journal's. A cash difference a listed record explains in full passes, and any other difference halts.
-6. **Execution stores what the risk model and portfolio construction read,** by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). It reads the hard caps blob, then stores the book, the hard caps as it read them and the session's valuation.
-7. **Monitoring repeats the same check** for its report, and nothing waits on it.
+2. **Execution waits for that snapshot,** and for its own send result of the decision before, a halt included, so it reads the broker at the decision's own time and after the last decision's orders went out.
+3. **Execution recovers,** in the steps below. They end in a comparison of the book, replayed from the journal, with the broker's positions, open orders and cash. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that recover also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison. A cash difference a listed record explains in full then passes, and any other difference halts. [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds it.
+4. **Execution stores what the risk model and portfolio construction read:** the book, the hard caps as it read them and the session's valuation.
+5. **Monitoring repeats the same check** for its report, and nothing waits on it.
+
+#### What recover does, step by step
+
+The stage is `execution/recover.py`. It waits for the decision's time, having written nothing, and then works in this order.
+
+1. It reads data's result and its snapshot, and passes a halt in either on.
+2. It stores each answer this process still owes the journal, and takes one reading of the journal. A plan a crash left unfinished halts here, under the rule below.
+3. It reads the broker's positions, open orders and cash, and then its fills. The fills come last, so a fill that lands between two reads shows as a difference and never as a match.
+4. It stores the four reads as one capture, `account.json`, before anything in them is compared.
+5. It journals a `read` entry that names the capture, and then halts where any of the four did not come whole.
+6. It journals a `fill` entry for each fill the journal does not hold, and a `disputed_fill` for one whose content differs from the fill held under its id, which the book then halts on. A fill of no order the platform acknowledged, or one that does not match its order, halts naming it and is not journaled, until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) journals it as unmatched.
+7. It looks up, by the broker's id, each order the broker no longer lists and whose fills do not explain it. An order that `expired` or was `rejected` is journaled so. Any other answer halts.
+8. It takes a second reading of the journal and compares it with the capture through `core.reconcile`. Any difference halts, with every one of them in the reason.
+9. It reads the owner's hard caps.
+10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
+
+A difference that is nothing but a fee, a dividend or a split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
+
+Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
+
+##### What a plan a crash left unfinished is
+
+Each `decision` entry plans its orders together. A plan is unfinished where any of these is so.
+
+1. An order of it is `Intended`, `Approved`, `Sending` or `InDoubt`.
+2. An order of it has no entry while another of its orders has one.
+
+Recover halts naming every order of that plan, its state and when its `sending` was stored, and sends an alarm for each. A crash writes no `in_doubt` entry, so this can be the first a person hears of the order. A plan none of whose orders has an entry sent nothing and halts nothing. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds what settles an unfinished one, and until then each later decision halts here.
+
+##### From when fills are read
+
+Recover asks for the fills since one day before the earlier of two times, and never since before the account was opened, with no day taken off that. Fills before the opening are in the account's opening cash.
+
+1. The newest `read` entry of a recover whose decision has a `decision` entry after it, so its fills were all journaled. A `read` alone proves nothing, because a recover that stored one and then halted has journaled no fill of it.
+2. The `sending` entry of the oldest order that has not ended.
+
+With neither time, it asks since the opening, and a fill at that time itself is read.
+
+##### What a second attempt goes on from
+
+A crash, or a second instance, can run one decision's recover twice. A second attempt reads the broker again and goes on from what the first stored.
+
+1. A read that differs is stored at the capture's next attempt number, with an alarm that says what differs. The first capture is the one that counts. Where the account moved between the two, in its positions, its open orders compared by the broker's id, its cash or a fill the first lacks, the attempt halts, because files made from the first would be stale. So does a later read that did not come whole, or that lacks a fill the first held without asking from after that fill's time. A read whose pages alone came later, or whose fills from a later time leave out one the first held, goes on.
+2. A fill or an end another attempt journaled is seen on a new reading of the journal and not repeated.
+3. `caps.json`, `book.json` and `valuation.json` are each read back where they are stored, and only a missing one is built. So the owner can rewrite the caps and the journal can grow between two attempts, and both attempts end in the same files. The caps' key and SHA-256 come from the stored file's header.
+4. Where `book.json` is stored, the valuation is of that book and never of a new replay. A stored book that differs from this attempt's in anything but the journal entry it replayed through halts, and so does a stored valuation other than its book's.
+
+A file of another release, format or configuration halts, because this release did not write its fields.
+
+##### When the session's valuation is built
+
+The first recover of a session values the book at the official closes of the session before, through `core.value_book`. A recover is the first where the journal's newest `sending` was not stored strictly after that session closed, because an order sent at the close itself belongs to the session that closed. A second decision in one session halts until [#183](https://github.com/l3a0/ithildin-runtime/issues/183) copies the first one's valuation, since no strategy decides twice a day.
+
+#### Which modes build a broker
+
+`runtime/execution_worker.py` is the one file that builds a broker, and the mode decides it.
+
+**Table:** What the execution worker builds in each mode
+
+| Mode | What it builds | What lifts the halt |
+| --- | --- | --- |
+| A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares |
+| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#147](https://github.com/l3a0/ithildin-runtime/issues/147) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151), [#155](https://github.com/l3a0/ithildin-runtime/issues/155) and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) closes last |
+| Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
+| Live | The same | Only the owner switches an account to live |
+| An unknown mode, and a backtest over any other store | The same | The configuration |
+
+A mode with no broker halts each decision with its reason stored, and the worker starts all the same, because a start that fails only restarts it. A deploy to shadow starts on a merge, and nothing yet serves a kill switch, a second instance or a lone leg there. A backtest's account goes to no real store, where its opening entry and its simulated fills could never be deleted.
 
 ### Phase 2: decide
 
@@ -626,7 +693,7 @@ A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an or
 | 7 | The hard caps | Their limits are the ones the gate was handed |
 | 8 | The order's last moment: its market-on-close cutoff or its session's close, or the moment a quote the gate marked reaches its written maximum age where that is sooner | It has not passed |
 
-Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give. Until the two leases are read, no mode but a backtest may run, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) holds. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
+Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give. Until the two leases are read, no mode but a backtest may run, as [Which modes build a broker](#which-modes-build-a-broker) says. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
 A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
 
@@ -882,7 +949,7 @@ The day's loss is the account's valuation at the prior session's official closes
 
 The mark is the midpoint of the instrument's quote, or its newest daily bar's close where the snapshot holds no quote of it, through `core.mark`, which the alpha model's signal reads and portfolio construction sizes with too. A split on the decision's own day leaves V and the bars before it and the quote after it, and the signal, the size and the day's loss read that step. The flag on a midpoint that moved is the only check on the prices that sees it. It halts nothing and misses a step within the written multiple, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds. Six gaps halt rather than read as no loss.
 
-1. The valuation is missing, or is of any session but the one before the decision's. That recover lists it is this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10). A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
+1. The valuation is missing, or is of any session but the one before the decision's. A decision at the close reads a snapshot that holds both sessions' bars, and V at that day's close would read a loss of zero.
 2. The valuation was replayed past the book.
 3. A held instrument, or one with an open order, has no quote and no bar later than V's session, or has a bar of a session later than the decision's or one that ends or was knowable after the decision.
 4. An instrument's price is missing, stale, of unstated kind or not above zero, or its quote has any fault [How a quote is judged](03-context-and-scope.md#how-a-quote-is-judged) lists, or its quote's older stamp is at or before V's close, or it has a quote beside a bar of the decision's session. Once any instrument is priced, any other of the snapshot that is not fresh halts too, as [`Snapshot.require_fresh()`](05-building-blocks.md#snapshotrequire_fresh-is-how-a-module-refuses-a-gap) says.
@@ -966,10 +1033,10 @@ Execution trades the difference between a target and the book, so a book the bro
 
 Two workers compare the broker with the sum of the strategies' books.
 
-1. Execution's recover stage compares them before a decision trades.
-2. Monitoring compares them again for its report.
+1. Execution's recover stage compares them before a decision trades, through `core.reconcile`, which [One function lists the differences from the broker](05-building-blocks.md#one-function-lists-the-differences-from-the-broker) describes.
+2. Monitoring compares them again for its report, through the same function ([#11](https://github.com/l3a0/ithildin-runtime/issues/11)).
 
-Both compare positions, open orders and cash. So an order the broker holds and the journal marks lost or abandoned halts the day it appears, not the day it fills.
+Both compare positions, open orders and cash, exactly and with no tolerance. So an order the broker holds and the journal marks lost or abandoned halts the day it appears, not the day it fills.
 
 #### What each difference leads to
 

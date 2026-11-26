@@ -20,7 +20,7 @@ from ithildinruntime import core
 DATA_TYPES = (
     "Instrument Bar Quote Snapshot Basket Forecast Constraints TargetPortfolio Book "
     "OrderIntent Fill Ack BrokerOrder FoundOrder JournalAck Verdict CostSchedule "
-    "BrokerAccount Valuation GateInputs SendOutcome BlobRef StoredBlob BlobHeader "
+    "AccountRead Valuation GateInputs SendOutcome BlobRef StoredBlob BlobHeader "
     "DecisionResult HaltRecord RestartRecord Heartbeat Lease Plan JournalEntry Halt"
 ).split()
 PROTOCOLS = (
