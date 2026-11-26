@@ -1380,7 +1380,11 @@ def committed() -> SimWorld:
 
 
 def test_5_this_release_reads_and_writes_the_committed_log() -> None:
-    """A shadow account's log outlives a release, so its bytes never change."""
+    """A shadow account's log outlives a release, so this release reads and writes it unchanged.
+
+    Each close names the SHA-256 of the snapshot it was priced from, so a change to
+    data's snapshot format moves those hashes, and the fixture with them.
+    """
     made = committed()
     stored = {p.name: p.read_bytes() for p in sorted(FIXTURES.glob("*.json"))}
     assert {k.rpartition("/")[2]: v for k, v in made.blobs().items()} == stored

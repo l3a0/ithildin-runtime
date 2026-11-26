@@ -444,7 +444,9 @@ python -m lake.live_upload lag --date <YYYY-MM-DD>
 ```
 
 1. It prints each segment's time from its cycle's start to the bucket, then a
-   summary line with the count and the largest.
+   summary line with the count, the largest, and how many are over 90 seconds.
+   That last count is marketlake's own bound, and the steps below read only the
+   largest.
 2. It reads the last seven days only. A day older than that lists no segments,
    because the bucket expires each segment seven days after upload.
 

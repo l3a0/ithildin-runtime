@@ -314,8 +314,8 @@ class Snapshot(_Record):
       whatever they held, because marketlake had not sealed the day.
     - `segments` names each segment opened, and `partitions` each sealed quotes
       partition linked, by its vintage id, sorted.
-    - `rows` maps an instrument to every row marketlake's reader returned that
-      is not its quote's own, in the form of `Quote.received`.
+    - `rows` maps an instrument to every row the cut 15 seconds before the
+      decision kept that is not its quote's own, in the form of `Quote.received`.
     - `faults` holds each reason the read of the quotes failed, in order.
     - `quotes_read_at` is the data worker's clock after the last answer of the
       read of the quotes, and `None` exactly when the decision read none.

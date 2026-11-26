@@ -297,15 +297,25 @@ could not have listed, and a backtest would trade on a quote live never saw. So
 every read of quotes, sealed or of segments, in every mode, keeps only rows whose
 `fetch_end_ts` is at or before the decision less `CAPTURE_LAG`, which is 15
 seconds and lives in `data/cycles.py`. The judge, the walk's stop and every age
-still read the decision time. A row after the cut is stored nowhere, by either
-read, since a snapshot holds no value its decision could not know.
+still read the decision time. A row after the cut is in no snapshot, by either
+read, since a snapshot holds no value its decision could not know, and
+marketlake's partition keeps it.
 
-The cut on both reads is what makes a backtest read what live reads. With
-uploads of 1 to 14 seconds planted on 3,696 decisions over 22 recorded sessions,
-the two picks differed on 0 with the cut on both, and on 190 with it on the
-backtest alone. An upload past 15 seconds is a capture the sealed day holds and
-live did not, and with uploads of up to 20 seconds the two differed on 140. All
-three counts are exploratory.
+The cut on both reads is what keeps a slow upload from making a backtest read
+what live could not, apart from the shapes [What a replay cannot show](#what-a-replay-cannot-show)
+and [How a sealed day becomes one quote of each instrument](#how-a-sealed-day-becomes-one-quote-of-each-instrument)
+name. With uploads of 1 to 14 seconds planted on 3,696 decisions over 22
+recorded sessions, the two picks differed on 0 with the cut on both, and on 190
+with it on the backtest alone. That 0 checks the cut's logic, since the cut
+rules out a difference from an upload under 15 seconds, and it is no
+measurement of live. An upload past 15 seconds is a capture the sealed day holds
+and live did not, and with uploads of up to 20 seconds the two differed on 140.
+All three counts are exploratory.
+
+Every count in this section was made in [#132's plan](https://github.com/l3a0/ithildin-runtime/issues/132#issuecomment-7170961785), whose comment holds
+the script, over capture stamps alone, on a copy of the lake whose manifest's
+SHA-256 is `96c023035150117b44f74a7bef67e2789ba89457ddec10ca1ded9830fe8312dd`.
+No code in this repository reproduces them.
 
 Two measures bound the lag.
 
@@ -320,7 +330,7 @@ Two measures bound the lag.
 
 **Table:** What bounds the lag, from the capture stamps of 22 sessions, exploratory
 
-| Lag, in seconds | Decisions of 8,580 on whole minutes whose capture differs from no lag | Sessions of twenty that read 15:39's quote at 15:40 |
+| Lag, in seconds | Decisions of 8,580 on whole minutes whose capture differs from no lag | Sessions of the twenty from 2026-09-15 to 2026-10-12 that read 15:39's quote at 15:40 |
 | --- | --- | --- |
 | 0 | 0 | 20 |
 | 11 | 16 | 20 |
@@ -338,8 +348,9 @@ another's upper bound.
 The price is one whole capture on every decision with a capture in those 15
 seconds, because it reads the capture before. That quote is about 60 seconds
 older: at a median of 60.0 seconds and at most 737 where minutes were missing, on
-25,482 of 102,432 decisions every 5 seconds, 25 of 8,536 on whole minutes and 0
-of 22 at close−20, all exploratory. So the greatest usual age is 75 seconds and
+25,482 of 102,432 decisions every 5 seconds and 25 of the 8,580 on whole minutes,
+counted where both instruments hold a capture with no lag, and 0 of 22 at
+close−20, all exploratory. So the greatest usual age is 75 seconds and
 not 60, an order has that much less of its maximum left, and sizing, the caps and
 the loss stop read the older mark. A capture in those seconds that shows a
 halted, crossed or wide quote halts nothing and holds no account.
@@ -616,8 +627,9 @@ A missing result, or a sealed day that never arrives, pages and stops no
 decision.
 
 This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-that the comparison also takes the newest sealed row at or before the decision
-time, so a row whose segment landed after the decision shows as a difference.
+that the comparison also takes the newest sealed row at or before the cut, 15
+seconds before the decision, so a row whose segment landed after the cut shows
+as a difference.
 
 ##### What the comparison reads
 

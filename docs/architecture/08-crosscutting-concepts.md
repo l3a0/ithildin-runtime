@@ -48,7 +48,7 @@ erDiagram
         string partitions "each sealed quotes partition's vintage_id"
         string bars "each with its vintage_id"
         string quotes "every Quote field"
-        string rows "every other row read, as text"
+        string rows "every other row the cut kept, as text"
         string faults "each reason the read failed"
         string quotes_read_at "the worker's clock, or null"
         string ledgers "each ledger's SHA-256"

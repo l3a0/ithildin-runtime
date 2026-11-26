@@ -1306,7 +1306,7 @@ A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built 
 1. `provisional` is true exactly when the decision read segments. A read of the sealed day is not provisional.
 2. `segments` names each segment opened, by key, the bucket's version and the SHA-256 the bucket stored with it.
 3. `partitions` names each sealed quotes partition linked, sorted, by the vintage id a bar's `vintage_id` uses.
-4. `rows` holds every other row the cut 15 seconds before the decision kept, as text, whether or not the decision halts, because the gate can refuse a quote after the snapshot is stored. A row after the cut is stored nowhere.
+4. `rows` holds every other row the cut 15 seconds before the decision kept, as text, whether or not the decision halts, because the gate can refuse a quote after the snapshot is stored. A row after the cut is in no snapshot, and marketlake's partition keeps it.
 5. `faults` holds each reason the read of the quotes failed, in order.
 6. `quotes_read_at` is the data worker's clock after the last answer of either read, and `None` exactly when the decision read no quote.
 

@@ -22,7 +22,7 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote, segment, row, fault or provisional mark, or says that a capture holds
+   quote, segment, partition, row, fault or provisional mark, or says that a capture holds
    other than one snapshot, that the first capture is no snapshot the codec
    reads, or that only the read time differs, as on a redelivery after a crash.
    Where only the segments and their rows differ, the later capture names one

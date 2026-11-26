@@ -431,12 +431,14 @@ def test_3_the_judge_the_stop_and_the_ages_read_the_decision(
 # 4. The walk.
 
 
-def build(draw: random.Random, at: datetime, late_cycles: bool) -> dict[str, list]:
-    """Each ticker's rows as (minute, landed or None for a gap), of one seeded day."""
+def build(draw: random.Random, at: datetime) -> dict[str, list]:
+    """Each ticker's rows as (minute, landed or None for a gap), of one seeded day.
+
+    No capture lands after a later minute's, the shape the walk can miss, which
+    `test_4_a_late_cycle_worked_by_hand` works by hand instead.
+    """
     floor = at.replace(second=0, microsecond=0)
     out: dict[str, list] = {}
-    lates = {b for b in range(1, 30) if late_cycles and draw.random() < 0.1}
-    shift = {b: draw.choice([70, 200, 400]) for b in lates}
     for t in BOTH:
         stop = draw.choice([0, 0, 0, 3, 15]) - draw.choice([0, 0, 12])
         missing, gaps = draw.choice([0, 0.2, 0.6]), draw.choice([0, 0.2])
@@ -450,7 +452,7 @@ def build(draw: random.Random, at: datetime, late_cycles: bool) -> dict[str, lis
             else:
                 # A capture lands up to 59 seconds after its minute, and never after the next.
                 within = timedelta(microseconds=draw.randrange(500_000, 59_000_000))
-                out[t].append((minute, minute + within + SECOND * shift.get(back, 0)))
+                out[t].append((minute, minute + within))
     return out
 
 
@@ -479,7 +481,7 @@ def test_4_the_walk_finds_the_brute_forces_cycle(
 ) -> None:
     draw = random.Random(seed * 100 + off)
     at = AT + off * SECOND
-    rows = build(draw, at, late_cycles=False)
+    rows = build(draw, at)
     planted(small, live, rows)
     limits = {i: QuoteLimits(draw.choice([60, 150, 400]), Decimal("0.02")) for i in (GLD, USO)}
     cut = at - timedelta(seconds=15)
@@ -864,6 +866,8 @@ def test_19_the_reading_and_the_log(day: Path, tmp_path: Path, caplog) -> None:
     (line,) = [r.getMessage() for r in caplog.records if "load_quotes" in r.getMessage()]
     assert "12 calls" in line and all(p in line for p in reading.snapshot.partitions)
     assert "59.000 seconds old" in line
+    assert f"with the cut at {(AT - 15 * SECOND).isoformat()}" in line
+    assert line.endswith("A decision before the seal may have read another row")
 
 
 # What no acceptance line holds.
