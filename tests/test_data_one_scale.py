@@ -174,6 +174,7 @@ OTHER_BARS = {
         {"origin": "imported", "source": SCHWAB_IMPORT, "source_as_of": SEAM},
     ),
     "a-captured-later-bar-with-a-date": (False, {"source_as_of": SEAM}),
+    "a-captured-later-bar-with-a-source": (False, {"source": "made-up:x"}),
     "a-raw-earlier-bar": (True, {"basis": "raw"}),
     "a-captured-earlier-bar": (True, {"origin": "captured"}),
 }
@@ -193,6 +194,31 @@ def test_2_a_pair_that_differs_in_one_field_or_origin_halts_on_the_stored_snapsh
     assert judge(stored, (GLD, USO), measured=False) == (
         reason("USO", one.session, two.session, str(series_of(one)), str(series_of(two))),
     )
+
+
+def test_2_the_pair_in_the_other_order_halts(first: Decided) -> None:
+    """A captured bar, then an import adjusted as of that bar's session."""
+    held = first.snapshot.bars[USO]["1d"]
+    captured, imported = held[len(IMPORTED)], held[len(IMPORTED) - 1]
+    after = replace(imported, session=held[len(IMPORTED) + 1].session, source_as_of=SEAM)
+    stored = replace(first.snapshot, bars={**first.snapshot.bars, USO: {"1d": (captured, after)}})
+    assert judge(stored, (GLD, USO), measured=False) == (
+        reason(
+            "USO",
+            SEAM,
+            after.session,
+            CAPTURED_SERIES,
+            f"adjusted from {SCHWAB_IMPORT} as of {SEAM}",
+        ),
+    )
+
+
+def test_2_a_step_at_the_seam_within_the_spike_multiple_raises_no_flag(tmp_path: Path) -> None:
+    """A split or stock dividend of 5 percent reads as a move of the market, with no sign."""
+    lake = built(tmp_path / "lake", scale={"USO": Decimal("1.05")})
+    found = decide(lake, tmp_path, DECIDED[0], walks=WALKS)
+    assert found.data.halt is None and found.alpha.halt is None
+    assert found.snapshot.flags == {}
 
 
 def test_2_a_split_at_the_seam_is_read_as_a_move_and_flagged(tmp_path: Path) -> None:

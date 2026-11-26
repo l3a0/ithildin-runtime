@@ -173,7 +173,7 @@ moment, not against a blob.
 | Live | marketlake's S3 bucket, captured bars, once [a split record covers them](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
-which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless the download is Schwab's, adjusted to the session capture began on, which sits on one scale with it. Shadow
+which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless the download is Schwab's, adjusted to the session capture began on. For GLD and USO an exploratory comparison with a second vendor shows the two on one scale there, and nothing measures it for another instrument. Shadow
 reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
@@ -1633,7 +1633,7 @@ A leg can move further in one session than in two, so m can read less than one s
 The command `python -m ithildinruntime.runtime.stress_move` reads the bars and prints one record, and [Measure a stress move](../what-a-person-runs.md#measure-a-stress-move) says how to run it. It reads through `data.LakeSource`, the read every decision makes, in three steps.
 
 1. **Each leg's start.** A leg starts at its own `[data.first_sessions]` date, and no option moves it, because a later start lowers m. So the command first reads each leg alone, over the two sessions that end at its start, and data halts there if the lake lists an earlier partition, as [Where each series starts](../design.md#where-each-series-starts) says.
-2. **Each series' span.** A `--seam` names each session a new series starts on. Each span between two seams is one read, so each read holds one series, data halts on a seam nobody named, and the move rule judges each series against its own returns within that span. A leg whose series runs on past a seam has its move across it counted in m and judged by no read. The command refuses a named seam at which no leg changes series.
+2. **Each series' span.** A `--seam` names each session a new series starts on. Each span between two seams is one read, so each read holds one series, data halts on a seam nobody named, the command refuses the one change data passes, from Schwab's import to captured bars, until that seam is named too, and the move rule judges each series against its own returns within that span. A leg whose series runs on past a seam has its move across it counted in m and judged by no read. The command refuses a named seam at which no leg changes series.
 3. **The moves**, over the spans joined, so a seam one leg does not change at leaves nothing out on it.
 
 Every read is at a stale lag of 0 and of one manifest, and any other manifest refuses the run. The price is that an import of days before a leg's start refuses each run until the strategy's file names the new start.

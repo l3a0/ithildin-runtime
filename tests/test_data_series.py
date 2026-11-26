@@ -344,7 +344,11 @@ def test_3_a_decision_before_the_close_crosses_one_session_later(
 def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
     tmp_path: Path,
 ) -> None:
-    """GLD and USO's two changes to come, as docs/design.md quotes the dates."""
+    """GLD and USO's two changes, with the import dated 2026-10-31 so both halt.
+
+    docs/design.md quotes the first span. Dated 2026-11-02, as the tracked import is,
+    the second reads, which tests/test_data_one_scale.py pins.
+    """
     (tracked,) = load_strategies(STRATEGIES, ["chan_bollinger"])
     # The file writes no maximum age or spread of a quote yet, so these are made up.
     settings = replace(data_settings([tracked]), quotes=LIMITS)

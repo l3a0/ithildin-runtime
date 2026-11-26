@@ -93,8 +93,9 @@ bars at the close, and 22 before it, reach the earlier sessions whose z-scores s
 So the download and capture together have to hold 60 sessions. A lookback that
 holds both [crosses a change of
 series](../design.md#a-lookback-that-crosses-a-change-of-series). It reads where
-the download is Schwab's, adjusted to the session capture began on, because the
-two sit on one scale there, and it halts otherwise.
+the download is Schwab's, adjusted to the session capture began on, and it halts
+otherwise. For GLD and USO an exploratory comparison with a second vendor shows
+the two on one scale there, and nothing measures it for another instrument.
 
 Every bar says whether it was captured or imported, in `origin`, and where an
 imported one came from, in `vintage_id`, so a consumer can refuse imported
@@ -336,7 +337,7 @@ The data worker runs its own minimum checks before anything decides. Beside the 
 3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
 4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
-6. Two consecutive bars of one instrument that are of two series, meaning two recordings by different sources, as of different dates, or one of the price as traded and one adjusted, halt the decision, as [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) says. The one change that passes is from Schwab's import to captured bars on the session the import is adjusted to, which sits on one scale.
+6. Two consecutive bars of one instrument that are of two series, meaning two recordings by different sources, as of different dates, or one of the price as traded and one adjusted, halt the decision, as [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) says. The one change that passes is from Schwab's import to captured bars on the session the import is adjusted to. An exploratory comparison shows that change on one scale for GLD and USO alone.
 7. A bar whose kind `data/price_kinds.csv` leaves unstated in any of its four fields halts the decision.
 8. A quote with a bid or an ask at or below zero, or an ask below its bid, is flagged beside the price, and the judge halts on it.
 9. A midpoint whose return on the newest bar's close is past the written multiple of the standard deviation of the lookback's returns is flagged beside that close. The owner is alerted, and the decision trades on the quote as it arrived. Fewer than two returns judge none, and where every return is the same any other move is flagged.
