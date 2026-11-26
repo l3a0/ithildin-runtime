@@ -534,7 +534,7 @@ found no side with a size of zero or none among the 92 quotes it read. Unstated 
 The quote's type, which says whether its bid and ask are the national best bid and offer,
 is neither recorded nor judged. On shadow and paper the bid and ask still read as the best
 bid and ask. A live decision may not: the conditions on [the Live step](../team-charter.md#5-release)
-ask for a row that states the type, which [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
+ask for a row that states the type and the owner's ruling on which types live reads, which [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
 
 #### Which read a decision uses
 
