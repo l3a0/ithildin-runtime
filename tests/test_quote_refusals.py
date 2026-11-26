@@ -83,7 +83,10 @@ def lake(built_lake: Path, tmp_path: Path) -> Path:
         if day == UNLISTED:
             del made["USO"]
         if day == UNSHARED:
-            made = {"GLD": rows("GLD", day, (1, 8)), "USO": rows("USO", day, (2, 8))}
+            # GLD's quote at eight minutes has a zero bid size and passes at the decision, and
+            # at the cutoff it is past the widest age.
+            gld = rows("GLD", day, (1,)) + rows("GLD", day, (8,), bid_size=0)
+            made = {"GLD": gld, "USO": rows("USO", day, (2, 8))}
         session = TABLE.session(day)
         for t, held in made.items():
             partition(small, t, *held, close_row(t, session.close), day=day)
@@ -213,20 +216,25 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
     assert "| 600 | 3 of 5 | 3 of 5 | 4 of 5, 1 for age: too old, GLD 1, USO 1 |" in out
     assert "| 0.0001 | 5 of 5, 3 for the spread: too wide, USO 3 |" in out
     assert "| 0.0005 | 3 of 5 |" in out
-    assert "| Reason | Instrument-sessions |" in out
+    assert "| Reason | Count |" in out
+    assert "and a fault of the read once for each session." in out
+    assert "the sessions refused for age include any that another reason refuses as well" in out
     assert qr.PLAN in out
     # 1 − 0.05 ** (1 / 5) is 0.4507, the share five sessions with none refused still allow.
     assert "5 sessions is a short record. A step that refuses none of them still allows a " in out
-    assert "true share as high as 45%, the one-sided 95% bound" in out
+    assert (
+        "true share as high as 45.1%, the one-sided 95% bound 1 − 0.05^(1/n) for sessions drawn "
+        "independently. Sessions in a row are not independent, so the true bound is likely wider."
+    ) in out
     assert "the send 30 seconds after the decision is a stand-in" in out
     assert "Refused at the cutoff at close−12, a proposal |" in out
     assert "| A bid or ask stamp later than its capture | 2 of 8 |" in out
     assert (
         "| The same, by more than the clock bound of 1 second, which the check refuses | 1 of 8 |"
     ) in out
-    assert "| A bid or ask size of zero | 2 of 8 |" in out
+    assert "| A bid or ask size of zero | 3 of 8 |" in out
     assert "| A bid or ask size that is missing | 2 of 8 |" in out
-    assert "| Either, passing every check at the widest steps at the decision | 3 of 4 |" in out
+    assert "| Either, passing every check at the widest steps at the decision | 4 of 5 |" in out
     assert "| `security_status` of 'Halted' | 1 of 8 |" in out
     assert "| `security_status` of 'Normal' | 7 of 8 |" in out
     assert "| `realtime` of True | 8 of 8 |" in out
@@ -296,6 +304,27 @@ def test_a_reason_both_sides_give_counts_once(measured: qr.Measurement) -> None:
     bare = replace(day, reads={age: read for age in qr.AGES})
     found = bare.refused(900, qr.SPREADS[-1], 0)
     assert found[("a side missing or not above zero", "GLD")] == 1
+
+
+def test_a_missing_partition_stops_the_run(lake: Path, tmp_path: Path) -> None:
+    (lake / part_key("USO", PLAIN)).unlink()
+    code, out, err = run(lake, tmp_path, "--normal-status", "Normal")
+    assert (code, out) == (1, "") and err.startswith(f"quote_refusals: on {PLAIN}, ")
+    assert err.endswith("so the data is not ready\n")
+
+
+@pytest.mark.parametrize("n", [1, 5, 18, 34, 600])
+def test_the_bound_is_rounded_up(n: int) -> None:
+    # 1 − 0.05 ** (1 / n): 0.95, 0.4507, 0.1533, 0.0843 and 0.0050.
+    assert qr._bound(n) == {1: "95.0%", 5: "45.1%", 18: "15.4%", 34: "8.5%", 600: "0.5%"}[n]
+
+
+def test_a_fault_of_the_read_counts_once_for_its_session(measured: qr.Measurement) -> None:
+    (day,) = [d for d in measured.days if d.session.day == PLAIN]
+    twice = ("q/GLD is quarantined in marketlake", "q/USO is quarantined in marketlake")
+    read = replace(day.widest, quotes={}, faults=twice)
+    bare = replace(day, reads={age: read for age in qr.AGES})
+    assert bare.refused(900, qr.SPREADS[-1], 0) == {("quarantined", ""): 1}
 
 
 def test_a_read_with_no_fault_and_no_quote_refuses(measured: qr.Measurement) -> None:

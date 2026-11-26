@@ -31,8 +31,9 @@ It reads a folder that holds a copy of marketlake's lake, through
    sessions took it.
 4. **A session it cannot measure stops the run.** Where the manifest lists no
    instrument's sealed quotes for a session, a decision that day would not take
-   the sealed read. Where a listed partition's bytes differ from the manifest,
-   the copy is damaged. Neither is a refusal to count.
+   the sealed read. Where a listed partition is missing from the folder, or its
+   bytes differ from the manifest, the copy is incomplete or damaged. None of
+   these is a refusal to count.
 
 On any refusal it writes one line to stderr, nothing to stdout, and exits
 nonzero. docs/what-a-person-runs.md says when to run it.
@@ -41,6 +42,7 @@ nonzero. docs/what-a-person-runs.md says when to run it.
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import statistics
 import sys
@@ -101,10 +103,11 @@ _STAND_IN = "a placeholder of the measurement's"
 
 # The reasons each step can lift. Every other reason refuses at every step.
 OLD = "too old"
-MISSING = "no quote"
-AFTER = "a stamp after its capture"
 UNSHARED = "no capture every instrument shares"
 WIDE = "too wide"
+# Two reasons the counts below name.
+MISSING = "no quote"
+AFTER = "a stamp after its capture"
 
 # Each reason `core.quote_faults` gives, by what it starts or ends with. Order
 # matters only where one text could match two, and none does.
@@ -274,7 +277,7 @@ def _check(
     instruments: Sequence[InstrumentId],
     master: SecurityMaster,
 ) -> None:
-    """Halt on a session a decision would not read sealed, and on a damaged partition."""
+    """Halt on a session a decision would not read sealed, and on a missing or damaged partition."""
     if not is_listed(root, day, instruments, master):
         raise Halt(
             f"the manifest lists no sealed quotes of {', '.join(instruments)} for {day}, so a "
@@ -309,7 +312,8 @@ def render(m: Measurement) -> str:
         "",
         f"{n} sessions is a short record. A step that refuses none of them still allows a true "
         f"share as high as {_bound(n)}, the one-sided 95% bound 1 − 0.05^(1/n) for sessions "
-        "drawn independently. Sessions in a row are not independent, so the true bound is wider.",
+        "drawn independently. Sessions in a row are not independent, so the true bound is "
+        "likely wider.",
         "",
         _kinds_line(m, took, n),
         "",
@@ -318,11 +322,12 @@ def render(m: Measurement) -> str:
         f"At the widest steps, {AGES[-1]} seconds and {SPREADS[-1]} of the midpoint, at the "
         f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. These "
         "reasons refuse at every step, so the tables after this one show only the reasons "
-        "each step lifts.",
+        "each step lifts. A reason a quote gives counts once for each instrument and session it "
+        "refuses, and a fault of the read once for each session.",
         "",
         "**Table:** What refuses a session at every step, exploratory",
         "",
-        "| Reason | Instrument-sessions |",
+        "| Reason | Count |",
         "| --- | --- |",
         *(f"| {r} | {c} |" for r, c in _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))),
         "",
@@ -335,7 +340,7 @@ def render(m: Measurement) -> str:
         "market-on-close cutoff. An order of another type, or one on a simulated account, can "
         "meet the gate up to the close, where the gate refuses a quote past its age.",
         "",
-        "In each cell, the sessions refused for age include any that a reason no step lifts "
+        "In each cell, the sessions refused for age include any that another reason "
         "refuses as well, and the same holds for the spread.",
         "",
         f"**Table:** Sessions refused at each age, with the spread at its widest step of "
@@ -403,7 +408,7 @@ def _cell(
 
 def _bound(n: int) -> str:
     """The share a run of n sessions with none refused still allows, at 95%, as a percent."""
-    return f"{1 - 0.05 ** (1 / n):.0%}"
+    return f"{math.ceil((1 - 0.05 ** (1 / n)) * 1000) / 10:.1f}%"
 
 
 def _kinds_line(m: Measurement, took: int, n: int) -> str:

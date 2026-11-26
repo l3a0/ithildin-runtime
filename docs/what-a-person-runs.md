@@ -459,13 +459,13 @@ uv run python -m ithildinruntime.runtime.quote_refusals --lake <folder> --instru
 1. The folder needs `manifest.jsonl`, `quarantine.jsonl`, `actions/corporate_actions.jsonl`, each file under `reference/` that the manifest lists, and each instrument's sealed quotes, `quotes/ticker=<ticker>/date=<YYYY-MM-DD>.parquet`, for every session from `--from` to `--through`. Each file must have the SHA-256 the manifest records.
 2. `--normal-status` is the security status a stand-in row states, for each session no row of `data/quote_kinds.csv` covers. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
 3. A run reads each session once for each age, so it takes a minute or more.
-4. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. A session the manifest lists no quotes for, a file the manifest lists and the folder lacks, and a file whose bytes differ from the manifest, each refuse the run, because neither is a refusal a decision would meet.
+4. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. A session the manifest lists no quotes for, a file the manifest lists and the folder lacks, and a file whose bytes differ from the manifest, each refuse the run, because none is a refusal a decision would meet.
 
 #### Read what it prints
 
 Every table is exploratory, and none holds a price.
 
-1. **What refuses a session at every step** lists the reasons no choice of age or spread lifts, such as a crossed quote or a status that is not normal, each counted once for each instrument and session it refuses.
+1. **What refuses a session at every step** lists the reasons no choice of age or spread lifts, such as a crossed quote or a status that is not normal. A reason a quote gives counts once for each instrument and session it refuses, and a fault of the read once for each session.
 2. **Refusals by age** counts the sessions refused at each age, at the decision, at a send 30 seconds after it and at the market-on-close cutoff design.md proposes, close−12. No send has been measured, so a quote refused at a send t seconds after the decision under an age a is refused at the decision under a − t. The cutoff bounds a market-on-close order under caps of close−12. Another order, or one on a simulated account, can meet the gate up to the close, where the gate refuses a quote past its age.
 3. **Refusals by spread** counts the sessions refused at each spread, at the decision. In both tables a cell gives every session refused, then those refused for that step's own reason, which can include sessions refused for another reason too, then those reasons by instrument and session.
 4. **What the quotes read hold** counts, over each quote read at the widest age, stamps later than their capture, sides whose size is zero or missing, and the status and realtime flag of each, which the row of `data/quote_kinds.csv` states.
