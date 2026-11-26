@@ -177,7 +177,7 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
 
 
 def test_the_runs_record_is_pinned(traded) -> None:
-    """The orders, the fills, the journal's head and the last book, pinned at 4344f02's tree.
+    """The orders, the fills, the journal's head and the last book, pinned at 737af7b's tree on CI's runner.
 
     The head is pinned by its record, since each entry's bytes name the
     process's writer, which is drawn afresh at each start.
@@ -201,7 +201,7 @@ PINNED = (
     2444,
     2444,
     16605,
-    "HEAD_RECORD",
+    "0bf8211924af0082253e333451d370fb2a8bbc1fd8f7a8f06799230b902ca698",
     "4d6a39985dbc8a69d32902fe9f34d24f478b932656245be822c5f7685db033a1",
 )
 
