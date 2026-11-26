@@ -23,16 +23,17 @@ from ithildinruntime.core import (
     StrategyEnd,
     claim_key,
     kill_switch_key,
+    loss_stop_key,
     off_switch_key,
     order_id,
     output_key,
 )
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
 from ithildinruntime.execution.order_path import OrderPath
-from ithildinruntime.journal import DecisionEntry, ReadEntry
+from ithildinruntime.journal import DecisionEntry, Journal, ReadEntry, StopClearedEntry
 from tests.support import gates
 from tests.support.send_world import CHAN, SendWorld, strategy
-from tests.support.sim_world import DEPLOYMENT, FULL, GLD, USO, after, close_of
+from tests.support.sim_world import ACCOUNT, DEPLOYMENT, FULL, GLD, USO, after, close_of
 
 DAYS = [FULL, after(FULL), after(FULL, 2)]
 CLOSES = {GLD: {day: 100 + n for n, day in enumerate(DAYS)}, USO: {day: 20 for day in DAYS}}
@@ -463,6 +464,36 @@ def test_a_loss_past_its_stop_at_the_ask_sends_nothing() -> None:
     result = made.send_attempt()
     assert result.halt is not None and "past its stop" in result.halt.reason
     assert made.submits() == []
+
+
+def test_a_loss_stop_that_fired_refuses_the_next_sessions_order_until_a_clear() -> None:
+    """The drill row of the latch: the price recovers, and only a person's clear trades again."""
+    days = [FULL, after(FULL), after(FULL, 2), after(FULL, 3)]
+    gld = dict(zip(days, (100, 101, 100.5, 100.5), strict=True))
+    closes = {GLD: gld, USO: dict.fromkeys(days, 20)}
+    made = SendWorld(closes)
+    sent(made, days[0], {CHAN: {GLD: -3, USO: 0}})
+    made.constraints = gates.constraints(loss_stop=Decimal(1))
+    made.ready(close_of(days[1]), {CHAN: {GLD: -3, USO: 0}})
+    result = made.send_stage()
+    assert result.halt is not None and "past its stop of 1" in result.halt.reason
+    # The price recovers, and the stop is loosened: the firing stands all the same.
+    made.constraints = gates.constraints(loss_stop=Decimal(1000))
+    made.ready(close_of(days[2]), {CHAN: {GLD: 0, USO: 0}})
+    result = made.send_stage()
+    assert result.halt is not None and "loss stop stands: entry" in result.halt.reason
+    assert "`ithildin stop clear --account" in result.halt.reason
+    assert len(made.submits()) == 1
+    # A clear by hand, in the command's steps.
+    made.account.settle(lambda: None)
+    standing = made.view().stop.standing
+    clearer = Journal(made.store, ACCOUNT, "c" * 32)
+    clearer.record(clearer.view(), StopClearedEntry(standing.seq), made.clock.now())
+    made.store.delete_if_match(loss_stop_key(ACCOUNT), standing.stored.etag)
+    made.ready(close_of(days[3]), {CHAN: {GLD: 0, USO: 0}})
+    result = made.send_stage()
+    assert result.halt is None, result.halt.reason
+    assert len(made.submits()) == 2
 
 
 def test_the_ask_halts_on_an_order_the_journal_already_holds() -> None:

@@ -349,7 +349,9 @@ def test_9_a_quote_that_ages_as_the_verdict_waits_hides_no_loss(short: bool) -> 
 
     world.store.before = before
     halted(world, "the day's loss of 101")
-    assert world.kinds() == ["intent", "verdict"] and len(world.alarms.sent) == 1
+    # The verdict read the loss past its stop, so the stop fires after it.
+    kinds = ["intent", "verdict", "stop_fired", "stop_stored"]
+    assert world.kinds() == kinds and len(world.alarms.sent) == 1
 
 
 def test_5_a_quote_with_no_stamp_halts_by_the_gates_own_words() -> None:
@@ -677,10 +679,11 @@ def test_9_a_loss_past_its_bound_halts_there_and_on_a_verdict() -> None:
     )
     alarm = f"account {ACCOUNT}: {said}"
     halted(world, said, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
-    assert world.alarms.sent == [alarm] and world.kinds() == []
+    assert world.alarms.sent == [alarm] and world.kinds() == ["stop_fired", "stop_stored"]
     halted(world, said)
     assert world.alarms.sent == [alarm, alarm]
-    assert world.kinds() == ["intent", "verdict"]
+    # The stop stands already, so the verdict's reading records no second firing.
+    assert world.kinds() == ["stop_fired", "stop_stored", "intent", "verdict"]
     assert world.state() is OrderState.REFUSED
 
 

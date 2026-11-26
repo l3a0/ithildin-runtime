@@ -170,7 +170,7 @@ Writing commands take more friction the more they can resume trading, so they ar
 | 3 | Correct the record | `ithildin override` | Records a correction the book cannot work out alone |
 | 4 | Resume trading | `ithildin halt clear` | Records that a person has looked at a halt |
 | 5 | Resume trading | `ithildin strategy on` | Deletes a strategy's off switch |
-| 6 | Resume trading | `ithildin stop clear` | Deletes a fired loss stop's blob |
+| 6 | Resume trading | `ithildin stop clear` | Journals the clear of a fired loss stop, then deletes its blob |
 | 7 | Resume trading | `ithildin switch clear` | Deletes the switch |
 | 8 | Recover from a dead host | `ithildin lease clear` | Rewrites a lease another VM holds to clear its holder |
 | 9 | Change the release | `ithildin pin set` | Rolls an environment back |
@@ -276,7 +276,7 @@ On a live account only the owner may. On shadow and paper this doc proposes that
 
 ###### `ithildin stop clear --account <a>`
 
-This deletes a fired loss stop's blob and journals the clear, so the gate takes new orders again. On a live account only the owner may, and on shadow and paper the operator may too.
+This journals the clear of a fired loss stop, then deletes its blob, so the gate takes new orders again. Deleting the blob by hand clears nothing, because the journal keeps the firing, as [When a clear counts](architecture/06-runtime.md#when-a-clear-counts) says. On a live account only the owner may, and on shadow and paper the operator may too.
 
 ###### `ithildin switch clear --account <a>`
 

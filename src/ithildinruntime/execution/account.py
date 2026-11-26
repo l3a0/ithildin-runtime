@@ -16,6 +16,7 @@ call with the reason instead.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from ithildinruntime.core import (
@@ -46,6 +47,7 @@ from ithildinruntime.journal import (
 )
 
 from .controls import Controls
+from .latch import Latch
 from .order_path import Named, OrderPath, Shared, Unstored, quietly
 from .patience import Patience, code_of
 
@@ -96,6 +98,7 @@ class Account:
             self._shared = Halt(f"the account {account!r} is no alias a journal is kept under")
         else:
             named = Named(alerts, account)
+            lock = threading.Lock()
             self._shared = Shared(
                 account=account,
                 store=store,
@@ -107,6 +110,8 @@ class Account:
                 patience=patience,
                 controls=Controls(store, account),
                 unstored=Unstored(journal, named, patience, storage.owner_step),
+                latch=Latch(account, journal, store, storage, patience, clock, lock),
+                lock=lock,
             )
 
     def path(self, broker: Broker, report: Callable[[], None]) -> OrderPath:
@@ -161,9 +166,10 @@ class Account:
 
         Each stage's handler calls it before its first view of the journal. An
         order in doubt halts recover, so an answer held back until the next
-        send would never be written.
+        send would never be written. It then completes the loss stop's firing,
+        whose failure joins the entries' rather than replacing it.
         """
-        self._held().unstored.settle(quietly(report))
+        self._held().settle(quietly(report))
 
     def unstored(self) -> tuple[str, ...]:
         """Each entry this process holds that the journal has not taken."""

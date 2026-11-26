@@ -1520,7 +1520,8 @@ def test_2_an_entry_another_writer_adds_ahead_of_the_second_view_is_compared() -
         nonlocal lists
         if op == "list" and key == f"journal/{ACCOUNT}/":
             lists += 1
-            if lists == 2:
+            # The settle's view, which completes the loss stop's firing, is the first.
+            if lists == 3:
                 world.store.quiet = True
                 world.plan(world.orders(world.at, [(1, GLD)]))
                 journaled(world, ("intent", 1), ("verdict", 1))
@@ -1921,8 +1922,9 @@ def calls_of(world: RecoverWorld) -> int:
     return len(world.store.calls)
 
 
-# A process that has just started, which reads its journal and its simulator's log whole.
-CALLS = 41
+# A process that has just started, which reads its journal and its simulator's log whole. The
+# settle's view of the journal and its read of the loss stop's blob are two of them.
+CALLS = 43
 
 
 def test_7_the_calls_of_one_recover_are_counted() -> None:

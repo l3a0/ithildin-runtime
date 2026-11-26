@@ -206,6 +206,8 @@ class _Held:
     attempt: Callable[[int], str] | None
     trying: str
     explain: Callable[[bytes], str] | None = None
+    # Any blob already at the key stands for this one, as a fired loss stop's does.
+    stands_in: bool = False
 
 
 class _Deadline(Exception):
@@ -374,6 +376,25 @@ class Storage:
         except _Deadline as late:
             raise self._outage(f"S3 did not store {late.key}", late) from None
         return BlobRef(key, stands or sha)
+
+    def hold_create(self, key: str, data: bytes) -> BlobRef:
+        """Create `key` holding `data`, where any blob already there stands for it.
+
+        It is for a mark that must outlive the process, such as a fired loss
+        stop, which one blob of any bytes says. The blob that stands is named,
+        so a caller compares its SHA-256 with its own. One S3 does not take is
+        held as a capture is: every later halt names it, `retry_held` tries it
+        again, and the receive loop keeps the process alive until it is stored.
+        """
+        held = _Held(key, data, sha256_of(data), None, key, stands_in=True)
+        try:
+            return self._place(StageKind.CAPTURING, held).counts
+        except _Deadline as late:
+            self._hold(StageKind.CAPTURING, held)
+            raise self._outage(f"S3 did not store {late.key}", late) from None
+        except BaseException:
+            self._hold(StageKind.CAPTURING, held)
+            raise
 
     def claim(self, key: str, data: bytes) -> bool:
         """Create `key` holding `data`, and say whether the blob that stands there is these bytes.
@@ -607,6 +628,8 @@ class Storage:
             tried.add(key)
             held.trying = key
             stored = self._create(key, held.data, held.sha256, once)
+            if stored is not None and held.stands_in:
+                return Stored(BlobRef(key, stored), BlobRef(key, stored))
             if stored is None or stored == held.sha256:
                 if n > 1:
                     # Raised whether this call stored it or found it stored by
