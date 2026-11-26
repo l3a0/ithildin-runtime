@@ -273,7 +273,9 @@ def test_a_tracked_row_takes_the_place_of_the_stand_in(lake: Path, tmp_path: Pat
         kinds=kinds,
     )
     assert [d.stand_in for d in m.days] == [True, False, True, True, True]
-    assert "a stand-in on 4 of 5 sessions." in qr.render(m)
+    shown = qr.render(m)
+    assert "a stand-in on 4 of 5 sessions." in shown
+    assert "unstated kind. The tracked row of quote_kinds.csv covers the rest." in shown
     assert days(m, 900, qr.SPREADS[-1], 0)[FLAGS] == {"crossed, USO", "status not normal, GLD"}
 
 
@@ -390,6 +392,28 @@ def test_an_error_names_its_type_and_no_folder(
 def test_a_session_with_no_fault_says_so(lake: Path, tmp_path: Path) -> None:
     code, out, err = run(lake, tmp_path, "--normal-status", "Normal", "--through", str(PLAIN))
     assert (code, err) == (0, "") and "The read gave no fault at any age." in out
+    assert "No reason refuses a session at every step." in out
+    assert "| Reason | Count |" not in out
+    assert "so no session it covers is refused for an unstated kind.\n" in out
+    assert "covers the rest" not in out
+    assert "What refuses at every step comes next, and the age and spread tables after it" in out
+
+
+def test_a_run_with_no_quote_lacking_a_size_leaves_that_row_out(lake: Path, tmp_path: Path) -> None:
+    # The one session's read is refused, so it gives no quote, and none lacks a size.
+    code, out, err = run(
+        lake,
+        tmp_path,
+        "--normal-status",
+        "Normal",
+        "--from",
+        str(UNLISTED),
+        "--through",
+        str(UNLISTED),
+    )
+    assert (code, err) == (0, "") and "Counted over the 0 quotes" in out
+    assert "| A bid or ask size that is missing | 0 of 0 |" in out
+    assert "Either, passing every check" not in out
 
 
 NOW = DECISION
