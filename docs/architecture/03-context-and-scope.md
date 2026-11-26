@@ -531,6 +531,10 @@ stamp, and the time the request went out are recorded and halt nothing, because
 nothing reads them to decide. A side with no size therefore passes where its price,
 stamp and status do. [#133's exploratory count](https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7193657427)
 found no side with a size of zero or none among the 92 quotes it read. Unstated coverage is shown on the report.
+The quote's type, which says whether its bid and ask are the national best bid and offer,
+is neither recorded nor judged, so on shadow and paper the bid and ask read as the best
+bid and ask. A live decision may not: the conditions on [the Live step](../team-charter.md)
+ask for a row that states the type, which [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
 
 #### Which read a decision uses
 
