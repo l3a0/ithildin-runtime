@@ -326,11 +326,7 @@ def render(m: Measurement) -> str:
         "each step lifts. A reason a quote gives counts once for each instrument and session it "
         "refuses, and each kind of fault of the read once for each session.",
         "",
-        "**Table:** What refuses a session at every step, exploratory",
-        "",
-        "| Reason | Count |",
-        "| --- | --- |",
-        *(f"| {r} | {c} |" for r, c in _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))),
+        *_floor(m),
         "",
         "### Refusals by age",
         "",
@@ -412,14 +408,28 @@ def _bound(n: int) -> str:
     return f"{math.ceil((1 - 0.05 ** (1 / n)) * 1000) / 10:.1f}%"
 
 
+def _floor(m: Measurement) -> list[str]:
+    """The table of what refuses a session at every step, or a line saying nothing does."""
+    rows = _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))
+    if not rows:
+        return ["No reason refuses a session at every step."]
+    return [
+        "**Table:** What refuses a session at every step, exploratory",
+        "",
+        "| Reason | Count |",
+        "| --- | --- |",
+        *(f"| {r} | {c} |" for r, c in rows),
+    ]
+
+
 def _kinds_line(m: Measurement, took: int, n: int) -> str:
     if not took:
         return "The tracked row of quote_kinds.csv covers every session."
     return (
         f"The quote kind was a stand-in on {took} of {n} sessions. It states the normal status "
         f"{m.normal_status!r}, and a placeholder for the price kind, the last sale's kind, the "
-        "venues and the volume, so no session it covers is refused for an unstated kind. The "
-        "tracked row of quote_kinds.csv covers the rest."
+        "venues and the volume, so no session it covers is refused for an unstated kind."
+        + ("" if took == n else " The tracked row of quote_kinds.csv covers the rest.")
     )
 
 
