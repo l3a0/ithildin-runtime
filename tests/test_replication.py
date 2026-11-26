@@ -202,7 +202,8 @@ def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) ->
     larger of before and after. A loss is a day's move on what the close before
     held. Each `max_position` is the largest position rounded up to ten shares, as
     the tracked file says, and no day of test 1 reaches the loss stop. The gate in
-    the run refuses a gross, a net or a loss past its limit before these asserts
+    the run refuses an order past the gross or net limit, and every order once
+    the day's loss passes the loss stop, so such a run fails before these asserts
     read it. Pinned at c288e22.
     """
     limits = STRATEGY.section("risk")
