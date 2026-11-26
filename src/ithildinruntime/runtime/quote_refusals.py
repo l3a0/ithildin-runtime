@@ -321,16 +321,12 @@ def render(m: Measurement) -> str:
         "### Refusals no step lifts",
         "",
         f"At the widest steps, {AGES[-1]} seconds and {SPREADS[-1]} of the midpoint, at the "
-        f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. These "
-        "reasons refuse at every step, so the tables after this one show only the reasons "
-        "each step lifts. A reason a quote gives counts once for each instrument and session it "
-        "refuses, and each kind of fault of the read once for each session.",
+        f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. What "
+        "refuses at every step comes next, and the age and spread tables after it show only "
+        "the reasons each step lifts. A reason a quote gives counts once for each instrument "
+        "and session it refuses, and each kind of fault of the read once for each session.",
         "",
-        "**Table:** What refuses a session at every step, exploratory",
-        "",
-        "| Reason | Count |",
-        "| --- | --- |",
-        *(f"| {r} | {c} |" for r, c in _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))),
+        *_floor(m),
         "",
         "### Refusals by age",
         "",
@@ -412,14 +408,28 @@ def _bound(n: int) -> str:
     return f"{math.ceil((1 - 0.05 ** (1 / n)) * 1000) / 10:.1f}%"
 
 
+def _floor(m: Measurement) -> list[str]:
+    """The table of what refuses a session at every step, or a line saying nothing does."""
+    rows = _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))
+    if not rows:
+        return ["No reason refuses a session at every step."]
+    return [
+        "**Table:** What refuses a session at every step, exploratory",
+        "",
+        "| Reason | Count |",
+        "| --- | --- |",
+        *(f"| {r} | {c} |" for r, c in rows),
+    ]
+
+
 def _kinds_line(m: Measurement, took: int, n: int) -> str:
     if not took:
         return "The tracked row of quote_kinds.csv covers every session."
     return (
         f"The quote kind was a stand-in on {took} of {n} sessions. It states the normal status "
         f"{m.normal_status!r}, and a placeholder for the price kind, the last sale's kind, the "
-        "venues and the volume, so no session it covers is refused for an unstated kind. The "
-        "tracked row of quote_kinds.csv covers the rest."
+        "venues and the volume, so no session it covers is refused for an unstated kind."
+        + ("" if took == n else " The tracked row of quote_kinds.csv covers the rest.")
     )
 
 
@@ -460,8 +470,14 @@ def _quotes(m: Measurement) -> list[str]:
         f"check refuses | {past} of {total} |",
         f"| A bid or ask size of zero | {zero} of {total} |",
         f"| A bid or ask size that is missing | {none} of {total} |",
-        f"| Either, passing every check at the widest steps at the decision | {unsized_passed} "
-        f"of {unsized} |",
+        *(
+            [
+                f"| Either, passing every check at the widest steps at the decision | "
+                f"{unsized_passed} of {unsized} |"
+            ]
+            if unsized
+            else []
+        ),
         *(f"| `security_status` of {s} | {c} of {total} |" for s, c in sorted(status.items())),
         *(f"| `realtime` of {s} | {c} of {total} |" for s, c in sorted(realtime.items())),
     ]
