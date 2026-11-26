@@ -5,9 +5,10 @@
 
 A decision before the close halts until its strategy writes a maximum quote age
 and a widest spread. This prints what each choice would have refused on the
-sealed sessions named, so the owner sets the two from a count rather than a
-guess. #133 holds the steps, written there before the first run. Every figure
-it prints is exploratory, and it prints no price and no spread's value.
+sealed sessions named, which bounds each limit from below. #133 names the bounds
+from above, which this does not measure, and holds the steps, written there
+before the first run. Every figure it prints is exploratory, and it prints no
+price and no spread's value.
 
 It reads a folder that holds a copy of marketlake's lake, through
 `adapters.FolderBucket`, so it needs no credential. How it reads, in order.
@@ -19,12 +20,19 @@ It reads a folder that holds a copy of marketlake's lake, through
    finds an old quote. A spread changes no read.
 2. **Each read is judged by `core.quote_faults`** at every spread, and at three
    moments: the decision, a send `SEND` after it, and the market-on-close
-   cutoff at close−12. No send has been measured, so `SEND` stands in for one.
-   On age alone, a quote refused at a send t seconds after the decision under a
-   maximum a is refused at the decision under a − t.
+   cutoff at close−12, which design.md proposes for the hard caps. No send has
+   been measured, so `SEND` stands in for one. On age alone, a quote refused at
+   a send t seconds after the decision under a maximum a is refused at the
+   decision under a − t. What it prints says both.
 3. **The kind of each quote** comes from `data/quote_kinds.csv` where a row
    covers the session. Where none does, a stand-in row states the normal status
-   given to `--normal-status`, and what it prints says which sessions took it.
+   given to `--normal-status`, and a placeholder for every other field, so no
+   session it covers is refused for an unstated kind. What it prints says which
+   sessions took it.
+4. **A session it cannot measure stops the run.** Where the manifest lists no
+   instrument's sealed quotes for a session, a decision that day would not take
+   the sealed read. Where a listed partition's bytes differ from the manifest,
+   the copy is damaged. Neither is a refusal to count.
 
 On any refusal it writes one line to stderr, nothing to stdout, and exits
 nonzero. docs/what-a-person-runs.md says when to run it.
@@ -59,8 +67,9 @@ from ithildinruntime.core import (
     to_utc,
 )
 from ithildinruntime.core.clock import CLOCK_BOUND
-from ithildinruntime.data import Mirror, QuoteLimits, load_master, load_quote_kinds
+from ithildinruntime.data import Mirror, QuoteLimits, SecurityMaster, load_master, load_quote_kinds
 from ithildinruntime.data.cycles import QuoteRead
+from ithildinruntime.data.mirror import LakeRoot
 from ithildinruntime.data.reference import (
     QUOTE_NOT_STATED,
     QUOTE_SOURCE,
@@ -68,11 +77,11 @@ from ithildinruntime.data.reference import (
     QuoteKindRow,
     QuoteKinds,
 )
-from ithildinruntime.data.sealed import read_sealed
+from ithildinruntime.data.sealed import is_listed, partition_key, read_sealed
 
 __all__ = ["AGES", "CUTOFF", "DECISION", "SEND", "SPREADS", "Measurement", "main", "measure"]
 
-# The steps #133 wrote before the first run. A change is a new plan there first.
+# The steps #133 wrote before the first run, which a test pins.
 DECISION = BeforeClose(20)
 CUTOFF = BeforeClose(12)
 SEND = timedelta(seconds=30)
@@ -81,12 +90,19 @@ SPREADS = tuple(
     Decimal(s)
     for s in ("0.00002", "0.00005", "0.0001", "0.0002", "0.0005", "0.001", "0.002", "0.005", "0.01")
 )
-MOMENTS = ("the decision", f"a send {SEND.seconds} seconds after", "the cutoff at close−12")
+MOMENTS = (
+    "the decision",
+    f"a send {SEND.seconds} seconds after",
+    "the cutoff at close−12, a proposal",
+)
+PLAN = "https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7183936703"
 
-_STAND_IN = "a stand-in of the measurement's, which states only the normal status"
+_STAND_IN = "a placeholder of the measurement's"
 
 # The reasons each step can lift. Every other reason refuses at every step.
 OLD = "too old"
+MISSING = "no quote"
+AFTER = "a stamp after its capture"
 UNSHARED = "no capture every instrument shares"
 WIDE = "too wide"
 
@@ -106,7 +122,7 @@ _QUOTE_REASONS = (
         re.compile(r"^its (bid|ask) has the stamp .*, which is no instant$"),
     ),
     (
-        "a stamp after its capture",
+        AFTER,
         re.compile(r"^its (bid|ask) has the stamp .* later than its capture at "),
     ),
     (OLD, re.compile(r"^its (bid|ask) has the stamp .* seconds old at ")),
@@ -118,6 +134,13 @@ _READ_REASONS = (
     ("no row of the equity close", re.compile(r" holds no row of the session's equity close$")),
     ("quarantined", re.compile(r" is quarantined in marketlake$")),
     ("two rows in one capture", re.compile(r" rows captured at ")),
+    ("unreadable snap_ts values", re.compile(r" snap_ts values in it cannot be read$")),
+    ("a partition that could not be linked or read", re.compile(r" could not be (linked|read)\b")),
+    ("a row of another ticker", re.compile(r" holds a row of ticker ")),
+    ("a column of another type", re.compile(r", and marketlake publishes ")),
+    ("a capture stamp that is no time", re.compile(r" has a fetch_end_ts .* that is no time$")),
+    ("no one ticker for an instrument", re.compile(r" security master rows? ")),
+    ("no one quote-kind row", re.compile(r" quote-kind rows on ")),
 )
 UNCLASSED = "a reason this command does not class"
 
@@ -149,14 +172,19 @@ class Day:
     moments: tuple[datetime, datetime, datetime]
     reads: Mapping[int, QuoteRead]
     stand_in: bool
+    instruments: tuple[InstrumentId, ...]
 
     def refused(self, age: int, spread: Decimal, moment: int) -> Counter[tuple[str, str]]:
         """Each reason the decision is refused, by its class and instrument, or none.
 
         A fault of the read names no instrument, and stands beside an empty one.
+        A read with no fault and no quote of an instrument refuses it, as data's
+        stage does.
         """
         read = self.reads[age]
         found: Counter[tuple[str, str]] = Counter((read_reason(f), "") for f in read.faults)
+        if not read.faults:
+            found.update((MISSING, str(i)) for i in self.instruments if i not in read.quotes)
         for instrument, quote in sorted(read.quotes.items()):
             judged = replace(quote, max_age=age, max_spread_share=spread)
             for fault in quote_faults(judged, self.decision, self.moments[moment]):
@@ -214,6 +242,7 @@ def measure(
                     f"no row of quote_kinds.csv covers {day}, so give --normal-status for a "
                     "stand-in"
                 )
+            _check(held, root, day, instruments, master)
             decision = to_utc(day, DECISION, table)
             reads = {
                 age: read_sealed(
@@ -230,10 +259,34 @@ def measure(
                 for age in AGES
             }
             moments = (decision, decision + SEND, to_utc(day, CUTOFF, table))
-            out.append(Day(session, decision, moments, reads, not covered))
+            out.append(Day(session, decision, moments, reads, not covered, tuple(instruments)))
     finally:
         root.remove()
     return Measurement(tuple(instruments), tuple(out), root.manifest.sha256, normal_status)
+
+
+def _check(
+    held: Mirror,
+    root: LakeRoot,
+    day: date,
+    instruments: Sequence[InstrumentId],
+    master: SecurityMaster,
+) -> None:
+    """Halt on a session a decision would not read sealed, and on a damaged partition."""
+    if not is_listed(root, day, instruments, master):
+        raise Halt(
+            f"the manifest lists no sealed quotes of {', '.join(instruments)} for {day}, so a "
+            "decision that day would not take the sealed read"
+        )
+    keys = [
+        partition_key(tickers[0], day)
+        for i in instruments
+        if len(tickers := master.tickers(i, day)) == 1
+    ]
+    try:
+        held.partitions(root, keys)
+    except Halt as halt:
+        raise Halt(f"on {day}, {halt.reason}") from None
 
 
 # What it prints
@@ -249,10 +302,13 @@ def render(m: Measurement) -> str:
         f"## Quote refusals of {names}, {span}, exploratory",
         "",
         f"Every figure here is exploratory. {n} sessions, each read at close−20 through the "
-        f"sealed read. The manifest's SHA-256 is `{m.manifest}`.",
+        f"sealed read, at the steps posted on #133 before any run, {PLAN}. The manifest's "
+        f"SHA-256 is `{m.manifest}`.",
         "",
-        f"The quote kind was a stand-in on {took} of {n} sessions, stating the normal status "
-        f"{m.normal_status!r}, and the tracked row of quote_kinds.csv on the rest.",
+        f"{n} sessions is a short record. A step that refuses none of them still allows a true "
+        f"share of up to about 3 in {n}, at 95% confidence.",
+        "",
+        _kinds_line(m, took, n),
         "",
         "### Refusals no step lifts",
         "",
@@ -263,33 +319,42 @@ def render(m: Measurement) -> str:
         "",
         "**Table:** What refuses a session at every step, exploratory",
         "",
-        "| Reason | Count |",
+        "| Reason | Instrument-sessions |",
         "| --- | --- |",
         *(f"| {r} | {c} |" for r, c in _grouped(_reasons(m, AGES[-1], SPREADS[-1], 0))),
         "",
         "### Refusals by age",
         "",
+        f"No send has been measured, so the send {SEND.seconds} seconds after the decision is a "
+        "stand-in. On age alone, a quote refused at a send t seconds after the decision under "
+        "a maximum a is refused at the decision under a − t, so the decision's column reads "
+        "for any send. The cutoff at close−12 is design.md's proposal for the hard caps' "
+        "market-on-close cutoff. An order of another type, or one on a simulated account, can "
+        "meet the gate up to the close, where the gate refuses a quote past its age.",
+        "",
         f"**Table:** Sessions refused at each age, with the spread at its widest step of "
-        f"{SPREADS[-1]}, and the reasons of age, exploratory",
+        f"{SPREADS[-1]}, then those refused for age, with the reasons of age by instrument and "
+        "session, exploratory",
         "",
         "| Age, seconds | " + " | ".join(f"Refused at {w}" for w in MOMENTS) + " |",
         "| --- |" + " --- |" * len(MOMENTS),
     ]
     for age in AGES:
-        cells = [_cell(m, age, SPREADS[-1], k, (OLD, UNSHARED)) for k in range(len(MOMENTS))]
+        cells = [_cell(m, age, SPREADS[-1], k, (OLD, UNSHARED), "age") for k in range(len(MOMENTS))]
         lines.append(f"| {age} | " + " | ".join(cells) + " |")
     lines += [
         "",
         "### Refusals by spread",
         "",
         f"**Table:** Sessions refused at each spread, at the decision, with the age at its "
-        f"widest step of {AGES[-1]} seconds, and the reasons of the spread, exploratory",
+        f"widest step of {AGES[-1]} seconds, then those refused for the spread, with the "
+        "reasons by instrument and session, exploratory",
         "",
         "| Spread, share of the midpoint | Refused at the decision |",
         "| --- | --- |",
     ]
     for spread in SPREADS:
-        lines.append(f"| {spread} | {_cell(m, AGES[-1], spread, 0, (WIDE,))} |")
+        lines.append(f"| {spread} | {_cell(m, AGES[-1], spread, 0, (WIDE,), 'the spread')} |")
     lines += ["", *_quotes(m), "", *_ages(m), "", *_read_faults(m)]
     return "\n".join(lines) + "\n"
 
@@ -314,28 +379,52 @@ def _grouped(found: Counter[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(reason, ", ".join(counts)) for reason, counts in by.items()]
 
 
-def _cell(m: Measurement, age: int, spread: Decimal, moment: int, lifted: Sequence[str]) -> str:
+def _cell(
+    m: Measurement, age: int, spread: Decimal, moment: int, lifted: Sequence[str], what: str
+) -> str:
+    """Sessions refused, then those refused for a reason the step lifts, and those reasons."""
     said = _count(m, age, spread, moment)
-    shown = Counter({k: c for k, c in _reasons(m, age, spread, moment).items() if k[0] in lifted})
+    shown: Counter[tuple[str, str]] = Counter()
+    sessions = 0
+    for d in m.days:
+        mine = Counter({k: c for k, c in d.refused(age, spread, moment).items() if k[0] in lifted})
+        sessions += bool(mine)
+        shown.update(mine)
     if shown:
-        said += ": " + "; ".join(f"{r}, {c}" for r, c in _grouped(shown))
+        said += f", {sessions} for {what}: " + "; ".join(f"{r}, {c}" for r, c in _grouped(shown))
     return said
 
 
+def _kinds_line(m: Measurement, took: int, n: int) -> str:
+    if not took:
+        return "The tracked row of quote_kinds.csv covers every session."
+    return (
+        f"The quote kind was a stand-in on {took} of {n} sessions. It states the normal status "
+        f"{m.normal_status!r}, and a placeholder for the price kind, the last sale's kind, the "
+        "venues and the volume, so no session it covers is refused for an unstated kind. The "
+        "tracked row of quote_kinds.csv covers the rest."
+    )
+
+
 def _quotes(m: Measurement) -> list[str]:
-    """Stamps after the capture, sides of size zero, and what Schwab wrote."""
+    """Stamps after the capture, sides with no size, and what Schwab wrote."""
     quotes = [(d, q) for d in m.days for q in d.widest.quotes.values()]
-    later = past = zero = zero_passed = 0
+    later = past = zero = none = unsized = unsized_passed = 0
     status: Counter[str] = Counter()
     realtime: Counter[str] = Counter()
     for d, q in quotes:
         gaps = [s - q.captured_at for s in (q.bid_at, q.ask_at) if s is not None]
         later += any(g > timedelta(0) for g in gaps)
-        past += any(g > CLOCK_BOUND for g in gaps)
-        if "0" in (q.received.get("bid_size"), q.received.get("ask_size")):
-            zero += 1
-            judged = replace(q, max_age=AGES[-1], max_spread_share=SPREADS[-1])
-            zero_passed += not d.widest.faults and not quote_faults(judged, d.decision, d.decision)
+        judged = replace(q, max_age=AGES[-1], max_spread_share=SPREADS[-1])
+        reasons = {quote_reason(f) for f in quote_faults(judged, d.decision, d.decision)}
+        past += AFTER in reasons
+        sizes = (q.received.get("bid_size"), q.received.get("ask_size"))
+        zero += "0" in sizes
+        none += None in sizes
+        if "0" in sizes or None in sizes:
+            unsized += 1
+            # A read with a fault gives no quote, so only the quote's own reasons count.
+            unsized_passed += not reasons
         status[repr(q.status)] += 1
         realtime[repr(q.realtime)] += 1
     total = len(quotes)
@@ -343,17 +432,18 @@ def _quotes(m: Measurement) -> list[str]:
         "### What the quotes read hold",
         "",
         f"Counted over the {total} quotes read at the widest age, one per instrument and "
-        "session that gave one.",
+        "session that gave one, and not over every recorded row.",
         "",
         "**Table:** Stamps, sizes and what Schwab wrote, exploratory",
         "",
         "| Count | Quotes |",
         "| --- | --- |",
         f"| A bid or ask stamp later than its capture | {later} of {total} |",
-        f"| The same, by more than the clock bound of {CLOCK_BOUND.seconds} second, which is "
-        f"refused | {past} of {total} |",
+        f"| The same, by more than the clock bound of {CLOCK_BOUND.seconds} second, which the "
+        f"check refuses | {past} of {total} |",
         f"| A bid or ask size of zero | {zero} of {total} |",
-        f"| The same, passing every check at the widest steps | {zero_passed} of {zero} |",
+        f"| A bid or ask size that is missing | {none} of {total} |",
+        f"| Either, passing every check at the widest steps | {unsized_passed} of {unsized} |",
         *(f"| `security_status` of {s} | {c} of {total} |" for s, c in sorted(status.items())),
         *(f"| `realtime` of {s} | {c} of {total} |" for s, c in sorted(realtime.items())),
     ]
@@ -365,6 +455,8 @@ def _ages(m: Measurement) -> list[str]:
         "",
         "**Table:** How old each quote and its capture were at close−20, in seconds, from the "
         "read at the widest age, exploratory",
+        "",
+        "A quote missing a stamp counts in its capture's ages and not in the quote's.",
         "",
         "| Instrument | Quotes | Quote age, least | Median | Most "
         "| Capture age, least | Median | Most |",
