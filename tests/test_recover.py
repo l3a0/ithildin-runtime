@@ -943,6 +943,8 @@ def test_2_a_store_that_stops_answering_while_a_row_is_kept_as_unmatched_stops_s
     alarms = len(world.alarms.sent)
     result = world.attempt(world.stage(brokers=doctored(world, find_order=lambda *a: answer)))
     assert result.halt is not None and "Nothing more is settled" in result.halt.reason
+    # The halt still says why the row was kept.
+    assert "differs in qty" in result.halt.reason
     sent = world.alarms.sent[alarms:]
     assert sum("was not stored" in a for a in sent) == 1, sent
 
