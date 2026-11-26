@@ -533,7 +533,7 @@ reaches its maximum age after the gate, before the broker call, and stops its or
 a last moment that has passed. The other would not last the plan's sends, and halts the
 plan before its first order, as [When the age is measured](architecture/03-context-and-scope.md#when-the-age-is-measured)
 says. Neither holds a shadow or paper account. Each halts its decision and alerts the
-owner, and once every order of the plan has ended, the next decision trades on its own
+owner, and unless recover finds the plan unfinished, the next decision trades on its own
 quotes. On live, as with every cause,
 the account is held until the owner clears it.
 

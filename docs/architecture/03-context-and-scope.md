@@ -501,7 +501,7 @@ says.
 
 On shadow and paper that halt holds no account, and neither does a quote that reaches
 its maximum after the gate and before the broker call, because each quote was a price
-when the gate judged it. Once every order of the plan has ended, the next decision
+when the gate judged it. Unless recover finds the plan unfinished, the next decision
 trades on its own quotes. On live, as with
 every cause, the account is held until the owner clears it.
 

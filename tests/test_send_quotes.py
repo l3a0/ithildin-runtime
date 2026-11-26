@@ -303,4 +303,8 @@ def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
         assert f"the decision at {at.isoformat()} is not settled" in recovered.halt.reason
         return
     assert recovered.halt is None, recovered.halt.reason
-    assert made.submits() == sent
+    # The next decision trades: its own pair goes out.
+    made.ready(later, PAIR)
+    nxt = made.send_attempt()
+    assert nxt.halt is None, nxt.halt.reason
+    assert len(made.submits()) == len(sent) + 2
