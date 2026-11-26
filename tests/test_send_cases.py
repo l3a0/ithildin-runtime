@@ -89,7 +89,8 @@ def verdicts(made: SendWorld) -> dict[str, list]:
 @pytest.mark.parametrize(
     ("held", "refused", "value"),
     # At the second close net is 3 × 101 − 5 × 20 = 203, and 1 × 101 − 15 × 20 = −199, both past
-    # the cap of 150.
+    # the cap of 150. The leg refused widens net with the other leg unfilled: buying USO back
+    # leaves 3 × 101 = 303, and selling GLD leaves 15 × 20 = 300.
     [({GLD: 3, USO: -5}, 1, "303"), ({GLD: 1, USO: -15}, 0, "300")],
     ids=["larger-leg-first", "larger-leg-second"],
 )
@@ -201,7 +202,7 @@ def test_a_second_leg_past_its_market_on_close_cutoff_at_the_ask_sends_nothing()
     # `hold` asks about the first leg again past its cutoff, which ends it before any verdict,
     # and the second has no entry, so both end abandoned.
     assert made.states() == {first: "Abandoned", second: "Abandoned"}
-    assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
+    assert verdicts(made) == {}
 
 
 # 2. Hard limit 2 again, through the stage
@@ -285,10 +286,10 @@ def _sized(made: SendWorld, day: date, direction: int):
 WALK = [
     (1, {GLD: ("3", True), USO: ("-5", True)}, {GLD: 3, USO: -5}, "999800"),
     (0, {GLD: ("-3", False), USO: ("5", False)}, {GLD: 0, USO: 0}, "1000003"),
-    # 400 / (3 × 102 + 5 × 20) baskets, each leg rounded toward zero.
-    (-1, {GLD: ("-2", True), USO: ("4", True)}, {GLD: -2, USO: 4}, "1000127"),
+    # 400 / (3 × 102 + 5 × 20) baskets, each leg rounded to the nearest share.
+    (-1, {GLD: ("-3", True), USO: ("5", True)}, {GLD: -3, USO: 5}, "1000209"),
     # 400 / (3 × 200 + 5 × 20) baskets. Each leg crosses zero and ends smaller than it began.
-    (1, {GLD: ("3", True), USO: ("-6", True)}, {GLD: 1, USO: -2}, "999647"),
+    (1, {GLD: ("5", True), USO: ("-8", True)}, {GLD: 2, USO: -3}, "999369"),
 ]
 
 
@@ -399,8 +400,8 @@ def test_a_price_wrong_100_times_sends_no_order_past_a_share_cap(leg, factor, st
 @pytest.mark.parametrize("start", ["flat", "held"])
 def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start) -> None:
     # The target sizing would give at GLD's price 100 times low, had no cap cut it: 400 /
-    # (3 × 1.00 + 5 × 20) baskets, each leg rounded toward zero. The gate's share caps, which
-    # read no price, are what stop it.
+    # (3 × 1.01 + 5 × 20) baskets, each leg rounded to the nearest share. The gate's share caps,
+    # which read no price, are what stop it.
     made = SendWorld(_priced(GLD, Decimal("0.01"), DAYS[1]), strategies=(SIZED,))
     made.constraints = gates.constraints(max_order_qty=TRUE, max_position=TRUE)
     if start == "held":
@@ -410,7 +411,7 @@ def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start)
         made.ready(close_of(DAYS[0]), {CHAN: {GLD: 0, USO: 0}})
         assert made.send_stage().halt is None
     before = len(made.submits())
-    made.ready(close_of(DAYS[1]), {CHAN: {GLD: 11, USO: -19}})
+    made.ready(close_of(DAYS[1]), {CHAN: {GLD: 12, USO: -19}})
     first, second = planned(made)
     result = made.send_attempt()
     assert result.halt is not None and "nothing is sent" in result.halt.reason
@@ -521,7 +522,9 @@ def test_a_plan_whose_snapshot_is_not_the_one_it_names_sends_nothing(spoil, why)
 
 @pytest.mark.parametrize("fault", [OrderFault.REJECT, OrderFault.REJECT_LATER])
 def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault) -> None:
-    # The second leg sells USO from flat, which opens the short the broker refuses.
+    # The second leg sells USO from flat, which opens a short. The simulator has no refusal of a
+    # short as such, so the fault refuses this one id, at the submit or after acknowledging it.
+    # The broker sits behind the fake broker's checks, which refuse an id sent twice.
     short = order_id(CHAN, close_of(FULL), 2)
     made = world(faults=Faults(orders={short: fault}))
     made.ready(close_of(FULL), PAIR)
@@ -529,6 +532,8 @@ def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault)
     result = made.send_attempt(checked(made))
     if fault is OrderFault.REJECT:
         assert result.halt is not None and f"the order {short} is Rejected" in result.halt.reason
+        # The first leg is at the broker alone, and the alarm says so.
+        assert f"{first} is Acknowledged" in made.alarms.sent[-1]
     else:
         assert result.halt is None, result.halt.reason
     # A rerun at the same decision, by another process, sends nothing, and the claim is what
@@ -543,8 +548,9 @@ def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault)
     assert result.halt is None, result.halt.reason
     states = made.states()
     assert states[short] == "Rejected" and states[first] == "Filled"
-    # The journal holds one `sending` of it, so the broker was called with it once. The
-    # simulator places an order it rejects later, and never one it rejects at the submit.
+    # The journal holds one `sending` of it, and the checks behind the broker refuse a second
+    # submit of the id. The simulator places an order it rejects later, and never one it
+    # rejects at the submit.
     kinds = [e.kind for e in made.view().orders[short].entries]
     assert kinds.count("sending") == 1 and kinds[-1] == "rejected", kinds
     assert made.submits().count(short) == (fault is OrderFault.REJECT_LATER)
