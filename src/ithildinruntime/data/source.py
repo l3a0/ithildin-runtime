@@ -56,8 +56,10 @@ stored, for one of three reasons that `_bar_halts` finds in the bars alone.
 2. Its price kind is unstated.
 3. It is of another series than the bar before it in its own instrument. Two
    series can be on two scales, and every reader of the bars would take the
-   step between them for a move of the market. docs/design.md's `#### A
-   lookback that crosses a change of series` says why, and what it costs.
+   step between them for a move of the market. One change passes, from
+   Schwab's import to captured bars on the session the import is adjusted to,
+   because the two sit on one scale there. docs/design.md's `#### A lookback
+   that crosses a change of series` says why, and what each costs.
 
 A decision inside its session, at or after the open and before the close, reads
 a quote of every instrument too, once its bars are read, from the capture
@@ -101,6 +103,7 @@ from ithildinruntime.core import (
     CodecError,
     Halt,
     InstrumentId,
+    Series,
     Session,
     Snapshot,
     SpikeFlag,
@@ -121,6 +124,7 @@ from .mirror import MANIFEST, Checked, LakeRoot, Mirror
 from .reference import (
     CAPTURE_SOURCE,
     QUOTE_SOURCE,
+    SCHWAB_IMPORT,
     PriceKinds,
     QuoteKinds,
     SecurityMaster,
@@ -275,7 +279,8 @@ class LakeSource:
         `core.DataSource` returns a snapshot alone, so a caller of this method
         never sees `Reading.halts`. A clock past a bound, a missing, stale or
         unstated input, a bar whose prices contradict each other, two bars of one
-        instrument that are of two series, or a quote that cannot be read,
+        instrument that are of two series, but for the one change `_one_scale`
+        passes, or a quote that cannot be read,
         therefore raises here rather than come back as a snapshot that reads as
         usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
@@ -640,7 +645,8 @@ def judge(
     3. an instrument that is not fresh, or is fresh with no bar;
     4. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
        whose prices contradict each other, one of unstated kind, and one of
-       another series than the bar before it in its own instrument;
+       another series than the bar before it in its own instrument, but for
+       the one change `_one_scale` passes;
     5. each stored flag that is not the move rule's and that this release's
        rules do not find in the bars and the quotes. Within one release they
        raise every flag stored beside them, so such a flag means the record is
@@ -791,13 +797,33 @@ def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
 
 
 def _changed(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
-    """A halt for each two consecutive bars of two series, which can be on two scales."""
+    """A halt for each two consecutive bars of two series, which can be on two scales.
+
+    One pair is let through, which `_one_scale` names.
+    """
     return [
         f"{instrument}'s bars for {one.session.isoformat()} and {two.session.isoformat()} are of "
         f"two series, {series_of(one)} and {series_of(two)}"
         for one, two in itertools.pairwise(bars)
-        if series_of(one) != series_of(two)
+        if series_of(one) != series_of(two) and not _one_scale(one, two)
     ]
+
+
+def _one_scale(one: Bar, two: Bar) -> bool:
+    """Whether two consecutive bars of two series are the one change that sits on one scale.
+
+    The earlier bar is imported from `SCHWAB_IMPORT`, `adjusted` as of the later
+    bar's session, and the later bar is captured. Schwab's candles come back on
+    the scale of the day they are fetched, so the import is on the scale of
+    that session, and a captured bar is as traded on it. docs/design.md's
+    `#### A lookback that crosses a change of series` says what it costs.
+    """
+    return (
+        one.origin == _IMPORTED
+        and series_of(one) == Series("adjusted", SCHWAB_IMPORT, two.session)
+        and two.origin == _CAPTURED
+        and series_of(two) == Series("raw", None, None)
+    )
 
 
 def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime | None]:

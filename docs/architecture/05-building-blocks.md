@@ -173,7 +173,7 @@ moment, not against a blob.
 | Live | marketlake's S3 bucket, captured bars, once [a split record covers them](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
-which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless [#175](https://github.com/l3a0/ithildin-runtime/issues/175) lifts that halt. Shadow
+which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless the download is Schwab's, adjusted to the session capture began on, which sits on one scale with it. Shadow
 reads live bars and decides real orders, but fills them in the simulated
 broker, so no order reaches any broker. The diagram leaves out the
 live broker, because only the owner switches to it.
@@ -1280,7 +1280,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
 | `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
-| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series) |
+| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series), but for the one change from Schwab's import to captured bars that sits on one scale |
 | `volume` | The volume, or `None` where marketlake holds none, as on both Chan vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
@@ -1624,7 +1624,7 @@ The price is that a limit is set in two places.
 
 `core/stress.py` holds the calculation, which reads bars and no store. A move over n sessions is |C(t+n) − C(t)| ÷ C(t), where C is a leg's close. It is one division that rounds up at eight places, so the rounding never raises the net cap. The prices carry float noise of their own, which is left standing. The stress move, **m**, is the largest move over two sessions across the legs, and the largest over one session is recorded beside it. Moves are compared as rounded, and a tie goes to the earliest date and then to the first leg by name.
 
-1. **No move crosses a change of series**, which [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) defines. Every bar from the move's first to its last is of one series, and each move left out is listed. Two series can be on two scales, and a step of eight left in would read as a move of about 7.0. The price is that a move of the market across the change is in no m, so whoever commits a record reads each one left out.
+1. **No move crosses a change of series**, which [A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series) defines. Every bar from the move's first to its last is of one series, and each move left out is listed. Two series can be on two scales, and a step of eight left in would read as a move of about 7.0. The price is that a move of the market across the change is in no m, so whoever commits a record reads each one left out. The command refuses a read across a seam nobody named, including the one change data passes from Schwab's import to captured bars.
 2. **Legs may begin on different sessions and end on one.** A leg cut to a younger one's start can lose the move that sets m.
 3. **It halts**, naming what is wrong, on a session missing or repeated, a close at or below zero, a leg with no bar or with no move left, legs whose last sessions differ, and an m of zero.
 

@@ -262,7 +262,7 @@ def test_2_one_series_throughout_adds_no_halt(one_lake: Path, tmp_path: Path) ->
 
 
 def test_2_two_price_kinds_within_one_series_add_no_halt(one_lake: Path, tmp_path: Path) -> None:
-    """A series is no price kind, and #175 holds how a window of two series is read."""
+    """A series is no price kind, and test_data_one_scale.py holds the window of two that reads."""
     rows = made.KINDS.rows
     other = replace(made.STATED, price_kind="last sale")
     kinds = PriceKinds(
