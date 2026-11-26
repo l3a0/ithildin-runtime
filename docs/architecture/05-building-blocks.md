@@ -734,8 +734,30 @@ classDiagram
     }
     class SendOutcome {
         +datetime decision_at
-        +str target_hash
-        +list orders
+        +list~SentOrder~ orders
+        +list~StrategySent~ strategies
+        +list~Remainder~ remainders
+    }
+    class SentOrder {
+        +str client_order_id
+        +OrderState state
+    }
+    class StrategySent {
+        +str strategy
+        +StrategyEnd end
+        +str reason
+    }
+    class StrategyEnd {
+        <<enumeration>>
+        SENT
+        NO_ORDER_NEEDED
+        PARTLY_SENT
+        OFF
+    }
+    class Remainder {
+        +str strategy
+        +InstrumentId instrument
+        +Decimal qty
     }
     class BlobRef {
         +str key
@@ -867,6 +889,10 @@ classDiagram
     GateInputs o-- HardCaps
     GateInputs o-- Valuation
     GateInputs --> StopState
+    SendOutcome o-- SentOrder
+    SendOutcome o-- StrategySent
+    SendOutcome o-- Remainder
+    StrategySent --> StrategyEnd
     GateInputs o-- JournalEntry
 ```
 

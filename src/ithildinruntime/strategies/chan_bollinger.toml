@@ -58,3 +58,7 @@ hedge_sessions = 20
 band_sessions = 20
 entry = 1
 exit = 0
+
+# The type every order of this strategy takes. `execution/orders.py` holds the form.
+[execution]
+order = "market_on_close"

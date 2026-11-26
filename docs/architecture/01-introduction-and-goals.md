@@ -89,10 +89,16 @@ flowchart TD
     diff -- "Units changed" --> trade["Trade both legs"]
     diff -- "Units unchanged and held, and<br/>h or a price moved" --> resize["Resize: trade both legs"]
     diff -- "Flat, 0 units" --> none["No trade"]
+    trade --> gate{"Does the risk gate<br/>approve both legs?"}
+    resize --> gate
+    gate -- "Yes" --> out["Send both legs<br/>as market-on-close orders"]
+    gate -- "No" --> held["Send neither leg"]
 ```
 
 The diagram shows one close, from the refit to what trades. Look for the two
-paths that keep the same units. A refit moves `h` even when the units hold
+paths that keep the same units, and for the gate at the end. The risk gate is
+asked about both legs before either is journaled, so a refused leg sends
+neither. A refit moves `h` even when the units hold
 still, so the target moves too, and the engine trades the difference as it
 would for any strategy. The engine holds as many baskets, each one share of
 USO against `h` of GLD, as come to G, a fixed amount of gross dollars. The figure

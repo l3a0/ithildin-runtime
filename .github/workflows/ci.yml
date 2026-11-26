@@ -57,6 +57,27 @@ jobs:
       - name: Run the test suite
         run: uv run pytest
 
+  # Test 1 of #4: the replicated strategy traded through every stage, the order path and
+  # the simulated broker, which takes minutes on its own. It runs beside `test` rather than
+  # inside it, so neither job nears its ceiling. The ruleset requires it by name too, which
+  # .github/rulesets/default.json lists and scripts/setup-repo.sh applies.
+  replication:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.4.0
+        with:
+          enable-cache: true
+
+      - name: Install the toolchain and dependencies
+        run: uv sync --dev --locked
+
+      - name: Run test 1
+        run: uv run pytest -m replication
+
   # Runs the suites marked `aws` against the test environment, with the test role. Only
   # on a push to main. The role trusts any job of this file on main, so neither a pull
   # request nor the board's job can assume it, and this is the one job here that holds

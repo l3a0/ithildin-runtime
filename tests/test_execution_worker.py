@@ -224,7 +224,7 @@ def test_9_a_backtest_over_a_folder_recovers_through_the_loop(case: Case, monkey
     monkeypatch.setattr(execution_worker, "SimulatedBroker", simulated)
     case.opened()
     worker = case.worker()
-    assert set(worker.handlers) == {RECOVER_STAGE}
+    assert set(worker.handlers) == {RECOVER_STAGE, SEND_STAGE}
     case.data(0)
     case.data(1)
     with running({"execution": case.loop({**worker.handlers, SEND_STAGE: send})}) as started:

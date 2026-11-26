@@ -40,7 +40,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from typing import Protocol
 
 from ithildinruntime.core import (
@@ -50,21 +49,15 @@ from ithildinruntime.core import (
     RECOVER_STAGE,
     VALUATION_OUTPUT,
     AccountRead,
-    Ack,
     BlobRef,
     Book,
     Broker,
     BrokerOrder,
-    BrokerState,
-    BrokerUnavailable,
     Clock,
     DecisionResult,
-    Fill,
     Halt,
     HardCaps,
     OrderRecord,
-    OrderState,
-    Outcome,
     Progress,
     Snapshot,
     StageDecision,
@@ -72,7 +65,6 @@ from ithildinruntime.core import (
     StageRun,
     Storage,
     Valuation,
-    broker_id_shown,
     caps_key,
     load_sessions,
     parse_caps,
@@ -81,42 +73,23 @@ from ithildinruntime.core import (
     value_book,
 )
 from ithildinruntime.journal import (
-    DOUBTFUL,
-    ENDED,
-    NOT_SENT,
     OPEN,
-    RAW_LIMIT,
-    DisputedFillEntry,
-    ExpiredEntry,
-    FillEntry,
-    NumberTaken,
-    ReadEntry,
-    RejectedEntry,
-    Repeat,
     View,
 )
 
-from .account import Account, StageRecord
-from .order_path import OrderPath
+from .account import Account
+from .sync import _UNSETTLED, journal_read, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
 # The format of the stage's four files and of its result header.
 _FORMAT = 1
-# How many numbers one entry may lose to another writer.
-_NUMBERS = 100
 # How long before the bound's own time the fills are asked from, so one the broker posts late
 # is still fetched.
 _LATE = timedelta(days=1)
 # The issue that copies the first decision's valuation to a later one of its session.
 _SECOND = "#183"
-_ZERO = Decimal(0)
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
-# An order the broker has, as the journal's own groups of states give it, and every other
-# state that has not ended, which only a lookup, a person or #147 settles.
-# A state no group names is unsettled, so it halts rather than being looked up.
-_AT_THE_BROKER = OPEN - NOT_SENT - DOUBTFUL
-_UNSETTLED = frozenset(OrderState) - ENDED - _AT_THE_BROKER
 
 
 class _Item(Protocol):
@@ -197,7 +170,7 @@ class RecoverStage:
         self._require_settled(view, report)
 
         path = account.path(brokers(at), report)
-        made = _read_broker(path, fills_since(view))
+        made = read_broker(path, fills_since(view))
         capture = decision.capture(ACCOUNT_OUTPUT, AccountRead, made, differences)
         # The capture that counts, which is an earlier attempt's where there was one.
         read = capture.entry
@@ -208,19 +181,17 @@ class RecoverStage:
                 f"{', '.join(moved)}, so the account may have moved between two attempts at "
                 "one decision"
             )
-        view = self._record(view, lambda v: self._read_entry(v, capture.ref, read, at), report)
-        seq = next(n for n, entry in view.reads.items() if entry.ref == capture.ref)
-        if short := read.short:
-            raise Halt(f"the broker's {', '.join(short)} did not come whole, as {capture.ref.key}")
-
-        for fill in read.fills.fills:
-            view = self._record(view, lambda v, f=fill: _fill_entry(v, f, seq), report)
-        # A fill in dispute halts here, ahead of any lookup, naming it.
-        _ = view.book
-        listed = {order.broker_order_id for order in read.open_orders.orders}
-        for name, order in view.live.items():
-            if order.state in _AT_THE_BROKER and order.broker_order_id not in listed:
-                view = self._ended(view, name, order, path, report)
+        journal_read(
+            account,
+            path,
+            view,
+            capture.ref,
+            read,
+            stage=self._run.stage,
+            at=at,
+            clock=self._clock,
+            report=report,
+        )
 
         view = account.view(report)
         book = view.book
@@ -262,59 +233,6 @@ class RecoverStage:
             return ""
         self._said.add(reason)
         return self._account.alarm(reason, report)
-
-    # Steps 5 to 7
-
-    def _read_entry(
-        self, view: View, ref: BlobRef, read: AccountRead, at: datetime
-    ) -> ReadEntry | None:
-        if any(entry.ref == ref for entry in view.reads.values()):
-            return None
-        # Never later than now, whatever clock an adapter dates its pages by, since the next
-        # recover asks for the fills from this time.
-        came = [page.at for part in read.reads.values() for page in part.received]
-        return ReadEntry(self._run.stage, at, ref, min(self._clock.now(), *came))
-
-    def _record(
-        self,
-        view: View,
-        decide: Callable[[View], StageRecord | None],
-        report: Callable[[], None],
-    ) -> View:
-        """Record what `decide` says on a view, deciding again on a new one each time a number goes.
-
-        It says nothing where the view already holds it, so a fill another
-        instance recorded is seen and not repeated.
-        """
-        for _ in range(_NUMBERS):
-            record = decide(view)
-            if record is None:
-                return view
-            try:
-                return self._account.record(view, record, report)
-            except NumberTaken:
-                view = self._account.view(report)
-        raise Halt(f"other writers took {_NUMBERS} numbers of the journal in a row")
-
-    def _ended(
-        self,
-        view: View,
-        name: str,
-        order: OrderRecord,
-        path: OrderPath,
-        report: Callable[[], None],
-    ) -> View:
-        """Journal how an order the broker no longer lists ended, or halt."""
-        broker = order.broker_order_id
-        if broker is None:
-            raise Halt(f"the order {name} is {order.state} under no broker's id")
-        ack = _asked(lambda: path.lookup(broker))
-        record = _end_entry(name, order, ack)
-
-        def decide(v: View) -> StageRecord | None:
-            return record if name in v.live else None
-
-        return self._record(view, decide, report)
 
     # Step 8
 
@@ -451,26 +369,6 @@ def _by_id(read: AccountRead) -> list[BrokerOrder]:
     return sorted(read.open_orders.orders, key=lambda order: order.broker_order_id)
 
 
-def _asked[R](call: Callable[[], R]) -> R:
-    """A read of the broker, whose failure halts naming the call and the kind of error alone."""
-    try:
-        return call()
-    except BrokerUnavailable as error:
-        reason = f"{error}"
-    raise Halt(reason)
-
-
-def _read_broker(path: OrderPath, since: datetime) -> AccountRead:
-    # In this order, so a fill that lands between two reads is a difference and never a match.
-    return AccountRead(
-        positions=_asked(path.positions),
-        open_orders=_asked(path.open_orders),
-        cash=_asked(path.account),
-        since=since,
-        fills=_asked(lambda: path.fills(since)),
-    )
-
-
 def _finished(orders: Iterable[OrderRecord | None]) -> bool:
     """Whether a plan's orders each stand where a lookup or a fill alone moves them on."""
     found = list(orders)
@@ -485,46 +383,6 @@ def _stands(name: str, order: OrderRecord | None) -> str:
         return f"the order {name} has no entry"
     when = "never" if order.sent_at is None else f"at {order.sent_at.isoformat()}"
     return f"the order {name} is {order.state}, its sending stored {when}"
-
-
-def _fill_entry(view: View, fill: Fill, read: int) -> FillEntry | DisputedFillEntry | None:
-    repeat = view.repeats(fill)
-    if repeat is Repeat.HELD:
-        return None
-    if repeat is Repeat.DIFFERS:
-        return DisputedFillEntry(fill, read)
-    if view.acknowledged(fill.broker_order_id) is None:
-        raise Halt(
-            f"the fill {broker_id_shown(fill.fill_id)} is of the broker's order "
-            f"{broker_id_shown(fill.broker_order_id)}, which no order of the platform's was "
-            "acknowledged under"
-        )
-    return FillEntry(fill, read)
-
-
-def _end_entry(name: str, order: OrderRecord, ack: Ack) -> ExpiredEntry | RejectedEntry:
-    """The entry a lookup of an order the broker no longer lists comes to, or a halt."""
-    what = f"the order {name}, the broker's {order.broker_order_id}, is not listed open"
-    copy = ack.order
-    if ack.outcome is not Outcome.ACCEPTED or copy is None:
-        raise Halt(f"{what}, and its lookup found no such order")
-    found = (ack.broker_order_id, copy.broker_order_id, copy.client_order_id)
-    if (*found, copy.instrument, copy.qty) != (
-        order.broker_order_id,
-        order.broker_order_id,
-        name,
-        order.intent.instrument,
-        order.intent.qty,
-    ):
-        raise Halt(f"{what}, and its lookup found another order")
-    raw, cut = ack.raw[:RAW_LIMIT], len(ack.raw) > RAW_LIMIT
-    if copy.state is BrokerState.EXPIRED:
-        return ExpiredEntry(name, copy.filled, raw, cut, ack.received_at)
-    if copy.state is BrokerState.REJECTED and copy.filled == _ZERO:
-        reason = "the broker rejected it after it had taken it"
-        return RejectedEntry(name, reason, raw, cut, ack.received_at)
-    state = copy.state.value if isinstance(copy.state, BrokerState) else "in no state"
-    raise Halt(f"{what}, and its lookup says {state} with {copy.filled} filled")
 
 
 def _value(book: Book, view: View, snapshot: Snapshot, at: datetime) -> Valuation:

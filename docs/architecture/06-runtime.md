@@ -604,7 +604,7 @@ The figure below is a component-level flowchart of the send stage's steps inside
 flowchart TB
     subgraph prepare["Prepare, once per decision"]
         direction LR
-        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>run the daily loss stop's test"] --> a4["Step 4<br/>plan and journal the target"] --> a5["Step 5<br/>check the clock"] --> a6["Step 6<br/>work through the plan"]
+        a1["Step 1<br/>claim the stage"] --> a2["Step 2<br/>sync with the broker"] --> a3["Step 3<br/>run the daily loss stop's test"] --> a4["Step 4<br/>plan and journal the target"] --> a5["Step 5<br/>ask the gate about the whole plan"] --> a6["Step 6<br/>check the clock"] --> a7["Step 7<br/>work through the plan"]
     end
     subgraph each["Send, once per order"]
         direction LR
@@ -628,8 +628,8 @@ Three more checks sit inside these steps, as [How a rerun never doubles anything
 
 The steps run in this order.
 
-1. **Claim the stage.** Whichever execution instance receives portfolio construction's result reads the target portfolio it lists, and writes a create-only claim on the send stage naming its handler. An instance that finds a claim it did not write never plans for that decision.
-2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
+1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, whose own halt joins the reason. All of that comes before any input is read, so an unreadable snapshot hides no order.
+2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
@@ -647,8 +647,20 @@ The steps run in this order.
 
      Being off never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
    - **What a strategy whose late forecast reads as no change gets.** It also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. A late forecast reads as no change where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
-5. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
-6. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
+5. **Ask the gate about the whole plan.** Before any order is journaled as intended, the risk gate is asked about each planned order in turn, with each approved one counted open in the book the next is asked on. Nothing is stored by the asking. Where one order is refused or its check halts, nothing is sent and the decision halts. Each order then ends with one recorded outcome: the steps up to the gate's `verdict` run again for each order up to the refused one, every order still approved is journaled `Abandoned` with the reason that a partner was refused, and each order after it gets an `intent` and that `Abandoned`. The caps can be rewritten between the two asks, so an order the second ask approves is abandoned too. Where every order passes, each is asked again right before its own send, as the path always does.
+6. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
+7. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
+
+#### What the first slice builds of these steps
+
+`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders alone, in the plan's order. Four parts wait on later issues.
+
+1. Cancels and replacements, and so an open order under a target that wants a change, which halts until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds them.
+2. The clock's check against the broker, which is [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s and [#165](https://github.com/l3a0/ithildin-runtime/issues/165)'s.
+3. A late forecast read as no change, which is [#54](https://github.com/l3a0/ithildin-runtime/issues/54)'s.
+4. The account's lease, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
+
+A send that answers anything but `Acknowledged` ends that strategy's plan, whichever leg it was, and each later order of the strategy is journaled `Abandoned`. A strategy switched off before any leg of its reached the broker ends as partly sent, and the other strategies' orders go on. Any other answer, a switch with a leg at the broker, and any error after a `sending` halt the stage once every later order of the plan is journaled `Abandoned`, with an alarm naming each leg's state. A leg already at the broker is #149's to cancel, so until it is built no mode but a backtest runs, as [Which modes build a broker](#which-modes-build-a-broker) says. The stage's result holds a halt or the decision's outcome, never both, and the outcome names each order's end state, each strategy's end and each part of a position no order of the account's share step can trade.
 
 #### Send, once per order
 

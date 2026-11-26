@@ -86,6 +86,15 @@ class Controls:
                 return Stopping(f"{name} unreadable: {read.error}", True)
             if read.found is not None:
                 return Stopping(f"{name} stands{read.found}", True)
+        return self.strategy(strategy, tries)
+
+    def strategy(self, strategy: str, tries: Tries) -> Stopping | None:
+        """The strategy's own control that stops its orders, or `None` where neither stands.
+
+        Its off switch and its halts stop the strategy and not the decision. One
+        that cannot be read halts the decision.
+        """
+        account = self._account
         for name, key, folder in (
             ("strategy off switch", off_switch_key(account, strategy), False),
             ("strategy halt", strategy_halts_prefix(account, strategy), True),

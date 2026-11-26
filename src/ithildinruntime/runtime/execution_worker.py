@@ -1,10 +1,12 @@
 """The execution worker's entry point: its stages' rows, its one account and its broker.
 
-The mode builds the broker, and this is the one file that does.
+The mode builds the broker, and this is the one file that does. It also hands a
+backtest's opening of its account the simulated broker's own, through
+`open_backtest`, since `execution` imports no broker.
 
 1. A backtest over a folder trades through the simulated broker, with no fault.
 2. Every other mode, a backtest over any other store, and a stage table whose row of
-   recover is not the one this file declares, build no broker. Each
+   recover or of send is not the one this file declares, build no broker. Each
    decision of each of this worker's stages halts with the reason stored, and the
    worker starts all the same, because a start that fails only restarts it. The
    reason names the parts of #10 that lift it.
@@ -24,12 +26,15 @@ from __future__ import annotations
 import secrets
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     DATA_STAGE,
+    PORTFOLIO_STAGE,
     RECOVER_STAGE,
+    RISK_STAGE,
     SEND_STAGE,
     Alerts,
     BlobStore,
@@ -47,12 +52,14 @@ from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.execution.brokers.log import SimulatedAccount
 from ithildinruntime.execution.brokers.prices import StoredPrices
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
+from ithildinruntime.execution.opening import open_account
 from ithildinruntime.execution.recover import RecoverStage
+from ithildinruntime.execution.send import SendStage
 from ithildinruntime.risk import Gate
 
 from .loop import ReceiveLoop, Stage, Table
 
-__all__ = ["RECOVER_ROW", "ExecutionWorker"]
+__all__ = ["RECOVER_ROW", "SEND_ROW", "ExecutionWorker", "open_backtest"]
 
 RECOVER_ROW = Stage(
     RECOVER_STAGE,
@@ -60,6 +67,13 @@ RECOVER_ROW = Stage(
     inputs=(DATA_STAGE,),
     keeps_order=True,
     follows=(SEND_STAGE,),
+)
+
+SEND_ROW = Stage(
+    SEND_STAGE,
+    StageKind.CAPTURING,
+    inputs=(DATA_STAGE, RECOVER_STAGE, RISK_STAGE, PORTFOLIO_STAGE),
+    keeps_order=True,
 )
 
 # The parts of #10 that shadow waits for, and the one paper waits for beside them.
@@ -93,11 +107,12 @@ class ExecutionWorker:
         stress_moves: Path,
     ) -> None:
         self._owner_step = storage.owner_step
+        writer = secrets.token_hex(16)
         self.account = Account(
             store=store,
             storage=storage,
             account=account,
-            writer=secrets.token_hex(16),
+            writer=writer,
             gate=Gate(read_records(stress_moves)),
             clock=clock,
             alerts=alerts,
@@ -132,10 +147,56 @@ class ExecutionWorker:
             config_hashes=table.hashes_for(stage.name),
         )
 
+        self.send: SendStage | None = None
+        if SEND_STAGE in {row.name for row in table.stages}:
+            self.send = self._send(table, storage, clock, writer, deployment, run, release)
+
+    def _send(
+        self,
+        table: Table,
+        storage: Storage,
+        clock: Clock,
+        writer: str,
+        deployment: str,
+        run: str,
+        release: str,
+    ) -> SendStage:
+        """The send stage, which halts each decision where the table's row is not `SEND_ROW`."""
+        stage = table.stage(SEND_STAGE)
+        brokers, inputs = self._brokers, {}
+        if stage != SEND_ROW:
+            # The stage would plan on a target nothing sized, or before recover's book.
+            brokers = Halt(
+                f"the table's row of {SEND_STAGE} is not the one it declares, so set send's row "
+                "in the deployment's stage table to "
+                "ithildinruntime.runtime.execution_worker.SEND_ROW, which captures, reads data, "
+                "recover, risk and portfolio construction, and keeps the plan's order"
+            )
+        else:
+            inputs = {name: table.hashes_for(name) for name in stage.inputs}
+        return SendStage(
+            self.account,
+            brokers,
+            storage,
+            clock,
+            strategies=table.strategies,
+            writer=writer,
+            stage=stage.name,
+            kind=stage.kind,
+            inputs=inputs,
+            deployment=deployment,
+            run=run,
+            release=release,
+            config_hashes=table.hashes_for(stage.name),
+        )
+
     @property
-    def handlers(self) -> Mapping[str, RecoverStage]:
+    def handlers(self) -> Mapping[str, RecoverStage | SendStage]:
         """Each of this worker's stages that is built, by its name."""
-        return {RECOVER_STAGE: self.recover}
+        built: dict[str, RecoverStage | SendStage] = {RECOVER_STAGE: self.recover}
+        if self.send is not None:
+            built[SEND_STAGE] = self.send
+        return built
 
     def run(self, loop: ReceiveLoop) -> None:
         """Run the loop to its end, then store what the journal still lacks.
@@ -228,3 +289,24 @@ def _brokers(
         return SimulatedBroker(log, clock, prices, Faults())
 
     return broker
+
+
+def open_backtest(
+    mode: Mode | str, store: BlobStore, account: str, cash: Decimal, at: datetime
+) -> None:
+    """Open a backtest's account with `cash`, in its journal and its simulated broker at once.
+
+    `at` is the close of the session before the backtest's first decision. Every
+    other mode halts, since a person opens a shadow or paper account (#11), and
+    so does a store that is not a folder, where nothing the account stores could
+    be deleted.
+    """
+    try:
+        known = Mode(mode)
+    except ValueError:
+        known = None
+    if known is not Mode.BACKTEST:
+        raise Halt(f"an account is opened here only for a backtest, and the mode is {mode}")
+    if not isinstance(store, FolderStore):
+        raise Halt("a backtest's account is opened only over a folder")
+    open_account(store, SimulatedBroker.open, account, cash, at, secrets.token_hex(16))

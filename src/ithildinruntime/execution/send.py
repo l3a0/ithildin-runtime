@@ -1,0 +1,495 @@
+"""Execution's send stage: where each strategy's target becomes orders, and the orders go out.
+
+It runs after recover, risk and portfolio construction, and is the one caller of
+`OrderPath.send`. Its handler waits for the decision's time, having written
+nothing, and then works in this order. docs/architecture/06-runtime.md's
+`### Phase 3: send` says why each step comes where it does.
+
+1. **The claim**, at `core.claim_key`, naming this process's writer and a token
+   of this call. A claim already there that this call did not write halts, after
+   the answers this process owes the journal, a view of the journal, an alarm for
+   each order in doubt, and the day's loss, so the halt names where each planned
+   order stands and the loss. That view comes before any input is read, so an
+   unreadable snapshot hides no order.
+2. Each input's result in the row's order, each halt passed on, and then the
+   snapshot, the constraints, the targets, and recover's book, valuation and
+   caps, all read before any file of this stage's is stored.
+3. **The sync**: the four reads of the broker, stored afresh at
+   `broker-read-<n>.json`, a `read` entry, the fills since, and
+   `core.reconcile`. An order in doubt, a difference, and an entry past
+   recover's book that moved it and that this sync did not write each halt.
+4. Each strategy's off switch and halts. One that is off gets no order. One that
+   cannot be read halts.
+5. `OrderPath.loss`, which halts past the stop with no order needed.
+6. `plan_orders`, and then the `decision` entry, which names every file the plan
+   was made from, before anything is asked or sent.
+7. `OrderPath.ask` about the whole plan. Where any order is refused or halts,
+   nothing is sent, and every order of the plan ends `Refused` or `Abandoned`.
+8. `OrderPath.send` for each order in the plan's order. An answer other than
+   `Acknowledged` ends that strategy's plan. An off switch with no leg of that
+   strategy at the broker ends it as partly sent, and every other answer halts
+   the stage, with each later order abandoned and an alarm naming every leg.
+9. `outcome.json`, and then the result.
+
+A result holds a halt or an outcome, never both.
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+from collections.abc import Callable, Mapping
+from datetime import datetime
+from typing import Protocol
+
+from ithildinruntime.core import (
+    ALPHA_COMPONENT,
+    BOOK_OUTPUT,
+    CAPS_OUTPUT,
+    CONSTRAINTS_OUTPUT,
+    COST_COMPONENT,
+    DATA_STAGE,
+    FORECAST_OUTPUT,
+    PORTFOLIO_STAGE,
+    RECOVER_STAGE,
+    RISK_STAGE,
+    SCHEDULE_OUTPUT,
+    TARGET_OUTPUT,
+    VALUATION_OUTPUT,
+    AccountRead,
+    BlobRef,
+    Book,
+    Broker,
+    Clock,
+    Constraints,
+    DecisionResult,
+    Halt,
+    HardCaps,
+    OrderIntent,
+    OrderState,
+    Progress,
+    Remainder,
+    SendOutcome,
+    SentOrder,
+    StageDecision,
+    StageKind,
+    StageRun,
+    Storage,
+    StrategyConfig,
+    StrategyEnd,
+    StrategySent,
+    TargetPortfolio,
+    Valuation,
+    broker_read_key,
+    claim_key,
+    error_name,
+    output_key,
+    reconcile,
+    result_key,
+)
+from ithildinruntime.journal import DecisionEntry, View
+
+from .account import Account
+from .inputs import read_inputs
+from .order_path import OrderPath
+from .orders import order_type, plan_orders
+from .recover import fills_since
+from .sync import journal_read, read_broker, recorded
+
+__all__ = ["OUTCOME_OUTPUT", "SendStage"]
+
+# The format of the stage's outcome file and of its result header.
+_FORMAT = 1
+OUTCOME_OUTPUT = "outcome"
+# The states of an order whose leg the broker may hold.
+_AT_THE_BROKER = frozenset(
+    {
+        OrderState.SENDING,
+        OrderState.IN_DOUBT,
+        OrderState.ACKNOWLEDGED,
+        OrderState.PARTLY_FILLED,
+        OrderState.FILLED,
+    }
+)
+
+
+class _Item(Protocol):
+    decision_at: datetime
+
+
+class SendStage:
+    """The handler the receive loop calls for the send stage.
+
+    `writer` is this process's, the one its `Account` journals under, and each
+    call draws a token of its own beside it, so a second call in one process
+    never reads the first one's claim as its own. `inputs` maps each stage
+    the row reads to the configuration hashes the stage table gives it.
+    """
+
+    def __init__(
+        self,
+        account: Account,
+        brokers: Callable[[datetime], Broker] | Halt,
+        storage: Storage,
+        clock: Clock,
+        *,
+        strategies: tuple[StrategyConfig, ...],
+        writer: str,
+        stage: str,
+        kind: StageKind,
+        inputs: Mapping[str, Mapping[str, str]],
+        deployment: str,
+        run: str,
+        release: str,
+        config_hashes: Mapping[str, str],
+    ) -> None:
+        self._account = account
+        self._brokers = brokers
+        self._storage = storage
+        self._clock = clock
+        self._strategies = strategies
+        self._writer = writer
+        self._inputs = {name: dict(hashes) for name, hashes in inputs.items()}
+        self._deployment = deployment
+        self._run = StageRun(
+            storage,
+            format=_FORMAT,
+            stage=stage,
+            kind=kind,
+            deployment=deployment,
+            run=run,
+            release=release,
+            config_hashes=config_hashes,
+        )
+
+    def __call__(self, item: _Item, report: Progress) -> DecisionResult:
+        # Nothing is written yet, so a stop may end this wait.
+        self._clock.wait_until(item.decision_at, report)
+        decision = self._run.decision(item.decision_at, report)
+        try:
+            outcome = self._sent(decision, item.decision_at, report)
+            ref = decision.put(OUTCOME_OUTPUT, SendOutcome, (outcome,))
+        except Halt as halt:
+            return decision.halted(halt)
+        return decision.done(ref)
+
+    def _sent(
+        self, decision: StageDecision, at: datetime, report: Callable[[], None]
+    ) -> SendOutcome:
+        account, brokers = self._account, self._brokers
+        if isinstance(brokers, Halt):
+            raise Halt(brokers.reason)
+        self._claim(at, brokers, report)
+
+        # Step 2
+        for upstream in (DATA_STAGE, RECOVER_STAGE, RISK_STAGE, PORTFOLIO_STAGE):
+            decision.result(upstream, self._inputs.get(upstream))
+        decision.snapshot(DATA_STAGE)
+        decision.entries(RISK_STAGE, CONSTRAINTS_OUTPUT, Constraints)
+        targets = decision.entries(PORTFOLIO_STAGE, TARGET_OUTPUT, TargetPortfolio)
+        recovered = decision.entry(RECOVER_STAGE, BOOK_OUTPUT, Book).replayed_through
+        decision.entry(RECOVER_STAGE, VALUATION_OUTPUT, Valuation)
+        caps = decision.entry(RECOVER_STAGE, CAPS_OUTPUT, HardCaps)
+        named = self._named(decision, at, report)
+        types = {s.name: order_type(s) for s in self._strategies}
+
+        # Step 3
+        account.settle(report)
+        path = account.path(brokers(at), report)
+        view = account.view(report)
+        made = read_broker(path, fills_since(view))
+        capture = decision.fresh(
+            lambda n: broker_read_key(self._deployment, self._run.run, at, n), AccountRead, made
+        )
+        view, seq = journal_read(
+            account,
+            path,
+            view,
+            capture.ref,
+            made,
+            stage=self._run.stage,
+            at=at,
+            clock=self._clock,
+            report=report,
+        )
+        view = account.view(report)
+        _synced(view, recovered, seq, capture.ref, made)
+
+        # Step 4
+        off = {s.name: why for s in self._strategies if (why := path.off(s.name)) is not None}
+
+        # Step 5
+        path.loss(self._deployment, self._run.run, at)
+
+        # Step 6
+        plan = plan_orders(
+            targets,
+            view.book,
+            types=types,
+            share_step=caps.share_step,
+            decision_at=at,
+            off=off,
+        )
+        entry = DecisionEntry(
+            deployment=self._deployment,
+            run=self._run.run,
+            decision_at=at,
+            targets=targets,
+            orders=plan.orders,
+            off=tuple(sorted(off)),
+            inputs=named,
+            read=seq,
+            synced=view.through.seq,
+        )
+        view = recorded(account, view, lambda v: None if at in v.decided else entry, report)
+        names = [order.client_order_id for order in plan.orders]
+
+        # Step 7
+        if names:
+            self._asked(path, names, report)
+
+        # Step 8
+        ended = self._sends(path, plan.orders, report)
+        view = account.view(report)
+        return _outcome(view, at, plan.orders, off, ended, plan.remainders, self._strategies)
+
+    # Step 1
+
+    def _claim(self, at: datetime, brokers: Callable[[datetime], Broker], report) -> None:
+        key = claim_key(self._deployment, self._run.run, at)
+        mark = {"token": secrets.token_hex(16), "writer": self._writer}
+        data = json.dumps(mark, sort_keys=True, separators=(",", ":")).encode()
+        claimed = self._storage.claim(key, data)
+        report()
+        if claimed:
+            return
+        account = self._account
+        account.settle(report)
+        view = account.view(report)
+        said, doubts = _standing(view, at)
+        added = ""
+        for doubt in doubts:
+            added = account.alarm(f"{doubt}, and {key} holds another call's claim", report) or added
+        try:
+            account.path(brokers(at), report).loss(self._deployment, self._run.run, at)
+            loss = ""
+        except Halt as halt:
+            loss = f". {halt.reason}"
+        raise Halt(
+            f"{key} holds another call's claim, so this one sends nothing: {said}{loss}{added}"
+        )
+
+    # Step 6
+
+    def _named(
+        self, decision: StageDecision, at: datetime, report: Callable[[], None]
+    ) -> dict[str, BlobRef]:
+        """Every file the plan is made from, by the name a `decision` entry gives it."""
+        run = self._run
+        inputs = read_inputs(self._storage, self._deployment, run.run, at, report)
+        named = dict(inputs.refs)
+        portfolio = decision.result(PORTFOLIO_STAGE)
+        target = output_key(self._deployment, run.run, at, PORTFOLIO_STAGE, TARGET_OUTPUT)
+        listed = [ref for ref in portfolio.outputs if ref.key == target]
+        named["targets"] = listed[0]
+        read = portfolio.header.inputs
+        portfolio_key = result_key(self._deployment, run.run, at, PORTFOLIO_STAGE)
+        for strategy in sorted(s.name for s in self._strategies):
+            for component, output, name in (
+                (ALPHA_COMPONENT, FORECAST_OUTPUT, "forecast"),
+                (COST_COMPONENT, SCHEDULE_OUTPUT, "schedule"),
+            ):
+                key = output_key(self._deployment, run.run, at, f"{component}/{strategy}", output)
+                sha256 = read.get(key)
+                if sha256 is None:
+                    raise Halt(f"{portfolio_key} names no {key}, which the plan is made from")
+                named[f"{name}/{strategy}"] = BlobRef(key, sha256)
+        return named
+
+    # Step 7
+
+    def _asked(self, path: OrderPath, names: list[str], report: Callable[[], None]) -> None:
+        """Ask the gate about the whole plan, and end every order of it where any is refused.
+
+        An order refused, or one whose check raised, sends nothing. The steps
+        up to the `verdict` run again for each order up to it, which journals
+        an `intent` and a `verdict` for each, or an `intent` and an `abandoned`
+        for one that raised. Then each order still `Approved` and each with no
+        entry is journaled `abandoned`. The caps can be rewritten between the
+        two asks, so an order the second approves is abandoned too.
+        """
+        answers = path.ask(names)
+        refused = next((a for a in answers if not a.approved), None)
+        if refused is None:
+            return
+        reason = refused.reason
+        said = [reason]
+        try:
+            path.hold(names)
+        except Halt as halt:
+            said.append(halt.reason)
+        why = f"a partner in its plan was refused: {reason}"
+        view = self._account.view(report)
+        for name in names:
+            order = view.orders.get(name)
+            if order is None or order.state in (OrderState.INTENDED, OrderState.APPROVED):
+                try:
+                    path.abandon(name, why)
+                except Halt as halt:
+                    said.append(halt.reason)
+        reason = ". ".join(said)
+        added = self._account.alarm(f"nothing is sent: {reason}", report)
+        raise Halt(f"nothing is sent: {reason}{added}")
+
+    # Step 8
+
+    def _sends(
+        self, path: OrderPath, orders: tuple[OrderIntent, ...], report: Callable[[], None]
+    ) -> dict[str, str]:
+        """Send each order in the plan's order, and return each strategy whose plan ended short.
+
+        Each is mapped to why. A strategy switched off with no leg at the
+        broker ends there, and the other strategies' orders go on. Anything
+        else that stops an order halts the stage once every later order is
+        journaled `abandoned`, with an alarm naming every leg's state.
+        """
+        ended: dict[str, str] = {}
+        went: dict[str, list[str]] = {}
+        for place, order in enumerate(orders):
+            name, strategy = order.client_order_id, order.strategy
+            if strategy in ended:
+                self._left(path, name, f"{strategy}'s plan ended: {ended[strategy]}")
+                continue
+            try:
+                state = path.send(name)
+            except Halt as halt:
+                self._failed(path, orders, place, halt.reason, report)
+            except Exception as error:
+                self._failed(
+                    path, orders, place, f"the send of {name} raised {error_name(error)}", report
+                )
+            if state is OrderState.ACKNOWLEDGED:
+                went.setdefault(strategy, []).append(name)
+                continue
+            if state is OrderState.ABANDONED and not went.get(strategy):
+                ended[strategy] = f"{name} was not sent, since {strategy} is off"
+                continue
+            self._failed(path, orders, place, f"the order {name} is {state}", report)
+        return ended
+
+    def _left(self, path: OrderPath, name: str, reason: str) -> None:
+        path.abandon(name, reason)
+
+    def _failed(
+        self,
+        path: OrderPath,
+        orders: tuple[OrderIntent, ...],
+        place: int,
+        reason: str,
+        report: Callable[[], None],
+    ) -> None:
+        """Abandon every order after `place`, alarm naming each leg's state, and halt."""
+        said = [reason]
+        for order in orders[place + 1 :]:
+            try:
+                path.abandon(
+                    order.client_order_id, f"an earlier order of its plan stopped: {reason}"
+                )
+            except Halt as halt:
+                said.append(halt.reason)
+        view = self._account.view(report)
+        legs = "; ".join(
+            _leg(order.client_order_id, view.orders.get(order.client_order_id)) for order in orders
+        )
+        what = f"{'. '.join(said)}. The plan's orders stand so: {legs}"
+        added = self._account.alarm(what, report)
+        raise Halt(f"{what}{added}")
+
+
+def _leg(name: str, order: object) -> str:
+    if order is None:
+        return f"{name} has no entry"
+    state = order.state  # type: ignore[attr-defined]
+    sent = order.sent_at  # type: ignore[attr-defined]
+    said = "in doubt" if state is OrderState.IN_DOUBT else f"{state}"
+    if sent is None:
+        return f"{name} is {said}"
+    return f"{name} is {said}, its sending stored at {sent.isoformat()}"
+
+
+def _standing(view: View, at: datetime) -> tuple[str, list[str]]:
+    """Where each order of the decision's plan stands, in words, and each in doubt.
+
+    A leg whose partner did not go is named too, since #149 cancels it.
+    """
+    seq = view.decided.get(at)
+    if seq is None:
+        return "the journal holds no plan of this decision", []
+    orders = view.decisions[seq].orders
+    said, doubts = [], []
+    for order in orders:
+        name = order.client_order_id
+        found = view.orders.get(name)
+        line = _leg(name, found)
+        said.append(line)
+        if found is not None and found.state is OrderState.IN_DOUBT:
+            doubts.append(f"the order {line}")
+    by_strategy: dict[str, tuple[list[str], list[str]]] = {}
+    for order in orders:
+        found = view.orders.get(order.client_order_id)
+        sent, unsent = by_strategy.setdefault(order.strategy, ([], []))
+        (sent if found is not None and found.sent_at is not None else unsent).append(
+            order.client_order_id
+        )
+    for strategy, (sent, unsent) in sorted(by_strategy.items()):
+        if sent and unsent:
+            said.append(
+                f"{', '.join(sent)} of {strategy} went and its partner {', '.join(unsent)} did not"
+            )
+    return "; ".join(said) or "the plan holds no order", doubts
+
+
+def _synced(view: View, recovered: int, seq: int, ref: BlobRef, read: AccountRead) -> None:
+    """Halt where the journal after the sync differs from the broker, or another writer moved it.
+
+    Between recover's book and this sync's `read` entry the journal may hold
+    reads alone, since anything else moved the book after recover stored it.
+    """
+    if moved := [n for n in range(recovered + 1, seq) if n not in view.reads]:
+        raise Halt(
+            f"entries {', '.join(map(str, moved))} came after the book recover stored, and before "
+            "this stage's read, so another writer moved the book"
+        )
+    book = view.book
+    if book.in_doubt:
+        raise Halt(f"an order is in doubt in {', '.join(book.in_doubt)}")
+    if found := reconcile(book, view.live.values(), read):
+        said = "; ".join(str(difference) for difference in found)
+        raise Halt(f"the book and the broker differ, as {ref.key} holds it: {said}")
+
+
+def _outcome(
+    view: View,
+    at: datetime,
+    orders: tuple[OrderIntent, ...],
+    off: Mapping[str, str],
+    ended: Mapping[str, str],
+    remainders: tuple[Remainder, ...],
+    strategies: tuple[StrategyConfig, ...],
+) -> SendOutcome:
+    sent = tuple(
+        SentOrder(order.client_order_id, view.orders[order.client_order_id].state)
+        for order in orders
+    )
+    planned = {order.strategy for order in orders}
+    lines = []
+    for strategy in sorted(s.name for s in strategies):
+        if strategy in off:
+            lines.append(StrategySent(strategy, StrategyEnd.OFF, off[strategy]))
+        elif strategy in ended:
+            lines.append(StrategySent(strategy, StrategyEnd.PARTLY_SENT, ended[strategy]))
+        elif strategy not in planned:
+            lines.append(StrategySent(strategy, StrategyEnd.NO_ORDER_NEEDED, ""))
+        else:
+            lines.append(StrategySent(strategy, StrategyEnd.SENT, ""))
+    return SendOutcome(at, sent, tuple(lines), remainders)
