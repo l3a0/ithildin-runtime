@@ -1295,6 +1295,6 @@ def test_a_link_planted_after_the_unlink_is_never_written_through(
             self.symlink_to(target)
 
     monkeypatch.setattr(Path, "unlink", unlink)
-    with pytest.raises(OSError):
-        world.supervisor().run(TODAY)
-    assert target.read_text() == "untouched\n"
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_PLAN and target.read_text() == "untouched\n"
+    assert any("release file could not be written" in a for a in world.alarms())

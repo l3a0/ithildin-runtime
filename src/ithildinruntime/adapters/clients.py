@@ -55,21 +55,22 @@ class CredentialFileError(Exception):
 
 def read_credential_file(path: Path) -> dict[str, str]:
     """The credential in `path`, in botocore's metadata form, with an expiry `REREAD` ahead."""
-    parser = configparser.ConfigParser()
+    # No interpolation, so a `%` in a value is a character, and no error quotes a value.
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         with path.open() as file:
             parser.read_file(file)
+        if not parser.has_section("default"):
+            raise CredentialFileError(f"the credential file {path} has no [default] section")
+        section = parser["default"]
+        found = {
+            key: section.get(key, "").strip()
+            for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
+        }
     except (OSError, configparser.Error) as error:
         raise CredentialFileError(
             f"the credential file {path} cannot be read: {type(error).__name__}"
         ) from None
-    if not parser.has_section("default"):
-        raise CredentialFileError(f"the credential file {path} has no [default] section")
-    section = parser["default"]
-    found = {
-        key: section.get(key, "").strip()
-        for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
-    }
     if not found["aws_access_key_id"] or not found["aws_secret_access_key"]:
         raise CredentialFileError(f"the credential file {path} holds no key and secret")
     expiry = datetime.now(UTC) + _ADVISORY + REREAD

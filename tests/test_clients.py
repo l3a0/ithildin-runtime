@@ -83,13 +83,37 @@ def test_the_credential_is_read_again_twenty_minutes_ahead(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "text", ["aws_secret_access_key = SECRETVALUE\n", "[default]\nSECRETVALUE\n"]
+    "text",
+    [
+        "aws_secret_access_key = SECRETVALUE\n",
+        "[default]\nSECRETVALUE\n",
+        # A `%` is a character of the value, and no error quotes what follows it.
+        "[default]\naws_access_key_id = %SECRETVALUE\naws_secret_access_key = %(SECRETVALUE\n",
+    ],
 )
 def test_a_file_that_does_not_parse_names_none_of_its_text(
     tmp_path: Path, no_metadata, text: str
 ) -> None:
     path = tmp_path / "c"
     path.write_text(text)
-    with pytest.raises(CredentialFileError) as refused:
-        AwsClients("us-east-1", path)
-    assert "SECRETVALUE" not in str(refused.value)
+    try:
+        clients = AwsClients("us-east-1", path)
+    except CredentialFileError as refused:
+        assert "SECRETVALUE" not in str(refused)
+    else:
+        # A file that parses with `%` in its values gives them back as they are written.
+        frozen = clients._session.get_credentials().get_frozen_credentials()
+        assert frozen.access_key == "%SECRETVALUE"
+
+
+def test_a_bad_file_swapped_in_mid_run_raises_and_falls_back_to_nothing(
+    tmp_path: Path, monkeypatch, no_metadata
+) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", ENV_KEY)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "e")
+    path = _file(tmp_path / "c", FILE_KEY)
+    found = AwsClients("us-east-1", path)._session.get_credentials()
+    path.write_text("[default]\n")
+    found._expiry_time = datetime.now(UTC)
+    with pytest.raises(CredentialFileError):
+        found.get_frozen_credentials()

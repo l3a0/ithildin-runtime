@@ -220,7 +220,15 @@ class Supervisor:
                 "next session runs the new release"
             )
             return Outcome(EXIT_PLAN, halt.reason)
-        self._write_release_file(plan.release, plan.run)
+        try:
+            self._write_release_file(plan.release, plan.run)
+        except OSError as error:
+            # No worker starts without the file, so this fails closed, and says so.
+            self._alerts.alarm(
+                f"{self._deployment}: the local release file could not be written, so no worker "
+                f"on this machine starts: {type(error).__name__}: {error}"
+            )
+            return Outcome(EXIT_PLAN, f"the local release file could not be written: {error}")
         return self._watch(plan)
 
     def _name_standing_halts(self, today: date) -> None:

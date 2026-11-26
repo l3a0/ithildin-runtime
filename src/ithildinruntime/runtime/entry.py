@@ -37,8 +37,9 @@ Each command ends with one of these codes, which #202's units read.
 - 5: the hold check after an unclean stop could not finish, so the supervisor
   writes no plan and no release file. Workers this machine released before run
   on with no supervisor, and no other worker starts.
-- 6: the supervisor could not store its run's plan, or a worker found a plan it
-  cannot read or one of another mode. Each alarms.
+- 6: the supervisor could not store its run's plan or write the local release
+  file, or a worker found a plan it cannot read or one of another mode. Each
+  alarms.
 - 7: SIGTERM ended the supervisor before the run's stop was stored, so nothing
   watches the rest of the session. It alarms.
 
