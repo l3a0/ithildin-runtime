@@ -3802,8 +3802,9 @@ not adopted. Six rules follow.
    McConnell's test of a finished piece is whether it could be locked in a
    vault and shipped as it stands, so a piece "99 percent done" is not done
    (RD p. 381). A report of done links the merged pull request that closed
-   the issue, its `## Review` comment with the mutation result, and the
-   checks that ran the changed code. A check that never ran the changed code
+   the issue, the `## Review` comment that carries the mutation result, the
+   review's closing `## Review complete` comment, and the checks that ran the
+   changed code. A check that never ran the changed code
    shows nothing.
 5. **Each slice keeps a list of the risks to its delivery, and a risk to
    something that cannot be undone ranks above every one that can.**
