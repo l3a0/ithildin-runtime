@@ -6,9 +6,9 @@ one where every stage writes outputs rather than halts. Each worker's core,
 its own named pipe and the history clock, and the supervisor's core writes the
 plan and the stop. Three decisions at close−20 read a made lake of captured
 bars, made-up quotes and a made-up quote-kind row, under the tracked strategy
-file with the sections a deployment adds: a `[data.quotes]`, a G, limits no
-decision reaches and an entry threshold low enough that the first decision
-trades. Every price is made up, so no figure here says anything of an edge.
+file, its G and its limits, with a made-up `[data.quotes]` and an entry
+threshold low enough that the first decision trades. Every price is made up,
+so no figure here says anything of an edge.
 
 Starting the workers before the supervisor and in reverse order must store the
 same results, because each stage waits for its inputs' results and never for
@@ -55,7 +55,7 @@ from tests.support import gates, segments
 from tests.support import lake as lakes
 from tests.support import made_lake as made
 from tests.support.order_world import caps_blob
-from tests.support.trading import _SECTIONS, _record, vintage
+from tests.support.trading import _record, vintage
 from tests.test_captured_bars import BEFORE_CAPTURE, CAPTURED, IMPORTED, WALKS
 from tests.test_storage_contract import Alarms
 
@@ -72,7 +72,6 @@ TRACKED = (STRATEGIES / f"{NAME}.toml").read_text()
 FILE = (
     TRACKED.replace("entry = 1\n", "entry = 0.01\n")
     + "\n[data.quotes]\nmax_age_seconds = 90\nmax_spread_share = 0.02\n"
-    + _SECTIONS
 )
 KINDS = QuoteKinds(
     (QuoteKindRow(DAYS[0], QUOTE_SOURCE, DAYS[0], DAYS[-1], segments.KIND, "a test"),)
