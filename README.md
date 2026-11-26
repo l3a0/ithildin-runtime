@@ -6,7 +6,7 @@ and live trading, so what is tested is what runs live.
 
 ## Status
 
-Only `core`, the types and shared code every module imports, the two stores, the two read-only buckets, the two queues, the two clocks and the sampler that asks the time servers in `adapters`, the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to in `journal`, the daily bars and the quotes of `data`, the alpha model of the first strategy in `alpha`, the transaction cost model in `cost`, the risk gate, the risk model and its stage in `risk`, the sizing of a target and its stage in `portfolio`, the one path an order takes to a broker, the simulated broker and the recover stage, which compares the journal's book with the broker's account, in `execution`, and in `runtime` the receive loop and the data, alpha, cost, risk, portfolio and execution workers' entry points, the last of which builds a broker only for a backtest over a folder, are built so far. The first milestone is a walking skeleton that runs in
+Only `core`, the types and shared code every module imports, the two stores, the two read-only buckets, the two queues, the two clocks and the sampler that asks the time servers in `adapters`, the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to in `journal`, the daily bars and the quotes of `data`, the alpha model of the first strategy in `alpha`, the transaction cost model in `cost`, the risk gate, the risk model and its stage in `risk`, the sizing of a target and its stage in `portfolio`, the one path an order takes to a broker, the simulated broker and the recover stage, which compares the journal's book with the broker's account, in `execution`, and in `runtime` the receive loop and the data, alpha, cost, risk, portfolio and execution workers' entry points, the last of which builds a broker only for a backtest over a folder, and the commands that measure a stress move and count quote refusals, are built so far. The first milestone is a walking skeleton that runs in
 shadow mode and trades on Alpaca's paper account, and [its issue](https://github.com/l3a0/ithildin-runtime/issues/4) says what it must leave usable and how
 its tests show it works.
 
@@ -19,8 +19,9 @@ its tests show it works.
 - [docs/architecture/](docs/architecture/00-README.md) draws how slice 1's modules
   fit together, as diagrams, one page per section of the arc42 template.
 - [docs/what-a-person-runs.md](docs/what-a-person-runs.md) holds the command line
-  tool the owner and the operator run, how an alarm leads to a command, and the
-  command that measures a stress move.
+  tool the owner and the operator run, how an alarm leads to a command, the
+  command that measures a stress move, and the one that counts how often
+  recorded quotes would be refused.
 - [docs/halts-and-drills.md](docs/halts-and-drills.md) holds the steps of a sort
   and every drill.
 - [infra/](infra/) holds the test environment's OpenTofu configuration, which
@@ -49,6 +50,8 @@ prose checks it cannot do run in the test suite.
 
 The cases marked `aws` run against the test environment in AWS, so the default
 run leaves them out and only `ci.yml`'s `aws` job runs them, on a push to `main`.
+The default run leaves test 1 out too, which takes minutes. `uv run pytest -m replication`
+runs it, as `ci.yml`'s `replication` job does on every pull request.
 The OpenTofu checks need OpenTofu 1.13 and no AWS credential.
 
 ```bash

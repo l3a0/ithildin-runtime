@@ -2127,7 +2127,8 @@ def test_a_listing_the_store_refuses_once_is_asked_again() -> None:
 
 
 def test_the_groups_of_states_recover_reads_cover_every_state_once() -> None:
-    from ithildinruntime.execution.recover import _AT_THE_BROKER, _UNSETTLED
+    from ithildinruntime.execution.sync import AT_THE_BROKER as _AT_THE_BROKER
+    from ithildinruntime.execution.sync import UNSETTLED as _UNSETTLED
     from ithildinruntime.journal import ENDED
 
     groups = (ENDED, _UNSETTLED, _AT_THE_BROKER)

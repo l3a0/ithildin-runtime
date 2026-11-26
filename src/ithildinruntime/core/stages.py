@@ -11,7 +11,8 @@ accepted, so a stored halt says what it was judged from. docs/design.md's
 `### Rule 7: a halt is passed on` says what a stage does with a halt it reads.
 
 It serves a deterministic stage, and a capturing one that stores a capture before
-it judges it and, in a later attempt, goes on from what it stored in the first. A
+it judges it and, in a later attempt, goes on from what it stored in the first,
+or stores a new one at each attempt where a read must be new each time. A
 stage that needs another form extends this class rather than writing beside it.
 Data's stage still stores its capture beside it, until #185 moves it here.
 """
@@ -37,6 +38,9 @@ from .storage import (
 )
 
 __all__ = ["Own", "StageDecision", "StageRun"]
+
+# How many attempts at one decision a capture made afresh each time may number.
+_FRESH = 999
 
 
 @dataclass(frozen=True)
@@ -240,6 +244,33 @@ class StageDecision:
         if stored.ref == stored.counts:
             return Own(stored.counts, self._header(), entry)
         return self._read_back(stored.counts, kind)
+
+    def fresh[T](self, key_of: Callable[[int], str], kind: type[T], entry: T) -> Own[T]:
+        """Store a capture made afresh on every attempt, at the first number its key leaves free.
+
+        It is for a read that must be new each time, such as the send stage's
+        read of the broker right before it plans, where the first capture
+        counting would plan on what an earlier attempt saw. A number whose key
+        holds these bytes already is this attempt's own, as after a try whose
+        answer was lost. A capture that is not stored is held and named by
+        every later halt, as `put` holds one. The capture is named in every
+        header from here on, and the result lists it. In the send stage a second
+        attempt halts at its claim, so only a takeover (#147) reaches a number
+        above 1.
+        """
+        run = self._run
+        data = encode_output(kind, OutputFile(self._header(), (entry,), False))
+        for n in range(1, _FRESH + 1):
+            key = key_of(n)
+            held = run.storage.find_blob(key)
+            self._report()
+            if held is not None and held != data:
+                continue
+            ref = run.storage.put(run.kind, key, data).ref
+            self._captures = (*self._captures, ref)
+            self._note(ref)
+            return Own(ref, self._header(), entry)
+        raise Halt(f"{key_of(1)} and the {_FRESH - 1} keys after it are each taken")
 
     def own[T](self, name: str, kind: type[T]) -> Own[T] | None:
         """A file this stage stored in an earlier attempt at this decision, or `None`.

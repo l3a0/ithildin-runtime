@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -46,6 +47,11 @@ __all__ = [
     "encode_output",
     "sha256_of",
 ]
+
+
+# How many decoded output files one `Storage` keeps, which covers every file of a decision at
+# today's count of strategies. More strategies cost only speed.
+_DECODED = 32
 
 
 class StoreError(Exception):
@@ -256,6 +262,7 @@ class Storage:
         # A held capture one handler is retrying stays in `_held`, so every
         # halt still names it, and sits here so a second handler skips it.
         self._claimed: list[_Held] = []
+        self._files: OrderedDict[tuple[str, type], OutputFile] = OrderedDict()
         self._lock = threading.Lock()
 
     @property
@@ -367,6 +374,23 @@ class Storage:
         except _Deadline as late:
             raise self._outage(f"S3 did not store {late.key}", late) from None
         return BlobRef(key, stands or sha)
+
+    def claim(self, key: str, data: bytes) -> bool:
+        """Create `key` holding `data`, and say whether the blob that stands there is these bytes.
+
+        It is for a mark that one writer alone may hold, such as the send
+        stage's claim on a decision. A key that already holds a blob is
+        compared by its SHA-256, so a try whose answer was lost and that landed
+        reads as this call's own. Nothing is held, since a claim that was not
+        stored is one nobody holds, and a store that does not answer by the
+        deadline halts.
+        """
+        sha = sha256_of(data)
+        try:
+            stands = self._create(key, data, sha, False)
+        except _Deadline as late:
+            raise self._outage(f"S3 did not store {late.key}", late) from None
+        return stands is None or stands == sha
 
     def announce(self, key: str) -> bool:
         """Announce a stored blob again, once, and say whether the store took the call.
@@ -529,7 +553,7 @@ class Storage:
                 f"lists {listed.sha256}"
             )
         try:
-            output = decode_output(data, entry)
+            output = self._decoded(actual, data, entry)
         except CodecError as error:
             raise self._halt(
                 f"output file {listed.key} is no {entry.__name__} file: {error}"
@@ -547,6 +571,26 @@ class Storage:
                 'and no "trade nothing" mark'
             )
         return output
+
+    def _decoded[T](self, sha256: str, data: bytes, entry: type[T]) -> OutputFile[T]:
+        """A file's decoding, kept for the last few files by their SHA-256.
+
+        Every stage of a decision reads the same snapshot, and decoding one is
+        most of a decision's time. A decoded file is frozen and its bytes are
+        named by their hash, so the same bytes give the same value.
+        """
+        key = (sha256, entry)
+        with self._lock:
+            found = self._files.get(key)
+            if found is not None:
+                self._files.move_to_end(key)
+                return found
+        made = decode_output(data, entry)
+        with self._lock:
+            self._files[key] = made
+            while len(self._files) > _DECODED:
+                self._files.popitem(last=False)
+        return made
 
     # The rules
 

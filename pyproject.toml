@@ -64,9 +64,10 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # The `aws` cases run only in ci.yml's push-only `aws` job, which passes `-m aws`. A
 # later -m on the command line replaces this one.
-addopts = "-ra -m 'not aws'"
+addopts = "-ra -m 'not aws and not replication'"
 markers = [
     "aws: runs against the test environment in AWS, in ci.yml's aws job only",
+    "replication: test 1 of #4, in ci.yml's replication job, which passes `-m replication`",
 ]
 
 [tool.ruff]

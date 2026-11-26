@@ -394,13 +394,13 @@ def test_a_missing_ranges_file_halts(tmp_path: Path) -> None:
 
 
 def test_a_bad_ranges_file_halts_every_decision_ahead_of_any_record(monkeypatch) -> None:
-    import ithildinruntime.execution.recover as recover
+    import ithildinruntime.execution.sync as sync
 
     def broken() -> object:
         raise Halt("records.toml is not of format 1")
 
     world = ready()
-    monkeypatch.setattr(recover, "load_ranges", broken)
+    monkeypatch.setattr(sync, "load_ranges", broken)
     result = world.attempt()
     assert result.halt is not None and "records.toml is not of format 1" in result.halt.reason
     assert world.kinds(world.before) == ["read"]
@@ -492,3 +492,29 @@ def test_recovers_files_are_of_format_2_whose_capture_holds_the_records_read() -
     assert attempt(world, brokers).halt is None
     for name in FILES:
         assert world.file(name).header.format == 2, name
+
+
+# The send stage reads the broker through the same sort
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["with its record", "with none"])
+def test_a_fee_booked_between_recover_and_send_is_explained_only_by_its_record(
+    listed: bool,
+) -> None:
+    from tests.support.sim_world import FULL
+    from tests.test_send import PAIR, world
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    fee = broker_record("20261105::send", "-0.75", at=made.at, received_at=made.at)
+    # The simulator counts every call of the account, so this edit lands at the send's first read.
+    made.faults = Faults(events={made.log.calls + 1: EditCash(fee.amount)})
+    records = listing([fee] if listed else [])
+    stage = made.sender(brokers=doctored(made, activities=records))
+    result = made.send_attempt(stage)
+    if listed:
+        assert result.halt is None, result.halt.reason
+        assert "outside_record" in made.kinds(made.before)
+    else:
+        assert result.halt is not None and "the book and the broker differ" in result.halt.reason
+        assert made.submits() == []

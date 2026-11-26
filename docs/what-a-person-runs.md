@@ -1,6 +1,6 @@
 # What a person runs
 
-This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, how a person goes from an alarm to the command that answers it, the steps the owner takes once per account, and the command that measures a stress move. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
+This page is for the owner and the operator. It is reference and how-to: the one command line tool, its commands, how a person goes from an alarm to the command that answers it, the steps the owner takes once per account, the command that measures a stress move, and the one that counts how often recorded quotes would be refused. The reasoning behind each rule sits in [the architecture](architecture/00-README.md) and [design.md](design.md), and each drill's steps sit in [halts-and-drills.md](halts-and-drills.md).
 
 ## Contents
 
@@ -10,6 +10,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
   - [Measure a stress move](#measure-a-stress-move)
+  - [Count how often quotes would be refused](#count-how-often-quotes-would-be-refused)
   - [Measure the capture lag](#measure-the-capture-lag)
   - [Set up the test environment](#set-up-the-test-environment)
 
@@ -444,6 +445,34 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 #### Withdraw a record
 
 A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. Where there is no other, a release that carries a new measurement runs first, and the withdrawal comes in a later one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
+
+### Count how often quotes would be refused
+
+A decision before the close halts until its strategy writes, under `[data.quotes]`, the oldest quote it may read and the widest spread. This command counts what each choice would have refused on past sessions, which bounds each limit from below. The bounds from above, and the steps it counts at, are on [#133](https://github.com/l3a0/ithildin-runtime/issues/133), and [When the age is measured](architecture/03-context-and-scope.md#when-the-age-is-measured) says why the age is judged again at the gate.
+
+#### Run the command
+
+It reads a folder that holds a copy of marketlake's lake, so it needs no credential, and it writes nothing but what it prints.
+
+```bash
+uv run python -m ithildinruntime.runtime.quote_refusals --lake <folder> --instruments <ticker> <ticker> --from <YYYY-MM-DD> --through <YYYY-MM-DD> --normal-status <status>
+```
+
+1. The folder needs `manifest.jsonl`, `quarantine.jsonl`, `actions/corporate_actions.jsonl`, each file under `reference/` that the manifest lists, and each instrument's sealed quotes, `quotes/ticker=<ticker>/date=<YYYY-MM-DD>.parquet`, for every session from `--from` to `--through`. Each file must have the SHA-256 the manifest records.
+2. `--normal-status` is the security status a stand-in row states, for each session no row of `data/quote_kinds.csv` covers. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
+3. A run reads each session once for each age, so it takes a minute or more.
+4. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. A session the manifest lists no quotes for, a file the manifest lists and the folder lacks, and a file whose bytes differ from the manifest, each refuse the run, because none is a refusal a decision would meet.
+
+#### Read what it prints
+
+Every table is exploratory, and none holds a price.
+
+1. **What refuses a session at every step** lists the reasons no choice of age or spread lifts, such as a crossed quote or a status that is not normal. A reason a quote gives counts once for each instrument and session it refuses, and each kind of fault of the read once for each session.
+2. **Refusals by age** counts the sessions refused at each age, at the decision, at a send 30 seconds after it and at the market-on-close cutoff design.md proposes, close−12. No send has been measured, so a quote refused at a send t seconds after the decision under an age a is refused at the decision under a − t. The cutoff bounds a market-on-close order under caps of close−12. Another order, or one on a simulated account, can meet the gate up to the close, where the gate refuses a quote past its age.
+3. **Refusals by spread** counts the sessions refused at each spread, at the decision. In both tables a cell gives every session refused, then those refused for that step's own reason, which can include sessions refused for another reason too, then those reasons by instrument and session, or by session for a fault of the read.
+4. **What the quotes read hold** counts, over each quote read at the widest age, stamps later than their capture, sides whose size is zero or missing, and the status and realtime flag of each, which the row of `data/quote_kinds.csv` states.
+5. **Ages at the decision** gives the least, median and most age of each instrument's quote and of its capture at close−20.
+6. **Faults of the read** lists each fault of the sealed read, by session and by the ages it fell at.
 
 ### Measure the capture lag
 

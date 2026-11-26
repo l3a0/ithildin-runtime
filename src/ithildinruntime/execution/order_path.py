@@ -38,7 +38,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from typing import NamedTuple
@@ -49,6 +49,7 @@ from ithildinruntime.core import (
     BeforeClose,
     BlobRef,
     BlobStore,
+    Book,
     Broker,
     BrokerState,
     BrokerUnavailable,
@@ -76,6 +77,7 @@ from ithildinruntime.core import (
     StopState,
     Storage,
     StoreError,
+    Verdict,
     caps_key,
     encode,
     error_name,
@@ -114,7 +116,7 @@ from .controls import Controls, Stopping, Where
 from .inputs import Inputs, read_inputs
 from .patience import Patience, Tries, code_of
 
-__all__ = ["OrderPath", "Shared", "Unstored", "quietly"]
+__all__ = ["Asked", "OrderPath", "Shared", "Unstored", "quietly"]
 
 # How many times a step that lost its number starts over.
 _STARTS_OVER = 5
@@ -505,6 +507,22 @@ class _Answer(NamedTuple):
         return f"sent at {self.went.isoformat()}, as the broker's {_shown(self.broker)}"
 
 
+class Asked(NamedTuple):
+    """What the gate answered for one planned order before anything was journaled.
+
+    `verdict` is `None` where the check raised `Halt`, and `reason` is empty
+    for an approval and otherwise says, in words, what stopped the order.
+    """
+
+    client_order_id: str
+    verdict: Verdict | None
+    reason: str
+
+    @property
+    def approved(self) -> bool:
+        return self.verdict is not None and self.verdict.approved
+
+
 class _Off(Exception):
     """A strategy that is off stops the order and not the decision."""
 
@@ -619,6 +637,78 @@ class OrderPath:
             if state is OrderState.ABANDONED:
                 return state
         raise Halt(f"the order {client_order_id} is {state}, so it is not abandoned")
+
+    def ask(self, client_order_ids: tuple[str, ...] | list[str]) -> tuple[Asked, ...]:
+        """Ask the gate about each planned order in turn, and store nothing.
+
+        Each order approved is counted open in the book the next is asked on, as
+        a journal holding its `verdict` would count it. It stops at the first
+        order the gate refuses or that raises `Halt`, and returns the answer of
+        each it reached. An order the journal already holds an entry of halts,
+        because a plan is asked about before any of it is journaled. It reads
+        no control but the loss stop, which the gate is handed, and `send`
+        reads every one again.
+        """
+        self._one_account()
+        shared = self._shared
+        view = self._view()
+        book = view.book
+        caps, _ = self._caps()
+        answers: list[Asked] = []
+        read: dict[tuple[str, str, datetime], Inputs] = {}
+        for name in client_order_ids:
+            if name in view.orders:
+                raise Halt(f"the order {name} has an entry already, so its plan is not asked again")
+            planned = self._planned(view, name)
+            order = planned.order
+            try:
+                where = planned.where
+                key = (where.deployment, where.run, where.decision_at)
+                if key not in read:
+                    read[key] = self._inputs(planned)
+                inputs = read[key]
+                limits = inputs.limits(order.strategy)
+                state, error = shared.controls.stop(shared.patience.tries(self._report))
+                handed = GateInputs(
+                    caps=caps, valuation=inputs.valuation, stop=state, close_entry=None
+                )
+                now = shared.clock.now()
+                verdict = shared.gate.check(order, book, inputs.snapshot, limits, handed, now)
+            except Halt as halt:
+                answers.append(Asked(name, None, halt.reason))
+                break
+            if verdict.loss.past:
+                # `loss` halts the decision on this before a plan is made. The gate read it
+                # again here, and a loss past its stop sends nothing.
+                reading = verdict.loss
+                answers.append(
+                    Asked(
+                        name,
+                        None,
+                        f"the day's loss of {reading.loss} is past its stop of {reading.bound}",
+                    )
+                )
+                break
+            if not verdict.approved:
+                answers.append(Asked(name, verdict, _refused(name, verdict, state, error)))
+                break
+            answers.append(Asked(name, verdict, ""))
+            book = _counted(book, order)
+        return tuple(answers)
+
+    def off(self, strategy: str) -> str | None:
+        """Why a strategy is off, by its off switch or its halts, or `None` where neither stands.
+
+        One that cannot be read halts the decision.
+        """
+        self._one_account()
+        shared = self._shared
+        stopping = shared.controls.strategy(strategy, shared.patience.tries(self._report))
+        if stopping is None:
+            return None
+        if stopping.halts:
+            raise Halt(stopping.reason)
+        return stopping.reason
 
     # The day's loss
 
@@ -1136,6 +1226,23 @@ class OrderPath:
             f"the valuation of {reading.session.isoformat()}"
         )
         return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
+
+
+def _counted(book: Book, order: OrderIntent) -> Book:
+    """The book with one more open order, as an approved `verdict` would leave it."""
+    orders = dict(book.open_orders_by_strategy)
+    orders[order.strategy] = (*orders.get(order.strategy, ()), order)
+    return replace(book, open_orders_by_strategy=orders)
+
+
+def _refused(name: str, verdict: Verdict, state: StopState, error: str) -> str:
+    """A refusal in words: the limit, and the figure and its bound where it has them."""
+    if verdict.limit is Limit.STOP:
+        return f"the gate refused {name}: {_stop_reason(state, error)}"
+    said = f"the gate refused {name} on {verdict.limit}"
+    if verdict.value is not None:
+        said = f"{said}, at {verdict.value} against its bound of {verdict.bound}"
+    return said
 
 
 def _last(planned: _Planned, minutes: int) -> _Last:
