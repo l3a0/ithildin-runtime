@@ -522,19 +522,21 @@ def test_another_writers_plan_for_this_decision_is_never_sent_as_this_ones() -> 
     assert made.submits() == []
 
 
-def test_a_claim_alarms_on_a_leg_a_kill_left_sending(monkeypatch) -> None:
+def test_a_claim_alarms_on_a_leg_a_kill_left_sending() -> None:
     made = world()
     made.ready(close_of(FULL), PAIR)
-    real = OrderPath._submit
 
-    def killed(self, ack):
-        real(self, ack)
-        raise _Killed
+    def before(number: int, op: str, key: str) -> None:
+        # The broker has placed the first leg, and the process dies as the journal is to take
+        # its answer.
+        if op == "create" and key.startswith("journal/") and made.kinds()[-1:] == ["sending"]:
+            if made.submits():
+                raise _Killed
 
-    monkeypatch.setattr(OrderPath, "_submit", killed)
+    made.store.before = before
     with pytest.raises(_Killed):
         made.send_attempt()
-    monkeypatch.setattr(OrderPath, "_submit", real)
+    made.store.before = lambda number, op, key: None
     first = gates_names(made)[0]
     assert made.states() == {first: "Sending"} and made.submits() == [first]
     made.alarms.sent.clear()
