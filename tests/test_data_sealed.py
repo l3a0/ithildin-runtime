@@ -65,6 +65,7 @@ from tests.test_data_source import Clock, Counting
 from tests.test_data_stage import Reports
 
 TICK = timedelta(microseconds=1)
+CUT_LAG = timedelta(seconds=15)
 BOTH = ("GLD", "USO")
 CUT = AT - timedelta(seconds=15)
 LAST = DAYS[DAYS.index(DAY) - 1]
@@ -452,10 +453,16 @@ def test_3_the_stop_reads_the_decision(small: Path, tmp_path: Path, doors: Doors
 def build(draw: random.Random, at: datetime) -> dict[str, list]:
     """Each ticker's rows as (minute, landed or None for a gap), of one seeded day.
 
+    Each minute's capture lands once for both legs, as one cycle's rows do, and
+    a leg lands on its own now and then, so a minute holds no capture both share.
     No capture lands after a later minute's, the shape the walk can miss, which
     `test_4_a_late_cycle_worked_by_hand` works by hand instead.
     """
     floor = at.replace(second=0, microsecond=0)
+    # A capture lands up to 59 seconds after its minute, and never after the next.
+    lands = {
+        back: timedelta(microseconds=draw.randrange(500_000, 59_000_000)) for back in range(-12, 31)
+    }
     out: dict[str, list] = {}
     for t in BOTH:
         stop = draw.choice([0, 0, 0, 3, 15]) - draw.choice([0, 0, 12])
@@ -467,10 +474,11 @@ def build(draw: random.Random, at: datetime) -> dict[str, list]:
             minute = floor - back * MINUTE
             if draw.random() < gaps:
                 out[t].append((minute, None))
-            else:
-                # A capture lands up to 59 seconds after its minute, and never after the next.
+                continue
+            within = lands[back]
+            if draw.random() < 0.15:
                 within = timedelta(microseconds=draw.randrange(500_000, 59_000_000))
-                out[t].append((minute, minute + within))
+            out[t].append((minute, minute + within))
     return out
 
 
@@ -518,6 +526,18 @@ def test_4_the_walk_finds_the_brute_forces_cycle(
             assert want is None or at - want > oldest
     if len(found) == 2:
         assert found["sealed"] == found["segments"]
+
+
+def test_4_the_seeded_days_hold_captures_both_legs_share() -> None:
+    """The brute force finds a shared capture on most seeded cases, so the walk is tested."""
+    cases = [
+        truth(
+            build(random.Random(seed * 100 + off), AT + off * SECOND), AT + off * SECOND - CUT_LAG
+        )
+        for seed in range(int(os.environ.get("COLD_SEEDS", "10")))
+        for off in (0, 7, 14, 16, 31)
+    ]
+    assert sum(c is not None for c in cases) >= len(cases) // 2
 
 
 def test_4_a_late_cycle_worked_by_hand(small: Path, live: Path, tmp_path: Path) -> None:
@@ -1178,7 +1198,7 @@ def test_5_no_shape_of_answer_leaves_the_read(
     got = read(shared_day, tmp_path)
     assert len(got.partitions) == 2
     assert got.calls >= 2 + 5
-    assert all(str(tmp_path) not in f for f in got.faults)
+    assert all(str(tmp_path) not in f and str(shared_day) not in f for f in got.faults)
     (good,) = {GLD, USO} - {InstrumentId(bad)}
     if got.faults:
         assert got.quotes == {}
