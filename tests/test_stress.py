@@ -687,27 +687,33 @@ PINNED: list[StressRecord] = [
                 date(2020, 3, 9),
                 "close",
                 _MOVE,
-                "a close a second vendor agrees with: it fell 25.32% from 2020-03-06, and Alpha "
-                "Vantage's daily closes give the same return to six places, read on 2026-11-26. "
-                "Exploratory, and an error both vendors share would pass unseen",
+                "a move a second vendor agrees with: the close fell 25.32% from 2020-03-06, and "
+                "Alpha Vantage's daily closes give the same return to six places, read on "
+                "2026-11-26. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
             ),
             FlaggedBar(
                 USO,
                 date(2020, 4, 21),
                 "close",
                 _MOVE,
-                "a close a second vendor agrees with: it fell 25.07% from 2020-04-20, and Alpha "
-                "Vantage's daily closes give the same return to six places, read on 2026-11-25. "
-                "Exploratory, and an error both vendors share would pass unseen",
+                "a move a second vendor agrees with: the close fell 25.07% from 2020-04-20, and "
+                "Alpha Vantage's daily closes give the same return to six places, read on "
+                "2026-11-25. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
             ),
             FlaggedBar(
                 GLD,
                 date(2026, 1, 30),
                 "close",
                 _MOVE,
-                "a close a second vendor agrees with: it fell 10.27% from 2026-01-29, and "
+                "a move a second vendor agrees with: the close fell 10.27% from 2026-01-29, and "
                 "Massive's daily aggregates give the same return to six places, read on "
-                "2026-11-26. Exploratory, and an error both vendors share would pass unseen",
+                "2026-11-26. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
             ),
         ),
         manifest="d6b1bc2dab67329a4963fab86b4ce94b14c79c4b763a18b37c50b251b4e2d77b",
