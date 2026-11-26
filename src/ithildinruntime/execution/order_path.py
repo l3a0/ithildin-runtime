@@ -961,7 +961,7 @@ class OrderPath:
                 self._appended(row.broker_order_id, made)
             except Outage as outage:
                 # It paged already, and the halt still says why the row was kept.
-                raise Outage(f"{reason}. {outage.reason}") from None
+                raise Outage(f"{'. '.join(said)}. {outage.reason}") from None
             except Halt as halt:
                 said.append(halt.reason)
         return Halt(". ".join(said))

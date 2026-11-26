@@ -905,6 +905,7 @@ def test_2_a_store_that_stops_answering_mid_settle_pages_once_and_names_every_or
     assert sum("could not be read" in a for a in world.alarms.sent) == 1
     (names,) = [a for a in world.alarms.sent if "the journal stopped answering" in a]
     assert ONE in names and TWO in names
+    assert names.endswith("Look each up on the broker's site")
 
 
 def _other_row(world: RecoverWorld):

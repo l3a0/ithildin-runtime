@@ -915,6 +915,8 @@ def test_a_refused_plan_stops_its_writes_at_the_first_outage(monkeypatch, at: st
 
     def hold(self, client_order_ids):
         if at == "hold":
+            # The store has stopped answering, so a read after the hold would page again.
+            made.store.refuse(("*", "journal/"))
             raise outage(self)
         return ()
 
@@ -935,6 +937,32 @@ def test_a_refused_plan_stops_its_writes_at_the_first_outage(monkeypatch, at: st
     # The outage's own page and the one that says nothing is sent.
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2 and sent[1].startswith("account sim-1: nothing is sent: refused")
+    assert sum("could not be read" in a for a in sent) == 2
+
+
+def test_a_refused_plan_whose_journal_cannot_be_read_still_pages_that_nothing_is_sent(
+    monkeypatch,
+) -> None:
+    """A fold that refuses an entry after the hold is named, and no abandon is tried."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    names = [f"ith-{CHAN}-x-{n}" for n in (1, 2)]
+    tried: list[str] = []
+    monkeypatch.setattr(OrderPath, "ask", lambda self, n: (Asked(n[0], None, "refused"),))
+    monkeypatch.setattr(OrderPath, "hold", lambda self, n: ())
+    monkeypatch.setattr(OrderPath, "abandon", lambda self, name, why: tried.append(name))
+    stage = made.sender()
+    path = made.account.path(made.broker(), lambda: None)
+    monkeypatch.setattr(
+        Account, "view", lambda *a: (_ for _ in ()).throw(Halt("entry 9 is refused"))
+    )
+    alarms = len(made.alarms.sent)
+    with pytest.raises(Halt) as halted:
+        stage._asked(path, names, lambda: None)
+    assert tried == []
+    assert "entry 9 is refused" in halted.value.reason
+    (page,) = made.alarms.sent[alarms:]
+    assert page.startswith("account sim-1: nothing is sent: refused") and "entry 9" in page
 
 
 def test_a_journal_whose_fold_refuses_an_entry_names_its_cause_and_every_leg_in_order(
@@ -959,3 +987,5 @@ def test_a_journal_whose_fold_refuses_an_entry_names_its_cause_and_every_leg_in_
     assert "entry 9 is refused" in reason and "did not answer" not in reason
     assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
     assert made.submits() == []
+    # Nothing is abandoned on a journal that cannot be read.
+    assert "abandoned" not in made.kinds(made.before)

@@ -1091,8 +1091,8 @@ unsent. So execution sends an order only when the journal holds no
 `sending` entry for its client order id, and asks the broker about any
 order in doubt, by the broker's order id as `### Orders the platform did not send` says, never by sending again. A request sent just
 before a crash can still reach the broker after the first lookup, so a lookup that finds nothing, or a whole order list that does not show it, leaves the order `InDoubt`, counted by the gate
-at its worst case, until its time in force has run out. Only then is a
-closing-auction order journaled `Lost`, which means the platform stopped waiting and sending is unproved. An order of any other kind stays `InDoubt`, because a broker may hold a day order that came after its close for the next session's open, until a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs, says what it does. The broker client's total request timeout is shorter than the wait before the first read of the order list or lookup. Five more rules keep a
+at its worst case, until its time in force has run out. Only a whole order list read
+after that gives an order up, and only a closing-auction one, which is then journaled `Lost`, which means the platform stopped waiting and sending is unproved. An order of any other kind stays `InDoubt`, because a broker may hold a day order that came after its close for the next session's open, until a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs, says what it does. The broker client's total request timeout is shorter than the wait before the first read of the order list or lookup. Five more rules keep a
 rerun from doubling anything. The first three follow, and the last two each have a section of their own below.
 
 1. Execution journals each fill under the broker's own fill id. A repeat with

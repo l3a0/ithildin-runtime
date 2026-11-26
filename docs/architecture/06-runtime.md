@@ -1284,7 +1284,7 @@ saying no.
 
 The way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. The process that sent the order may also still hold the broker's answer, where the journal did not take it at the time, and journals it when it can. Sending the order again is never a way out.
 
-A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, when a closing-auction order becomes `Lost`. It stays because a request sent just before a crash can still arrive after that read. An order of any other kind stays `InDoubt` until a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs, shows what a late one does.
+A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out. Only a whole order list read after that gives an order up, and only a closing-auction one, which then becomes `Lost`. A lookup that finds nothing keeps it in doubt and halts at any time. It stays because a request sent just before a crash can still arrive after that read. An order of any other kind stays `InDoubt` until a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs, shows what a late one does.
 
 ### What the next decision does with `Abandoned` and `Lost`
 
