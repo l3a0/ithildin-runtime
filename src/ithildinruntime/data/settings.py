@@ -26,7 +26,7 @@ lookback it cuts, as `LakeSource._refuse_late` says.
 `max_age_seconds` is how old a quote may be when
 it is read, and `max_spread_share` how far apart its bid and ask may be, as a
 share of their midpoint. Both hold for every instrument the file lists, and
-#133 holds the owner's values of both.
+the owner ruled the values on #133.
 
 Every key is written, because an absent value never reads as a default (hard
 limit 3). The one table a file may leave out is `[data.quotes]`. A file without

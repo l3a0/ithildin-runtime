@@ -44,7 +44,7 @@ from ithildinruntime.core import (
     quote_faults,
 )
 from ithildinruntime.data import DataStage, LakeSource, Mirror, QuoteLimits, differences, spikes
-from ithildinruntime.data.reference import QUOTE_KINDS, QuoteKinds, load_quote_kinds
+from ithildinruntime.data.reference import UNSTATED, QuoteKind, QuoteKinds, load_quote_kinds
 from ithildinruntime.data.source import _session_read, judge
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
@@ -202,7 +202,7 @@ def test_7_close_minus_20_reads_its_quotes_and_its_snapshot_names_each_segment(
 def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
     lake: Path, live: Path, tmp_path: Path
 ) -> None:
-    """Every live quote halts until a row of `quote_kinds.csv` states what it is."""
+    """A live quote halts on a session no row of the tracked `quote_kinds.csv` covers."""
     text = (
         'instruments = ["GLD", "USO"]\n[data]\nlookback = 40\nstale_lag = 0\nspike_multiple = 100\n'
         "[data.quotes]\nmax_age_seconds = 90\nmax_spread_share = 0.02\n"
@@ -235,7 +235,8 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
     snap = stored(tmp_path)
     assert set(snap.quotes) == {GLD, USO}
     assert snap.quotes_read_at == AT
-    assert load_quote_kinds().rows == ()
+    # The tracked rows start in 2026, and this session is in 2012.
+    assert load_quote_kinds().kind(DAY) == QuoteKind(*[UNSTATED] * 5)
     assert result.halt is not None
     assert (
         result.halt.reason
@@ -247,7 +248,6 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
         + "; data/quote_kinds.csv states no price kind or no normal status of marketlake:quotes "
         f"on {DAY}"
     )
-    assert QUOTE_KINDS.read_text().splitlines()[-1].startswith("added,source,")
 
 
 # 5 to 8. Which decisions read quotes.

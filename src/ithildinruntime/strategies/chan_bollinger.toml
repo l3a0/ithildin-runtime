@@ -14,6 +14,15 @@ spike_multiple = 10
 GLD = 2006-04-26
 USO = 2006-04-26
 
+# The oldest quote a decision or an order may read, in seconds, and the widest
+# spread, as a share of the midpoint. The owner ruled both on #133 at
+# https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7199939899
+# from an exploratory count over 12 sessions. The age is revisited once the
+# order path's send time is measured.
+[data.quotes]
+max_age_seconds = 180
+max_spread_share = 0.001
+
 # The replication charges no transaction cost, so every term is a written
 # zero. `cost/model.py` holds the form.
 [[cost.GLD]]

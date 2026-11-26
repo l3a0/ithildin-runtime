@@ -141,8 +141,27 @@ KIND_ROWS = (
     ]
 )
 
-# #133 adds the first, and until then every live quote halts.
-QUOTE_ROWS: list[str] = []
+_QUOTE_READ_FROM = (
+    "owner's ruling of 2026-11-26 on #133 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7199939899. Schwab's "
+    "Trader API Market Data Production specification at https://developer.schwab.com/products"
+    "/trader-api--individual/details/specifications/Market%20Data%20Production read on "
+    "2026-11-26 behind the owner's developer sign-in. Its QuoteEquity schema calls bidPrice "
+    "and askPrice the current best bid and ask price and totalVolume the shares traded "
+    "through the day including pre-market and post-market hours. It gives lastPrice no "
+    "description. It calls securityStatus the status of the security with Normal as its "
+    "example and lists no other value. All 92 quotes read in an exploratory count on "
+    "2026-11-26 read Normal and so does marketlake's committed test recording of Schwab's "
+    "answer. They are 24 of GLD and USO from 2026-11-02 to 2026-11-25 and 68 of SPY and QQQ "
+    "from 2026-09-15 to 2026-10-30. The page gives each side a MIC code of its venue and each"
+    " answer a quoteType of NBBO or NFL and marketlake records neither so the venues are "
+    "unstated"
+)
+QUOTE_ROWS = [
+    "2026-11-26,marketlake:quotes,2026-09-15,2027-02-25,current best bid and ask,unstated,unstated,"
+    "shares traded through the day including pre-market and post-market hours,Normal,"
+    f"{_QUOTE_READ_FROM}"
+]
 
 
 HEAD = "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
