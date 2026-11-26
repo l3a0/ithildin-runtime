@@ -114,7 +114,8 @@ class ExecutionWorker:
                 "ithildinruntime.runtime.execution_worker.RECOVER_ROW, which captures, reads "
                 f"data, keeps the plan's order and follows {SEND_STAGE}"
             )
-        # A row that reads nothing still builds the stage, which then halts each decision.
+        # A row that reads nothing still builds the stage from a table that declares the
+        # data row, and the stage then halts each decision before it reads data.
         data_stage = (stage.inputs or RECOVER_ROW.inputs)[0]
         self.recover = RecoverStage(
             self.account,
