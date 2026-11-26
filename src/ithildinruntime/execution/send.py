@@ -362,7 +362,7 @@ class SendStage:
                 self._failed(path, orders, place, halt.reason, report)
             except Exception as error:
                 self._failed(
-                    path, orders, place, f"the send of {name} raised {error_name(error)}", report
+                    path, orders, place, f"the call for {name} raised {error_name(error)}", report
                 )
             if state is OrderState.ACKNOWLEDGED:
                 went.setdefault(strategy, []).append(name)

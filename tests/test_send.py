@@ -528,6 +528,33 @@ def test_another_writers_plan_for_this_decision_is_never_sent_as_this_ones() -> 
     assert made.submits() == []
 
 
+def test_an_identical_plan_in_the_journal_is_this_stages_own_and_goes_out_once() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    planned = world()
+    planned.ready(close_of(FULL), PAIR)
+    assert planned.send_attempt().halt is None
+    (same,) = planned.view().decisions.values()
+    done = []
+
+    def before(number: int, op: str, key: str) -> None:
+        # The same plan, with this stage's own read, lands just before the stage records it,
+        # as an append whose answer was lost would leave it.
+        if done or op != "create" or not key.startswith("journal/"):
+            return
+        if made.kinds().count("read") >= 2:
+            done.append(True)
+            view = made.view()
+            read = max(view.reads)
+            made._record(replace(same, read=read, synced=view.through.seq))
+
+    made.store.before = before
+    result = made.send_attempt()
+    assert done and result.halt is None
+    assert made.kinds(made.before).count("decision") == 1
+    assert made.submits() == gates_names(made)
+
+
 def test_a_claim_alarms_on_a_leg_a_kill_left_sending() -> None:
     made = world()
     made.ready(close_of(FULL), PAIR)
