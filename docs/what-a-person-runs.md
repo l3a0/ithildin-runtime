@@ -10,6 +10,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
   - [Measure a stress move](#measure-a-stress-move)
+  - [Measure the capture lag](#measure-the-capture-lag)
   - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
@@ -441,6 +442,42 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 #### Withdraw a record
 
 A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. Where there is no other, a release that carries a new measurement runs first, and the withdrawal comes in a later one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
+
+### Measure the capture lag
+
+Every read of quotes keeps only captures that landed 15 seconds before its
+decision, the constant `CAPTURE_LAG` in `data/cycles.py`. [Why every read cuts 15 seconds before its decision](architecture/03-context-and-scope.md#why-every-read-cuts-15-seconds-before-its-decision)
+says what bounds it. The measure behind it is one day, so measure again after
+anything that could slow an upload, such as more tickers captured.
+
+#### Run the command
+
+It is marketlake's, and runs on marketlake's VM, where the bucket's credential
+is. It sends one listing request a page and writes nothing.
+
+```bash
+python -m lake.live_upload lag --date <YYYY-MM-DD>
+```
+
+1. It prints each segment's time from its cycle's start to the bucket, then a
+   summary line with the count, the largest, and how many are over 90 seconds.
+   That last count is marketlake's own bound, and the steps below read only the
+   largest.
+2. It reads the last seven days only. A day older than that lists no segments,
+   because the bucket expires each segment seven days after upload.
+
+#### Act on the largest
+
+1. **13 seconds or less** needs nothing.
+2. **Above 13 seconds** moves the constant up, in a pull request of its own,
+   which is reviewed as a raised maximum age is. The new value stays above the
+   largest measured with the second S3 rounds away to spare, so a backtest reads
+   no row a live listing could not hold.
+3. **A value that would stop a close−20 decision reading 15:39's quote** goes to
+   the owner, since 15:39's youngest capture is 20.5 seconds old at 15:40.
+
+Nothing runs this on a schedule. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
+is asked for the alarm.
 
 ### Set up the test environment
 

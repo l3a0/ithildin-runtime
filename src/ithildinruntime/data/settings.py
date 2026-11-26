@@ -67,7 +67,7 @@ from typing import NamedTuple
 
 from ithildinruntime.core import Halt, InstrumentId, StrategyConfig, maximum_faults
 
-from .segments import QuoteLimits
+from .cycles import QuoteLimits
 from .source import DataSettings
 
 __all__ = ["SECTION", "data_settings"]

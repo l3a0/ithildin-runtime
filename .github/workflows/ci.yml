@@ -22,8 +22,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # A ceiling far above the real runtime, so it fires on a hang rather than
-    # on a slow day. It replaces GitHub's six-hour default.
-    timeout-minutes: 15
+    # on a slow day. It replaces GitHub's six-hour default. The suite took 13.7
+    # minutes on main on 2026-11-26, so a ceiling of 15 cancelled slow days, and
+    # 30 is about twice that.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 

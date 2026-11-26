@@ -11,14 +11,14 @@ from decimal import Decimal
 from ithildinruntime.core import InstrumentId, Quote
 
 # What a snapshot holds beside its quotes where its decision read none.
-NONE_READ: dict[str, object] = {"rows": {}, "faults": (), "quotes_read_at": None}
+NONE_READ: dict[str, object] = {"partitions": (), "rows": {}, "faults": (), "quotes_read_at": None}
 MAX_AGE = 90
 MAX_SPREAD = Decimal("0.02")
 
 
 def read_at(at: datetime) -> dict[str, object]:
     """What a snapshot holds beside its quotes where its decision read them at `at`."""
-    return {"provisional": True, "rows": {}, "faults": (), "quotes_read_at": at}
+    return {"provisional": True, "partitions": (), "rows": {}, "faults": (), "quotes_read_at": at}
 
 
 def quote(

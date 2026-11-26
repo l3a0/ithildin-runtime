@@ -346,6 +346,7 @@ def _stored(bars, flags=None, status=None):  # type: ignore[no-untyped-def]
         False,
         flags or {},
         (),
+        (),
         {},
         {},
         (),

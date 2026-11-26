@@ -12,6 +12,9 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 ## Prices in Context and scope
 
 - [Why no decision waits for a listing to fill](03-context-and-scope.md#why-no-decision-waits-for-a-listing-to-fill)
+- [Why every read cuts 15 seconds before its decision](03-context-and-scope.md#why-every-read-cuts-15-seconds-before-its-decision), whose figures are exploratory
+- [Which decisions read the sealed day](03-context-and-scope.md#which-decisions-read-the-sealed-day)
+- [What a replay cannot show](03-context-and-scope.md#what-a-replay-cannot-show)
 - [Which stamp dates a quote](03-context-and-scope.md#which-stamp-dates-a-quote)
 - [What measuring the clock costs](03-context-and-scope.md#what-measuring-the-clock-costs)
 
