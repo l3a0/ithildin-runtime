@@ -32,6 +32,7 @@ from ithildinruntime.core import (
     TimeInForce,
     decode_output,
     output_key,
+    quote_faults,
     result_key,
     sha256_of,
 )
@@ -259,6 +260,29 @@ def test_1_a_long_reason_is_cut_to_its_bound() -> None:
     assert said.startswith(f"the quote of {GLD} cannot be read: its status is 'xxx")
 
 
+@pytest.mark.parametrize("over", [0, 1], ids=["at-the-limit", "one-past-it"])
+def test_1_a_reason_is_cut_only_past_its_limit(over: int) -> None:
+    prefix = f"the quote of {GLD} cannot be read: "
+    one = prefix + "; ".join(quote_faults(faulted(status="x"), AT, AT))
+    status = "x" * (1 + REASON_LIMIT - len(one) + over)
+    made = world()
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert past_the_gate(made, intent, quotes={GLD: faulted(status=status)}) is OrderState.REJECTED
+    said = rejected(made)
+    assert len(said) == REASON_LIMIT
+    assert said.endswith(" (cut)") is bool(over)
+
+
+def test_1_a_rejection_names_every_fault_of_the_quote() -> None:
+    made = world()
+    (intent,) = made.decide(AT, (market(1, 4),))
+    two = faulted(D("3.02"), status="Halted")
+    assert past_the_gate(made, intent, quotes={GLD: two}) is OrderState.REJECTED
+    said = rejected(made)
+    assert "its ask of 3.01 is below its bid of 3.02" in said
+    assert "its status is 'Halted'" in said
+
+
 def test_1_a_market_order_after_its_sessions_close_is_rejected() -> None:
     close = close_of(FULL)
     assert refusal(market(1, 4, at=close), close, close) is None
@@ -338,6 +362,20 @@ def test_1_late_fills_as_it_arrives_under_its_own_decisions_prices() -> None:
     assert (fill.price, fill.at, fill.basis) == (ASK, arrived, FillBasis.QUOTE)
     (ended,) = broker.orders(LONG_AGO).orders
     assert (ended.state, ended.submitted_at) == (BrokerState.FILLED, arrived)
+
+
+def test_1_two_late_market_orders_arriving_in_one_call_take_their_own_fill_ids() -> None:
+    made = world(Faults({name(1): Late(3), name(2): Late(2)}))
+    buy, sale = made.decide(AT, (market(1, 4), market(2, -2, USO)))
+    assert [made.send(o) for o in (buy, sale)] == [OrderState.IN_DOUBT] * 2
+    broker = made.broker()
+    counts = [len(broker.fills(LONG_AGO).fills) for _ in range(3)]
+    assert counts in ([0, 2, 2], [2, 2, 2])
+    fills = broker.fills(LONG_AGO).fills
+    assert [(f.fill_id, f.instrument, f.qty) for f in fills] == [
+        ("sim-f-1", GLD, 4),
+        ("sim-f-2", USO, -2),
+    ]
 
 
 def test_1_late_arriving_under_another_decisions_prices_is_missed() -> None:
