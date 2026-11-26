@@ -1403,7 +1403,7 @@ Every call to the broker goes through `OrderPath`.
 - Asking the gate and journaling its answer with nothing sent, which is `hold`.
 - Journaling that an order was never sent, which is `abandon`.
 - Reading the day's loss with no order, which is `loss`.
-- Reading the positions, the open orders, the cash and the fills, and looking one order up.
+- Reading the positions, the open orders, the cash, the broker's own records and the fills, and looking one order up.
 
 Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
 
@@ -1439,14 +1439,14 @@ A fill that carries a correction identifier is refused as a `fill`, and recover 
 
 ##### How a broker's record and what the platform did not send are kept
 
-A broker moves cash on its own, and an order or a fill can reach the account that the platform never sent. Recover sorts each one into an entry with `execution/outside.py`, and the fold reads four kinds for them.
+A broker moves cash on its own, and an order or a fill can reach the account that the platform never sent. Recover and the send stage each sort them into entries with `execution/outside.py`, through `execution/sync.py`'s one read, and the fold reads four kinds for them.
 
 1. `outside_record` holds a fee, debit interest or a dividend inside its range, which moves the book's cash by its amount. `View.records` holds each by the broker's record id, and an identical repeat is skipped.
 2. `unmatched_record`, `unmatched_fill` and `unmatched_order` each hold what no rule lets reach a book, kept as it came, with the platform's own words for why. `View.unmatched` holds each, and the book halts while any stands, naming each one.
 
 A repeat of a held id with other content is kept beside the first as unmatched. The fold refuses a fill or a record kept as unmatched that is later applied, an applied fill later kept as unmatched, an applied record later kept as unmatched with its own content, and an order kept as unmatched that a later `ack` maps, and the reverse.
 
-Like a dispute, an unmatched entry holds up no answer, abandonment or cancel, because every other entry can still be journaled beside it. The kill switch cancels every resting order, an order kept as unmatched included, as design.md's `## Decisions` records for [2026-10-31](../design.md#2026-10-31), and [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds it so that no hold stops a cancel. Recover's `outside.py` is the one place an `outside_record` is built, because the fold reads no range, so an old entry replays the same after a range moves. A test fails any other call to `OutsideRecordEntry` under `src`, by name, through a module or under a renamed import.
+Like a dispute, an unmatched entry holds up no answer, abandonment or cancel, because every other entry can still be journaled beside it. The kill switch cancels every resting order, an order kept as unmatched included, as design.md's `## Decisions` records for [2026-10-31](../design.md#2026-10-31), and [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds it so that no hold stops a cancel. `execution/outside.py` is the one place an `outside_record` is built, because the fold reads no range, so an old entry replays the same after a range moves. A test fails any other call to `OutsideRecordEntry` under `src`, by name, through a module or under a renamed import.
 
 ##### What each call returns, and what is journaled first
 

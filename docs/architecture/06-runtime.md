@@ -1072,7 +1072,7 @@ A mismatch in a position means one of two things: a fill the platform never jour
 | An order the broker holds and the journal marks lost or abandoned | Halts the day it appears | Explains the difference |
 | A broker record of a type on the closed list, with its amount in range | Journals it with no halt | Nothing |
 | A broker record that leaves a difference unexplained | Halts | Explains the difference |
-| By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a record that repeats a record id with different content | Halts | Explains the difference |
+| A record that repeats a record id with different content | Halts | Explains the difference |
 
 The closed list of record types, and the four cases that halt, are in [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions).
 

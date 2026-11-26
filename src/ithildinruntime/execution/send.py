@@ -14,9 +14,10 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
 2. Each input's result in the row's order, each halt passed on, and then the
    snapshot, the constraints, the targets, and recover's book, valuation and
    caps, all read before any file of this stage's is stored.
-3. **The sync**: the four reads of the broker, stored afresh at
-   `broker-read-<n>.json`, a `read` entry, the fills since, and
-   `core.reconcile`. An order in doubt, a difference, and an entry past
+3. **The sync**: the five reads of the broker, stored afresh at
+   `broker-read-<n>.json`, a `read` entry, an entry for each new record, fill
+   and open order as `execution/outside.py` sorts them, a halt on anything kept
+   as unmatched, and `core.reconcile`. An order in doubt, a difference, and an entry past
    recover's book that moved it and that this sync did not write each halt.
 4. Each strategy's off switch and halts. One that is off gets no order. One that
    cannot be read halts.

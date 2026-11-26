@@ -19,6 +19,7 @@ import pytest
 
 from ithildinruntime.core import (
     ACCOUNT_OUTPUT,
+    AccountRead,
     BrokerRecord,
     DecisionResult,
     Fill,
@@ -27,7 +28,9 @@ from ithildinruntime.core import (
     InstrumentId,
     RecordKind,
     RecordsRead,
+    broker_read_key,
     decode,
+    decode_output,
     encode,
 )
 from ithildinruntime.execution.brokers.faults import EditCash, Faults, ForeignOrder
@@ -53,7 +56,7 @@ from tests.support.journals import (
     unmatched_fill,
 )
 from tests.support.recover_world import FILES, RecoverWorld
-from tests.support.sim_world import close_of
+from tests.support.sim_world import DEPLOYMENT, close_of
 from tests.test_recover import (
     CAPTURED,
     DAY,
@@ -515,6 +518,44 @@ def test_a_fee_booked_between_recover_and_send_is_explained_only_by_its_record(
     if listed:
         assert result.halt is None, result.halt.reason
         assert "outside_record" in made.kinds(made.before)
+        # The stored broker read the `read` entry names holds the record, at format 2.
+        key = broker_read_key(DEPLOYMENT, made.run, made.at, 1)
+        stored = decode_output(made.store.blobs[key], AccountRead)
+        assert stored.header.format == 2
+        (read,) = stored.entries
+        assert read.records.records == (fee,)
+        assert result.header.format == 2
     else:
         assert result.halt is not None and "the book and the broker differ" in result.halt.reason
         assert made.submits() == []
+
+
+def test_an_order_the_platform_did_not_send_between_recover_and_send_sends_nothing() -> None:
+    from tests.support.sim_world import FULL
+    from tests.test_send import PAIR, world
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    made.faults = Faults(events={made.log.calls + 1: ForeignOrder(GLD, D(7))})
+    result = made.send_attempt()
+    assert result.halt is not None and f"keeps an unmatched order, {HELD}" in result.halt.reason
+    assert "unmatched_order" in made.kinds(made.before)
+    assert "decision" not in made.kinds(made.before)
+    assert made.submits() == []
+
+
+def test_a_fill_of_no_order_between_recover_and_send_sends_nothing() -> None:
+    from tests.support.sim_world import FULL
+    from tests.test_send import PAIR, world
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    odd = fill("f-foreign-1", "b-foreign-1", at=made.at, received_at=made.at)
+
+    def fills(since: datetime) -> FillsRead:
+        return FillsRead((*made.broker().fills(since).fills, odd), page(), True)
+
+    result = made.send_attempt(made.sender(brokers=doctored(made, fills=fills)))
+    assert result.halt is not None and f"keeps an unmatched fill, {HELD}" in result.halt.reason
+    assert "unmatched_fill" in made.kinds(made.before)
+    assert made.submits() == []
