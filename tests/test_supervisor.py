@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import io
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -897,10 +897,15 @@ def test_the_deadlines_are_the_values_the_issues_wrote() -> None:
 # The walk back and the lost machine, each condition on its own
 
 
+def _opened_on(world: World, at: datetime) -> None:
+    """An account opened at `at`, with no decision journaled."""
+    world.journal.record(world.journal.view(), opening(), at)
+
+
 def test_an_unclean_run_behind_a_clean_one_is_not_reached(world: World) -> None:
-    world.opened()
-    older = date(2026, 9, 30)
-    world.ran(day=older, stopped=False)
+    # Opened well before, so only the clean run, and not the opening, ends the walk.
+    _opened_on(world, datetime(2026, 9, 25, 19, 40, tzinfo=UTC))
+    world.ran(day=date(2026, 9, 29), stopped=False)
     world.ran(day=YESTERDAY)
     world.results()
     world.supervisor().run(TODAY)
@@ -908,8 +913,8 @@ def test_an_unclean_run_behind_a_clean_one_is_not_reached(world: World) -> None:
 
 
 def test_an_unclean_run_behind_one_whose_end_a_pause_covers_is_not_reached(world: World) -> None:
-    world.opened()
-    world.ran(day=date(2026, 9, 30), stopped=False)
+    _opened_on(world, datetime(2026, 9, 25, 19, 40, tzinfo=UTC))
+    world.ran(day=date(2026, 9, 29), stopped=False)
     world.ran(stopped=False)
     end = PauseEntry(DEPLOYMENT, YESTERDAY.isoformat(), AT, (CHAN,), "ended", (), True)
     world.journal.record(world.journal.view(), end, AT)
@@ -919,9 +924,9 @@ def test_an_unclean_run_behind_one_whose_end_a_pause_covers_is_not_reached(world
 
 
 def test_a_run_before_the_accounts_opening_is_not_reached(world: World) -> None:
-    # The account opened at 2026-10-01's decision, and a plan of the session before it ran.
+    # The account opened at 2026-10-01's decision, which ran no plan, and a plan of the
+    # session before it stored no stop.
     world.opened()
-    world.ran(stopped=True)
     world.put(plan_key(DEPLOYMENT, "2026-09-30"), encode(_plan(date(2026, 9, 30))))
     world.results()
     world.supervisor().run(TODAY)
@@ -979,7 +984,7 @@ def test_a_lost_machine_with_no_journaled_decision_holds_from_its_plans_first(
     assert world.blob(strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, first, 1)) is not None
 
 
-@pytest.mark.parametrize("state", ["Acknowledged", "InDoubt"])
+@pytest.mark.parametrize("state", ["Intended", "Acknowledged", "InDoubt"])
 def test_a_working_or_doubtful_order_of_a_strategy_the_table_lacks_is_held(
     world: World, state: str
 ) -> None:
@@ -1066,3 +1071,26 @@ def test_a_runs_halt_that_cannot_be_read_stores_no_stop(world: World) -> None:
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_HALTED and "could not be read" in outcome.line
     assert _stop_of(world) is None
+
+
+def test_an_unclean_run_whose_plan_holds_no_decision_holds_everything(world: World) -> None:
+    world.opened(decided=False)
+    empty = Plan(1, DEPLOYMENT, YESTERDAY.isoformat(), Mode.PAPER, RELEASE, ())
+    world.put(plan_key(DEPLOYMENT, YESTERDAY.isoformat()), encode(empty))
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HELD and "holds no decision" in outcome.line
+    assert world.blob(strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, OPEN, 1)) is not None
+
+
+def test_a_plan_with_no_decision_is_not_stored(world: World) -> None:
+    from datetime import time
+
+    from ithildinruntime.core import ExchangeTime
+
+    # 2026-11-27 closes at 13:00 New York time, so a decision at 15:40 there is dropped.
+    half = date(2026, 11, 27)
+    world.timer.at = SESSIONS.session(half).open
+    late = {CHAN: (ExchangeTime(time(15, 40)),)}
+    outcome = world.supervisor(schedules=late).run(half)
+    assert outcome.code == EXIT_PLAN and "holds no decision" in outcome.line
+    assert world.blob(plan_key(DEPLOYMENT, half.isoformat())) is None

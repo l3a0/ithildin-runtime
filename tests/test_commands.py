@@ -536,3 +536,38 @@ def test_a_plan_the_codec_cannot_read_halts_the_worker(tmp_path: Path) -> None:
     worker.store.create(plan_key("ci", "2026-11-30"), b"{not a plan", sha256_of(b"{not a plan"))
     with pytest.raises(Halt, match="holds no plan the codec reads"):
         entry.wait_for_plan(worker)
+
+
+def test_a_plan_read_the_store_does_not_answer_is_tried_again(tmp_path: Path) -> None:
+    from ithildinruntime.core import StoreUnavailable, plan_key
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    _store_plan(worker, Mode.SHADOW)
+    key = plan_key("ci", "2026-11-30")
+    store, end = worker.store, time.monotonic() + 1.5
+    real = store.get
+
+    def get(asked: str) -> bytes:
+        # Refused past Storage's one-second retries, as S3 that stops answering for a while.
+        if asked == key and time.monotonic() < end:
+            raise StoreUnavailable(asked, "503: no answer")
+        return real(asked)
+
+    store.get = get  # type: ignore[method-assign]
+    plan = entry.wait_for_plan(worker)
+    assert plan is not None and plan.run == "2026-11-30"
+
+
+def test_a_worker_started_after_its_runs_stop_ends_at_once(tmp_path: Path) -> None:
+    import threading
+
+    from ithildinruntime.core import run_stop_key, sha256_of
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    _store_plan(worker, Mode.SHADOW)
+    worker.store.create(run_stop_key("ci", "2026-11-30"), b"{}", sha256_of(b"{}"))
+    ended: list[int] = []
+    thread = threading.Thread(target=lambda: ended.append(entry.run_alpha(worker)), daemon=True)
+    thread.start()
+    thread.join(15)
+    assert not thread.is_alive() and ended == [0]

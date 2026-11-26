@@ -205,7 +205,7 @@ def _hold(
     book = view.book
     held = set(strategies)
     held |= {s for s, positions in book.positions_by_strategy.items() if any(positions.values())}
-    held |= {s for s, orders in book.open_orders_by_strategy.items() if orders}
+    # Every order that has not ended, an open one or one in doubt among them.
     held |= {o.intent.strategy for o in view.live.values()}
     names = sorted(held)
     for unclean in found:
