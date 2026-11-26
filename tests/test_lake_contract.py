@@ -26,7 +26,10 @@ beyond these cases.
    `QUOTES_SURFACE` and the two row kinds, and `lake.gap.SEGMENT_STAMP_FORMAT`,
    in tests only, which build a segment. `lake.schema_versions` and
    `lake.battery.build_entry`, in tests only, build the two ledgers the reader reads.
-9. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
+9. `lake.loader.load_quotes`, `SnapAbsent` with its `unreadable`, `NoSpotClose`,
+   `PartitionQuarantined` and `LakePaths.quotes_partition_path`, which the
+   read of a sealed day relies on by their docstrings, beside `captured_by`.
+10. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
    compares it with the one marketlake's `uv.lock` holds at the pinned commit.
 """
 
@@ -580,3 +583,112 @@ def test_unsealed_the_pinned_reader_reads_up_to_version_2() -> None:
 def test_unsealed_the_installed_pyarrow_is_the_pinned_one() -> None:
     """marketlake's uv.lock holds it at 2d41793, the pinned commit, and the two move together."""
     assert pa.__version__ == "25.0.1"
+
+
+# The sealed day, which #132's read relies on through `load_quotes`, `SnapAbsent`
+# and `LakePaths.quotes_partition_path`, by their docstrings at the pinned commit.
+
+
+def _sealed(lake: Path, *rows: dict[str, object]) -> str:
+    """GLD's quotes partition for the support's session, listed in the manifest."""
+    from tests.support.sealed import partition
+
+    return partition(lake, "GLD", *rows)
+
+
+def test_sealed_the_manifest_lists_a_quotes_partition_under_the_paths_key(lake: Path) -> None:
+    from tests.support.segments import AT, MINUTE
+    from tests.support.segments import DAY as SESSION_DAY
+
+    key = _sealed(lake, lakes.quote_row("GLD", AT - MINUTE))
+    root = Path("/lake")
+    path = LakePaths(root).quotes_partition_path("GLD", SESSION_DAY)
+    assert (
+        key == path.relative_to(root).as_posix() == f"quotes/ticker=GLD/date={SESSION_DAY}.parquet"
+    )
+    assert key in latest_entries(lake)
+    assert not is_reader_file(key)
+
+
+def test_sealed_load_quotes_answers_a_minute_and_the_equity_close(lake: Path) -> None:
+    from lake.loader import load_quotes
+
+    from tests.support.sealed import close_row
+    from tests.support.segments import AT, MINUTE, SESSION
+    from tests.support.segments import DAY as SESSION_DAY
+
+    _sealed(
+        lake,
+        lakes.quote_row("GLD", AT - 2 * MINUTE, bid=60.0),
+        lakes.quote_row("GLD", AT - MINUTE, bid=61.0),
+        close_row("GLD", SESSION.close),
+    )
+    minute = load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake)
+    assert minute.column("bid").to_pylist() == [61.0]
+    close = load_quotes("GLD", SESSION_DAY, lake_root=lake)
+    assert close.column("close_tag").to_pylist() == ["spot_close"]
+    for name, kind in PUBLISHED.items():
+        assert minute.schema.field(name).type == kind, name
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+def test_sealed_a_minute_with_no_row_is_snap_absent(lake: Path, unreadable: bool) -> None:
+    from lake.loader import SnapAbsent, load_quotes
+
+    from tests.support.sealed import close_row
+    from tests.support.segments import AT, MINUTE, SESSION
+    from tests.support.segments import DAY as SESSION_DAY
+
+    rows = [lakes.quote_row("GLD", AT - 2 * MINUTE), close_row("GLD", SESSION.close)]
+    if unreadable:
+        rows.append(lakes.quote_row("GLD", AT - 3 * MINUTE, snap_ts="never"))
+    _sealed(lake, *rows)
+    with pytest.raises(SnapAbsent) as raised:
+        load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake)
+    assert bool(raised.value.unreadable) is unreadable
+
+
+def test_sealed_a_partition_with_no_equity_close_raises_no_spot_close(lake: Path) -> None:
+    from lake.loader import NoSpotClose, load_quotes
+
+    from tests.support.segments import AT, MINUTE
+    from tests.support.segments import DAY as SESSION_DAY
+
+    _sealed(lake, lakes.quote_row("GLD", AT - MINUTE))
+    with pytest.raises(NoSpotClose):
+        load_quotes("GLD", SESSION_DAY, lake_root=lake)
+
+
+def test_sealed_a_quarantined_partition_is_refused_unless_asked_for(lake: Path) -> None:
+    from lake.loader import PartitionQuarantined, load_quotes
+
+    from tests.support.segments import AT, MINUTE
+    from tests.support.segments import DAY as SESSION_DAY
+
+    key = _sealed(lake, lakes.quote_row("GLD", AT - MINUTE))
+    entry = build_entry(partition=key, verdict="quarantined", check="planted", observed_at=AT)
+    append_quarantine(lake, entry)
+    with pytest.raises(PartitionQuarantined):
+        load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake)
+    assert load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake, include_quarantined=True)
+
+
+@pytest.mark.parametrize("step", [-1, 0, 1])
+def test_sealed_captured_by_on_its_answer_is_the_doors_cut(
+    lake: Path, tmp_path: Path, step: int
+) -> None:
+    """One minute's row, read from its segment and from the sealed partition, cut alike."""
+    from lake.loader import load_quotes
+
+    from tests.support.segments import AT, MINUTE
+    from tests.support.segments import DAY as SESSION_DAY
+
+    minute, landed = AT - MINUTE, AT - MINUTE + 20 * SECOND
+    made = lakes.quote_row("GLD", minute, bid=61.0, fetch_end_ts=landed.isoformat())
+    key, sha = lakes.quotes_segment(tmp_path, "GLD", minute, made)
+    _sealed(lake, made)
+    cut = landed + step * timedelta(microseconds=1)
+    door = load_unsealed_quotes("GLD", SESSION_DAY, cut, segments={key: sha}, lake_root=tmp_path)
+    sealed = captured_by(load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake), cut)
+    assert sealed.column("bid").to_pylist() == door.column("bid").to_pylist()
+    assert door.num_rows == (step >= 0)

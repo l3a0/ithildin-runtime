@@ -62,7 +62,7 @@ from lake.paths import is_reader_file
 
 from ithildinruntime.core import BlobMissing, Bucket, BucketObject, Halt, StoreError
 
-__all__ = ["LEDGERS", "MANIFEST", "Checked", "LakeRoot", "Mirror"]
+__all__ = ["LEDGERS", "MANIFEST", "Checked", "LakeRoot", "Mirror", "vintage_id"]
 
 MANIFEST = "manifest.jsonl"
 QUARANTINE = "quarantine.jsonl"
@@ -85,6 +85,11 @@ class Checked:
     key: str
     sha256: str
     version: str
+
+
+def vintage_id(checked: Checked) -> str:
+    """What names one partition's bytes, on a bar and on a snapshot."""
+    return f"{checked.key}#sha256={checked.sha256}#version={checked.version}"
 
 
 @dataclass
@@ -223,7 +228,7 @@ def _manifest_sha(entry: Mapping[str, object], key: str) -> str:
 def _check(got: BucketObject, want: str | None) -> str:
     key = got.key
     if got.version is None:
-        raise Halt(f"{key} has no version in the bucket, so no bar read from it can name one")
+        raise Halt(f"{key} has no version in the bucket, so nothing read from it can name one")
     if got.sha256 is None:
         raise Halt(f"{key} has no SHA-256 stored in the bucket, so its download cannot be checked")
     actual = hashlib.sha256(got.data).hexdigest()

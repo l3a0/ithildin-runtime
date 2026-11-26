@@ -86,7 +86,7 @@ __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 STAGE = DATA_STAGE
 SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
-_FORMAT = 2
+_FORMAT = 3
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 
 
@@ -247,6 +247,7 @@ def differences(first: bytes, later: bytes) -> str:
         "ledgers",
         "quotes",
         "segments",
+        "partitions",
         "rows",
         "faults",
         "provisional",

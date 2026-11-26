@@ -519,12 +519,11 @@ def test_17_a_snapshot_of_two_captures_is_refused() -> None:
         quoted({GLD: GOOD, USO: other})
 
 
-@pytest.mark.parametrize(("provisional", "at"), [(True, None), (False, DECISION)])
-def test_16_a_snapshot_says_when_its_quotes_were_read_exactly_where_it_read_them(
-    provisional: bool, at: datetime | None
-) -> None:
-    with pytest.raises(ValueError, match="has quotes_read_at"):
-        replace(quoted(BOTH), provisional=provisional, quotes_read_at=at)
+def test_16_a_provisional_snapshot_says_when_its_quotes_were_read() -> None:
+    with pytest.raises(ValueError, match="has quotes_read_at None"):
+        replace(quoted(BOTH), quotes_read_at=None)
+    # One that is not provisional may hold a time, as a sealed read's does.
+    assert replace(quoted(BOTH), provisional=False).quotes_read_at == DECISION
 
 
 def test_16_a_provisional_snapshot_reads_back_with_every_field() -> None:

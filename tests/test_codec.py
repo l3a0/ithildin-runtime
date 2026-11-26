@@ -287,6 +287,7 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
             )
         },
         segments=(core.Segment("journal/x.arrows", "v1", "0" * 64),),
+        partitions=(),
         ledgers={"a": "b"},
         rows={InstrumentId("USO"): ({"bid": "60.5", "ask": None},)},
         faults=("a reason",),

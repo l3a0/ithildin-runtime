@@ -551,6 +551,7 @@ def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
         ("rows",),
         ("faults",),
         ("bars", "ledgers"),
+        ("partitions",),
         ("segments", "faults"),
         ("status", "ledgers"),
         ("flags", "segments"),
@@ -569,7 +570,7 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
 
     hashes = {"chan_bollinger": "c" * 64}
     header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None)
     gld = InstrumentId("GLD")
     flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
     two = close(LAST) + timedelta(minutes=1)
@@ -580,11 +581,14 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
         "provisional": True,
         "ledgers": {"manifest.jsonl": "e" * 64},
         "segments": (Segment("journal/a.arrows", "v1", "e" * 64),),
+        "partitions": ("quotes/a#sha256=x#version=v",),
         "rows": {gld: ({"bid": "1.0", "ask": None},)},
         "faults": ("a reason",),
         "bars": {gld: {"1d": (bar(0, "100"),)}},
     }
-    read = {"quotes_read_at": two} if "provisional" in names else {}
+    read = {} if set(names) <= {"bars", "status", "flags", "ledgers"} else {"quotes_read_at": two}
+    if "segments" in names:
+        base = dataclasses.replace(base, provisional=True, quotes_read_at=two)
     changed = dataclasses.replace(base, **{name: values[name] for name in names}, **read)
 
     def encoded(snap: Snapshot) -> bytes:
@@ -609,7 +613,7 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
 
     hashes = {"chan": "c" * 64}
     first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None)
     later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
@@ -640,7 +644,7 @@ def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None)
 
     def holding(n: int) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,) * n, False))

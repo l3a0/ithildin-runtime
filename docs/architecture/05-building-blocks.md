@@ -395,6 +395,7 @@ classDiagram
         +bool provisional
         +dict flags
         +list segments
+        +list partitions
         +dict ledgers
         +dict rows
         +list faults
@@ -1300,15 +1301,18 @@ A `Quote` is one row of one capture, with what it was read under. `core.quote_fa
 | `received` | Every column of the row by name, as text, a float as its shortest form and a null as `None` |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 
-A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built with two. Five more of its fields say what its decision read of an unsealed day.
+A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built with two. Six more of its fields say what its decision read of its quotes, from segments or from the sealed day.
 
-1. `provisional` is true exactly when the decision read segments.
+1. `provisional` is true exactly when the decision read segments. A read of the sealed day is not provisional.
 2. `segments` names each segment opened, by key, the bucket's version and the SHA-256 the bucket stored with it.
-3. `rows` holds every other row marketlake's reader returned, as text, whether or not the decision halts, because the gate can refuse a quote after the snapshot is stored.
-4. `faults` holds each reason the read of the quotes failed, in order.
-5. `quotes_read_at` is the data worker's clock after the bucket's last answer, and `None` exactly when `provisional` is false.
+3. `partitions` names each sealed quotes partition linked, sorted, by the vintage id a bar's `vintage_id` uses.
+4. `rows` holds every other row the cut 15 seconds before the decision kept, as text, whether or not the decision halts, because the gate can refuse a quote after the snapshot is stored. A row after the cut is stored nowhere.
+5. `faults` holds each reason the read of the quotes failed, in order.
+6. `quotes_read_at` is the data worker's clock after the last answer of either read, and `None` exactly when the decision read no quote.
 
-The data module's file format is 2. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
+`Snapshot` refuses a provisional one that names a partition, one that names a segment and is not provisional, and one with no `quotes_read_at` that is provisional or names a partition.
+
+The data module's file format is 3. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
 
 A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A bar's flag from the contradiction rule halts the decision once its snapshot is stored, a quote's adds no halt to the judge's, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
 
