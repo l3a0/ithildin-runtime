@@ -129,6 +129,7 @@ __all__ = [
     "data_main",
     "execution_main",
     "measures",
+    "one_storage",
     "parts_for",
     "portfolio_main",
     "risk_main",
@@ -377,9 +378,25 @@ def run_execution(worker: Worker, *, clock: Clock, servers: TimeServers | None) 
         )
         return made[0].handlers
 
-    return _with_servers(
-        servers, lambda: _serve(worker, "execution", handlers, lambda loop: made[0].run(loop))
-    )
+    def run(loop: ReceiveLoop) -> None:
+        one_storage(made[0], loop)
+        made[0].run(loop)
+
+    return _with_servers(servers, lambda: _serve(worker, "execution", handlers, run))
+
+
+def one_storage(execution: ExecutionWorker, loop: ReceiveLoop) -> None:
+    """Refuse an execution worker whose account and loop hold blobs through two `Storage`s.
+
+    A fired loss stop's blob S3 has not stored is held by the account's
+    `Storage`, and the loop keeps the process alive only while its own holds
+    something, so over two a clean end in an S3 outage would drop the blob.
+    """
+    if execution.storage is not loop.storage:
+        raise RuntimeError(
+            "execution's account and its loop are built over two Storages, so a blob held "
+            "unstored by one could be dropped when the other ends"
+        )
 
 
 def _common(worker: Worker, plan: Plan) -> dict[str, object]:

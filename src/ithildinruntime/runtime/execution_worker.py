@@ -108,6 +108,7 @@ class ExecutionWorker:
         stress_moves: Path,
     ) -> None:
         self._owner_step = storage.owner_step
+        self.storage = storage
         writer = secrets.token_hex(16)
         self.account = Account(
             store=store,

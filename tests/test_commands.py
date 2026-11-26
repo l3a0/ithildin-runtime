@@ -767,3 +767,23 @@ def test_execution_that_cannot_run_its_plan_says_no_cancel_is_served(tmp_path: P
     assert "Execution serves no cancel and no kill switch on this machine" in alarm
     assert entry.OWNER_STEP in alarm
     assert dataclasses.is_dataclass(worker)
+
+
+def test_execution_built_over_two_storages_is_refused_before_its_loop_runs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    same = SimpleNamespace(storage=worker.storage)
+    entry.one_storage(same, SimpleNamespace(storage=worker.storage))  # type: ignore[arg-type]
+    other = SimpleNamespace(storage=object())
+    with pytest.raises(RuntimeError, match="two Storages"):
+        entry.one_storage(other, SimpleNamespace(storage=worker.storage))  # type: ignore[arg-type]
+    # The entry point checks it before the loop runs.
+    ran: list[str] = []
+    monkeypatch.setattr(entry, "one_storage", lambda execution, loop: ran.append("checked"))
+    monkeypatch.setattr(entry.ExecutionWorker, "run", lambda self, loop: ran.append("ran") or None)
+    _store_plan(worker, Mode.SHADOW)
+    entry.run_execution(worker, clock=object(), servers=None)  # type: ignore[arg-type]
+    assert ran == ["checked", "ran"]
