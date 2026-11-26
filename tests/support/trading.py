@@ -59,6 +59,7 @@ from ithildinruntime.core import (
     to_utc,
 )
 from ithildinruntime.execution.brokers.faults import Faults
+from ithildinruntime.portfolio import gross
 from ithildinruntime.runtime.alpha_worker import alpha_handlers, alpha_rows
 from ithildinruntime.runtime.cost_worker import cost_handlers, cost_rows
 from ithildinruntime.runtime.data_worker import DATA_ROW
@@ -80,7 +81,6 @@ from tests.test_storage_contract import Alarms
 ACCOUNT, DEPLOYMENT, RELEASE = "bt-chan", "ci", "sha256:release"
 RUN = "2006-06-21_2012-04-09"
 CASH = Decimal(1_000_000)
-G = 10_000
 STEP = Decimal("0.000000001")
 SESSIONS = load_sessions()
 LOOSE = gates.LOOSE
@@ -90,28 +90,9 @@ MOVE = gates.d("0.347")
 AFTER = date(2012, 4, 10)
 NAME = "chan_bollinger"
 
-# The tracked strategy file, with the two sections a deployment needs that the
-# replication leaves to it: a G, and limits no decision reaches.
-_SECTIONS = f"""
-[portfolio]
-gross = {G}
-
-[risk]
-max_gross = {LOOSE}
-max_net = {LOOSE}
-max_open_orders = 100
-loss_stop = {LOOSE}
-moc_cutoff = 0
-
-[risk.max_order_qty]
-GLD = {LOOSE}
-USO = {LOOSE}
-
-[risk.max_position]
-GLD = {LOOSE}
-USO = {LOOSE}
-"""
-STRATEGY = parse_strategy(NAME, (STRATEGIES / f"{NAME}.toml").read_bytes() + _SECTIONS.encode())
+# The tracked strategy file as every environment reads it, with its G and its limits.
+STRATEGY = parse_strategy(NAME, (STRATEGIES / f"{NAME}.toml").read_bytes())
+G = gross(STRATEGY)
 
 # One made-up stress record each half year from 2006-06-20, since a record serves a decision at
 # most 365 days after it. The owner rewrites the caps to the newest, and

@@ -618,8 +618,8 @@ class TargetPortfolio(_Record):
 class Sizing(_Record):
     """How one strategy's target was sized.
 
-    - `wanted` is each leg's shares before any limit, toward zero at the
-      places a quantity declares.
+    - `wanted` is each leg's shares before any limit, to the nearest at the
+      places a quantity declares, with half a place going toward zero.
     - `cut` names each limit that alone would make the target smaller before
       its rounding, in the order the gate reads them.
     """

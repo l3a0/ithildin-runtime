@@ -15,7 +15,7 @@ and pins every decision's orders and the state each ended in.
    stage that died runs again, and day 3's recover settles what was left.
 
 Every figure is exploratory, as test 1's are. The orders move with any change to
-G or to the rounding, so #129 re-pins them.
+G, to the strategy's limits or to the rounding, which re-pins them.
 """
 
 from __future__ import annotations
@@ -197,26 +197,26 @@ def test_2_a_fill_made_while_execution_was_down_applies_once_and_a_redelivery_dr
     nothing_twice(replay)
 
 
-# The pins of the code that added them, at the head of PR #214 that answers round 2 of its
-# review, under chan_bollinger's G of 10,000 and orders of fractional shares. Both data days
-# halt every stage and send nothing, so they pin alike, and so do the three kills of recover.
+# The pins of the code that added them, at the merge of main's PR #212 into PR #214, under
+# chan_bollinger.toml's own G and limits and test 1's share step. Both data days halt every
+# stage and send nothing, so they pin alike, and so do the three kills of recover.
 PINS = {
-    "USO": "1723deb7fe2fc9d8985b15a29d1e0d7f6b6d9e1c0bd68e37cf8007054af9efc1",
-    "stale:GLD": "1723deb7fe2fc9d8985b15a29d1e0d7f6b6d9e1c0bd68e37cf8007054af9efc1",
-    "withheld": "adb2fd12f7cdb7733eeded79c8bbc3ef367e2ba279f00872b1c3c714e0f3fa95",
+    "USO": "9076ad8122f98c9106ba45e7efe7863a89660cec68ffb08c23e5886b55df1364",
+    "stale:GLD": "9076ad8122f98c9106ba45e7efe7863a89660cec68ffb08c23e5886b55df1364",
+    "withheld": "93dc97216c16ad8e2024b642a4ab20222be2df90910aa405f11e30fc9f9b8c69",
 }
 RESTARTS = {
-    1: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
-    2: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
-    3: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
-    4: "4ffddb16110bf8aee2f1395f82774ea3d44797b211ecb2c4cf03bd1500b28689",
-    5: "c87c833716c45fd938a237aac5e0c4dac6cb33a5ae96f2c043abc92a417a6ce1",
-    6: "29ebdfab9ad56d7798d2bea665f7e719096878a640159676ebc29c9a9a4245e9",
-    7: "4262c02818241fee9e19eaf613684aed88f191779850292732e02524a5e3852e",
-    8: "b93045d34d4e2a063be78199c2a652edbbb02c62ff02fe296ae4e3217af8b9b5",
-    9: "9d6631c771fdc5d49e3ad7424f9beb6f0a8ef28ca37c6736fb467118e7f68b50",
-    10: "b31e7053cde63c567ffa8d2859e47233bcfedec4d4bb62e63ff408dcfabd9916",
-    11: "9d1aeed3ee76e6ccf513469a946eb0f0696d8d2ec21789a8153a74ff74b690bd",
-    12: "62caa9c422a5516725268236a1ce8b9f9bd68115de5295213aa531d021933bfa",
-    13: "27e054b836bb043518e821b057564da0fee53812db2aa9cce075d02d2f8ecee6",
+    1: "4a9ff71e05115c50c553dfb61a7106335708070d491a85176d61e1cf327cb6f6",
+    2: "4a9ff71e05115c50c553dfb61a7106335708070d491a85176d61e1cf327cb6f6",
+    3: "4a9ff71e05115c50c553dfb61a7106335708070d491a85176d61e1cf327cb6f6",
+    4: "b621c62a3b70c0117f66834a4c974d7d5bc7ed8496fd0416dacd4278d82a34cb",
+    5: "430cc53bcfaf8e8e54b11830e1ad4435bb2487430c7f709b21620e7f44503133",
+    6: "9d44bd32483982721c31c172b211c7e58f59d645582dbfc3533f189a736a66ec",
+    7: "65b0f2b7ef18f152b5f6e66d24ddec203fd4efb67ac554e9a4e260a5e2bfb441",
+    8: "4866491038d18bb18e025b0b6f904c723aa44d3b4bc45d26d2dcf1177fa5d8ac",
+    9: "b37eae1ba0a179dc2f49451a606e45665b11daf71ae43abb824d3dc138c1524d",
+    10: "d6c4ff740bdeb0fb7f8047d033596483ab7f87876bfe20c612de9dd88bcfa081",
+    11: "bef13b7faa5e0d0776acc87a5064d36b1909cde9fc00d7599a1ff5d61515c15a",
+    12: "cc23b82384cea115c3292069e18ac2b0c709ee1991973da8d5c7087155e34e8d",
+    13: "bb48331863bb6874334eeabdbccb0081ea308f7eca409b8984e71d3c2f3cde51",
 }

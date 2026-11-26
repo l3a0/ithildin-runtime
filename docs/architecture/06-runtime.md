@@ -667,7 +667,7 @@ The steps run in this order.
      5. The instance running the send stage.
      6. Each strategy that is off.
      7. Each strategy whose late forecast reads as no change.
-   - **What the target must name.** A target portfolio names every leg of its strategy's forecast, with a flat leg as an explicit zero. By this doc's proposal for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), portfolio construction halts on an instrument the strategy holds that the forecast does not name, so a target names everything its strategy's book holds. Execution halts on one that leaves an instrument out, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds.
+   - **What the target must name.** A target portfolio names every leg of its strategy's forecast, with a flat leg as an explicit zero. Portfolio construction halts on an instrument the strategy holds that the forecast does not name, so a target names everything its strategy's book holds, and execution halts on one that leaves an instrument out.
    - **What a strategy that is off gets.** A strategy that is off when this step reads it gets no planned orders, cancels or replacements. So its resting orders are left to the sort, and the entry names it as off. A strategy is off when either of two things holds, the same two things the check before each send reads.
      1. Its off switch is set.
      2. By this doc's proposal in [How a sort runs](../halts-and-drills.md#how-a-sort-runs), a strategy halt of its is unreleased.
