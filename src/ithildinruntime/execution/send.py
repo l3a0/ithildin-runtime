@@ -336,17 +336,24 @@ class SendStage:
         working. So a leg checked after its partner went reads every one of
         these, and each quote the snapshot holds of them is judged at the
         margin past `now`. An instrument with no quote is marked at its close,
-        which does not age.
+        which does not age. A quote that fails at `now` itself is left to the
+        gate, whose halt on it is the quote's own fault rather than the plan's
+        time.
         """
         now = self._clock.now()
         margin = MARGIN * len(orders)
+        later = now + margin
         marked: set[InstrumentId] = {*held(view.book), *(order.instrument for order in orders)}
         faults = []
         for instrument in sorted(marked):
             if instrument not in snapshot.quotes:
                 continue
             try:
-                require_quote(snapshot, instrument, now + margin)
+                require_quote(snapshot, instrument, now)
+            except Halt:
+                continue
+            try:
+                require_quote(snapshot, instrument, later)
             except Halt as halt:
                 faults.append(halt.reason)
         if not faults:
@@ -354,9 +361,10 @@ class SendStage:
         seconds = margin // timedelta(seconds=1)
         count = f"{len(orders)} order{'' if len(orders) == 1 else 's'}"
         reason = (
-            f"{'; '.join(faults)}, judged at {(now + margin).isoformat()}, the margin of "
-            f"{seconds} seconds for the plan's {count} past {now.isoformat()}, so a leg could "
-            "go out before its partner's quote ran out"
+            f"each quote passes now, at {now.isoformat()}, and at {later.isoformat()}, the margin "
+            f"of {seconds} seconds for the plan's {count}, {'; '.join(faults)}. So an order's "
+            "gate check could meet a quote past its maximum. On shadow and paper this halts the "
+            "decision alone, and the next decision trades on its own quotes"
         )
         why = f"a quote would not last its plan: {reason}"
         self._none_sent(path, [order.client_order_id for order in orders], why, [why], report)

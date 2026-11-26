@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ithildinruntime.core import Snapshot, readable_until
+from ithildinruntime.core import Snapshot, StoreUnavailable, readable_until
+from ithildinruntime.execution import order_path
 from ithildinruntime.execution.send import MARGIN
 from tests.support.send_world import CHAN, SendWorld
 from tests.support.sim_world import FULL, GLD, USO, after, close_of
@@ -73,7 +74,8 @@ def test_the_quotes_last_thirty_seconds_past_the_decision() -> None:
         GLD: at + timedelta(seconds=30),
         USO: at + timedelta(seconds=30),
     }
-    assert MARGIN == timedelta(seconds=5)
+    # The margin is the order path's own bound on one pass of a submit's checks.
+    assert MARGIN == timedelta(seconds=5) == timedelta(seconds=order_path._PASS)
 
 
 @pytest.mark.parametrize(
@@ -128,10 +130,10 @@ def test_a_held_leg_the_plan_does_not_order_halts_it_too() -> None:
     assert result.halt is not None
     reason = result.halt.reason
     assert "USO's quote cannot be read" in reason and "GLD's quote" not in reason
-    assert "the margin of 5 seconds for the plan's 1 order past" in reason
+    assert "the margin of 5 seconds for the plan's 1 order, USO's quote" in reason
     assert [made.states()[name] for name in planned] == ["Abandoned"]
     assert not set(planned) & set(made.keeper.asked)
-    assert made.submits()[-1] != planned[0]
+    assert planned[0] not in made.submits()
 
 
 @pytest.mark.parametrize(
@@ -153,9 +155,83 @@ def test_the_margin_is_five_seconds_for_each_order(wanted, orders: int) -> None:
         assert states == ["Acknowledged"]
 
 
-def test_a_plan_with_no_order_checks_nothing() -> None:
+def test_a_plan_with_no_order_sends_and_alarms_nothing() -> None:
     made = world(PAIR)
     result = decide(made, early(DAYS[1]), PAIR, timedelta(seconds=29))
     assert result.halt is None, result.halt.reason
     assert made.outcome(result).orders == ()
     assert not [a for a in made.alarms.sent if "would not last" in a]
+
+
+def changed(made: SendWorld, instrument: str, **fields: object) -> None:
+    """Every later snapshot's quote of `instrument` with `fields` changed."""
+    snapshot = made.snapshot
+
+    def with_fields(at: datetime, **changes: object) -> Snapshot:
+        found = snapshot(at, **changes)
+        if instrument not in found.quotes:
+            return found
+        quote = replace(found.quotes[instrument], **fields)
+        return replace(found, quotes={**found.quotes, instrument: quote})
+
+    made.snapshot = with_fields  # type: ignore[method-assign]
+
+
+def test_a_quote_already_past_its_age_at_now_is_left_to_the_gate() -> None:
+    """At 31 seconds both quotes fail at `now`, which is the gate's fault and not this check's."""
+    made = world()
+    result = decide(made, early(DAYS[1]), PAIR, timedelta(seconds=31))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert "would not last" not in reason
+    assert reason.startswith("nothing is sent: GLD's quote cannot be read")
+    assert made.submits() == []
+    assert not [a for a in made.alarms.sent if "would not last" in a]
+
+
+def test_a_held_quote_of_another_status_is_left_to_the_gate() -> None:
+    """A status fault fails at `now` too, so the gate's own reason halts the decision."""
+    made = world(PAIR)
+    changed(made, USO, status="Halted")
+    result = decide(made, early(DAYS[1]), {CHAN: {GLD: 5, USO: -5}}, timedelta(0))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert "its status is 'Halted'" in reason and "would not last" not in reason
+    assert len(made.submits()) == 2
+
+
+def test_an_instrument_neither_held_nor_ordered_is_not_checked() -> None:
+    """USO's quote has run out, and the plan neither holds nor orders USO, so GLD's order goes."""
+    made = world({CHAN: {GLD: 3, USO: 0}})
+    older(made, USO, timedelta(seconds=31))
+    at = early(DAYS[1])
+    result = decide(made, at, {CHAN: {GLD: 5, USO: 0}}, timedelta(0))
+    assert readable_until(made.snapshot(at).quotes[USO]) < at
+    assert result.halt is None, result.halt.reason
+    planned = made.view().decisions[made.view().decided[at]].orders
+    assert [(o.instrument, made.states()[o.client_order_id]) for o in planned] == [
+        (GLD, "Acknowledged")
+    ]
+
+
+def test_an_abandon_the_store_refuses_is_named_in_the_halt_and_the_alarm() -> None:
+    made = world()
+    at = early(DAYS[1])
+    made.ready(at, PAIR)
+    made.clock.at = at + timedelta(seconds=20) + TICK
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/") and made.kinds()[-1:] == ["abandoned"]:
+            raise StoreUnavailable(key, "the store's own text")
+
+    made.store.before = before
+    result = made.send_attempt()
+    first, second = [
+        o.client_order_id for o in made.view().decisions[made.view().decided[at]].orders
+    ]
+    assert made.states().get(first) == "Abandoned" and second not in made.states()
+    assert result.halt is not None
+    assert f"the abandoned of {second} was not stored" in result.halt.reason
+    (alarm,) = [a for a in made.alarms.sent if a.startswith("account") and "would not last" in a]
+    assert f"the abandoned of {second} was not stored" in alarm
+    assert made.submits() == []

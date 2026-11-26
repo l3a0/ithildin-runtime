@@ -489,13 +489,25 @@ at a margin past its clock's `now`. Those are the snapshot's quotes of each
 instrument the account holds or has a working order in, and of each the plan
 orders, because an order approved before counts as working for the next. The margin
 is `execution.send.MARGIN`, 5 seconds, for each order of the plan, the order path's
-own bound on one pass of a submit's checks. A quote that would not last it halts the
-decision, every order of the plan is journaled `Abandoned`, and nothing is asked or
-sent. It holds no account, and neither does a quote that reaches its maximum after the
-gate and before the broker call, because each quote was a price when the gate judged
-it. The next decision trades on its own quotes. At a maximum of 180 seconds a plan of more than about nine orders halts this
-way every time at close−20, since its sends would outlast its quotes. Nothing has
-measured a send yet, so the margin is revisited once one is.
+own bound on one pass of a submit's checks. A quote that already fails at `now` is
+left to the gate, whose halt on it is the quote's own fault. A quote that passes at
+`now` and would not last the margin halts the decision, nothing is asked or sent, and
+every order of the plan is journaled `Abandoned` where the journal takes each entry.
+An order the store refuses leaves its decision unsettled, which halts every later
+recover until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+
+On shadow and paper that halt holds no account, and neither does a quote that reaches
+its maximum after the gate and before the broker call, because each quote was a price
+when the gate judged it. The next decision trades on its own quotes. On live, as with
+every cause, the account is held until the owner clears it.
+
+The check narrows the case of one leg sent without its partner, and does not close
+it. A send slower than the margin still meets its partner's quote past its maximum at
+the partner's own gate check, with the first leg at the broker, and that halt alarms
+with each leg's state. [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s ruling leaves a quote at close−20 about 107 seconds,
+or about 47 after one missed capture. So a plan of more than about nine orders halts
+this way whenever a capture was missed, and one of more than about twenty every time.
+Nothing has measured a send yet, so the margin is revisited once one is.
 
 ##### Why a wide quote is a fault
 
