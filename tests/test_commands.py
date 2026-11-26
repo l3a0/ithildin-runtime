@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 from importlib.metadata import entry_points
 from pathlib import Path
 
@@ -341,10 +342,25 @@ def test_a_stop_asked_while_the_loop_runs_ends_it_with_code_0(tmp_path: Path) ->
     worker = _idle_worker(tmp_path, Mode.SHADOW)
     _store_plan(worker, Mode.SHADOW)
     ended: list[int] = []
-    thread = threading.Thread(target=lambda: ended.append(entry.run_alpha(worker)), daemon=True)
-    thread.start()
-    # The loop has started once it has run its first check, which stores nothing here.
-    thread.join(1.0)
+    loops: list[entry.ReceiveLoop] = []
+
+    class Seen(entry.ReceiveLoop):
+        def __init__(self, **made) -> None:
+            super().__init__(**made)
+            loops.append(self)
+
+    entry_loop = entry.ReceiveLoop
+    entry.ReceiveLoop = Seen  # type: ignore[misc]
+    try:
+        thread = threading.Thread(target=lambda: ended.append(entry.run_alpha(worker)), daemon=True)
+        thread.start()
+        # Wait on the loop's own signal that it has run its first check.
+        end = time.monotonic() + 15
+        while not loops and time.monotonic() < end:
+            time.sleep(0.01)
+        assert loops and loops[0].wait_started(15), "the loop never started"
+    finally:
+        entry.ReceiveLoop = entry_loop  # type: ignore[misc]
     assert thread.is_alive()
     worker.stop.set()
     thread.join(15)
@@ -474,3 +490,49 @@ def test_the_supervisors_command_wires_its_environment(tmp_path: Path, boot: Pat
     assert dict(made._schedules) == {
         "chan_bollinger": ENVIRONMENTS["shadow"].deployment.schedules["chan_bollinger"]
     }
+
+
+def test_every_setting_reaches_its_field(tmp_path: Path, boot: Path) -> None:
+    values = GOOD | {
+        "mirror": "/m/mirror",
+        "lake_bucket": "the-lake",
+        "lake_prefix": "lake-prefix",
+        "pin": "/m/pin",
+        "release_file": "/m/release",
+        "credentials": "/m/credentials",
+        "heartbeat": "/m/beat",
+    }
+    settings = read_settings(_write(tmp_path, values), boot)
+    assert (settings.mirror, settings.pin, settings.release_file) == (
+        Path("/m/mirror"),
+        Path("/m/pin"),
+        Path("/m/release"),
+    )
+    assert (settings.lake_bucket, settings.lake_prefix) == ("the-lake", "lake-prefix")
+    assert (settings.credentials, settings.heartbeat) == (Path("/m/credentials"), Path("/m/beat"))
+
+
+@pytest.mark.parametrize(
+    ("at", "day"),
+    [
+        ("2026-12-01T00:59:59+00:00", "2026-11-30"),
+        ("2026-12-01T01:00:00+00:00", "2026-11-30"),
+        ("2026-12-01T05:00:00+00:00", "2026-12-01"),
+        ("2026-07-01T03:59:59+00:00", "2026-06-30"),
+        ("2026-07-01T04:00:00+00:00", "2026-07-01"),
+    ],
+)
+def test_the_runs_day_is_new_yorks_date(at: str, day: str) -> None:
+    from datetime import date, datetime
+
+    # 20:00 in New York is 01:00 UTC in winter and 00:00 UTC in summer, both still that day.
+    assert entry.trading_day(datetime.fromisoformat(at)) == date.fromisoformat(day)
+
+
+def test_a_plan_the_codec_cannot_read_halts_the_worker(tmp_path: Path) -> None:
+    from ithildinruntime.core import Halt, plan_key, sha256_of
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    worker.store.create(plan_key("ci", "2026-11-30"), b"{not a plan", sha256_of(b"{not a plan"))
+    with pytest.raises(Halt, match="holds no plan the codec reads"):
+        entry.wait_for_plan(worker)

@@ -12,6 +12,7 @@ journals its entries at, and today is the session after it.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from ithildinruntime.adapters import FolderStore, LogAlerts
+from ithildinruntime.adapters import FolderStore, LogAlerts, SystemTimer
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
     BeforeClose,
@@ -31,6 +32,7 @@ from ithildinruntime.core import (
     RunHalt,
     RunStop,
     Storage,
+    StoreUnavailable,
     StrategyHalt,
     SupervisorStart,
     decode,
@@ -241,11 +243,8 @@ def test_the_stop_waits_for_every_result_and_five_minutes_past_the_close(world: 
     stop = _stop_of(world)
     assert stop is not None and stop.run == TODAY.isoformat() and stop.release == RELEASE
     # No earlier than five minutes past the close, and within one tick of it.
-    assert (
-        CLOSE + STOP_AFTER_CLOSE
-        <= stop.stopped_at
-        < CLOSE + STOP_AFTER_CLOSE + timedelta(seconds=TICK)
-    )
+    five = timedelta(minutes=5)
+    assert CLOSE + five <= stop.stopped_at < CLOSE + five + timedelta(seconds=TICK)
     assert world.alarms() == []
 
 
@@ -270,7 +269,9 @@ def test_a_result_missing_an_hour_after_the_close_ends_the_run_with_no_stop(
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_STALLED, outcome.line
     assert _stop_of(world) is None
-    assert world.timer.at - CLOSE < STALL_AFTER_CLOSE + timedelta(seconds=TICK)
+    # The alarm says an hour, so the stall comes at the close plus 60 minutes, within a tick.
+    hour = timedelta(minutes=60)
+    assert hour <= world.timer.at - CLOSE < hour + timedelta(seconds=TICK)
     (alarm,) = world.alarms()
     assert "execution/send at 2026-10-02T19:40Z" in alarm and "an hour after the close" in alarm
 
@@ -369,7 +370,8 @@ def _doubtful(world: World, sent_at: datetime, state: str = "InDoubt") -> str:
 
 
 def _deadline(sent_at: datetime) -> datetime:
-    return min(sent_at + IN_DOUBT_LIMIT, CLOSE - timedelta(minutes=10))
+    # #147 item 6: the smaller of 30 minutes and the time left to the cancel cutoff, close−10.
+    return min(sent_at + timedelta(minutes=30), CLOSE - timedelta(minutes=10))
 
 
 @pytest.mark.parametrize(
@@ -883,3 +885,184 @@ def test_the_release_file_is_never_written_through_a_planted_link(world: World) 
     assert target.read_text() == "untouched\n"
     assert (local / "release").read_text() == f"{RELEASE}\n"
     assert not (local / "release").is_symlink()
+
+
+def test_the_deadlines_are_the_values_the_issues_wrote() -> None:
+    # #147 item 6, and the two margins past the close #200's plan wrote.
+    assert IN_DOUBT_LIMIT == timedelta(minutes=30)
+    assert STOP_AFTER_CLOSE == timedelta(minutes=5)
+    assert STALL_AFTER_CLOSE == timedelta(minutes=60)
+
+
+# The walk back and the lost machine, each condition on its own
+
+
+def test_an_unclean_run_behind_a_clean_one_is_not_reached(world: World) -> None:
+    world.opened()
+    older = date(2026, 9, 30)
+    world.ran(day=older, stopped=False)
+    world.ran(day=YESTERDAY)
+    world.results()
+    world.supervisor().run(TODAY)
+    assert world.held() == [] and world.pauses() == []
+
+
+def test_an_unclean_run_behind_one_whose_end_a_pause_covers_is_not_reached(world: World) -> None:
+    world.opened()
+    world.ran(day=date(2026, 9, 30), stopped=False)
+    world.ran(stopped=False)
+    end = PauseEntry(DEPLOYMENT, YESTERDAY.isoformat(), AT, (CHAN,), "ended", (), True)
+    world.journal.record(world.journal.view(), end, AT)
+    world.results()
+    world.supervisor().run(TODAY)
+    assert len(world.pauses()) == 1 and world.held() == []
+
+
+def test_a_run_before_the_accounts_opening_is_not_reached(world: World) -> None:
+    # The account opened at 2026-10-01's decision, and a plan of the session before it ran.
+    world.opened()
+    world.ran(stopped=True)
+    world.put(plan_key(DEPLOYMENT, "2026-09-30"), encode(_plan(date(2026, 9, 30))))
+    world.results()
+    world.supervisor().run(TODAY)
+    assert world.held() == []
+
+
+def test_a_start_on_this_boot_beside_another_boots_is_a_supervised_restart(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-old")
+    _start_on(world, "boot-a")
+    world.supervisor(boot="boot-a").run(TODAY)
+    assert world.held() == [] and world.pauses() == []
+
+
+def test_another_boots_start_with_no_plan_stored_is_no_lost_machine(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    _start_on(world, "boot-old")
+    world.supervisor(boot="boot-new").run(TODAY)
+    assert world.held() == [] and world.pauses() == []
+
+
+def test_the_halt_names_the_runs_last_journaled_decision(world: World) -> None:
+    world.opened()
+    later = AT + timedelta(minutes=1)
+    add(world.journal, read(later))
+    add(world.journal, decision(at=later, read=4))
+    other = decision(at=AT + timedelta(minutes=2), read=4)
+    add(world.journal, dataclasses.replace(other, run="2026-09-29"))
+    world.ran(stopped=False)
+    world.results()
+    world.supervisor().run(TODAY)
+    (pause,) = world.pauses()
+    assert pause.since == later
+    assert world.blob(strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, later, 1)) is not None
+
+
+def test_a_lost_machine_with_no_journaled_decision_holds_from_its_plans_first(
+    world: World,
+) -> None:
+    world.opened(decided=False)
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-old")
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    world.supervisor(boot="boot-new").run(TODAY)
+    (pause,) = world.pauses()
+    assert pause.since is None and pause.boots == ("boot-old",)
+    first = _plan(TODAY).decisions[0].at
+    assert world.blob(strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, first, 1)) is not None
+
+
+@pytest.mark.parametrize("state", ["Acknowledged", "InDoubt"])
+def test_a_working_or_doubtful_order_of_a_strategy_the_table_lacks_is_held(
+    world: World, state: str
+) -> None:
+    order = planned(1, 2, GLD, OTHER, at=AT)
+    world.opened(order)
+    for record in route(state, order):
+        add(world.journal, record)
+    world.ran(stopped=False)
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    world.supervisor().run(TODAY)
+    assert world.held(OTHER)
+    (pause,) = world.pauses()
+    assert OTHER in pause.strategies
+
+
+# Store faults on the supervisor's path
+
+
+class Refusing(FolderStore):
+    """A folder that refuses each call on one key, as S3 not answering does."""
+
+    def __init__(self, root: Path, refused: Callable[[str, str], bool]) -> None:
+        super().__init__(root)
+        self.refused = refused
+
+    def get(self, key: str) -> bytes:
+        if self.refused("get", key):
+            raise StoreUnavailable(key, "503: no answer")
+        return super().get(key)
+
+    def create(self, key: str, data: bytes, sha256: str) -> str:
+        if self.refused("create", key):
+            raise StoreUnavailable(key, "503: no answer")
+        return super().create(key, data, sha256)
+
+    def list(self, prefix: str, after: str | None):
+        if self.refused("list", prefix):
+            raise StoreUnavailable(prefix, "503: no answer")
+        return super().list(prefix, after)
+
+
+def _refusing(world: World, refused: Callable[[str, str], bool]) -> None:
+    world.store = Refusing(world.root, refused)
+    # The retries' deadline runs on the machine's clock, since the test's moves only on a wait.
+    world.storage = Storage(
+        world.store,
+        timer=SystemTimer(),
+        pause=lambda seconds: None,
+        retry=Retry(timedelta(seconds=1), 0.01, 0.01),
+        alerts=world.alerts,
+        owner_step="nothing to do: a test",
+    )
+
+
+def test_a_result_read_that_does_not_answer_waits_for_the_next_tick(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    send = result_key(DEPLOYMENT, TODAY.isoformat(), DECIDED[TODAY], "execution/send")
+    # Refused past Storage's own retries until the supervisor's first tick.
+    _refusing(world, lambda call, key: call == "get" and key == send and world.ticks == 0)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_STOPPED, outcome.line
+    assert world.ticks == 1 and _stop_of(world) is not None
+
+
+def test_start_records_that_cannot_be_written_read_as_a_lost_machine(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
+    world.supervisor().run(TODAY)
+    assert world.held(), "a start that cannot record itself holds"
+    assert any("could not be read or written" in a for a in world.alarms())
+
+
+def test_a_runs_halt_that_cannot_be_read_stores_no_stop(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(world, lambda call, key: call == "get" and key == halt)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HALTED and "could not be read" in outcome.line
+    assert _stop_of(world) is None

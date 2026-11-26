@@ -18,6 +18,7 @@ another process, as 06-runtime.md says of the reboot that liquidated a book.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
@@ -222,9 +223,17 @@ class Run:
                 self.errors[name] = error
 
         threads = {}
+        release = self.root / "local" / "release"
         for name in order:
             threads[name] = threading.Thread(target=run, args=(name,), daemon=True, name=name)
             threads[name].start()
+            if name == "supervisor" and name == order[0]:
+                # As the host's path unit does: the workers start once the release file is written.
+                end = time.monotonic() + 60
+                while not release.exists():
+                    assert time.monotonic() < end, "the supervisor wrote no release file"
+                    assert not self.errors, self.errors
+                    time.sleep(0.02)
         return threads
 
     def result(self, stage: str, at) -> DecisionResult:
