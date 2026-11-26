@@ -471,14 +471,20 @@ def test_only_the_sort_builds_an_entry_that_moves_cash_from_a_record() -> None:
     """The ranges are checked where an `outside_record` is built, so nothing else in src builds one.
 
     The fold reads no range, so an old entry replays the same after a range moves.
+    A call by a bare name or through a module counts, and so does an import that
+    renames the kind, which would hide a call from the first two.
     """
+    name = "OutsideRecordEntry"
     src = Path(__file__).parent.parent / "src" / "ithildinruntime"
-    builders = sorted(
-        {
-            str(path.relative_to(src))
-            for path in src.rglob("*.py")
-            for node in ast.walk(ast.parse(path.read_text()))
-            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "OutsideRecordEntry"
-        }
-    )
-    assert builders == ["execution/outside.py"]
+    builders, renamed = set(), set()
+    for path in src.rglob("*.py"):
+        where = str(path.relative_to(src))
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call):
+                called = node.func
+                if getattr(called, "id", None) == name or getattr(called, "attr", None) == name:
+                    builders.add(where)
+            if isinstance(node, ast.alias) and node.name == name and node.asname:
+                renamed.add(where)
+    assert builders == {"execution/outside.py"}
+    assert renamed == set()
