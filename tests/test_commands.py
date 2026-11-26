@@ -240,3 +240,96 @@ def test_sigterm_ends_a_worker_waiting_for_its_plan_with_code_0(tmp_path: Path) 
     assert child.returncode == 0, err
     # It beat more than once while it waited, and ran no loop.
     assert out.strip() == "ended 0 True"
+
+
+def _idle_worker(root: Path, mode: Mode) -> entry.Worker:
+    """An alpha worker over a folder, whose plan's decisions never get data's result."""
+    import threading
+    import time
+    from datetime import timedelta
+
+    from ithildinruntime.adapters import FolderStore, PipeQueue, SystemTimer
+    from ithildinruntime.core import BeforeClose, Retry, Storage
+    from ithildinruntime.runtime.deployment import Deployment, deployment_table
+
+    class Alarms:
+        def __init__(self) -> None:
+            self.reasons: list[str] = []
+
+        def alarm(self, reason: str) -> None:
+            self.reasons.append(reason)
+
+        def heartbeat(self) -> None:
+            pass
+
+    store = FolderStore(root / "store")
+    alarms = Alarms()
+    storage = Storage(
+        store,
+        timer=SystemTimer(),
+        pause=time.sleep,
+        retry=Retry(timedelta(seconds=1), 0.05, 0.1),
+        alerts=alarms,
+        owner_step="x",
+    )
+    return entry.Worker(
+        mode=mode,
+        deployment="ci",
+        account="acct1",
+        run="2026-11-30",
+        store=store,
+        storage=storage,
+        queue=PipeQueue(root / "pipes", "alpha", wait_seconds=0.2),
+        bucket="folder",
+        table=deployment_table(Deployment("ci", "acct1", {"chan_bollinger": (BeforeClose(20),)})),
+        timer=SystemTimer(),
+        alerts=alarms,
+        beat=lambda: None,
+        stop=threading.Event(),
+        plan_every=0.05,
+    )
+
+
+def _store_plan(worker: entry.Worker, mode: Mode) -> None:
+    from datetime import date
+
+    from ithildinruntime.core import (
+        BeforeClose,
+        Plan,
+        PlanDecision,
+        encode,
+        load_sessions,
+        plan_key,
+        sha256_of,
+        to_utc,
+    )
+
+    at = to_utc(date(2026, 11, 30), BeforeClose(20), load_sessions())
+    plan = Plan(1, "ci", "2026-11-30", mode, "sha256:r", (PlanDecision(at, ("chan_bollinger",)),))
+    data = encode(plan)
+    worker.store.create(plan_key("ci", "2026-11-30"), data, sha256_of(data))
+
+
+def test_a_plan_of_another_mode_halts_the_worker(tmp_path: Path) -> None:
+    from ithildinruntime.core import Halt
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    _store_plan(worker, Mode.PAPER)
+    with pytest.raises(Halt, match="a plan for paper, and this worker runs shadow"):
+        entry.wait_for_plan(worker)
+
+
+def test_a_stop_asked_while_the_loop_runs_ends_it_with_code_0(tmp_path: Path) -> None:
+    import threading
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    _store_plan(worker, Mode.SHADOW)
+    ended: list[int] = []
+    thread = threading.Thread(target=lambda: ended.append(entry.run_alpha(worker)), daemon=True)
+    thread.start()
+    # The loop has started once it has run its first check, which stores nothing here.
+    thread.join(1.0)
+    assert thread.is_alive()
+    worker.stop.set()
+    thread.join(15)
+    assert not thread.is_alive() and ended == [0]
