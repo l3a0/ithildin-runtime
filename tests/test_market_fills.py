@@ -369,8 +369,8 @@ def test_1_two_late_market_orders_arriving_in_one_call_take_their_own_fill_ids()
     buy, sale = made.decide(AT, (market(1, 4), market(2, -2, USO)))
     assert [made.send(o) for o in (buy, sale)] == [OrderState.IN_DOUBT] * 2
     broker = made.broker()
-    counts = [len(broker.fills(LONG_AGO).fills) for _ in range(3)]
-    assert counts in ([0, 2, 2], [2, 2, 2])
+    # Both are due at the second call, so both arrive and fill in it.
+    assert [len(broker.fills(LONG_AGO).fills) for _ in range(3)] == [0, 2, 2]
     fills = broker.fills(LONG_AGO).fills
     assert [(f.fill_id, f.instrument, f.qty) for f in fills] == [
         ("sim-f-1", GLD, 4),
@@ -454,6 +454,15 @@ def test_1_a_market_order_still_working_at_its_close_never_fills_there() -> None
     (ended,) = broker.orders(LONG_AGO).orders
     assert (ended.state, ended.filled) == (BrokerState.EXPIRED, 0)
     assert broker.positions().positions == {}
+    # The log records its end at the session's close, not at the call that saw it.
+    closes = [
+        c
+        for number in range(2, made.log.number + 1)
+        for c in call(made, number)["events"]["closed"]
+    ]
+    assert [(c["id"], c["state"], c["at"], c["fill"]) for c in closes] == [
+        ("sim-o-1", "expired", "2026-11-03T21:00:00.000000Z", None)
+    ]
 
 
 # 3. What the fill traces to

@@ -294,8 +294,8 @@ never shares the paper account's lease.
    9. An order past its close needs one, and so does an order it takes. A result
    or a snapshot that is missing, stale or of another decision gives none.
 9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
-   a price, and both leave a close that needs one, and a market order on its way,
-   to the next call that reads one.
+   a price, and both leave a close that needs one, and a market order on its way
+   that needs its quote, to the next call that reads one.
    A cancel is judged by the clock it reads, or by the log's newest call where the
    clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
    which say what there is to cancel, give the log as it stands where the clock
@@ -325,21 +325,25 @@ asks.
 4. **Size.** A fill is whole whatever its size, and moves no price.
 5. **Terms it does not book.** Commission, borrow, interest, distributions, credit
    on a short's proceeds and buying power read as unknown, never as zero. A split
-   is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
+   is [#191](https://github.com/l3a0/ithildin-runtime/issues/191)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
 6. **The time a market order lands.** A market order fills at the decision's
    quote whatever the time of the call, so its cost from the decision's midpoint
    is half the spread by construction and never shows the market moving in
    between. `OrderPath` abandons a send past the moment its quote stops being
-   readable, so a later fill reaches only an order a test's `Late` fault holds.
+   readable, which bounds how late a fill can come, apart from an order that
+   arrives late, such as one a test's `Late` fault holds.
 7. **An order on its way across decisions.** A market order on its way that
    arrives under another decision's prices is not taken, where a real broker
    fills an order whenever it lands. So a test of an order in doubt on this
    simulator never meets one that fills in a later decision after a lookup found
-   nothing, which is the case where sending it again would double it.
+   nothing, which is the case where sending it again would double it. Within one
+   decision a read of the orders can find nothing while such an order waits on
+   its way, and the next call that reads a price fills it.
 8. **The quote's kind.** The bid and the ask are what the quote-kind contract in
    `data/quote_kinds.csv` says of them. On shadow and paper they read as the best
-   bid and ask, which the source does not promise of every answer, as `## Decisions`
-   of [2026-11-26](../design.md#2026-11-26) records.
+   bid and ask, though the source marks some answers NFL rather than NBBO and
+   marketlake's columns do not say which, as `## Decisions` of
+   [2026-11-26](../design.md#2026-11-26) records.
 
 The figure below is a C4 dynamic diagram.
 
@@ -1463,10 +1467,10 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 `fills(since)` takes a time before any fill not yet journaled, as [From when fills are read](06-runtime.md#from-when-fills-are-read) says, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id. `View.repeats` says which of the three a fill is.
 
 1. A repeat with the same broker's order, instrument, shares, price and time is skipped. The other fields may differ, because a second endpoint may leave one out or write it another way.
-2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
+2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
 3. A repeat of a dispute already held is skipped, because a recover stage that halts on one reads it again at each decision. One with no shares or no price is refused as a `fill`, so a caller looks at the view's disputes first.
 
-A fill that carries a correction identifier is refused as a `fill`, and recover keeps it as an `unmatched_fill`, until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
+A fill that carries a correction identifier is refused as a `fill`, and recover keeps it as an `unmatched_fill`, until [#227](https://github.com/l3a0/ithildin-runtime/issues/227) writes the rule for one.
 
 ##### How a broker's record and what the platform did not send are kept
 
@@ -1833,7 +1837,7 @@ The journal's entries, applied in order from the first, give the account's `Book
 | `cash` | The opening cash less each fill's signed shares times its price, plus each `outside_record`'s amount, exact, with no rounding |
 | `replayed_through` | The number of the last entry |
 | `in_doubt` | Each instrument with an order that may or may not be with the broker. A `sending` entry with nothing after it is one |
-| `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, since an `outside_record` is a listed record, so it is empty until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds a correction of a fill |
+| `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, since an `outside_record` is a listed record, so it is empty until [#227](https://github.com/l3a0/ithildin-runtime/issues/227) builds a correction of a fill |
 
 The gate reads two facts from `corrections`: the newest correction's number against the valuation's, and the newest one that moved a position against the close of the valuation's session. The list tells a deposit from a broker's trade behind it, so [#117](https://github.com/l3a0/ithildin-runtime/issues/117) can excuse the trade without excusing the deposit. The book carries no realised profit, because nothing reads one.
 

@@ -31,8 +31,8 @@ fill rule by order type and no branch on a mode or a test.
 Every call reads the log forward. Every call but a cancel then does what is due:
 what a fault has someone do to the account, an order that arrives late, a
 rejection that comes later, and the closes. A read of the orders leaves each close
-that needs a price, and each market order on its way, to the next call that reads
-one. A call then does its own part, stores one blob where anything changed, and
+that needs a price, and each market order on its way that needs its quote, to the
+next call that reads one. A call then does its own part, stores one blob where anything changed, and
 answers. Where its create fails, nothing this
 process remembers has changed, and the next call finds whether the blob landed.
 One whose number another call took starts over on what it then reads.
@@ -316,7 +316,7 @@ class SimulatedBroker:
         """Do what is due and then `work`, store both as one call, and answer.
 
         `work` gives every event of the call and what reads its answer once they
-        are stored. A close it needs is read with the log let go, so a price that
+        are stored. A close or a quote it needs is read with the log let go, so a price that
         is slow holds no other call.
         """
         lost: list[type[StoreError]] = []
