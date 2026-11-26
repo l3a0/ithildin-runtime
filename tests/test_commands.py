@@ -457,6 +457,7 @@ def test_each_command_wires_its_environments_adapters(
     assert worker.run == "2026-11-30" and worker.bucket == "ithildin-runtime-shadow"
     assert worker.store._bucket == "ithildin-runtime-shadow"
     assert worker.release_file == tmp_path / "local" / "release" and worker.stop is stop
+    assert worker.boot == settings.boot
     assert [s.name for s in worker.table.strategies] == ["chan_bollinger"]
     worker.beat()
     assert (tmp_path / "beat").exists()
@@ -629,3 +630,36 @@ def test_a_release_file_that_is_not_utf_8_releases_nothing(tmp_path: Path) -> No
     assert not entry._released(release, "sha256:r", "2026-11-30", None)
     worker = dataclasses.replace(_idle_worker(tmp_path, Mode.SHADOW), release_file=release)
     assert entry._released(worker.release_file, "sha256:r", "2026-11-30", None) is False
+
+
+@pytest.mark.parametrize(
+    ("lines", "released"),
+    [
+        ("sha256:r\n2026-11-30\nboot-a\n", True),
+        ("sha256:r\n2026-11-30\nboot-b\n", False),
+        ("sha256:r\n2026-11-29\nboot-a\n", False),
+        ("sha256:other\n2026-11-30\nboot-a\n", False),
+        ("sha256:r\n", False),
+    ],
+    ids=["this run and boot", "another boot", "another run", "another release", "one line"],
+)
+def test_a_worker_with_a_boot_waits_for_its_run_and_boot(
+    tmp_path: Path, lines: str, released: bool
+) -> None:
+    import dataclasses
+    import threading
+
+    release = tmp_path / "local" / "release"
+    release.parent.mkdir(parents=True)
+    release.write_text(lines)
+    worker = dataclasses.replace(
+        _idle_worker(tmp_path, Mode.SHADOW), release_file=release, boot="boot-a"
+    )
+    _store_plan(worker, Mode.SHADOW)
+    found: list[object] = []
+    thread = threading.Thread(target=lambda: found.append(entry.wait_for_plan(worker)), daemon=True)
+    thread.start()
+    thread.join(1.0)
+    assert (not thread.is_alive()) is released
+    worker.stop.set()
+    thread.join(5)

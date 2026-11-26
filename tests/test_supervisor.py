@@ -738,7 +738,21 @@ def test_a_hold_check_that_fails_mid_session_says_the_workers_run_on(world: Worl
     assert world.supervisor().run(TODAY).code == EXIT_HELD
     (alarm,) = world.alarms()
     assert "the workers run today's plan and no supervisor watches it" in alarm
-    assert "no worker starts" not in alarm
+    assert "no worker starts" not in alarm and "stays held" in alarm
+
+
+def test_a_release_file_of_yesterdays_run_on_this_boot_released_nothing_today(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_text(f"{RELEASE}\n{YESTERDAY}\nboot-a\n")
+    world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    (alarm,) = world.alarms()
+    assert "no worker starts" in alarm
 
 
 def test_a_hold_check_that_fails_before_this_machine_released_says_none_starts(
@@ -806,6 +820,8 @@ def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) 
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_ASKED and "asked to stop before" in outcome.line
     assert _stop_of(world) is None
+    (alarm,) = world.alarms()
+    assert "asked to stop before 2026-10-02's stop was stored" in alarm
 
 
 # A pause covers only what it names
@@ -1330,3 +1346,36 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
     assert _stop_of(world) is None
+
+
+def test_two_decisions_whose_results_are_all_stored_stop_the_run(world: World) -> None:
+    world.opened()
+    world.ran()
+    first = to_utc(TODAY, BeforeClose(60), SESSIONS)
+    for at in (first, DECIDED[TODAY]):
+        for stage in STAGES:
+            world.put(result_key(DEPLOYMENT, TODAY.isoformat(), at, stage), b"{}")
+    twice = {CHAN: (BeforeClose(60), BeforeClose(20))}
+    assert world.supervisor(schedules=twice).run(TODAY).code == EXIT_STOPPED
+    assert _stop_of(world) is not None
+
+
+def test_a_newer_runs_halt_that_cannot_be_stored_stores_no_pause_at_all(world: World) -> None:
+    world.journal.record(world.journal.view(), opening(), datetime(2026, 9, 25, 19, 40, tzinfo=UTC))
+    world.ran(day=date(2026, 9, 30), stopped=False)
+    world.ran(stopped=False)
+    newer = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, DECIDED[YESTERDAY], 1)
+    _refusing(world, lambda call, key: call == "create" and key == newer)
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    # Every halt is stored before any pause, so the older run's pause never lands alone.
+    assert world.pauses() == []
+
+
+def test_unreadable_start_records_before_any_plan_hold_nothing_of_today(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    _refusing(world, lambda call, key: call == "list" and "/starts/" in key)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_STOPPED, outcome.line
+    assert world.held() == [] and world.pauses() == []

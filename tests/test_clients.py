@@ -87,8 +87,6 @@ def test_the_credential_is_read_again_twenty_minutes_ahead(tmp_path: Path) -> No
     [
         "aws_secret_access_key = SECRETVALUE\n",
         "[default]\nSECRETVALUE\n",
-        # A `%` is a character of the value, and no error quotes what follows it.
-        "[default]\naws_access_key_id = %SECRETVALUE\naws_secret_access_key = %(SECRETVALUE\n",
     ],
 )
 def test_a_file_that_does_not_parse_names_none_of_its_text(
@@ -96,14 +94,9 @@ def test_a_file_that_does_not_parse_names_none_of_its_text(
 ) -> None:
     path = tmp_path / "c"
     path.write_text(text)
-    try:
-        clients = AwsClients("us-east-1", path)
-    except CredentialFileError as refused:
-        assert "SECRETVALUE" not in str(refused)
-    else:
-        # A file that parses with `%` in its values gives them back as they are written.
-        frozen = clients._session.get_credentials().get_frozen_credentials()
-        assert frozen.access_key == "%SECRETVALUE"
+    with pytest.raises(CredentialFileError) as refused:
+        AwsClients("us-east-1", path)
+    assert "SECRETVALUE" not in str(refused.value)
 
 
 def test_a_bad_file_swapped_in_mid_run_raises_and_falls_back_to_nothing(
@@ -124,3 +117,10 @@ def test_a_file_that_is_not_utf_8_refuses_the_start(tmp_path: Path, no_metadata)
     path.write_bytes(b"[default]\naws_access_key_id = k\naws_secret_access_key = \xff\xfe\n")
     with pytest.raises(CredentialFileError, match="UnicodeDecodeError"):
         AwsClients("us-east-1", path)
+
+
+def test_a_percent_sign_in_a_value_is_read_back_as_written(tmp_path: Path, no_metadata) -> None:
+    path = tmp_path / "c"
+    path.write_text("[default]\naws_access_key_id = %KEY\naws_secret_access_key = %(SECRET\n")
+    frozen = AwsClients("us-east-1", path)._session.get_credentials().get_frozen_credentials()
+    assert (frozen.access_key, frozen.secret_key) == ("%KEY", "%(SECRET")

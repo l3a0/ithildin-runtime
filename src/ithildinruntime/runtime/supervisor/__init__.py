@@ -181,7 +181,7 @@ class Supervisor:
             # The hold cannot tell a lost machine from a restart, so it holds, and a boot
             # of its own for this start keeps a pause of it from covering any other.
             unknown = f"unknown-{secrets.token_hex(4)}"
-            starts = Starts(True, (unknown,), False, self._released_here(run))
+            starts = Starts(self._plan_may_stand(run), (unknown,), False, self._released_here(run))
             self._alerts.alarm(
                 f"{self._deployment}: the start records of {run} could not be read: {_said(error)}"
             )
@@ -261,6 +261,13 @@ class Supervisor:
         others = tuple(sorted(b for b in counts if b != self._boot))
         starts = Starts(plan_stored, others, self._boot in counts, self._released_here(run))
         return starts, counts.get(self._boot, 0) + 1
+
+    def _plan_may_stand(self, run: str) -> bool:
+        """Whether today's plan is stored, reading a store that does not answer as yes."""
+        try:
+            return self._storage.exists(plan_key(self._deployment, run))
+        except Exception:
+            return True
 
     def _released_here(self, run: str) -> bool:
         """Whether this machine's local release file already released its workers into `run`."""
