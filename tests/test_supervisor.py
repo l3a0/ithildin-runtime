@@ -322,7 +322,7 @@ def test_the_plan_and_the_release_file_name_the_release(world: World) -> None:
         RELEASE,
         [DECIDED[TODAY]],
     )
-    assert (world.root / "local" / "release").read_text() == f"{RELEASE}\n"
+    assert (world.root / "local" / "release").read_text() == f"{RELEASE}\n{TODAY}\nboot-a\n"
 
 
 def test_another_plan_already_stored_ends_the_start_and_starts_no_worker(world: World) -> None:
@@ -330,6 +330,8 @@ def test_another_plan_already_stored_ends_the_start_and_starts_no_worker(world: 
     world.ran()
     other = Plan(1, DEPLOYMENT, TODAY.isoformat(), Mode.PAPER, "sha256:other", ())
     world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(other))
+    # The start that stored that plan, on this boot, recorded itself.
+    _start_on(world, "boot-a")
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_PLAN and "sha256:other" in outcome.line
     assert not (world.root / "local" / "release").exists()
@@ -340,6 +342,8 @@ def test_a_stored_plan_of_another_mode_ends_the_start(world: World) -> None:
     world.ran()
     other = Plan(1, DEPLOYMENT, TODAY.isoformat(), Mode.SHADOW, RELEASE, ())
     world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(other))
+    # The start that stored that plan, on this boot, recorded itself.
+    _start_on(world, "boot-a")
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_PLAN and "is for shadow" in outcome.line
 
@@ -404,7 +408,7 @@ def test_an_order_in_doubt_halts_the_run_only_past_its_deadline(
     send = world.blob(result_key(DEPLOYMENT, TODAY.isoformat(), DECIDED[TODAY], "execution/send"))
     assert send is not None and b"the supervisor halted the run" in send
     (alarm,) = world.alarms()
-    assert "halted 2026-10-02" in alarm and held in alarm
+    assert "halts 2026-10-02" in alarm and held in alarm
 
 
 def test_the_deadline_sits_inside_the_heartbeat_grace() -> None:
@@ -700,6 +704,8 @@ def test_a_plan_that_cannot_be_stored_alarms(world: World) -> None:
     world.ran()
     other = Plan(1, DEPLOYMENT, TODAY.isoformat(), Mode.PAPER, "sha256:other", ())
     world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(other))
+    # The start that stored that plan, on this boot, recorded itself.
+    _start_on(world, "boot-a")
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
     assert "could not store the plan of 2026-10-02" in alarm and "sha256:other" in alarm
@@ -724,11 +730,41 @@ def test_a_hold_check_that_fails_mid_session_says_the_workers_run_on(world: Worl
     world.opened()
     world.ran()
     world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    # This machine released its workers into today's run before.
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_text(f"{RELEASE}\n{TODAY}\nboot-a\n")
+    _start_on(world, "boot-a")
     world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
     assert world.supervisor().run(TODAY).code == EXIT_HELD
     (alarm,) = world.alarms()
     assert "the workers run today's plan and no supervisor watches it" in alarm
     assert "no worker starts" not in alarm
+
+
+def test_a_hold_check_that_fails_before_this_machine_released_says_none_starts(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    # A release file of another boot, such as one left from before a reboot, released none.
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_text(f"{RELEASE}\n{TODAY}\nboot-old\n")
+    world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    (alarm,) = world.alarms()
+    assert "no worker starts" in alarm
+
+
+def test_a_hold_check_that_stores_no_halt_says_nothing_is_held(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
+    _refusing(world, lambda call, key: call == "create" and "/halts/" in key)
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    (alarm,) = [a for a in world.alarms() if "unclean stop" in a]
+    assert "no halt could be stored, so no strategy is held" in alarm
+    assert "Pull the kill switch" in alarm and "stays held" not in alarm
 
 
 def test_a_first_run_says_so_in_a_line(world: World) -> None:
@@ -759,7 +795,7 @@ def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: Worl
     world.timer.at = CLOSE
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
-    assert "unless the missing result lands and a restart before then stores the stop" in alarm
+    assert "unless the missing result lands and a person starts the supervisor's unit" in alarm
 
 
 def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) -> None:
@@ -883,7 +919,7 @@ def test_the_release_file_is_never_written_through_a_planted_link(world: World) 
     (local / "release.partial").symlink_to(target)
     world.supervisor().run(TODAY)
     assert target.read_text() == "untouched\n"
-    assert (local / "release").read_text() == f"{RELEASE}\n"
+    assert (local / "release").read_text() == f"{RELEASE}\n{TODAY}\nboot-a\n"
     assert not (local / "release").is_symlink()
 
 
@@ -1052,14 +1088,18 @@ def test_a_result_read_that_does_not_answer_waits_for_the_next_tick(world: World
     assert world.ticks == 1 and _stop_of(world) is not None
 
 
-def test_start_records_that_cannot_be_written_read_as_a_lost_machine(world: World) -> None:
+def test_a_start_record_that_cannot_be_written_makes_the_next_start_hold(world: World) -> None:
     world.opened()
     world.ran()
     world.results()
     _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
+    assert any("start record of 2026-10-02 could not be written" in a for a in world.alarms())
+    assert world.held() == []
+    # The plan stands with no start recorded, so the next start, on any boot, holds.
+    _refusing(world, lambda call, key: False)
     world.supervisor().run(TODAY)
-    assert world.held(), "a start that cannot record itself holds"
-    assert any("could not be read or written" in a for a in world.alarms())
+    assert world.held() and [p.boots for p in world.pauses()] == [("unrecorded",)]
 
 
 def test_a_runs_halt_that_cannot_be_read_stores_no_stop(world: World) -> None:
@@ -1094,3 +1134,102 @@ def test_a_plan_with_no_decision_is_not_stored(world: World) -> None:
     outcome = world.supervisor(schedules=late).run(half)
     assert outcome.code == EXIT_PLAN and "holds no decision" in outcome.line
     assert world.blob(plan_key(DEPLOYMENT, half.isoformat())) is None
+
+
+# Round 2: what a start that never finished its hold leaves
+
+
+def test_a_start_whose_hold_failed_leaves_no_record_so_its_restart_holds(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-a")
+    bad = journal_entry_key(ACCOUNT, 4)
+    world.put(bad, b"not an entry")
+    # B finds A lost, and its hold fails and writes no start record of B.
+    assert world.supervisor(boot="boot-b").run(TODAY).code == EXIT_HELD
+    assert not (world.root / f"runs/{DEPLOYMENT}/{TODAY}/starts/boot-b").exists()
+    (world.root / bad).unlink()
+    _clear(world)
+    # B's restart on the same boot still finds A lost, and holds.
+    world.supervisor(boot="boot-b").run(TODAY)
+    (pause,) = world.pauses()
+    assert pause.boots == ("boot-a",) and world.held()
+
+
+def test_a_start_that_dies_mid_hold_leaves_its_restart_holding(world: World, monkeypatch) -> None:
+    from ithildinruntime.runtime import supervisor as module
+
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-a")
+
+    class Killed(BaseException):
+        pass
+
+    def killed(**kwargs):
+        raise Killed
+
+    real = module.hold_after_unclean_stops
+    monkeypatch.setattr(module, "hold_after_unclean_stops", killed)
+    with pytest.raises(Killed):
+        world.supervisor(boot="boot-b").run(TODAY)
+    monkeypatch.setattr(module, "hold_after_unclean_stops", real)
+    world.supervisor(boot="boot-b").run(TODAY)
+    assert world.held() and [p.boots for p in world.pauses()] == [("boot-a",)]
+
+
+def test_unreadable_start_records_each_hold_with_a_boot_of_their_own(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _refusing(world, lambda call, key: call == "list" and "/starts/" in key)
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    world.supervisor().run(TODAY)
+    _clear(world)
+    world.supervisor().run(TODAY)
+    pauses = world.pauses()
+    assert len(pauses) == 2 and pauses[0].boots != pauses[1].boots
+    assert all(p.boots[0].startswith("unknown-") for p in pauses)
+    assert world.held(), "a second failure to read the starts holds again"
+
+
+def test_two_unclean_runs_have_their_halts_stored_before_either_pause_oldest_first(
+    world: World,
+) -> None:
+    world.journal.record(world.journal.view(), opening(), datetime(2026, 9, 25, 19, 40, tzinfo=UTC))
+    world.ran(day=date(2026, 9, 30), stopped=False)
+    world.ran(stopped=False)
+    world.results()
+    world.supervisor().run(TODAY)
+    assert [p.run for p in world.pauses()] == ["2026-09-30", "2026-10-01"]
+
+
+def test_a_runs_halt_that_cannot_be_stored_still_alarms_naming_the_order(world: World) -> None:
+    world.opened()
+    world.ran()
+    held = _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(world, lambda call, key: call == "create" and key == halt)
+    from ithildinruntime.core import Halt
+
+    # Storage halts on a create it cannot store, and the process ends and restarts.
+    with pytest.raises(Halt):
+        world.supervisor().run(TODAY)
+    assert any(held in a and "Settle each order" in a for a in world.alarms())
+
+
+def test_a_standing_hold_on_live_names_the_owner(world: World) -> None:
+    world.opened()
+    world.put(_hold_key(), b"{}")
+    world.supervisor(mode=Mode.LIVE).run(TODAY)
+    standing = [a for a in world.alarms() if "still held" in a]
+    assert standing and "The owner clears it" in standing[0]

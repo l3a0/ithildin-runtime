@@ -381,10 +381,10 @@ def test_a_worker_waits_for_the_release_file_as_well_as_the_plan(tmp_path: Path)
     # The plan is stored and the supervisor has not yet finished its hold.
     assert thread.is_alive() and found == []
     release.parent.mkdir(parents=True)
-    release.write_text("sha256:other\n")
+    release.write_text("sha256:other\n2026-11-30\n")
     thread.join(0.5)
     assert thread.is_alive(), "a file naming another release is not this plan's"
-    release.write_text("sha256:r\n")
+    release.write_text("sha256:r\n2026-11-30\n")
     thread.join(5)
     assert not thread.is_alive() and found and found[0].release == "sha256:r"
 
@@ -571,3 +571,50 @@ def test_a_worker_started_after_its_runs_stop_ends_at_once(tmp_path: Path) -> No
     thread.start()
     thread.join(15)
     assert not thread.is_alive() and ended == [0]
+
+
+@pytest.mark.parametrize("component", WORKERS)
+def test_each_command_hands_its_core_the_parts_it_built(
+    tmp_path: Path, boot: Path, component: str, monkeypatch
+) -> None:
+    import threading
+    from datetime import UTC, datetime
+
+    settings = _settings_of(tmp_path, boot)
+    handed: dict[str, object] = {}
+
+    def core(worker, **parts):
+        handed.update(parts, worker=worker)
+        return 17
+
+    monkeypatch.setattr(entry, f"run_{component}", core)
+    timer = FixedTimer(datetime(2026, 12, 1, 3, 0, tzinfo=UTC))
+    code = entry.serve(settings, component, threading.Event(), StandInClients(), timer)
+    assert code == 17 and handed["worker"].run == "2026-11-30"
+    if component == "data":
+        assert handed["measured"] is True and handed["mirror"] == tmp_path / "mirror"
+        assert handed["servers"] is not None and handed["clock"]._servers is handed["servers"]
+        assert handed["lake"].lake._root == "lake/"
+    elif component == "execution":
+        assert handed["servers"] is not None and handed["clock"]._servers is handed["servers"]
+    else:
+        assert set(handed) == {"worker"}
+
+
+def test_the_supervisors_command_runs_todays_run_and_ends_with_its_code(
+    tmp_path: Path, boot: Path, monkeypatch
+) -> None:
+    import threading
+    from datetime import UTC, date, datetime
+
+    from ithildinruntime.runtime.supervisor import Outcome, Supervisor
+
+    asked: list[date] = []
+    monkeypatch.setattr(
+        Supervisor, "run", lambda self, today: asked.append(today) or Outcome(4, "x")
+    )
+    settings = _settings_of(tmp_path, boot)
+    # 01:30 UTC on 2026-12-01 is 20:30 on 2026-11-30 in New York.
+    timer = FixedTimer(datetime(2026, 12, 1, 1, 30, tzinfo=UTC))
+    outcome = entry.supervise(settings, threading.Event(), StandInClients(), timer)
+    assert asked == [date(2026, 11, 30)] and outcome.code == 4

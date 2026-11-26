@@ -50,7 +50,7 @@ flowchart TB
         creds[("Memory-backed storage<br/>a credential, an error and a heartbeat<br/>directory per container, and the release file")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer -->|"starts the supervisor before the session"| sup
-        pathu -->|"starts the workers once the supervisor<br/>has read the run's plan"| ctrs
+        pathu -->|"starts the workers once the supervisor<br/>has finished its hold and stored the plan"| ctrs
         timer -->|"stops every container after the close"| ctrs
         docker --> ctrs
         wd -.->|"kills a container whose heartbeat stops"| ctrs
@@ -447,7 +447,7 @@ backtest, CI and the VM run the same bytes.
 
 The supervisor only sends messages, as [How a run starts](../design.md#rule-7-how-a-run-starts) says, so it
 needs no power over containers. A systemd unit per container, under [Systemd
-keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), starts the supervisor before the session and each worker once the supervisor has read the run's plan, restarts it when it exits or
+keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), starts the supervisor before the session and each worker once the supervisor has finished its hold check and stored the run's plan, restarts it when it exits or
 its heartbeat stops, and stops it after the close. No container holds the
 Docker socket or the system D-Bus, because either one is root on the
 host.

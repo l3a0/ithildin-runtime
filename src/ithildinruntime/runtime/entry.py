@@ -28,21 +28,26 @@ Each command ends with one of these codes, which #202's units read.
 
 - 0: the run's stop is stored, or SIGTERM ended a worker, or a day with no
   session started nothing.
+- 1, or any other: a failure, whose traceback goes to the host's journal, and
+  so does a crash by a signal.
 - 2: a setting is missing or malformed, or the credential file it names cannot
   be read, named in one line on standard error.
 - 3: the supervisor halted the run, which stores no stop.
 - 4: the supervisor found a result still missing an hour after the close.
-- 5: the hold check after an unclean stop could not finish, so no worker starts.
+- 5: the hold check after an unclean stop could not finish, so the supervisor
+  writes no plan and no release file. Workers this machine released before run
+  on with no supervisor, and no other worker starts.
 - 6: the supervisor could not store its run's plan, or a worker found a plan it
   cannot read or one of another mode. Each alarms.
 - 7: SIGTERM ended the supervisor before the run's stop was stored, so nothing
-  watches the rest of the session.
+  watches the rest of the session. It alarms.
 
-#202's units restart a process that ends with 1 or 7, and give the supervisor's
-unit `RestartPreventExitStatus=3 4 5 6`, because a restart into the same halt,
+#202's units restart a process that ends with 1 or 7 or by a signal. The
+supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6` and each worker's
+`RestartPreventExitStatus=2 6`, because a restart into the same setting, halt,
 stall, failed hold or plan raises the same alarm again and spends the day's
-restarts.
-- 1, or any other: a failure, whose traceback goes to the host's journal.
+restarts. After 4 or 5 a person starts the supervisor's unit again once the
+cause is fixed.
 """
 
 from __future__ import annotations
@@ -100,7 +105,7 @@ from .loop import Handler, ReceiveLoop, Table
 from .portfolio_worker import portfolio_handler
 from .risk_worker import risk_handler
 from .settings import SettingError, Settings, read_settings
-from .supervisor import Supervisor
+from .supervisor import Outcome, Supervisor
 
 __all__ = [
     "EXIT_PLAN",
@@ -123,6 +128,8 @@ __all__ = [
     "run_execution",
     "run_portfolio",
     "run_risk",
+    "serve",
+    "supervise",
     "supervisor_for",
     "supervisor_main",
     "trading_day",
@@ -170,7 +177,10 @@ class Worker:
     plan_every: float = PLAN_EVERY
     # The local release file, which the supervisor writes once its hold check is done.
     release_file: Path | None = None
-    # How many of the worker's decisions its loop runs side by side.
+    # This machine's boot, which the local release file must name.
+    boot: str | None = None
+    # How many of the worker's decisions its loop runs side by side. A test sets 1 for
+    # data until #215 fixes the mirror's race between decisions read side by side.
     pool_size: int = 4
 
 
@@ -200,20 +210,27 @@ def wait_for_plan(worker: Worker) -> Plan | None:
                     f"{key} is a plan for {plan.mode.value}, and this worker runs "
                     f"{worker.mode.value}"
                 )
-            if _released(worker.release_file, plan.release):
+            if _released(worker.release_file, plan.release, plan.run, worker.boot):
                 return plan
         worker.stop.wait(worker.plan_every)
     return None
 
 
-def _released(path: Path | None, release: str) -> bool:
-    """Whether the local release file names `release`, or no file is handed in."""
+def _released(path: Path | None, release: str, run: str, boot: str | None) -> bool:
+    """Whether the local release file names `release` for `run` on this boot, or none is handed in.
+
+    A file left from another run, or from before a reboot, releases nothing, so a
+    worker never starts ahead of this boot's hold.
+    """
     if path is None:
         return True
     try:
-        return path.read_text().strip() == release
+        lines = path.read_text().split("\n")
     except OSError:
         return False
+    named = lines[:3] if boot is not None else lines[:2]
+    wanted = [release, run, boot] if boot is not None else [release, run]
+    return named == wanted
 
 
 def _serve(
@@ -469,6 +486,7 @@ def parts_for(
         beat=_beat(settings.heartbeat),
         stop=stop,
         release_file=settings.release_file,
+        boot=settings.boot,
     )
     servers = TimeServers(TIME_SERVERS, now=timer.now) if component in _TIMED else None
     clock = WallClock(timer, servers=servers) if servers is not None else None
@@ -515,56 +533,82 @@ def supervisor_for(
     )
 
 
-def data_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    parts = parts_for(settings, "data", stop)
-    assert parts.lake is not None and parts.clock is not None
-    raise SystemExit(
-        run_data(
-            parts.worker,
+def serve(
+    settings: Settings,
+    component: str,
+    stop: threading.Event,
+    clients: AwsClients | None = None,
+    timer: Timer | None = None,
+) -> int:
+    """Run `component`'s worker in the environment `settings` names, and return its exit code."""
+    parts = parts_for(settings, component, stop, clients, timer)
+    worker = parts.worker
+    if component == "data":
+        if parts.lake is None or parts.clock is None:
+            raise RuntimeError("data's parts hold no lake or no clock")
+        return run_data(
+            worker,
             clock=parts.clock,
             measured=parts.measured,
             lake=parts.lake,
             mirror=parts.mirror,
             servers=parts.servers,
         )
-    )
+    if component == "execution":
+        if parts.clock is None:
+            raise RuntimeError("execution's parts hold no clock")
+        return run_execution(worker, clock=parts.clock, servers=parts.servers)
+    cores = {"alpha": run_alpha, "cost": run_cost, "risk": run_risk, "portfolio": run_portfolio}
+    return cores[component](worker)
+
+
+def supervise(
+    settings: Settings,
+    stop: threading.Event,
+    clients: AwsClients | None = None,
+    timer: Timer | None = None,
+) -> Outcome:
+    """Run the supervisor of the environment `settings` names, for today's run."""
+    timer = timer or SystemTimer()
+    supervisor = supervisor_for(settings, stop, clients, timer)
+    return supervisor.run(trading_day(timer.now()))
+
+
+def _main(component: str) -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    raise SystemExit(serve(settings, component, stop))
+
+
+def data_main() -> None:
+    _main("data")
 
 
 def alpha_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_alpha(parts_for(settings, "alpha", stop).worker))
+    _main("alpha")
 
 
 def cost_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_cost(parts_for(settings, "cost", stop).worker))
+    _main("cost")
 
 
 def risk_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_risk(parts_for(settings, "risk", stop).worker))
+    _main("risk")
 
 
 def portfolio_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_portfolio(parts_for(settings, "portfolio", stop).worker))
+    _main("portfolio")
 
 
 def execution_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    parts = parts_for(settings, "execution", stop)
-    assert parts.clock is not None
-    raise SystemExit(run_execution(parts.worker, clock=parts.clock, servers=parts.servers))
+    _main("execution")
 
 
 def supervisor_main() -> None:
-    settings, stop, timer = _settings(), _stop_on_sigterm(), SystemTimer()
+    settings, stop = _settings(), _stop_on_sigterm()
     try:
-        supervisor = supervisor_for(settings, stop, timer=timer)
+        outcome = supervise(settings, stop)
     except SettingError as error:
         print(f"ithildin: {error}", file=sys.stderr)
         raise SystemExit(EXIT_SETTING) from None
-    outcome = supervisor.run(trading_day(timer.now()))
     print(f"ithildin-supervisor: {outcome.line}")
     raise SystemExit(outcome.code)

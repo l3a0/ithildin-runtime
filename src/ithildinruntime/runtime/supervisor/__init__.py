@@ -17,21 +17,25 @@ never waits on `Clock.wait_until`.
 One start runs in this order.
 
 1. A day with no session ends at once, with no plan and no release file.
-2. It reads today's start records, then writes its own, numbered one past the
-   newest of its boot, so the hold can tell a lost machine from a restart.
-3. Outside a backtest it runs the hold after an unclean stop, as `hold` says.
-   A hold check that cannot finish writes no plan, so no worker starts.
-4. It stores the run's plan, create-only. An equal plan already stored is
+2. It reads today's start records, so the hold can tell a lost machine from a
+   restart.
+3. Outside a backtest it runs the hold after an unclean stop, as `hold` says,
+   and alarms on each strategy a halt still holds from before. A hold check
+   that cannot finish writes no plan and no release file.
+4. It records its own start, numbered one past the newest of its boot, only now
+   that the hold has finished, so a start that died mid-hold leaves none.
+5. It stores the run's plan, create-only. An equal plan already stored is
    done, and a different one ends the start.
-5. It writes the local release file, naming the plan's release.
-6. On each tick, outside a backtest, it checks the deadline of each order in
+6. It writes the local release file, naming the plan's release, the run and
+   this boot.
+7. On each tick, outside a backtest, it checks the deadline of each order in
    doubt, as `deadline` says, and halts the run past it.
-7. It stores the run's stop once every stage has a result for every decision
+8. It stores the run's stop once every stage has a result for every decision
    and, outside a backtest, the close has passed by `STOP_AFTER_CLOSE`. #151
    adds a third condition, that the run has read the day's fills. Outside a
    backtest it first reads the run's halt, and stores the stop only where the
    store answers that there is none.
-8. At `STALL_AFTER_CLOSE` past the close, a result still missing alarms and the
+9. At `STALL_AFTER_CLOSE` past the close, a result still missing alarms and the
    start ends with no stop.
 
 It is safe as one instance, because each write it makes is create-only. A
@@ -170,14 +174,16 @@ class Supervisor:
         else:
             first = last = today
         run = run_part(self._mode, first, last)
+        count: int | None = None
         try:
-            starts = self._start(run)
+            starts, count = self._read_starts(run)
         except Exception as error:
-            # The hold cannot tell a lost machine from a restart, so it holds.
-            starts = Starts(plan_stored=True, other_boots=("unknown",), this_boot=False)
+            # The hold cannot tell a lost machine from a restart, so it holds, and a boot
+            # of its own for this start keeps a pause of it from covering any other.
+            unknown = f"unknown-{secrets.token_hex(4)}"
+            starts = Starts(True, (unknown,), False, self._released_here(run))
             self._alerts.alarm(
-                f"{self._deployment}: the start records of {run} could not be "
-                f"read or written: {_said(error)}"
+                f"{self._deployment}: the start records of {run} could not be read: {_said(error)}"
             )
         if self._trading:
             try:
@@ -200,6 +206,10 @@ class Supervisor:
             if not found:
                 # The hold's own alarm already names what it held on this start.
                 self._name_standing_halts(today)
+        if count is not None:
+            # Recorded only once the hold has finished, so a start that died mid-hold, or
+            # whose hold failed, never makes its restart read as one the host supervised.
+            self._record_start(run, count)
         try:
             plan = self._store_plan(first, last)
         except Halt as halt:
@@ -210,7 +220,7 @@ class Supervisor:
                 "next session runs the new release"
             )
             return Outcome(EXIT_PLAN, halt.reason)
-        self._write_release_file(plan.release)
+        self._write_release_file(plan.release, plan.run)
         return self._watch(plan)
 
     def _name_standing_halts(self, today: date) -> None:
@@ -221,25 +231,40 @@ class Supervisor:
                 if self._store.list(strategy_halts_prefix(self._account, strategy), None):
                     held.append(strategy)
             except StoreError as error:
-                held.append(f"{strategy} (its halts could not be listed: {_said(error)})")
+                held.append(f"{strategy}, whose halts could not be read ({_said(error)}),")
         if held:
             self._alerts.alarm(
                 f"{self._deployment}: on {today.isoformat()} {', '.join(held)} is still held by a "
-                "halt nobody has cleared, so it sends no new order. A person clears it with "
-                "`ithildin halt clear` once each position is confirmed at the broker"
+                f"halt nobody has cleared, so it sends no new order. {who(self._mode)}, with "
+                "#203's `ithildin halt clear` once it is built"
             )
 
     # Starting
 
-    def _start(self, run: str) -> Starts:
-        """Read today's start records, then write this one's."""
+    def _read_starts(self, run: str) -> tuple[Starts, int]:
+        """What today's start records say, and the count this start's record will take."""
         prefix = starts_prefix(self._deployment, run)
         counts: dict[str, int] = {}
         for key in self._store.list(prefix, None):
             boot, _, name = key.removeprefix(prefix).partition("/")
             counts[boot] = max(counts.get(boot, 0), int(name.removesuffix(".json")))
         plan_stored = self._storage.exists(plan_key(self._deployment, run))
-        count = counts.get(self._boot, 0) + 1
+        others = tuple(sorted(b for b in counts if b != self._boot))
+        starts = Starts(plan_stored, others, self._boot in counts, self._released_here(run))
+        return starts, counts.get(self._boot, 0) + 1
+
+    def _released_here(self, run: str) -> bool:
+        """Whether this machine's local release file already released its workers into `run`."""
+        if self._release_file is None:
+            return False
+        try:
+            lines = self._release_file.read_text().split("\n")
+        except OSError:
+            return False
+        return lines[1:3] == [run, self._boot]
+
+    def _record_start(self, run: str, count: int) -> None:
+        """Record this start on its boot, which a later start reads."""
         record = SupervisorStart(
             format=RUN_RECORD_FORMAT,
             deployment=self._deployment,
@@ -249,11 +274,16 @@ class Supervisor:
             release=self._release,
             started_at=self._timer.now(),
         )
-        self._storage.keep(
-            supervisor_start_key(self._deployment, run, self._boot, count), encode(record)
-        )
-        others = tuple(sorted(b for b in counts if b != self._boot))
-        return Starts(plan_stored, others, self._boot in counts)
+        try:
+            self._storage.keep(
+                supervisor_start_key(self._deployment, run, self._boot, count), encode(record)
+            )
+        except Exception as error:
+            # A restart then reads as a lost machine and holds, which errs toward stopping.
+            self._alerts.alarm(
+                f"{self._deployment}: the start record of {run} could not be written: "
+                f"{_said(error)}. A restart on this machine holds every strategy"
+            )
 
     def _store_plan(self, first: date, last: date) -> Plan:
         built = build_plan(
@@ -281,8 +311,13 @@ class Supervisor:
             f"on {plan.release}, writes none"
         )
 
-    def _write_release_file(self, release: str) -> None:
-        """Name the plan's release in the local release file, whole or not at all."""
+    def _write_release_file(self, release: str, run: str) -> None:
+        """Name the plan's release, its run and this boot in the local release file, whole.
+
+        Its first line is the release the host's path unit reads. The run and the
+        boot follow, so a file left from another run or from before a reboot
+        releases no worker.
+        """
         if self._release_file is None:
             return
         self._release_file.parent.mkdir(parents=True, exist_ok=True)
@@ -292,7 +327,7 @@ class Supervisor:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
         descriptor = os.open(partial, flags, 0o644)
         with os.fdopen(descriptor, "w") as file:
-            file.write(release + "\n")
+            file.write(f"{release}\n{run}\n{self._boot}\n")
         os.replace(partial, self._release_file)
 
     # Watching
@@ -317,11 +352,16 @@ class Supervisor:
                 self._alerts.alarm(
                     f"{self._deployment}: {plan.run} has no result for {said} an hour after the "
                     "close, so the supervisor ends with no stop. The next session's start holds "
-                    "every strategy, unless the missing result lands and a restart before then "
-                    "stores the stop"
+                    "every strategy, unless the missing result lands and a person starts the "
+                    "supervisor's unit again before then, which stores the stop"
                 )
                 return Outcome(EXIT_STALLED, f"{plan.run} stalled with results missing: {said}")
             if self._wait(self._tick):
+                self._alerts.alarm(
+                    f"{self._deployment}: the supervisor was asked to stop before {plan.run}'s "
+                    "stop was stored, so nothing watches the rest of the session until it starts "
+                    "again"
+                )
                 return Outcome(EXIT_ASKED, f"asked to stop before {plan.run} stopped")
 
     def _missing(
@@ -365,6 +405,12 @@ class Supervisor:
     ) -> Outcome:
         """Halt the whole run: its halt first, then a halt as every result still missing."""
         reason = "; ".join(late)
+        # Alarmed first, so the orders are named even where the halt cannot be stored.
+        self._alerts.alarm(
+            f"{self._deployment}: the supervisor halts {plan.run}, so no order is sent and the "
+            f"run ends with no stop: {reason}. Settle each order named at the broker. The next "
+            f"session's start holds every strategy. {who(self._mode)}"
+        )
         record = RunHalt(
             format=RUN_RECORD_FORMAT,
             deployment=self._deployment,
@@ -380,11 +426,6 @@ class Supervisor:
                 if self._storage.exists(key):
                     continue
                 self._storage.put_result(key, self._halt_result(plan, stage, at, halt))
-        self._alerts.alarm(
-            f"{self._deployment}: the supervisor halted {plan.run}, so no order is sent and the "
-            f"run ends with no stop: {reason}. Settle each order named at the broker. The next "
-            f"session's start holds every strategy. {who(self._mode)}"
-        )
         return Outcome(EXIT_HALTED, f"halted {plan.run}: {reason}")
 
     def _halt_result(self, plan: Plan, stage: str, at: datetime, halt: Halt) -> DecisionResult:

@@ -526,7 +526,7 @@ Each component runs as its own process, from a command that `pyproject.toml` ins
 
 #### What a command reads
 
-A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, and may name the unit user's AWS credential file and the local heartbeat file. `runtime/settings.py` lists each key. Everything else about an environment is in the release's table in `runtime/deployment.py`.
+A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, the unit user's AWS credential file, which is the one credential the command reads, and may name the local heartbeat file. `runtime/settings.py` lists each key. Everything else about an environment is in the release's table in `runtime/deployment.py`.
 
 #### What each exit code means
 
@@ -536,14 +536,14 @@ A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOM
 | --- | --- | --- |
 | 0 | The run's stop is stored, SIGTERM ended a worker, or the day has no session | Nothing |
 | 2 | A setting is missing or malformed, or the credential file it names cannot be read. The one line on standard error names it | Fix the settings file or the credential file, then start the unit again |
-| 3 | The supervisor halted the run, past an order's deadline or on a journal it could not read | Read the alarm and settle each order it names at the broker. The next session's start holds every strategy |
-| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. The next session's start holds every strategy, unless the result lands and a restart before then stores the stop |
-| 5 | The hold check after an unclean stop could not finish. Before the plan is stored no worker starts, and after it the workers run on with no supervisor | Read the alarm, which names what failed. The strategies it held stay held after a later start succeeds, and each later start alarms on them until they are cleared |
+| 3 | The supervisor halted the run, past an order's deadline, or on a journal or a deadline it could not read | Read the alarm and settle each order it names at the broker. The next session's start holds every strategy |
+| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. Start the supervisor's unit again once the result lands, which stores the stop. Otherwise the next session's start holds every strategy |
+| 5 | The hold check after an unclean stop could not finish, so no plan and no release file are written. Workers this machine released earlier in the session run on with no supervisor, and no other worker starts | Read the alarm, which names what failed, and start the supervisor's unit again once the cause is fixed. The strategies it held stay held after a later start succeeds, and each later start alarms on them until they are cleared. An alarm that says no halt could be stored means nothing is held: pull the account's kill switch |
 | 6 | The supervisor could not store the day's plan, or a worker found a plan it cannot read or one of another mode | Read the alarm. A plan of another release means a pin moved during the session |
-| 7 | SIGTERM ended the supervisor before the run's stop was stored, so nothing watches the rest of the session | Start the supervisor's unit again |
+| 7 | SIGTERM ended the supervisor before the run's stop was stored, so nothing watches the rest of the session. It alarms | The host restarts it. After a `systemctl stop`, start it by hand |
 | Any other | A failure, whose traceback is in the host's journal | Read the journal |
 
-The host restarts a process that ends with 1 or 7. The supervisor's unit carries `RestartPreventExitStatus=3 4 5 6`, so a halt, a stall, a failed hold or a plan it cannot store raises its alarm once rather than once for each restart, and spends none of the day's restarts. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
+The host restarts a process that ends with 1 or 7, or that a signal ends, such as one killed for running out of memory. The supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6`, and each worker's `RestartPreventExitStatus=2 6`, so a setting, a halt, a stall, a failed hold or a plan it cannot run raises its alarm once rather than once for each restart, and spends none of the day's restarts. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
 
 #### After a stop with no clean-shutdown record
 

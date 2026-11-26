@@ -289,7 +289,7 @@ def test_every_entry_point_stores_a_result_that_is_no_halt_and_the_journal_holds
     ]
     assert fills, "the first decision's orders fill at the second decision's recover"
     assert in_order.alarms.reasons == []
-    assert (in_order.root / "local" / "release").read_text() == f"{RELEASE}\n"
+    assert (in_order.root / "local" / "release").read_text() == f"{RELEASE}\n{RUN}\nboot-ci\n"
 
 
 def test_the_workers_started_before_the_supervisor_and_in_reverse_store_the_same_results(

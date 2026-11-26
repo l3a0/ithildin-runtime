@@ -9,29 +9,37 @@ timer ended stored none.
 
 1. **Which runs it checks.** Every earlier run with a plan, walking back one
    session at a time from the session before today, until a run with a stop, a
-   run a pause entry names, or the session of the account's opening entry.
+   run whose end a pause covers, or the session of the account's opening entry.
    Today's run is checked only after a lost machine: its plan exists, a start
-   record read before this start's own names another boot, and none names this
-   boot. A start record of this boot is a restart the host supervised, which
-   holds nothing. An account whose journal has no entry has never traded, so
-   its first run holds nothing.
+   record read before this start names another boot no pause covers, and none
+   names this boot. A start records itself only once its hold has finished, so
+   a record of this boot is a restart the host supervised, which holds nothing,
+   and a start that died mid-hold leaves none. An account whose journal has no
+   entry has never traded, so its first run holds nothing.
 2. **Which strategies it holds.** Every strategy of the deployment's table,
-   and every strategy the journal's book holds a position, a working order or
-   an order in doubt for.
-3. **What it writes, in order.** For each held strategy, a `StrategyHalt` at
-   `strategy_halt_key(account, strategy, "supervisor", "unclean_stop", at, 1)`,
-   created once, where `at` is the run's last journaled decision, or the
-   plan's first decision where the journal names none. Then one `pause`
-   journal entry naming the run. Then an alarm. A crash between the halts and
-   the pause leaves halts a rerun finds, as #33 asks of every strategy halt.
-4. **Safe to repeat.** A pause entry naming the run ends the hold for good, so a
-   halt a person cleared stays cleared. A halt already stored with no pause
+   and every strategy the journal's book holds a position or an order that has
+   not ended for.
+3. **What it writes, in order.** First the halts of every stop it found: for
+   each held strategy a `StrategyHalt` at `strategy_halt_key(account,
+   strategy, "supervisor", "unclean_stop", at, n)`, created once, where `at` is
+   the run's last journaled decision, or the plan's first decision where the
+   journal names none, and `n` counts the run's pauses from 1, so each pause's
+   halts have keys of their own. Then one `pause` journal entry for each stop,
+   the oldest first, then the alarms. A crash anywhere leaves halts a rerun
+   finds, as #33 asks of every strategy halt, and a pause of a newer run never
+   lands before the older run's.
+4. **Safe to repeat.** A pause covers only what it names: the boots of the lost
+   machines it judged, or the run's own end. So a halt a person cleared stays
+   cleared, while a later lost machine or the run's unclean end after a pause
+   written in its session holds again. A halt already stored with no pause
    still gets its pause.
-5. **A read that fails holds.** Only a store's answer of "missing" reads as
-   absent. Any other failure holds every strategy of the table at the open of
-   today's session, alarms with what failed and raises `HoldFailed`, so the
-   supervisor writes no plan and no worker starts. It journals no pause,
-   because the check did not finish, and the next start runs it all again.
+5. **A failure holds.** Only a store's answer of "missing" reads as absent.
+   Any failure holds every strategy of the table at the open of today's
+   session, alarms with what failed and raises `HoldFailed`, so the supervisor
+   writes no plan and no release file. Workers this machine released before,
+   on a restart in the session, run on with no supervisor, and no other worker
+   starts. It journals no pause, because the check did not finish, and the
+   next start runs it all again.
 
 Execution's `Controls.strategy` refuses every new order of a strategy whose
 halts folder holds a blob, at three points on the order path, so the halt is
@@ -85,7 +93,8 @@ _TRIES = 3
 
 
 class HoldFailed(Exception):
-    """The hold check could not finish, so every strategy is held and nothing starts."""
+    """The hold check could not finish, so every strategy it could hold is held, and no plan
+    or release file is written."""
 
 
 @dataclass(frozen=True)
@@ -98,7 +107,7 @@ class Unclean:
     at: datetime
     # The lost machines' boots this stop covers, or none where it is the run's own end.
     boots: tuple[str, ...] = ()
-    # How many pauses of the run came before, so each one's halts have keys of their own.
+    # This pause's number among the run's, from 1, so each one's halts have keys of their own.
     count: int = 1
 
     @property
@@ -113,6 +122,8 @@ class Starts:
     plan_stored: bool
     other_boots: tuple[str, ...]
     this_boot: bool
+    # Whether this machine's local release file names a release, so its workers run.
+    released: bool = False
 
 
 def hold_after_unclean_stops(
@@ -165,17 +176,24 @@ def hold_after_unclean_stops(
             now(),
             quiet=True,
         )
-        said = ", ".join(held) or "no strategy, since no halt could be stored"
-        if starts.plan_stored:
-            # A start in the middle of the session: the workers run today's plan already.
+        if starts.released:
+            # Started in the session, after the workers had their release file.
             after = "the workers run today's plan and no supervisor watches it"
         else:
             after = "no worker starts"
-        alarm(
-            f"{deployment}: the check for an unclean stop could not finish, so {said} stays "
-            f"held and {after}: {reason}. The strategies stay held after a later start "
-            f"succeeds. {who(mode)}"
-        )
+        if held:
+            alarm(
+                f"{deployment}: the check for an unclean stop could not finish, so "
+                f"{', '.join(held)} stays held and {after}: {reason}. The strategies stay held "
+                f"after a later start succeeds. Start the supervisor's unit again once the cause "
+                f"is fixed. {who(mode)}"
+            )
+        else:
+            alarm(
+                f"{deployment}: the check for an unclean stop could not finish and no halt could "
+                f"be stored, so no strategy is held and {after}: {reason}. Pull the kill switch "
+                "of the account, then start the supervisor's unit again once the cause is fixed"
+            )
         raise HoldFailed(reason) from error
 
 
@@ -208,6 +226,8 @@ def _hold(
     # Every order that has not ended, an open one or one in doubt among them.
     held |= {o.intent.strategy for o in view.live.values()}
     names = sorted(held)
+    # Every halt lands before any pause, and the pauses go oldest first, because a pause
+    # of a run's end covers every run before it.
     for unclean in found:
         _write_halts(
             storage,
@@ -219,6 +239,7 @@ def _hold(
             now(),
             count=unclean.count,
         )
+    for unclean in reversed(found):
         view = _pause(journal, view, deployment, unclean, names, now)
         alarm(_alarm(mode, deployment, unclean, names, view, today, sessions))
     return tuple(found)
@@ -244,6 +265,10 @@ def _unclean(
     today_run = run_part(mode, today, today)
     covered, _, made = _covered(view, deployment, today_run)
     lost = tuple(b for b in starts.other_boots if b not in covered)
+    if starts.plan_stored and not starts.other_boots and not starts.this_boot:
+        # The plan is stored and no start recorded itself, so the record of the start that
+        # stored it was lost, and nothing tells its machine from this one.
+        lost = tuple(b for b in ("unrecorded",) if b not in covered)
     if starts.plan_stored and lost and not starts.this_boot:
         boots = ", ".join(lost)
         yield _judged(

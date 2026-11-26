@@ -17,7 +17,9 @@ built the way the adapter that takes it refuses otherwise.
    or the machine's own role can never stand in for it. It is read again every
    `REREAD` so a replaced credential is used, and a file that cannot be read
    refuses the start with `CredentialFileError`.
-4. **No file named reads the default chain**, as on a laptop or in CI's job.
+4. **No file named reads the default chain.** Every command names one, because
+   `runtime/settings.py` requires it, so the default chain serves only tests
+   and code a person runs outside the commands, as on a laptop.
 
 The file holds AWS's shared-credentials form under `[default]`:
 `aws_access_key_id`, `aws_secret_access_key` and, for a short-lived role,
