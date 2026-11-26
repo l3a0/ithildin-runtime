@@ -46,6 +46,7 @@ from ithildinruntime.journal import (
     InDoubtEntry,
     IntentEntry,
     Journal,
+    LostEntry,
     OpeningEntry,
     OutsideRecordEntry,
     ReadEntry,
@@ -66,6 +67,8 @@ ACCOUNT, WRITER = "paper-1", "0" * 32
 AT = datetime(2026, 10, 1, 19, 40, tzinfo=UTC)
 GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
 CHAN, OTHER = "chan_bollinger", "other-one.2"
+# A day after `AT`, once every order planned at `AT` has had its close.
+LATE = AT + timedelta(days=1)
 REF = BlobRef("runs/d/2026-10-01/x/y.json", "a" * 64)
 LOSS = LossReading(Decimal(1), Decimal(2), False, date(2026, 9, 30))
 
@@ -189,6 +192,10 @@ def in_doubt(name: str, raw: bytes | None = None, cut: bool = False) -> InDoubtE
     return InDoubtEntry(name, "no answer", raw, cut, AT)
 
 
+def lost(name: str, read: int = 2) -> LostEntry:
+    return LostEntry(name, read, "a whole list omits it")
+
+
 def expired(name: str, filled: object, raw: bytes = b"{}", cut: bool = False) -> ExpiredEntry:
     return ExpiredEntry(name, Decimal(str(filled)), raw, cut, AT)
 
@@ -309,6 +316,8 @@ def route(state: str, order: OrderIntent, decided: int = 3, broker: str = "b1") 
         "Abandoned late": [*sending, abandoned(name)],
         "Sending": sending,
         "InDoubt": [*sending, in_doubt(name)],
+        # The list is asked for a day later, and is entry `decided` + 5.
+        "Lost": [*sending, in_doubt(name), read(LATE), lost(name, decided + 5)],
         "Acknowledged": acked,
         "PartlyFilled": [*acked, first],
         "Filled": [*acked, first, rest],

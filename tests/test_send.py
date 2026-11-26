@@ -712,11 +712,46 @@ def test_a_failure_whose_journal_cannot_be_read_still_names_its_cause_and_every_
         return real(self, name)
 
     monkeypatch.setattr(OrderPath, "send", send)
+    alarms = len(made.alarms.sent)
     result = made.send_attempt()
     reason = result.halt.reason
     assert "raised RuntimeError" in reason and "could not be read" in reason
-    assert f"{first}, {second}" in reason
+    # The leg this call saw acknowledged is named, and the one it cannot read back is not known.
+    assert f"stand so: {first} acknowledged, and {second} not known, since the journal" in reason
+    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
     assert made.submits() == [first]
+    # One alarm for the outage and one naming every leg, and no abandon is tried on it.
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2 and sent[0].startswith("account sim-1: the journal could not be read")
+    assert "The plan's orders stand so" in sent[1]
+
+
+def test_a_journal_that_turns_unreadable_after_the_abandons_names_the_legs_this_call_saw(
+    monkeypatch,
+) -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == second:
+            raise RuntimeError("the path broke")
+        return real(self, name)
+
+    def before(number: int, op: str, key: str) -> None:
+        if op != "create" and key.startswith("journal/") and "abandoned" in made.kinds():
+            raise StoreUnavailable(key, "the store's own text")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    made.store.before = before
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert f"stand so: {first} acknowledged, and {second} not known" in reason
+    assert "the store's own text" not in reason
+    # The second leg was abandoned before the journal went, so nothing says it was not.
+    assert "not journaled abandoned" not in reason
+    assert made.kinds()[-1] == "abandoned"
 
 
 @pytest.mark.parametrize("leg", [0, 1], ids=["first", "second"])

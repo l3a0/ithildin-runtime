@@ -1404,8 +1404,9 @@ Every call to the broker goes through `OrderPath`.
 - Journaling that an order was never sent, which is `abandon`.
 - Reading the day's loss with no order, which is `loss`.
 - Reading the positions, the open orders, the cash, the broker's own records and the fills, and looking one order up.
+- Settling an order of a plan whose send stage ended, which is `settle`: it abandons one that was never sent, and finds one in doubt in the broker's list and looks it up by the broker's id.
 
-Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
+Three parts add the rest, now that `OrderPath.settle` settles an order in doubt. [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
 
 Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a submit, a cancel or a search for an order, one of six entries only the order path records, a change to the path from outside it in the spellings its tests plant, or an import of an adapter. The sweep reads what is written, so other spellings pass it. The fake broker catches none of those that replace the gate, because the approval is in the journal like any other. The fake broker reads the stored journal itself, and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
 
@@ -1480,7 +1481,7 @@ Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `Ca
 
 A read that fails raises `BrokerUnavailable`, which takes the error or its type, and carries the call's name and that type's name and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, and an answer that is not exactly the read's own type, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
 
-`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) reads it.
+`orders(since)` reads a takeover's whole list, open and closed orders across every page, and the simulator's `find_order` reads it.
 
 ##### One function lists the differences from the broker
 

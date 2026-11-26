@@ -47,6 +47,7 @@ from ithildinruntime.journal import (
     InDoubtEntry,
     IntentEntry,
     Journal,
+    LostEntry,
     OpeningEntry,
     OutsideRecordEntry,
     ReadEntry,
@@ -83,6 +84,7 @@ from tests.support.journals import (
     filled,
     foreign,
     in_doubt,
+    lost,
     opening,
     outside,
     planned,
@@ -132,12 +134,13 @@ SAMPLES: tuple[Record, ...] = (
     unmatched_fill(FULL),
     unmatched_order(foreign()),
     unmatched_order(foreign("x2", -3, client_order_id=NAME, type=None, time_in_force=None)),
+    lost(NAME),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 17
+    assert len(KINDS) == 18
 
 
 # Acceptance 1: each kind there and back.
@@ -168,7 +171,10 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         filled(part),
         disputed(dataclasses.replace(part, qty=Decimal(2))),
     ]
-    given += [expired(names[0], 1), *route("InDoubt", two), *route("Rejected", three)]
+    given += [expired(names[0], 1), *route("InDoubt", two)]
+    # A list asked for an hour after the close, which the `lost` names by its number.
+    given += [read(AT + timedelta(hours=1)), lost(names[1], len(given) + 1)]
+    given += [*route("Rejected", three)]
     given += [
         outside(broker_record()),
         unmatched_record(broker_record("r::2", 9, RecordKind.WITHDRAWAL)),
@@ -573,6 +579,8 @@ def _committed() -> list[tuple[Record, datetime]]:
     def t(seconds: int) -> datetime:
         return at + timedelta(seconds=seconds)
 
+    next_day = at + timedelta(days=1)
+
     def blob(name: str) -> BlobRef:
         return BlobRef(f"runs/fixture/2026-10-01/{name}.json", sha256_of(name.encode()))
 
@@ -734,6 +742,10 @@ def _committed() -> list[tuple[Record, datetime]]:
             "the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack "
             "mapped",
         ),
+        # A recover the next day takes the order a crash left sending, and a whole list omits it.
+        InDoubtEntry(names[5], "its send stage ended with no answer journaled", None, False, t(54)),
+        ReadEntry("execution/recover", next_day, blob("lookup-1"), next_day),
+        LostEntry(names[5], 55, "the broker's whole order list omits it"),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 

@@ -391,7 +391,7 @@ Every call first reads the log forward from the newest call it knows, and takes 
 | A blob whose events, applied to the account before it, give the account it holds | Takes it in |
 | A blob of a later format, one that is not canonical, or one that is not the call before it with its events applied, such as a fill that is not of its order | Halts, and so does every later call |
 | A gap, at a process's first call, which lists the whole log | Halts, and so does every later call. A process that has read the log asks for the next number alone, so it does not see a gap there and can store a call in it. Its own next call then halts on the call after the gap, unless that one still follows |
-| Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed. One that lands after the close is an order the account took in time, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) halts on its fill where it had read that order as lost |
+| Its own create refused, or with no answer | Raises, and nothing this process remembers changes. The next call finds whether the blob landed. One that lands after the close is an order the account took in time, and its fill is kept as unmatched and halts where recover had given that order up as lost |
 | Its number holding these same bytes | The create is done, since its first answer was lost |
 | Its number holding another call, or a store that says the create raced another and did not land | Starts over on what it then reads, up to 100 times, and then raises with nothing changed |
 
@@ -657,7 +657,8 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `sending` | `client_order_id` | Execution's order path | The order may leave now |
 | `ack` | `client_order_id`, `broker_order_id`, `raw`, `cut`, `received_at` | Execution's order path | The broker has the order, with the bytes it sent |
 | `rejected` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution | The broker refused the order |
-| `in_doubt` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution's order path | No answer that settles the order, or one this release does not read. `raw` is null where no plain bytes came |
+| `in_doubt` | `client_order_id`, `reason`, `raw`, `cut`, `received_at` | Execution's order path | No answer that settles the order, or one this release does not read, or a `sending` whose send stage ended with no answer journaled. `raw` is null where no plain bytes came |
+| `lost` | `client_order_id`, `read`, `reason` | Execution's order path | A whole order list, asked for once the order's time in force ran out and named by its `read` entry, omits an order in doubt, so whether it was sent is unproved. The fold refuses one whose list was asked for before the session's close plus twice the clock's bound |
 | `fill` | `fill`, `read` | Execution | One fill, and the number of the `read` entry whose file holds it |
 | `disputed_fill` | `fill`, `read` | Execution | A repeat of a fill whose content differs, kept beside the first |
 | `expired` | `client_order_id`, `filled`, `raw`, `cut`, `received_at` | Execution | The broker says the order ended with a part unfilled |
@@ -668,7 +669,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 
 A `verdict` keeps the caps as the canonical bytes of the parsed `HardCaps`, with the SHA-256 of the blob they came from, because the owner rewrites that blob. The fold never decodes them, so a cap added later leaves old entries readable, and the blob's other sections stay out of entries nobody can delete.
 
-The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull`, `outside_fill` and `outside_order`, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format. The four kinds `outside_record`, `unmatched_record`, `unmatched_fill` and `unmatched_order` are the one exception: the release that first reads them also writes them, because no environment builds a broker outside a backtest over a folder, so no journal outside a test holds one. A pin back past that release halts on any such entry, which [Rule 6: a rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) lists.
+The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull`, `outside_fill` and `outside_order`, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format. The kinds `outside_record`, `unmatched_record`, `unmatched_fill`, `unmatched_order` and `lost` are the one exception: the release that first reads each also writes it, because no environment builds a broker outside a backtest over a folder, so no journal outside a test holds one. A pin back past that release halts on any such entry, which [Rule 6: a rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) lists.
 
 ##### What holds a kind still
 
@@ -691,7 +692,7 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | `opening` | The entry's number, since an account's entry 1 is its only one |
 | `read` | The stored file's key and SHA-256 |
 | `decision` | The decision time |
-| `intent`, `verdict`, `abandoned`, `sending`, `ack`, `rejected`, `in_doubt` and `expired` | The client order id, with the state the view shows the order in |
+| `intent`, `verdict`, `abandoned`, `sending`, `ack`, `rejected`, `in_doubt`, `expired` and `lost` | The client order id, with the state the view shows the order in |
 | `cancel` | The broker's order id and what tells this cancel from an earlier one on the same order, because an order the platform did not stamp has no client order id and one order can carry several cancels. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) names that key. A `cancel` entry with no journaled answer is a cancel whose answer is lost, so a restarted writer looks it up before any new cancel, as rule 6 of [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) says |
 | `fill` | The broker's fill id, with a repeat of the same content skipped and a differing one journaled as `disputed_fill`, after which the book halts |
 | `disputed_fill` | The broker's fill id with its order, instrument, shares, price and time |
@@ -727,7 +728,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
 | A takeover's broker order list, a capture named by the journaled takeover entry, whose form [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json` |
-| The order list that maps an order in doubt | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds the key |
+| A broker's answer about an order in doubt, the order list that maps it or the lookup by the broker's id, an `OrderLookup` stored afresh on each attempt and named by a `read` entry | `runs/<deployment>/<run>/<decision>/execution/recover/lookup-<n>.json` |
 | A send stage's claim, naming its process's writer and a token of the call that wrote it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |
 | A journal checkpoint | `journal/<account>/checkpoints/<seq>.json`, with `seq` padded to twelve digits |
@@ -762,6 +763,6 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | `<boot>` | The boot id of the VM that wrote the record, so a replacement VM whose restart count starts again never meets an earlier record's key |
 | `<seq>` | The journal entry's sequence number. Every key that carries it pads it to twelve digits, the journal entry's own key, a checkpoint's and a book snapshot's, so a listing sorts them in order. Twelve digits of sequence number cover a million million entries, which at thirty entries a minute around the clock last tens of thousands of years |
 
-`core`'s key builders refuse a part that would make two rows' keys the same, such as a `-` inside a halt key's component or cause, or an output named `result`, `claim`, `broker-read-<n>` or like an attempt.
+`core`'s key builders refuse a part that would make two rows' keys the same, such as a `-` inside a halt key's component or cause, or an output named `result`, `claim`, `broker-read-<n>`, `lookup-<n>` or like an attempt.
 
 A halt's id is the key of the result that holds it, `<deployment>/<run>/<decision>/<stage>`, or for a halt held in a folder its name. The prefixes are the ones the grants of [The runtime's credential does only what the rules need](07-deployment.md#rule-5-the-runtimes-credential-does-only-what-the-rules-need) and the bucket's lifecycle name, with `release/` read by each VM's role for its own pin, as [Four environments](07-deployment.md#four-environments) says.

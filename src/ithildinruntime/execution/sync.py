@@ -13,7 +13,8 @@ two never drift apart.
    lists, as `execution/outside.py` sorts them, and halts on a fill in dispute
    or anything kept as unmatched, ahead of any lookup.
 4. It looks up each order the journal holds at the broker that the broker no
-   longer lists, and records the entry of its end, or halts.
+   longer lists, and records the entry of its end, or halts. An answer that
+   halts is not stored, which #211 changes.
 
 What a person reads shows a broker's order or fill id where it is one the
 journal takes, and no other text of the broker's.
@@ -32,10 +33,14 @@ from ithildinruntime.core import (
     BrokerState,
     BrokerUnavailable,
     Clock,
+    CodecError,
     Halt,
+    OrderLookup,
     OrderRecord,
     OrderState,
     Outcome,
+    StageDecision,
+    lookup_key,
 )
 from ithildinruntime.journal import (
     DOUBTFUL,
@@ -54,16 +59,46 @@ from .account import Account, StageRecord
 from .order_path import OrderPath
 from .outside import fill_entry, load_ranges, order_entry, record_entry
 
-__all__ = ["AT_THE_BROKER", "UNSETTLED", "journal_read", "read_broker", "recorded"]
+__all__ = [
+    "AT_THE_BROKER",
+    "UNSETTLED",
+    "Keep",
+    "journal_read",
+    "keeper",
+    "read_broker",
+    "recorded",
+]
+
+# What stores one answer of a broker's about one order, as it came, and gives the stored file.
+type Keep = Callable[[OrderLookup], BlobRef]
 
 # How many numbers one entry may lose to another writer.
 _NUMBERS = 100
 _ZERO = Decimal(0)
 # An order the broker has, as the journal's own groups of states give it, and every other
-# state that has not ended, which only a lookup, a person or #147 settles.
+# state that has not ended, which only a lookup, a person or recover's settling moves on.
 # A state no group names is unsettled, so it halts rather than being looked up.
 AT_THE_BROKER = OPEN - NOT_SENT - DOUBTFUL
 UNSETTLED = frozenset(OrderState) - ENDED - AT_THE_BROKER
+
+
+def keeper(decision: StageDecision, deployment: str, run: str, stage: str, at: datetime) -> Keep:
+    """Store each lookup of a decision afresh, at `lookup-<n>.json` under the stage's prefix."""
+
+    def keep(found: OrderLookup) -> BlobRef:
+        def key(n: int) -> str:
+            return lookup_key(deployment, run, at, stage, n)
+
+        try:
+            return decision.fresh(key, OrderLookup, found).ref
+        except CodecError:
+            # Its text quotes a field, and the field came from the broker.
+            raise Halt(
+                f"what the broker answered of {found.client_order_id} is no stored lookup, so it "
+                "is not stored and nothing settles the order"
+            ) from None
+
+    return keep
 
 
 def read_broker(path: OrderPath, since: datetime) -> AccountRead:

@@ -20,7 +20,7 @@ from .chain import (
 )
 from .entries import *  # noqa: F403
 from .entries import __all__ as _entries
-from .orders import DOUBTFUL, ENDED, NOT_SENT, OPEN
+from .orders import DOUBTFUL, ENDED, NOT_SENT, OPEN, lost_from
 
 __all__ = [
     "DOUBTFUL",
@@ -36,5 +36,6 @@ __all__ = [
     "OPEN",
     "Repeat",
     "View",
+    "lost_from",
     *_entries,
 ]

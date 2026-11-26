@@ -58,6 +58,7 @@ __all__ = [
     "Forecast",
     "ForecastSet",
     "FoundOrder",
+    "OrderLookup",
     "GateInputs",
     "HaltRecord",
     "HardCaps",
@@ -714,6 +715,7 @@ class OrderState(StrEnum):
     FILLED = "Filled"
     REJECTED = "Rejected"
     EXPIRED = "Expired"
+    LOST = "Lost"
 
 
 @dataclass(frozen=True)
@@ -899,6 +901,29 @@ class FoundOrder(_Record):
     rows: tuple[BrokerOrder, ...]
     whole_list: bool
     raw: bytes = dataclasses.field(repr=False)
+
+
+@dataclass(frozen=True)
+class OrderLookup(_Record):
+    """One answer a broker gave about one order, stored as it came before anything judges it.
+
+    `found` is the answer to a read of the order list that maps an order in
+    doubt, from `since`, and `answer` the answer to a lookup by the broker's id.
+    Exactly one of the two is set. `asked_at` is the platform's clock just
+    before the call, which bounds when the broker read its list.
+    """
+
+    client_order_id: str
+    since: datetime | None
+    asked_at: datetime
+    found: FoundOrder | None
+    answer: Ack | None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        _received_at(self.asked_at)
+        if (self.found is None) == (self.answer is None):
+            raise ValueError("a stored lookup holds a list's answer or a lookup's, and not both")
 
 
 # The most bytes a broker read holds in all its pages. Alpaca's order list gives at most 500

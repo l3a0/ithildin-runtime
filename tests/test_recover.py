@@ -740,7 +740,7 @@ def odd_fill(fill_id: str = SECRET, order: str = SECRET, **changes: object) -> F
     return Fill(**fields | changes)  # type: ignore[arg-type]
 
 
-# The orders nothing has settled, which step 2 halts on
+# The plans a send stage left unfinished, which step 2 settles
 
 
 AT1 = close_of(DAYS[1]).isoformat()
@@ -769,49 +769,33 @@ def journaled(world: RecoverWorld, *steps: tuple[str, int]) -> None:
 
 
 SENT = [("intent", 1), ("verdict", 1), ("sending", 1)]
-NONE_TWO = f"the order {TWO} has no entry"
+_S = OrderState
+# Each order is journaled by hand, so the broker holds none of them. An order in doubt is
+# then lost, since the next decision's list is asked for a session after its close.
 STUCK = {
-    "intended": ([("intent", 1)], f"{ONE} is Intended, its sending stored never", NONE_TWO),
-    "approved": (
-        [("intent", 1), ("verdict", 1)],
-        f"{ONE} is Approved, its sending stored never",
-        NONE_TWO,
-    ),
-    "sending": (SENT, f"{ONE} is Sending, its sending stored at {AT1}", NONE_TWO),
-    "in doubt": (
-        [*SENT, ("in_doubt", 1)],
-        f"{ONE} is InDoubt, its sending stored at {AT1}",
-        NONE_TWO,
-    ),
-    "a leg acknowledged and its partner with no entry": (
-        [*SENT, ("ack", 1)],
-        f"{ONE} is Acknowledged, its sending stored at {AT1}",
-        NONE_TWO,
-    ),
+    "intended": ([("intent", 1)], _S.ABANDONED, _S.ABANDONED),
+    "approved": ([("intent", 1), ("verdict", 1)], _S.ABANDONED, _S.ABANDONED),
+    "sending": (SENT, _S.LOST, _S.ABANDONED),
+    "in doubt": ([*SENT, ("in_doubt", 1)], _S.LOST, _S.ABANDONED),
     "a leg abandoned and its partner with no entry": (
         [("intent", 1), ("abandoned", 1)],
-        f"{ONE} is Abandoned, its sending stored never",
-        NONE_TWO,
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner intended": (
         [("intent", 1), ("abandoned", 1), ("intent", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is Intended, its sending stored never",
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner approved": (
         [("intent", 1), ("abandoned", 1), ("intent", 2), ("verdict", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is Approved, its sending stored never",
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner in doubt": (
         [("intent", 1), ("abandoned", 1), *((kind, 2) for kind, _ in SENT), ("in_doubt", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is InDoubt, its sending stored at {AT1}",
-    ),
-    "a leg acknowledged and its partner sending": (
-        [*SENT, ("ack", 1), *((kind, 2) for kind, _ in SENT)],
-        f"{ONE} is Acknowledged, its sending stored at {AT1}",
-        f"{TWO} is Sending, its sending stored at {AT1}",
+        _S.ABANDONED,
+        _S.LOST,
     ),
 }
 
@@ -826,48 +810,47 @@ def planned_pair(*steps: tuple[str, int]) -> RecoverWorld:
 
 
 @pytest.mark.parametrize("case", STUCK)
-def test_2_a_plan_a_crash_left_halts_with_each_order_and_alarms_for_each(case: str) -> None:
-    steps, *said = STUCK[case]
+def test_2_a_plan_a_crash_left_is_settled_and_nothing_is_sent(case: str) -> None:
+    steps, one, two = STUCK[case]
     world = planned_pair(*steps)
     calls: list[str] = []
-    stage = world.stage(brokers=doctored(world, calls=calls))
-    result = world.attempt(stage)
-    reason = halts(world, said[0], [], [], DATA_KEYS, result)
-    when = f"the decision at {AT1}"
-    assert reason == (
-        f"account {ACCOUNT}: {when} is not settled: the order {'; the order '.join(bare(said))}"
-    )
-    assert world.alarms.sent == [
-        f"account {ACCOUNT}: the order {one}, in {when}, whose orders are not settled"
-        for one in bare(said)
+    result = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
+    assert result.halt is None, result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (one, two)
+    doubted = [o for o in (one, two) if o is _S.LOST]
+    # Each order in doubt is found in the list alone, and nothing is submitted.
+    assert calls[: len(doubted)] == ["find_order"] * len(doubted)
+    assert "submit" not in calls
+    lost = [n for n, o in ((ONE, one), (TWO, two)) if o is _S.LOST]
+    assert [a.split(": ", 1)[1].split(":")[0] for a in world.alarms.sent] == [
+        f"the order {name} is lost" for name in lost
     ]
-    assert calls == []
-    # A cause that stands pages once in a process, and again after a restart.
-    world.prepare(close_of(DAYS[3]))
-    # The worker keeps one stage for its run, and this world keys a run by its session.
-    later = world.stage(brokers=doctored(world, calls=calls))
-    later._said = stage._said
-    again = world.attempt(later)
-    assert again.halt is not None and again.halt.reason.endswith(reason.split(": ", 1)[1])
-    assert len(world.alarms.sent) == len(bare(said))
-    world.restart()
-    world.attempt()
-    assert len(world.alarms.sent) == 2 * len(bare(said))
+    # A second attempt settles nothing more and sends no alarm of a lost order again.
+    kinds = world.kinds()
+    again = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
+    assert again.halt is None
+    assert sum(" is lost: " in a for a in world.alarms.sent) == len(lost)
+    assert "lost" not in world.kinds()[len(kinds) :]
 
 
-def bare(said: list[str]) -> list[str]:
-    return [one.removeprefix("the order ") for one in said]
+def test_2_a_leg_acknowledged_by_hand_and_its_partner_sending_settles_the_partner() -> None:
+    """The acknowledged leg is the broker's to move on, so recover's lookup of it halts."""
+    world = planned_pair(*SENT, ("ack", 1), *((kind, 2) for kind, _ in SENT))
+    result = world.attempt()
+    assert result.halt is not None and "its lookup found no such order" in result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.ACKNOWLEDGED, _S.LOST)
 
 
-def test_2_an_alarm_about_a_plan_that_could_not_be_sent_is_in_the_reason() -> None:
+def test_2_an_alarm_about_a_lost_order_that_could_not_be_sent_is_owed() -> None:
     world = planned_pair(*SENT)
     world.alarms.error = RuntimeError(SECRET)
-    halts(world, "The alarm could not be sent, and is tried again", [], [], DATA_KEYS)
-    # Both alarms were tried, and each is owed until the channel takes it.
-    assert len(world.alarms.sent) == 2 and len(world.account.unsent()) == 2
+    assert world.attempt().halt is None
+    assert len(world.alarms.sent) == 1 and len(world.account.unsent()) == 1
     world.alarms.error = None
     world.account.settle(lambda: None)
-    assert len(world.alarms.sent) == 4 and world.account.unsent() == ()
+    assert len(world.alarms.sent) == 2 and world.account.unsent() == ()
 
 
 @pytest.mark.parametrize(
@@ -881,11 +864,13 @@ def test_2_an_alarm_about_a_plan_that_could_not_be_sent_is_in_the_reason() -> No
 def test_2_a_plan_that_stands_halts_nothing(steps: list) -> None:
     """A crash right after the `decision` entry sent nothing, so the next decision goes on."""
     world = planned_pair(*steps)
+    before = world.kinds()
     assert world.attempt().halt is None
     assert world.alarms.sent == []
+    assert world.kinds()[len(before)] == "read"
 
 
-def test_2_every_unfinished_plan_is_named_not_the_newest_alone() -> None:
+def test_2_every_unfinished_plan_is_settled_not_the_newest_alone() -> None:
     world = planned_pair(*SENT)
     world.store.put(
         result_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE), b"a halted recover's result"
@@ -894,7 +879,9 @@ def test_2_every_unfinished_plan_is_named_not_the_newest_alone() -> None:
     world.plan(())
     world.prepare(close_of(DAYS[3]))
     result = world.attempt()
-    assert result.halt is not None and f"{ONE} is Sending" in result.halt.reason
+    assert result.halt is None, result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.LOST, _S.ABANDONED)
 
 
 def test_2_an_answer_this_process_owes_is_settled_before_the_view() -> None:

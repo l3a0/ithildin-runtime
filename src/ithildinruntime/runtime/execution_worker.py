@@ -4,7 +4,8 @@ The mode builds the broker, and this is the one file that does. It also hands a
 backtest's opening of its account the simulated broker's own, through
 `open_backtest`, since `execution` imports no broker.
 
-1. A backtest over a folder trades through the simulated broker, with no fault.
+1. A backtest over a folder trades through the simulated broker, with the faults
+   it is handed and none by default. Test 2 of #4 hands it the ones it replays.
 2. Every other mode, a backtest over any other store, and a stage table whose row of
    recover is not the one this file declares, build no broker. A row of send that is
    not the one this file declares halts send alone. Each
@@ -78,7 +79,7 @@ SEND_ROW = Stage(
 )
 
 # The parts of #10 that shadow waits for, and the one paper waits for beside them.
-_SHADOW = "#147, #148, #149, #150, #151, #155 and #156"
+_SHADOW = "#148, #149, #150, #151, #155 and #156"
 _PAPER = "#153"
 
 
@@ -106,6 +107,7 @@ class ExecutionWorker:
         release: str,
         table: Table,
         stress_moves: Path,
+        faults: Faults | None = None,
     ) -> None:
         self._owner_step = storage.owner_step
         writer = secrets.token_hex(16)
@@ -120,7 +122,8 @@ class ExecutionWorker:
             retry=retry,
             pause=pause,
         )
-        self._brokers = _brokers(mode, store, storage, account, clock, deployment, run)
+        made = (store, storage, account, clock, deployment, run, faults or Faults())
+        self._brokers = _brokers(mode, *made)
         stage = table.stage(RECOVER_STAGE)
         if stage != RECOVER_ROW:
             # Recover would read the broker before the last send went out.
@@ -263,8 +266,12 @@ def _brokers(
     clock: Clock,
     deployment: str,
     run: str,
+    faults: Faults,
 ) -> Callable[[datetime], Broker] | Halt:
-    """One decision's broker as the mode builds it, or why this run has none."""
+    """One decision's broker as the mode builds it, or why this run has none.
+
+    `faults` is what a backtest's simulated broker fails by, and no other mode builds one.
+    """
     try:
         known = Mode(mode)
     except ValueError:
@@ -287,7 +294,7 @@ def _brokers(
 
     def broker(at: datetime) -> Broker:
         prices = StoredPrices(storage, deployment, run, at)
-        return SimulatedBroker(log, clock, prices, Faults())
+        return SimulatedBroker(log, clock, prices, faults)
 
     return broker
 

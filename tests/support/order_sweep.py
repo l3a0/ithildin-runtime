@@ -64,7 +64,9 @@ _EXECUTION = ("src/ithildinruntime/execution/", "src/ithildinruntime/runtime/")
 
 # Each exemption: where, what, and the hits it lets through, or `None` for any.
 ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
-    (_PATH, "call"): frozenset({"_broker", "submit", "_submit"}),
+    (_PATH, "call"): frozenset({"_broker", "submit", "_submit", "find_order"}),
+    # The name `OrderPath._called` gives the search for an order in doubt.
+    (_PATH, "text"): frozenset({"find_order"}),
     (_JOURNAL, "call"): frozenset({"_build", "_append"}),
     ("tests/support/broken_paths.py", "call"): frozenset({"_broker", "submit", "_submit"}),
     ("tests/support/relay_broker.py", "call"): frozenset({"submit"}),

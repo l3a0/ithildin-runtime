@@ -1106,7 +1106,7 @@ rerun from doubling anything. The first three follow, and the last two each have
 
    1. It fetches the broker's positions, open orders, cash, records and fills again, a fresh read on every attempt rather than a capture that the first one wins.
    2. It stores that read and journals its hash before it compares, as architecture/05-building-blocks.md's `### The interfaces` says.
-   3. It settles each order in doubt by lookup. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds the lookup, an order in doubt halts the decision instead.
+   3. It halts on an order in doubt. Recover settles every one before it, by lookup, so only another writer's entry after recover's book can leave one here, and taking such a book without halting is [#211](https://github.com/l3a0/ithildin-runtime/issues/211)'s.
    4. It journals any record and fill that arrived since its recover stage, and any order the platform did not send, through the same sort recover runs.
    5. It compares the result with the book it replays from the journal. A comparison of cash follows a read of the broker's records, so a listed record posted between stages explains its difference rather than halting.
    6. Only then, once no halt this item names stands, does it plan. It journals the planned orders, cancels and replacements, each with its client order id, in the same entry as the whole target portfolio, along with the journal entry it synced through and a hash and the time of the broker state it fetched, before its first send. It then asks the risk gate about every planned order before any is journaled as intended, and sends nothing where one is refused.
@@ -1464,8 +1464,9 @@ order is the adapter's own, so a new broker changes no line of `OrderPath`. Thre
 [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
 
 1. The adapter reads the broker's order list, open and closed orders alike, from
-   the earliest `sending` entry in doubt, less a written overlap larger than the
-   clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets. Alpaca's
+   the order's `sending` entry, less a written overlap of 60 seconds, which is
+   larger than twice the clock's bound of 1 second, since the broker dates an
+   order by a clock of its own. Alpaca's
    [list of orders](https://docs.alpaca.markets/reference/getallorders-1)
    names both ids.
 2. It returns the broker's order id from the row that carries the order's client

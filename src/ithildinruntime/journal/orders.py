@@ -9,12 +9,13 @@ runs in production` asks.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 
-from ithildinruntime.core import Halt, OrderState
+from ithildinruntime.core import CLOCK_BOUND, Halt, OrderState, load_sessions, read_order_id
 
-__all__ = ["DOUBTFUL", "ENDED", "MOVES", "NOT_SENT", "OPEN", "Move", "moved"]
+__all__ = ["DOUBTFUL", "ENDED", "MOVES", "NOT_SENT", "OPEN", "Move", "lost_from", "moved"]
 
 
 class Move(StrEnum):
@@ -31,6 +32,7 @@ class Move(StrEnum):
     PART_FILL = "a fill"
     LAST_FILL = "a fill of the rest"
     EXPIRED = "an expired"
+    LOST = "a lost"
 
 
 _S = OrderState
@@ -46,6 +48,7 @@ _TABLE: tuple[tuple[Move, tuple[OrderState | None, ...], OrderState], ...] = (
     (Move.PART_FILL, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.PARTLY_FILLED),
     (Move.LAST_FILL, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.FILLED),
     (Move.EXPIRED, (_S.ACKNOWLEDGED, _S.PARTLY_FILLED), _S.EXPIRED),
+    (Move.LOST, (_S.IN_DOUBT,), _S.LOST),
 )
 MOVES: Mapping[tuple[Move, OrderState | None], OrderState] = MappingProxyType(
     {(move, start): end for move, starts, end in _TABLE for start in starts}
@@ -58,7 +61,8 @@ DOUBTFUL = frozenset({_S.SENDING, _S.IN_DOUBT})
 # An order in one of these has no `sending`, so nothing of it can have left.
 NOT_SENT = frozenset({_S.INTENDED, _S.APPROVED})
 # No entry moves an order out of one of these.
-ENDED = frozenset({_S.REFUSED, _S.ABANDONED, _S.FILLED, _S.REJECTED, _S.EXPIRED})
+# A `Lost` order is one the platform stopped waiting for, so its sending is unproved.
+ENDED = frozenset({_S.REFUSED, _S.ABANDONED, _S.FILLED, _S.REJECTED, _S.EXPIRED, _S.LOST})
 
 
 def moved(seq: int, name: str, move: Move, state: OrderState | None) -> OrderState:
@@ -68,3 +72,16 @@ def moved(seq: int, name: str, move: Move, state: OrderState | None) -> OrderSta
         stands = "has no entry" if state is None else f"is {state.value}"
         raise Halt(f"entry {seq} is {move.value} of the order {name}, which {stands}")
     return end
+
+
+def lost_from(client_order_id: str) -> datetime:
+    """The earliest time a whole order list asked for can show an order in doubt `Lost`.
+
+    It is the close of the session the order was planned in, which ends both a
+    day order and a closing-auction one, plus twice the clock's bound, since the
+    broker's clock and the platform's can each be off by the bound. A list asked
+    for earlier may yet be followed by the order, since a request sent just
+    before a crash can still arrive.
+    """
+    _, decided, _ = read_order_id(client_order_id)
+    return load_sessions().opened_by(decided).close + 2 * CLOCK_BOUND

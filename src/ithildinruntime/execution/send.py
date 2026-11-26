@@ -94,7 +94,7 @@ from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
 
 from .account import Account
 from .inputs import read_inputs
-from .order_path import OrderPath
+from .order_path import OrderPath, Outage
 from .orders import order_type, plan_orders
 from .recover import fills_since
 from .sync import journal_read, read_broker, recorded
@@ -355,24 +355,24 @@ class SendStage:
         went: dict[str, list[str]] = {}
         for place, order in enumerate(orders):
             name, strategy = order.client_order_id, order.strategy
+            sent = [n for names in went.values() for n in names]
             try:
                 if strategy in ended:
                     path.abandon(name, f"{strategy}'s plan ended: {ended[strategy]}")
                     continue
                 state = path.send(name)
             except Halt as halt:
-                self._failed(path, orders, place, halt.reason, report)
+                self._failed(path, orders, place, halt, sent, report)
             except Exception as error:
-                self._failed(
-                    path, orders, place, f"the call for {name} raised {error_name(error)}", report
-                )
+                why = Halt(f"the call for {name} raised {error_name(error)}")
+                self._failed(path, orders, place, why, sent, report)
             if state is OrderState.ACKNOWLEDGED:
                 went.setdefault(strategy, []).append(name)
                 continue
             if state is OrderState.ABANDONED and not went.get(strategy):
                 ended[strategy] = f"{name} was not sent, since {strategy} is off"
                 continue
-            self._failed(path, orders, place, f"the order {name} is {state}", report)
+            self._failed(path, orders, place, Halt(f"the order {name} is {state}"), sent, report)
         return ended
 
     def _failed(
@@ -380,36 +380,59 @@ class SendStage:
         path: OrderPath,
         orders: tuple[OrderIntent, ...],
         place: int,
-        reason: str,
+        halt: Halt,
+        sent: list[str],
         report: Callable[[], None],
     ) -> None:
         """Abandon every order not yet sent from `place` on, alarm naming each leg, and halt.
 
         The order at `place` is abandoned only where it has no entry or was
         left before its `sending`, as an error the path did not expect can leave
-        it. An order the broker may hold is left as it stands.
+        it. An order the broker may hold is left as it stands. `sent` names each
+        order this call saw acknowledged. A store that did not answer has
+        alarmed once already, so once one is met no other write or read is tried,
+        and the legs this call cannot read back are named from `sent`.
         """
+        reason = halt.reason
         said = [reason]
-        view = self._read(said, report)
+        down = isinstance(halt, Outage)
+        view = None if down else self._read(said, report)
+        down = down or view is None
+        left: list[str] = []
         for order in orders[place:]:
             name = order.client_order_id
             found = None if view is None else view.orders.get(name)
             if found is not None and found.state not in NOT_SENT:
                 continue
+            if down:
+                left.append(name)
+                continue
             try:
                 path.abandon(name, f"an earlier order of its plan stopped: {reason}")
-            except Halt as halt:
-                said.append(halt.reason)
-        view = self._read(said, report)
+            except Outage as outage:
+                said.append(outage.reason)
+                down = True
+                left.append(name)
+            except Halt as failed:
+                said.append(failed.reason)
+        view = None if down else self._read(said, report)
+        if left:
+            said.append(
+                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
+                "since the journal did not answer, and none of them was sent"
+            )
         if view is None:
-            names = ", ".join(order.client_order_id for order in orders)
-            legs = f"not known, since the journal could not be read: {names}"
+            names = [order.client_order_id for order in orders]
+            known = f"{', '.join(sent)} acknowledged, and " if sent else ""
+            rest = [name for name in names if name not in sent]
+            legs = f"{known}{', '.join(rest)} not known, since the journal could not be read"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))
                 for order in orders
             )
         what = f"{'. '.join(said)}. The plan's orders stand so: {legs}"
+        # The one alarm that names every leg, beside the outage's own where there was one.
         added = self._account.alarm(what, report)
         raise Halt(f"{what}{added}")
 
