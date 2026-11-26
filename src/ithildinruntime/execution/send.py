@@ -101,16 +101,6 @@ __all__ = ["OUTCOME_OUTPUT", "SendStage"]
 # The format of the stage's outcome file and of its result header.
 _FORMAT = 1
 OUTCOME_OUTPUT = "outcome"
-# The states of an order whose leg the broker may hold.
-_AT_THE_BROKER = frozenset(
-    {
-        OrderState.SENDING,
-        OrderState.IN_DOUBT,
-        OrderState.ACKNOWLEDGED,
-        OrderState.PARTLY_FILLED,
-        OrderState.FILLED,
-    }
-)
 
 
 class _Item(Protocol):
