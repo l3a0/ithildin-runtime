@@ -243,7 +243,7 @@ The command writes the override's body under the overrides prefix and a journal 
 
 A change to a strategy's position leaves that strategy off and sorted, as [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) says, and the command prints so.
 
-This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+An override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
 
 ##### Resume trading
 
@@ -261,7 +261,7 @@ On an account that sets `release_needs_blob`, it first writes the release blob, 
 
 This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
 
-This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+A clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
 
 ###### `ithildin strategy on --account <a> --strategy <s>`
 
