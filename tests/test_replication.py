@@ -17,6 +17,7 @@ over quantitative-trading's vintages at `19aadbeb`.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -195,15 +196,19 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
 def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) -> None:
     """The figures `chan_bollinger.toml` quotes for its `[risk]` limits, each inside its limit.
 
-    Each is exploratory, read at the tracked G over test 1's decisions. The net
-    counts one leg's order filled and the other's not, as the gate counts a leg
-    with the other unfilled. A loss is a day's move on what the close before held.
+    Each is exploratory, read at the tracked G over test 1's decisions. The net is
+    the widest the gate can count for a decision's two legs, each leg either
+    filled or not, at the decision's closes, and the gross takes each leg at the
+    larger of before and after. A loss is a day's move on what the close before
+    held. Each share limit is the largest position rounded up to ten shares, as
+    the tracked file says, and no day of test 1 reaches the loss stop. Pinned at
+    COMMIT.
     """
     limits = STRATEGY.section("risk")
     most_held = dict.fromkeys((GLD, USO), ZERO)
     most_order = dict.fromkeys((GLD, USO), ZERO)
     most_orders = 0
-    most_net = worst_loss = ZERO
+    most_net = most_gross = worst_loss = ZERO
     before: dict[InstrumentId, Decimal] = {}
     for n, (day, after) in enumerate(held):
         moved = [i for i in (GLD, USO) if after.get(i, ZERO) != before.get(i, ZERO)]
@@ -211,8 +216,13 @@ def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) ->
         for i in (GLD, USO):
             most_held[i] = max(most_held[i], abs(after.get(i, ZERO)))
             most_order[i] = max(most_order[i], abs(after.get(i, ZERO) - before.get(i, ZERO)))
-            half = {**before, i: after.get(i, ZERO)}
-            net = abs(sum((q * closes[j][day] for j, q in half.items()), ZERO))
+        # The gate counts each leg's gross at the larger of before and after its order.
+        widest = (max(abs(before.get(i, ZERO)), abs(after.get(i, ZERO))) for i in (GLD, USO))
+        gross = sum((q * closes[i][day] for i, q in zip((GLD, USO), widest, strict=True)), ZERO)
+        most_gross = max(most_gross, gross)
+        for gld, uso in itertools.product((before, after), repeat=2):
+            corner = {GLD: gld.get(GLD, ZERO), USO: uso.get(USO, ZERO)}
+            net = abs(sum((q * closes[j][day] for j, q in corner.items()), ZERO))
             most_net = max(most_net, net)
         if n:
             last = held[n - 1][0]
@@ -226,14 +236,16 @@ def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) ->
         "largest USO order": round(float(most_order[USO]), 1),
         "most orders a decision": most_orders,
         "largest net over G": round(float(most_net / G), 3),
+        "largest gross over G": round(float(most_gross / G), 3),
         "worst day over G": round(float(worst_loss / G), 3),
     }
     assert found == RANGE, found
     for i in (GLD, USO):
-        assert most_held[i] <= limits["max_position"][i]
+        assert limits["max_position"][i] == math.ceil(most_held[i] / 10) * 10
         assert most_order[i] <= limits["max_order_qty"][i]
     assert most_orders <= limits["max_open_orders"]
-    assert most_net <= limits["max_net"] and worst_loss < limits["loss_stop"]
+    assert most_net <= limits["max_net"] and most_gross <= limits["max_gross"]
+    assert worst_loss < limits["loss_stop"]
 
 
 RANGE = {
@@ -243,6 +255,7 @@ RANGE = {
     "largest USO order": 484.0,
     "most orders a decision": 2,
     "largest net over G": 1.447,
+    "largest gross over G": 1.453,
     "worst day over G": 0.066,
 }
 
