@@ -106,6 +106,7 @@ __all__ = [
     "EXIT_PLAN",
     "EXIT_SETTING",
     "PLAN_EVERY",
+    "Parts",
     "RETRY",
     "Worker",
     "alpha_main",
@@ -113,6 +114,7 @@ __all__ = [
     "data_main",
     "execution_main",
     "measures",
+    "parts_for",
     "portfolio_main",
     "risk_main",
     "run_alpha",
@@ -121,6 +123,7 @@ __all__ = [
     "run_execution",
     "run_portfolio",
     "run_risk",
+    "supervisor_for",
     "supervisor_main",
     "trading_day",
 ]
@@ -405,10 +408,37 @@ def _beat(path: Path | None) -> Callable[[], None]:
     return beat
 
 
-def _worker(settings: Settings, component: str, stop: threading.Event) -> tuple[Worker, AwsClients]:
+@dataclass(frozen=True)
+class Parts:
+    """What one worker's core is handed in its environment, as `parts_for` builds it."""
+
+    worker: Worker
+    clock: Clock | None
+    servers: TimeServers | None
+    lake: DataBuckets | None
+    mirror: Path
+    measured: bool
+
+
+# The workers whose clock is the machine's, judged against the time servers.
+_TIMED = ("data", "execution")
+
+
+def parts_for(
+    settings: Settings,
+    component: str,
+    stop: threading.Event,
+    clients: AwsClients | None = None,
+    timer: Timer | None = None,
+) -> Parts:
+    """Every adapter `component`'s core takes in the environment `settings` names.
+
+    It is the one place a command wires its adapters, so a test that hands it
+    stand-in clients checks the wiring a VM runs.
+    """
     place = settings.environment
-    clients = _clients(settings)
-    timer = SystemTimer()
+    clients = clients or _clients(settings)
+    timer = timer or SystemTimer()
     alerts = LogAlerts(component)
     store = S3Store(clients.s3(), place.bucket)
     sqs = clients.sqs()
@@ -437,77 +467,35 @@ def _worker(settings: Settings, component: str, stop: threading.Event) -> tuple[
         stop=stop,
         release_file=settings.release_file,
     )
-    return worker, clients
-
-
-def _servers(timer: Timer) -> TimeServers:
-    return TimeServers(TIME_SERVERS, now=timer.now)
-
-
-def data_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    worker, clients = _worker(settings, "data", stop)
-    servers = _servers(worker.timer)
-    lake = data_buckets(
-        worker.mode, client=clients.s3(), bucket=settings.lake_bucket, prefix=settings.lake_prefix
-    )
-    clock = WallClock(worker.timer, servers=servers)
-    raise SystemExit(
-        run_data(
-            worker,
-            clock=clock,
-            measured=measures(worker.mode),
-            lake=lake,
-            mirror=settings.mirror,
-            servers=servers,
+    servers = TimeServers(TIME_SERVERS, now=timer.now) if component in _TIMED else None
+    clock = WallClock(timer, servers=servers) if servers is not None else None
+    lake = None
+    if component == "data":
+        lake = data_buckets(
+            place.mode,
+            client=clients.s3(),
+            bucket=settings.lake_bucket,
+            prefix=settings.lake_prefix,
         )
-    )
+    return Parts(worker, clock, servers, lake, settings.mirror, measures(place.mode))
 
 
-def alpha_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_alpha(_worker(settings, "alpha", stop)[0]))
-
-
-def cost_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_cost(_worker(settings, "cost", stop)[0]))
-
-
-def risk_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_risk(_worker(settings, "risk", stop)[0]))
-
-
-def portfolio_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    raise SystemExit(run_portfolio(_worker(settings, "portfolio", stop)[0]))
-
-
-def execution_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    worker, _ = _worker(settings, "execution", stop)
-    servers = _servers(worker.timer)
-    clock = WallClock(worker.timer, servers=servers)
-    raise SystemExit(run_execution(worker, clock=clock, servers=servers))
-
-
-def supervisor_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
-    try:
-        release = settings.release()
-    except SettingError as error:
-        print(f"ithildin: {error}", file=sys.stderr)
-        raise SystemExit(EXIT_SETTING) from None
+def supervisor_for(
+    settings: Settings,
+    stop: threading.Event,
+    clients: AwsClients | None = None,
+    timer: Timer | None = None,
+) -> Supervisor:
+    """The supervisor of the environment `settings` names, reading its release from the pin."""
     place = settings.environment
-    clients = _clients(settings)
-    timer = SystemTimer()
+    clients = clients or _clients(settings)
+    timer = timer or SystemTimer()
     alerts = LogAlerts("supervisor")
     store = S3Store(clients.s3(), place.bucket)
     storage = Storage(
         store, timer=timer, pause=time.sleep, retry=RETRY, alerts=alerts, owner_step=OWNER_STEP
     )
-    outcome = Supervisor(
+    return Supervisor(
         mode=place.mode,
         deployment=place.deployment.name,
         account=place.deployment.account,
@@ -515,12 +503,65 @@ def supervisor_main() -> None:
         storage=storage,
         table=deployment_table(place.deployment),
         schedules=place.deployment.schedules,
-        release=release,
+        release=settings.release(),
         boot=settings.boot,
         timer=timer,
         alerts=alerts,
         release_file=settings.release_file,
         wait=stop.wait,
-    ).run(trading_day(timer.now()))
+    )
+
+
+def data_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    parts = parts_for(settings, "data", stop)
+    assert parts.lake is not None and parts.clock is not None
+    raise SystemExit(
+        run_data(
+            parts.worker,
+            clock=parts.clock,
+            measured=parts.measured,
+            lake=parts.lake,
+            mirror=parts.mirror,
+            servers=parts.servers,
+        )
+    )
+
+
+def alpha_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    raise SystemExit(run_alpha(parts_for(settings, "alpha", stop).worker))
+
+
+def cost_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    raise SystemExit(run_cost(parts_for(settings, "cost", stop).worker))
+
+
+def risk_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    raise SystemExit(run_risk(parts_for(settings, "risk", stop).worker))
+
+
+def portfolio_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    raise SystemExit(run_portfolio(parts_for(settings, "portfolio", stop).worker))
+
+
+def execution_main() -> None:
+    settings, stop = _settings(), _stop_on_sigterm()
+    parts = parts_for(settings, "execution", stop)
+    assert parts.clock is not None
+    raise SystemExit(run_execution(parts.worker, clock=parts.clock, servers=parts.servers))
+
+
+def supervisor_main() -> None:
+    settings, stop, timer = _settings(), _stop_on_sigterm(), SystemTimer()
+    try:
+        supervisor = supervisor_for(settings, stop, timer=timer)
+    except SettingError as error:
+        print(f"ithildin: {error}", file=sys.stderr)
+        raise SystemExit(EXIT_SETTING) from None
+    outcome = supervisor.run(trading_day(timer.now()))
     print(f"ithildin-supervisor: {outcome.line}")
     raise SystemExit(outcome.code)

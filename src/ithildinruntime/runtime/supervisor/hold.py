@@ -236,6 +236,10 @@ def _unclean(
     """Each unclean stop no pause covers yet, newest first.
 
     A pause covers the boots it names, or the run's own end, and nothing else.
+    A start on another boot reads as a lost machine only while one VM runs the
+    environment. In a group of several VMs every VM has its own boot, so there
+    a machine counts as lost only once the plan's lease has expired, which #210
+    builds before a second supervisor runs.
     """
     today_run = run_part(mode, today, today)
     covered, _, made = _covered(view, deployment, today_run)

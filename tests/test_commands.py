@@ -371,3 +371,106 @@ def test_a_worker_waits_for_the_release_file_as_well_as_the_plan(tmp_path: Path)
     release.write_text("sha256:r\n")
     thread.join(5)
     assert not thread.is_alive() and found and found[0].release == "sha256:r"
+
+
+class StandInClients:
+    """`AwsClients` with no network: real botocore clients, and a queue URL by name."""
+
+    def __init__(self) -> None:
+        from ithildinruntime.adapters import AwsClients
+
+        self._real = AwsClients("us-east-1")
+        self.asked: list[str] = []
+
+    def s3(self):
+        return self._real.s3()
+
+    def sqs(self):
+        return self._real.sqs()
+
+    def queue_url(self, sqs, name: str) -> str:
+        self.asked.append(name)
+        return f"https://sqs.example/{name}"
+
+
+class FixedTimer:
+    def __init__(self, at) -> None:
+        self.at = at
+
+    def now(self):
+        return self.at
+
+    def monotonic(self) -> float:
+        return 0.0
+
+    def after(self, seconds: float) -> object:
+        raise NotImplementedError
+
+
+def _settings_of(tmp_path: Path, boot: Path):
+    pin = tmp_path / "pin"
+    pin.write_text("sha256:pinned\n")
+    values = GOOD | {
+        "pin": str(pin),
+        "heartbeat": str(tmp_path / "beat"),
+        "release_file": str(tmp_path / "local" / "release"),
+        "mirror": str(tmp_path / "mirror"),
+    }
+    return read_settings(_write(tmp_path, values), boot)
+
+
+@pytest.mark.parametrize("component", WORKERS)
+def test_each_command_wires_its_environments_adapters(
+    tmp_path: Path, boot: Path, component: str
+) -> None:
+    import threading
+    from datetime import UTC, datetime
+
+    from ithildinruntime.adapters import S3Bucket, WallClock
+
+    settings = _settings_of(tmp_path, boot)
+    clients = StandInClients()
+    # 03:00 UTC on 2026-12-01 is still 2026-11-30 in New York.
+    timer = FixedTimer(datetime(2026, 12, 1, 3, 0, tzinfo=UTC))
+    stop = threading.Event()
+    parts = entry.parts_for(settings, component, stop, clients=clients, timer=timer)
+    worker = parts.worker
+    assert clients.asked == [f"ithildin-shadow-{component}"]
+    assert worker.queue._url == f"https://sqs.example/ithildin-shadow-{component}"
+    assert (worker.mode, worker.deployment, worker.account) == (Mode.SHADOW, "shadow", "shadow1")
+    assert worker.run == "2026-11-30" and worker.bucket == "ithildin-runtime-shadow"
+    assert worker.store._bucket == "ithildin-runtime-shadow"
+    assert worker.release_file == tmp_path / "local" / "release" and worker.stop is stop
+    assert [s.name for s in worker.table.strategies] == ["chan_bollinger"]
+    worker.beat()
+    assert (tmp_path / "beat").exists()
+    assert parts.measured is True and parts.mirror == tmp_path / "mirror"
+    if component in ("data", "execution"):
+        assert isinstance(parts.clock, WallClock) and parts.clock._servers is parts.servers
+        assert parts.servers is not None
+    else:
+        assert (parts.clock, parts.servers) == (None, None)
+    if component == "data":
+        assert isinstance(parts.lake.lake, S3Bucket) and isinstance(parts.lake.live, S3Bucket)
+        assert (parts.lake.lake._bucket, parts.lake.lake._root) == ("lake-bucket", "lake/")
+        assert parts.lake.live._root == "lake-live/"
+    else:
+        assert parts.lake is None
+
+
+def test_the_supervisors_command_wires_its_environment(tmp_path: Path, boot: Path) -> None:
+    import threading
+    from datetime import UTC, datetime
+
+    settings = _settings_of(tmp_path, boot)
+    timer = FixedTimer(datetime(2026, 11, 30, 14, 0, tzinfo=UTC))
+    stop = threading.Event()
+    made = entry.supervisor_for(settings, stop, clients=StandInClients(), timer=timer)
+    assert (made._mode, made._deployment, made._account) == (Mode.SHADOW, "shadow", "shadow1")
+    assert made._release == "sha256:pinned" and made._boot == settings.boot
+    assert made._release_file == tmp_path / "local" / "release"
+    assert made._store._bucket == "ithildin-runtime-shadow" and made._timer is timer
+    assert made._wait == stop.wait
+    assert dict(made._schedules) == {
+        "chan_bollinger": ENVIRONMENTS["shadow"].deployment.schedules["chan_bollinger"]
+    }
