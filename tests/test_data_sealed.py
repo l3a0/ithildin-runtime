@@ -823,11 +823,11 @@ def test_6_a_partition_restated_and_the_bytes_of_a_backtest(day: Path, tmp_path:
 def test_6_each_sample_reads_back(day: Path, live: Path, tmp_path: Path) -> None:
     snap = source(day, tmp_path, quotes=WIDE).read(AT).snapshot
     assert snap.partitions and snap.rows and decode(encode(snap), Snapshot) == snap
-    for changes in (
-        {"provisional": True},
-        {"quotes_read_at": None},
+    for changes, said in (
+        ({"provisional": True}, "a provisional snapshot names no sealed partition"),
+        ({"quotes_read_at": None}, "a snapshot that read quotes has quotes_read_at None"),
     ):
-        with pytest.raises(ValueError, match="snapshot"):
+        with pytest.raises(ValueError, match=said):
             replace(snap, **changes)
 
 
@@ -1214,3 +1214,29 @@ def test_6_two_decisions_side_by_side_over_one_mirror(day: Path, tmp_path: Path)
     for thread in threads:
         thread.join()
     assert got == alone
+
+
+def test_x_the_clocks_reading_is_taken_after_the_last_answer_of_a_sealed_read(
+    day: Path, tmp_path: Path, monkeypatch
+) -> None:
+    from ithildinruntime.core import ClockReading
+    from tests.support.clocks import slow
+
+    order: list[str] = []
+    real = sealed.load_quotes
+
+    def load(ticker, on, snap=None, **kw):
+        order.append("load_quotes")
+        return real(ticker, on, snap, **kw)
+
+    class Noted(Clock):
+        def reading(self) -> ClockReading:
+            order.append("reading")
+            return slow(AT)
+
+    monkeypatch.setattr(sealed, "load_quotes", load)
+    reading = source(day, tmp_path, clock=Noted()).read(AT)
+    assert reading.sealed is True and order.count("reading") == 1
+    assert order[-2:] == ["load_quotes", "reading"]
+    assert reading.snapshot.clock == slow(AT)
+    assert reading.halts[0].startswith("the clock is 2.000000 seconds slow against")

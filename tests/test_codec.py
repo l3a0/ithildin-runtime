@@ -389,23 +389,23 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
         (b'{"entry_hash":"a","seq":"1"}', core.JournalAck, "a string where an int is"),
         (b"[]", core.JournalAck, "a list where a record is"),
         (
-            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
-            b'"ledgers":{},"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
-            b'"segments":{},"status":{}}',
+            b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
+            b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":{},'
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":{},"status":{}}',
             core.Snapshot,
             "an object where a list is",
         ),
         (
-            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
-            b'"ledgers":{},"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
-            b'"segments":[],"status":{"USO":"rotten"}}',
+            b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
+            b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":{},'
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"status":{"USO":"rotten"}}',
             core.Snapshot,
             "a status no BarStatus names",
         ),
         (
-            b'{"bars":{},"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},'
-            b'"ledgers":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},'
-            b'"segments":[],"status":{}}',
+            b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
+            b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":[],'
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"status":{}}',
             core.Snapshot,
             "a list where a mapping is",
         ),
@@ -438,6 +438,8 @@ def test_decode_refuses_dirty_bytes(data: bytes, kind: type, defect: str) -> Non
     with pytest.raises(CodecError) as raised:
         decode(data, kind)
     assert type(raised.value) is CodecError
+    # A record refused for its field set never reaches the defect the case names.
+    assert " holds fields " not in str(raised.value), raised.value
 
 
 @pytest.mark.parametrize(

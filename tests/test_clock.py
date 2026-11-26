@@ -424,7 +424,7 @@ def test_8_differences_names_a_clock_past_a_bound(first, later, said: str) -> No
 
 def _capture(clock: ClockReading, status=()) -> bytes:
     header = BlobHeader(
-        3, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
+        4, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
     )
     snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), (), {}, {}, (), None, clock)
     return encode_output(Snapshot, OutputFile(header, (snap,), False))
