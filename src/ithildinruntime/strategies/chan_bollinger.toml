@@ -87,9 +87,9 @@ gross = 9936
 #   the day, V less the book at its marks, and past it refuses every order,
 #   exits included. It stops trading after a loss and bounds no loss itself: a
 #   stress move against every leg, as the gate's worst loss counts it, can pass
-#   it by far. The level holds for paper. No ruling sets it for live, where the
-#   account's caps set the loss limit. Test 1's worst day, a loss of 6.6% of G,
-#   shows only that no day of test 1 stops.
+#   it by far. The level is ruled for paper, and an account's caps can lower it
+#   and never raise it. Test 1's worst day, a loss of 6.6% of G, shows only that
+#   no day of test 1 stops.
 # - moc_cutoff is 0, because test 1's account fills at the close. An account's
 #   caps set its own.
 [risk]
