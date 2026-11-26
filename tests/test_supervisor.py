@@ -825,6 +825,7 @@ def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) 
     assert _stop_of(world) is None
     (alarm,) = world.alarms()
     assert "asked to stop before 2026-10-02's stop was stored" in alarm
+    assert "If its unit shows stopped, start the supervisor's unit again" in alarm
 
 
 # A pause covers only what it names

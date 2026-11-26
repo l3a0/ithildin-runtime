@@ -416,7 +416,7 @@ class Supervisor:
                 self._alerts.alarm(
                     f"{self._deployment}: the supervisor was asked to stop before {plan.run}'s "
                     "stop was stored, so nothing watches the rest of the session until it starts "
-                    "again"
+                    "again. If its unit shows stopped, start the supervisor's unit again"
                 )
                 return Outcome(EXIT_ASKED, f"asked to stop before {plan.run} stopped")
 

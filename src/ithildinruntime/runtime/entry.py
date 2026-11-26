@@ -51,10 +51,10 @@ supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6` and each worker's
 but execution's `RestartPreventExitStatus=2 6`, because a restart into the same
 setting, halt, stall, failed hold or plan raises the same alarm again and spends
 the day's restarts. Execution's units have no start limit and restart on any
-exit while a session is open, so a cancel and the kill switch are always served,
-as design.md's `#### Automatic restarts: the two components that keep on past
-their cap` says. After 4, 5 or 6 a person starts the supervisor's unit again
-once the cause is fixed.
+exit while a session is open, so a cancel and the kill switch are served again as
+soon as the cause of an exit is fixed, as design.md's `#### Automatic restarts:
+the two components that keep on past their cap` says. After 4, 5 or 6 a person
+starts the supervisor's unit again once the cause is fixed.
 """
 
 from __future__ import annotations
@@ -250,6 +250,7 @@ def _serve(
         worker.alerts.alarm(
             f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing. Correct the "
             "plan or the settings' environment, then start the unit again"
+            + _serves_no_cancel(component)
         )
         return EXIT_PLAN
     if plan is None:
@@ -402,10 +403,22 @@ def _with_servers(servers: TimeServers | None, serve: Callable[[], int]) -> int:
 # The commands
 
 
+def _serves_no_cancel(component: str) -> str:
+    """What execution's alarm adds where it ends before its loop: nothing serves a cancel."""
+    if component != "execution":
+        return ""
+    return (
+        ". Execution serves no cancel and no kill switch on this machine until the cause is "
+        f"fixed, though its unit restarts on its own, so {OWNER_STEP}"
+    )
+
+
 def _refuse(component: str, error: Exception) -> NoReturn:
     """End a command on a setting it cannot use: one line, and an alarm line beside it."""
     print(f"ithildin: {error}", file=sys.stderr)
-    LogAlerts(component).alarm(f"{error}. Fix it, then start the unit again")
+    LogAlerts(component).alarm(
+        f"{error}. Fix it, then start the unit again{_serves_no_cancel(component)}"
+    )
     raise SystemExit(EXIT_SETTING) from None
 
 

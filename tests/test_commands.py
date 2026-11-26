@@ -49,7 +49,7 @@ def test_a_command_with_no_settings_exits_2_naming_them(command: str) -> None:
     assert done.stderr.splitlines() == [
         "ithildin: ITHILDIN_SETTINGS names no settings file",
         f"ALARM {worker}: ITHILDIN_SETTINGS names no settings file. Fix it, then start the "
-        "unit again",
+        f"unit again{entry._serves_no_cancel(worker)}",
     ]
 
 
@@ -750,3 +750,20 @@ def test_a_pin_the_supervisor_cannot_use_exits_2_with_an_alarm(monkeypatch, caps
         entry.supervisor_main()
     assert ended.value.code == entry.EXIT_SETTING
     assert "ALARM supervisor: the release pin file /x cannot be read" in capsys.readouterr().err
+
+
+def test_execution_that_cannot_run_its_plan_says_no_cancel_is_served(tmp_path: Path) -> None:
+    import dataclasses
+
+    from ithildinruntime.core import Halt
+
+    worker = _idle_worker(tmp_path, Mode.SHADOW)
+    _store_plan(worker, Mode.PAPER)
+    with pytest.raises(Halt):
+        entry.wait_for_plan(worker)
+    code = entry._serve(worker, "execution", lambda plan: {})
+    assert code == entry.EXIT_PLAN
+    (alarm,) = worker.alerts.reasons  # type: ignore[attr-defined]
+    assert "Execution serves no cancel and no kill switch on this machine" in alarm
+    assert entry.OWNER_STEP in alarm
+    assert dataclasses.is_dataclass(worker)
