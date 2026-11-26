@@ -273,7 +273,7 @@ and a decision before the close reads two.
 | --- | --- | --- | --- |
 | The vintages it is tested on | Official close, as `data/price_kinds.csv` states of both files | Consolidated | None |
 | The recent vendor download of [Where bars come from](03-context-and-scope.md#where-bars-come-from) | What `data/price_kinds.csv` states of it. It states nothing until [#175](https://github.com/l3a0/ithildin-runtime/issues/175) | What the same row states | What the same row states |
-| The bars marketlake captures | What `data/price_kinds.csv` states of capture. It states nothing until [#174](https://github.com/l3a0/ithildin-runtime/issues/174) | What the same row states | What the same row states |
+| The bars marketlake captures | Official close, as `data/price_kinds.csv` states of capture on the sessions its row covers | Consolidated | None |
 | The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag has to say real time. Its stamps are held to [a maximum age](03-context-and-scope.md#when-the-age-is-measured), which nobody writes until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) |
 
 So at close−20 the newest hedge ratio and z-score mix one midpoint of each leg

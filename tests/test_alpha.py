@@ -792,10 +792,29 @@ def leg(held: Snapshot, instrument, bars) -> Snapshot:
     return replace(held, bars={**held.bars, instrument: {"1d": tuple(bars)}})
 
 
-def basis(instrument, n: int) -> Snapshot:
-    bars = list(HAND_SNAPSHOT.bars[instrument]["1d"])
-    bars[n] = replace(bars[n], basis="raw")
-    return leg(HAND_SNAPSHOT, instrument, bars)
+def traded(instrument, bars: slice) -> Snapshot:
+    """The snapshot with these bars of the leg as marketlake captures one, as traded."""
+    held = HAND_SNAPSHOT.bars[instrument]["1d"]
+    changed = set(held[bars])
+    return leg(
+        HAND_SNAPSHOT,
+        instrument,
+        [replace(b, basis="raw", source=None) if b in changed else b for b in held],
+    )
+
+
+def test_a_window_of_captured_bars_is_read_as_one_of_adjusted_bars_is() -> None:
+    captured = leg(traded(USO, slice(None)), GLD, traded(GLD, slice(None)).bars[GLD]["1d"])
+    assert {b.basis for by in captured.bars.values() for b in by["1d"]} == {"raw"}
+    assert forecast_of(SMALL, captured) == forecast_of(SMALL, HAND_SNAPSHOT)
+
+
+@pytest.mark.parametrize("instrument", [USO, GLD])
+@pytest.mark.parametrize("bars", [slice(0, 1), slice(3, 4), slice(NEWEST, None), slice(None)])
+def test_the_model_reads_no_bars_basis_because_data_judges_the_series(instrument, bars) -> None:
+    held = traded(instrument, bars)
+    assert "raw" in {b.basis for b in held.bars[instrument]["1d"]}
+    assert forecast_of(SMALL, held) == forecast_of(SMALL, HAND_SNAPSHOT)
 
 
 NEWEST_OF = {
@@ -804,10 +823,26 @@ NEWEST_OF = {
         "{leg}'s bar for 2011-11-28 was knowable at 2011-11-28T21:00:01+00:00, after the decision "
         "at 2011-11-28T21:00:00+00:00",
     ),
+    "that-ends-a-second-after-the-decision": (
+        {"end": CLOSE + timedelta(seconds=1)},
+        "{leg}'s bar for 2011-11-28 ends at 2011-11-28T21:00:01+00:00, after the decision at "
+        "2011-11-28T21:00:00+00:00",
+    ),
     "with-an-unstated-kind": (
         {"price_kind": "unstated"},
         "{leg}'s bar for 2011-11-28 has unstated price kind",
     ),
+    **{
+        f"with-unstated-{name.replace('_', '-')}": (
+            {name: "unstated"},
+            f"{{leg}}'s bar for 2011-11-28 has unstated {what}",
+        )
+        for name, what in (
+            ("venues", "venues"),
+            ("delay", "delay"),
+            ("volume_counted", "volume counting"),
+        )
+    },
     "with-a-close-of-zero": (
         {"close": d(0)},
         "{leg}'s close for 2011-11-28 is 0, not above zero",
@@ -851,36 +886,6 @@ HALTS = {
             HAND_SNAPSHOT, status={**HAND_SNAPSHOT.status, InstrumentId("SPY"): BarStatus.STALE}
         ),
         "SPY stale for the session",
-    ),
-    "both-legs-captured": (
-        replace(
-            HAND_SNAPSHOT,
-            bars={
-                i: {
-                    "1d": tuple(
-                        replace(b, basis="raw", source=None, source_as_of=None) for b in by["1d"]
-                    )
-                }
-                for i, by in HAND_SNAPSHOT.bars.items()
-            },
-        ),
-        "strategy chan reads adjusted prices, and USO's bar of 2011-11-17 has the basis raw",
-    ),
-    "a-leg-as-traded": (
-        leg(
-            HAND_SNAPSHOT,
-            USO,
-            [replace(bar, basis="raw") for bar in HAND_SNAPSHOT.bars[USO]["1d"]],
-        ),
-        "strategy chan reads adjusted prices, and USO's bar of 2011-11-17 has the basis raw",
-    ),
-    "a-bar-as-traded": (
-        basis(GLD, 0),
-        "strategy chan reads adjusted prices, and GLD's bar of 2011-11-17 has the basis raw",
-    ),
-    "the-newest-bar-as-traded": (
-        basis(USO, NEWEST),
-        "strategy chan reads adjusted prices, and USO's bar of 2011-11-28 has the basis raw",
     ),
     "one-leg-a-session-short": (
         leg(HAND_SNAPSHOT, USO, HAND_SNAPSHOT.bars[USO]["1d"][:-1]),
