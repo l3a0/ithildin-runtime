@@ -47,7 +47,7 @@ from ithildinruntime.core import (
     to_utc,
 )
 from ithildinruntime.execution.controls import Controls
-from ithildinruntime.journal import Journal, PauseEntry, body_of, record_of
+from ithildinruntime.journal import Journal, PauseEntry, record_of
 from ithildinruntime.runtime.deployment import Deployment, deployment_table
 from ithildinruntime.runtime.supervisor import (
     EXIT_HALTED,
@@ -363,8 +363,7 @@ def _doubtful(world: World, sent_at: datetime, state: str = "InDoubt") -> str:
     order = planned(1, 5, at=DECIDED[TODAY])
     add(world.journal, decision(order, at=DECIDED[TODAY], read=2))
     for record in route(state, order, decided=world.journal.head().seq):
-        body = body_of(placed(world.journal, record), WRITER)
-        world.journal._append(world.journal._build(body, sent_at))
+        world.journal.record(world.journal.view(), placed(world.journal, record), sent_at)
     return order.client_order_id
 
 
