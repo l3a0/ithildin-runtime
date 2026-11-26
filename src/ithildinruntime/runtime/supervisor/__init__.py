@@ -87,7 +87,7 @@ from ithildinruntime.journal import DOUBTFUL, Journal
 from ithildinruntime.runtime.loop import Table
 
 from .deadline import STALL_AFTER_CLOSE, STOP_AFTER_CLOSE, past_deadline
-from .hold import HoldFailed, Starts, hold_after_unclean_stops, who
+from .hold import HoldFailed, Starts, hold_after_unclean_stops, who, write_halts
 
 __all__ = [
     "EXIT_ASKED",
@@ -110,6 +110,8 @@ EXIT_STALLED = 4
 EXIT_HELD = 5
 EXIT_PLAN = 6
 EXIT_ASKED = 7
+# The cause a strategy's halt names where it stands in for a run's halt that could not be stored.
+RUN_HALT_CAUSE = "run_halt"
 _COMPONENT = "supervisor"
 
 
@@ -477,14 +479,28 @@ class Supervisor:
         try:
             self._storage.keep(run_halt_key(self._deployment, plan.run), encode(record))
         except Exception as error:
-            # Without the run's halt execution's orders are not stopped. The supervisor ends
-            # with no stop and is not restarted, so the run ends unclean and the next start holds.
-            self._alerts.alarm(
-                f"{self._deployment}: the run's halt of {plan.run} could not be stored, so "
-                f"execution's orders are not stopped: {_said(error)}. Pull the account's kill "
-                "switch now. The host restarts the supervisor, which tries the halt again"
+            # Without the run's halt, a halt of each strategy, at keys of their own, still
+            # stops every new order, since execution's controls read those too. The
+            # supervisor then ends with the code the host restarts, so the run's halt is
+            # tried again, and with no stop, so the run ends unclean.
+            held = write_halts(
+                self._storage,
+                self._account,
+                sorted(s.name for s in self._table.strategies),
+                plan.run,
+                f"the run's halt could not be stored: {reason}",
+                self._timer.now(),
+                self._timer.now(),
+                cause=RUN_HALT_CAUSE,
+                quiet=True,
             )
-            # Ended with the code the host restarts, so the halt is tried again.
+            said = ", ".join(held) or "no strategy"
+            self._alerts.alarm(
+                f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
+                f"{_said(error)}. In its place a halt of each strategy holds {said}. "
+                "Pull the account's kill switch now. The host restarts the supervisor, which "
+                "tries the halt again"
+            )
             return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")
         for at in decisions:

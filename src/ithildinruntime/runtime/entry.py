@@ -30,7 +30,9 @@ Each command ends with one of these codes, which #202's units read.
   session started nothing.
 - 1, or any other: a failure, whose traceback goes to the host's journal, and
   so does a crash by a signal. The supervisor also ends with 1, and alarms, where
-  it cannot read the run's halt, so the host restarts it to read again.
+  it cannot read the run's halt, or store it, so the host restarts it to try
+  again. Where the halt cannot be stored, each strategy is halted in its place
+  and the alarm says to pull the kill switch.
 - 2: a setting is missing or malformed, the credential file it names cannot be
   read, or the release pin file is missing or empty, named in one line on
   standard error and in an alarm line.

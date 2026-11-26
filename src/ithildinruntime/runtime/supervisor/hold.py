@@ -87,6 +87,7 @@ __all__ = [
     "Unclean",
     "hold_after_unclean_stops",
     "who",
+    "write_halts",
 ]
 
 COMPONENT = "supervisor"
@@ -170,7 +171,7 @@ def hold_after_unclean_stops(
         # Any failure holds, so an error nobody foresaw never reads as nothing to hold.
         reason = error.reason if isinstance(error, Halt) else f"{type(error).__name__}: {error}"
         at = sessions.session(today).open
-        held = _write_halts(
+        held = write_halts(
             storage,
             account,
             sorted(set(strategies)),
@@ -240,7 +241,7 @@ def _hold(
     # Every halt lands before any pause, and the pauses go oldest first, because a pause
     # of a run's end covers every run before it.
     for unclean in found:
-        _write_halts(
+        write_halts(
             storage,
             account,
             names,
@@ -363,7 +364,7 @@ def _judged(
     return Unclean(run, reason, None, plan.decisions[0].at, boots, count)
 
 
-def _write_halts(
+def write_halts(
     storage: Storage,
     account: str,
     strategies: Sequence[str],
@@ -374,6 +375,7 @@ def _write_halts(
     *,
     count: int = 1,
     quiet: bool = False,
+    cause: str = CAUSE,
 ) -> list[str]:
     """Create each strategy's halt once, and return the strategies whose halt stands."""
     held = []
@@ -382,12 +384,12 @@ def _write_halts(
             format=RUN_RECORD_FORMAT,
             account=account,
             strategy=strategy,
-            cause=CAUSE,
+            cause=cause,
             reason=reason,
             run=run,
             halted_at=written_at,
         )
-        key = strategy_halt_key(account, strategy, COMPONENT, CAUSE, at, count)
+        key = strategy_halt_key(account, strategy, COMPONENT, cause, at, count)
         try:
             storage.keep(key, encode(record))
         except (Halt, StoreError):

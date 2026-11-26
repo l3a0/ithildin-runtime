@@ -1354,6 +1354,9 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
     assert _stop_of(world) is None
+    # A halt of each strategy stands in its place, which execution's controls refuse orders on.
+    assert world.held() and "supervisor-run_halt-" in world.held()[0]
+    assert Controls(world.store, ACCOUNT).strategy(CHAN, lambda call: call()) is not None
     _refusing(world, lambda call, key: False)
     assert world.supervisor().run(TODAY).code == EXIT_HALTED
     assert world.blob(halt) is not None
