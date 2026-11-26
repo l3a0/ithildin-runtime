@@ -980,12 +980,14 @@ def test_a_journal_whose_fold_refuses_an_entry_names_its_cause_and_every_leg_in_
         )
         raise RuntimeError("the path broke")
 
+    tried: list[str] = []
     monkeypatch.setattr(OrderPath, "send", send)
+    monkeypatch.setattr(OrderPath, "abandon", lambda self, name, why: tried.append(name))
     result = made.send_attempt()
     monkeypatch.setattr(Account, "view", real)
     reason = result.halt.reason
     assert "entry 9 is refused" in reason and "did not answer" not in reason
     assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
     assert made.submits() == []
-    # Nothing is abandoned on a journal that cannot be read.
-    assert "abandoned" not in made.kinds(made.before)
+    # No abandon is tried on a journal that cannot be read.
+    assert tried == []

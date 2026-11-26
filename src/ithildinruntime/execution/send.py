@@ -27,7 +27,8 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    journal already holds that is not this one halts, with an alarm naming both.
 7. `OrderPath.ask` about the whole plan. Where any order is refused or halts,
    nothing is sent, and every order of the plan ends `Refused` or `Abandoned`,
-   by this stage or, where the journal stops answering, by the next recover.
+   by this stage or, where the journal stops answering, by the next recover. A
+   plan none of whose orders has an entry stays so, with nothing sent.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
@@ -317,7 +318,8 @@ class SendStage:
         entry is journaled `abandoned`. The caps can be rewritten between the
         two asks, so an order the second approves is abandoned too. A store
         that stops answering, or a journal that cannot be read, stops those
-        abandons, and the next recover journals them instead.
+        abandons, and the next recover journals them instead, where any order
+        of the plan has an entry. A plan none of whose orders has one stays so.
         """
         answers = path.ask(names)
         refused = next((a for a in answers if not a.approved), None)
