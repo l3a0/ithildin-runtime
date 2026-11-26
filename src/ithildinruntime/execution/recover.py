@@ -43,6 +43,7 @@ stage's alarm is the only page about an order a crash left.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -85,7 +86,7 @@ from ithildinruntime.journal import (
 )
 
 from .account import Account
-from .order_path import OrderPath
+from .order_path import OrderPath, Outage
 from .sync import UNSETTLED, journal_read, keeper, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
@@ -99,6 +100,8 @@ _LATE = timedelta(days=1)
 # The issue that copies the first decision's valuation to a later one of its session.
 _SECOND = "#183"
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
+# A stored lookup's key, which names its decision.
+_STORED = re.compile(r"runs/\S+?/lookup-[0-9]+\.json")
 
 
 class _Item(Protocol):
@@ -238,17 +241,24 @@ class RecoverStage:
         keep = keeper(decision, self._run.deployment, self._run.run, stage, at)
         failed: list[str] = []
         added = ""
-        for entry in plans:
-            for planned in entry.orders:
-                name = planned.client_order_id
-                try:
-                    settled = path.settle(name, keep, stage, at)
-                except Halt as halt:
-                    failed.append(halt.reason)
-                    added = self._alarm(halt.reason, report) or added
-                    continue
-                if settled.said:
-                    added = self._alarm(settled.said, report) or added
+        for planned in [o for entry in plans for o in entry.orders]:
+            name = planned.client_order_id
+            try:
+                settled = path.settle(name, keep, stage, at)
+            except Outage as outage:
+                # It alarmed already, and every later order would meet the same outage.
+                names = ", ".join(o.client_order_id for e in plans for o in e.orders)
+                when = ", ".join(e.decision_at.isoformat() for e in plans)
+                raise Halt(
+                    f"account {self._account.alias}: {outage.reason}. Nothing more is settled of "
+                    f"the decisions at {when}, whose orders are {names}"
+                ) from None
+            except Halt as halt:
+                failed.append(halt.reason)
+                added = self._alarm(halt.reason, report) or added
+                continue
+            if settled.said:
+                added = self._alarm(settled.said, report) or added
         view = self._account.view(report)
         said: list[str] = []
         for entry in plans:
@@ -264,10 +274,15 @@ class RecoverStage:
         return view
 
     def _alarm(self, reason: str, report: Callable[[], None]) -> str:
-        """Send an alarm once in this process, and say what a halt adds where it went nowhere."""
-        if reason in self._said:
+        """Send an alarm once in this process, and say what a halt adds where it went nowhere.
+
+        A stored lookup's key is under each decision's own prefix, so it is left out of
+        what makes two alarms the same cause.
+        """
+        cause = _STORED.sub("a stored lookup", reason)
+        if cause in self._said:
             return ""
-        self._said.add(reason)
+        self._said.add(cause)
         return self._account.alarm(reason, report)
 
     # Step 8

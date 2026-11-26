@@ -560,7 +560,7 @@ The receive loop runs recover only once the last decision's send stage has a res
 2. A `Sending` order gets an `in_doubt` entry, the half of the move a crash leaves unwritten, because only the writer of a `sending` may journal that nothing left.
 3. An `InDoubt` order is looked up, as [If an instance dies in the middle of a send](#if-an-instance-dies-in-the-middle-of-a-send) says.
 
-An order a lookup leaves in doubt halts the decision, naming every order of the plan with its state and when its `sending` was stored. Each order that becomes `InDoubt` here or `Lost`, and each halt, sends an alarm, once in a process and again after a restart. A crash writes no `in_doubt` entry, so that alarm can be the first a person hears of the order. Recover settles a plan before it reads what the broker lists, so an acknowledged order and an `unmatched_fill` never share one broker id.
+An order a lookup leaves in doubt halts the decision, naming every order of the plan with its state and when its `sending` was stored, and an order that cannot be settled does not stop the orders after it. A journal that stops answering does stop them, because each would page the same outage again, and the halt names every order of the plans left. Each order given up as `Lost`, and each halt, sends an alarm, once in a process for one cause and again after a restart, whichever decision's file the halt names. A crash writes no `in_doubt` entry, so that alarm can be the first a person hears of the order. Recover settles a plan before it reads what the broker lists, so an acknowledged order and an `unmatched_fill` never share one broker id.
 
 ##### From when fills are read
 
@@ -695,7 +695,7 @@ A send that answers anything but `Acknowledged` ends that strategy's plan, which
 Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
 1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
-2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts, and the next decision's recover journals it `Abandoned`, as [How recover settles an unfinished plan](#how-recover-settles-an-unfinished-plan) says.
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
@@ -799,7 +799,8 @@ Each answer is stored as it came before anything judges it, at `lookup-<n>.json`
 | The list does not come whole | It is stored, nothing is settled, and the decision halts |
 | A whole list omits the order, asked for at or after its session's close plus twice the clock's bound | A `lost` entry names the list's `read` entry, and the order is `Lost`, with an alarm that says whether it was sent is unproved |
 | A whole list omits the order, asked for earlier | It stays `InDoubt`, and the decision halts |
-| More than one row, or one row that differs in client order id, instrument, quantity, whose sign is the side, or type | Each row is journaled as an `unmatched_order` and holds the account, and the decision halts |
+| A whole list omits an order whose time in force is not the closing auction | It stays `InDoubt`, and the decision halts, because a broker may hold a day order that came after its close for the next session's open. Giving one up waits on a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs |
+| More than one row, or one row that differs in client order id, instrument, quantity, whose sign is the side, type or time in force, or a row under an id the journal refuses | Each row the journal can key is journaled as an `unmatched_order` and holds the account, and the decision halts |
 | One row that matches, whose lookup by the broker's id fails or answers anything but that order | It stays `InDoubt`, and the decision halts. A copy that differs is journaled as an `unmatched_order` |
 | One row that matches, and a lookup that matches | The `ack` is journaled with the lookup's bytes, and recover goes on to read the order's fills like any other |
 

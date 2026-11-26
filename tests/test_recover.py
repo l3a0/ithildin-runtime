@@ -43,6 +43,7 @@ from ithildinruntime.core import (
     InstrumentId,
     OrdersRead,
     OrderState,
+    OrderType,
     Outcome,
     OutputFile,
     PositionsRead,
@@ -50,6 +51,7 @@ from ithildinruntime.core import (
     RecordsRead,
     StageKind,
     StoreUnavailable,
+    TimeInForce,
     Valuation,
     attempt_key,
     caps_key,
@@ -882,6 +884,66 @@ def test_2_every_unfinished_plan_is_settled_not_the_newest_alone() -> None:
     assert result.halt is None, result.halt.reason
     orders = world.view().orders
     assert (orders[ONE].state, orders[TWO].state) == (_S.LOST, _S.ABANDONED)
+
+
+def test_2_a_store_that_stops_answering_mid_settle_pages_once_and_names_every_order() -> None:
+    world = planned_pair(*SENT, *((kind, 2) for kind, _ in SENT))
+
+    def find_order(*args):
+        world.store.refuse(("*", "journal/"))
+        return world.broker().find_order(*args)
+
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=find_order)))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert "the journal could not be read" in reason
+    assert f"Nothing more is settled of the decisions at {AT1}, whose orders are {ONE}, {TWO}" in (
+        reason
+    )
+    # The outage's own page, and none for each order after it.
+    assert sum("could not be read" in a for a in world.alarms.sent) == 1
+
+
+def test_2_an_order_that_cannot_be_settled_does_not_stop_the_next_one() -> None:
+    world = planned_pair(*SENT, ("intent", 2))
+    world.faults = Faults(reads={("orders", 1): ReadFault.FAILS})
+    world.restart()
+    result = world.attempt()
+    assert result.halt is not None and "could not be read" in result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.IN_DOUBT, _S.ABANDONED)
+
+
+def test_2_a_cause_that_stands_pages_once_in_a_process_whatever_file_each_decision_stores() -> None:
+    world = planned_pair(*SENT)
+    world.faults = Faults(reads={("orders", n): ReadFault.SHORT for n in (1, 2)})
+    world.restart()
+    stage = world.stage()
+    first = world.attempt(stage)
+    assert first.halt is not None and "did not come whole" in first.halt.reason
+    whole = [a for a in world.alarms.sent if "did not come whole" in a]
+    world.prepare(close_of(DAYS[3]))
+    later = world.stage()
+    later._said = stage._said
+    again = world.attempt(later)
+    assert again.halt is not None and "did not come whole" in again.halt.reason
+    assert [a for a in world.alarms.sent if "did not come whole" in a] == whole
+    assert len(whole) == 1
+
+
+def test_2_an_order_of_the_day_a_list_omits_is_never_given_up_as_lost() -> None:
+    """A broker may hold a day order that arrives after its close for the next session's open."""
+    world = RecoverWorld(flat_prices())
+    at = close_of(DAYS[1])
+    (made,) = world.orders(at, [(10, GLD)])
+    day = replace(made, type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+    world.decide(at, (day,))
+    journaled(world, *SENT, ("in_doubt", 1))
+    world.prepare(close_of(DAYS[2]))
+    result = world.attempt()
+    assert result.halt is not None
+    assert "only a closing-auction order is given up as lost" in result.halt.reason
+    assert world.view().orders[ONE].state is _S.IN_DOUBT
 
 
 def test_2_an_answer_this_process_owes_is_settled_before_the_view() -> None:

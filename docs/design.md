@@ -1460,8 +1460,8 @@ it. `OrderPath` hands the adapter the order's intent, and the adapter answers wi
 the broker's id, not found, or more than one. It also says whether its list was whole and gives each paired row it read,
 converted at the adapter to the platform's types, so `OrderPath` runs the checks
 below in one place. How it finds the
-order is the adapter's own, so a new broker changes no line of `OrderPath`. Three steps make Alpaca's lookup go by the broker's id too, and
-[#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
+order is the adapter's own, so a new broker changes no line of `OrderPath`. Three steps make Alpaca's lookup go by the broker's id too.
+Alpaca's adapter, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) builds, takes the first two, and `OrderPath.settle` the third.
 
 1. The adapter reads the broker's order list, open and closed orders alike, from
    the order's `sending` entry, less a written overlap of 60 seconds, which is

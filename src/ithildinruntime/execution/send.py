@@ -391,18 +391,24 @@ class SendStage:
         it. An order the broker may hold is left as it stands. `sent` names each
         order this call saw acknowledged. A store that did not answer has
         alarmed once already, so once one is met no other write or read is tried,
-        and the legs this call cannot read back are named from `sent`.
+        and the legs this call cannot read back are named from `sent`. The order
+        at `place` may be at the broker unless the path's halt is an `Outage`,
+        so where the journal cannot be read it is named not known, never unsent.
         """
         reason = halt.reason
         said = [reason]
+        # The path raises an `Outage` only before the broker's call, so the order at `place`
+        # was not sent where it is one.
         down = isinstance(halt, Outage)
-        view = None if down else self._read(said, report)
-        down = down or view is None
+        view, down = (None, True) if down else self._read(said, report)
         left: list[str] = []
-        for order in orders[place:]:
+        for at, order in enumerate(orders[place:], start=place):
             name = order.client_order_id
             found = None if view is None else view.orders.get(name)
             if found is not None and found.state not in NOT_SENT:
+                continue
+            if view is None and at == place and not isinstance(halt, Outage):
+                # It may be at the broker, and only the journal could say.
                 continue
             if down:
                 left.append(name)
@@ -415,7 +421,10 @@ class SendStage:
                 left.append(name)
             except Halt as failed:
                 said.append(failed.reason)
-        view = None if down else self._read(said, report)
+        if not down:
+            view, down = self._read(said, report)
+        else:
+            view = None
         if left:
             said.append(
                 f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
@@ -436,13 +445,19 @@ class SendStage:
         added = self._account.alarm(what, report)
         raise Halt(f"{what}{added}")
 
-    def _read(self, said: list[str], report: Callable[[], None]) -> View | None:
-        """A view of the journal, or `None` with the reason it could not be read added to `said`."""
+    def _read(self, said: list[str], report: Callable[[], None]) -> tuple[View | None, bool]:
+        """A view of the journal, or `None` with why it could not be read added to `said`.
+
+        The second value says whether the store did not answer, which ends every later write.
+        """
         try:
-            return self._account.view(report)
+            return self._account.view(report), False
+        except Outage as outage:
+            said.append(outage.reason)
+            return None, True
         except Halt as halt:
             said.append(halt.reason)
-            return None
+            return None, False
 
 
 class _OtherPlan(Exception):

@@ -15,14 +15,17 @@ import pytest
 
 from ithildinruntime.core import (
     Ack,
+    BlobRef,
     FoundOrder,
     OrderLookup,
     OrderState,
     Outcome,
+    TimeInForce,
     decode_output,
 )
 from ithildinruntime.execution.brokers.faults import Faults, Late, OrderFault, ReadFault
 from ithildinruntime.execution.order_path import OVERLAP
+from ithildinruntime.journal import lost_from
 from tests.support.gates import d as D
 from tests.support.recover_world import RecoverWorld
 from tests.support.sim_world import GLD, USO, close_of
@@ -177,8 +180,9 @@ def _row(world: RecoverWorld, name: str):
         ({"instrument": USO}, "differs in instrument"),
         ({"client_order_id": None}, "differs in client_order_id"),
         ({"type": None}, "differs in type"),
+        ({"time_in_force": TimeInForce.DAY}, "differs in time_in_force"),
     ],
-    ids=["shares", "instrument", "no client order id", "type"],
+    ids=["shares", "instrument", "no client order id", "type", "time in force"],
 )
 def test_a_row_that_differs_is_kept_as_unmatched_and_halts(change: dict, said: str) -> None:
     world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_ANSWER}))
@@ -237,3 +241,114 @@ def test_a_fill_on_an_order_given_up_as_lost_is_kept_as_unmatched_and_halts() ->
 
 def _name(at, place: int) -> str:
     return f"ith-chan-{at.strftime('%Y%m%dT%H%M%SZ')}-{place:02d}"
+
+
+@pytest.mark.parametrize(
+    ("answer", "said", "kinds"),
+    [
+        (lambda row: FoundOrder(Outcome.ACCEPTED, (), True, b"[]"), "accepted with no row", []),
+        (
+            lambda row: FoundOrder(Outcome.NOT_FOUND, (row,), True, b"[]"),
+            "not_found with 1 rows",
+            ["unmatched_order"],
+        ),
+        (lambda row: FoundOrder(Outcome.UNKNOWN, (), True, b"[]"), "unknown with no row", []),
+        (
+            lambda row: FoundOrder(Outcome.ACCEPTED, (replace(row, qty=-row.qty),), True, b"[]"),
+            "differs in qty",
+            ["unmatched_order"],
+        ),
+        (
+            lambda row: FoundOrder(
+                Outcome.ACCEPTED, (replace(row, broker_order_id="no id here"),), True, b"[]"
+            ),
+            "a row's broker id is one the journal refuses",
+            [],
+        ),
+    ],
+    ids=[
+        "accepted with no row",
+        "not found with a row",
+        "unknown with no row",
+        "the other side",
+        "a broker id the journal refuses",
+    ],
+)
+def test_a_list_answer_of_any_other_shape_settles_nothing(answer, said: str, kinds: list) -> None:
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_ANSWER}))
+    found = answer(_row(world, name))
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=lambda *a: found)))
+    assert result.halt is not None and said in result.halt.reason
+    assert world.kinds(world.before) == ["read", *kinds]
+    assert states(world, name) == [_S.IN_DOUBT]
+
+
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        (
+            lambda ack: replace(ack, outcome=Outcome.REJECTED),
+            "answers rejected, as ",
+        ),
+        (
+            lambda ack: replace(ack, broker_order_id="sim-o-99", order=replace(ack.order)),
+            "answers accepted, as ",
+        ),
+        (
+            lambda ack: replace(ack, order=replace(ack.order, broker_order_id="sim-o-99")),
+            "differs in broker_order_id",
+        ),
+    ],
+    ids=["rejected with a copy", "under another id", "a copy under another id"],
+)
+def test_a_lookup_by_the_broker_id_that_answers_otherwise_keeps_the_order_in_doubt(
+    change, said: str
+) -> None:
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_ANSWER}))
+    answer = change(world.broker().lookup("sim-o-1"))
+    result = world.attempt(world.stage(brokers=doctored(world, lookup=lambda b: answer)))
+    assert result.halt is not None and said in result.halt.reason, result.halt.reason
+    assert "ack" not in world.kinds(world.before)
+    assert states(world, name) == [_S.IN_DOUBT]
+
+
+@pytest.mark.parametrize(
+    ("after", "state"),
+    [(timedelta(0), _S.LOST), (-timedelta(microseconds=1), _S.IN_DOUBT)],
+    ids=["at the first moment the order cannot arrive", "a microsecond before it"],
+)
+def test_the_list_gives_an_order_up_from_its_close_plus_twice_the_clock_bound(after, state) -> None:
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_REQUEST}))
+    # A decision time is whole seconds, and the list is asked for at the clock's time.
+    world.prepare(lost_from(name) - timedelta(seconds=1))
+    world.clock.at = lost_from(name) + after
+    world.attempt()
+    assert states(world, name) == [state]
+
+
+def test_the_list_is_read_from_a_minute_before_the_sending() -> None:
+    """The broker dates an order by a clock of its own, which can run behind the platform's."""
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_ANSWER}))
+    world.attempt()
+    found, _ = lookups(world)
+    assert found.since == world.view().orders[name].sent_at - timedelta(seconds=60)
+
+
+def test_a_list_that_never_says_it_is_whole_is_not_stored_and_settles_nothing() -> None:
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_REQUEST}))
+    found = FoundOrder(Outcome.NOT_FOUND, (), None, b"[]")  # type: ignore[arg-type]
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=lambda *a: found)))
+    assert result.halt is not None and "is no stored lookup" in result.halt.reason
+    assert world.kinds(world.before) == []
+    assert states(world, name) == [_S.IN_DOUBT]
+
+
+def test_a_stored_answer_is_named_by_one_read_entry_however_often_it_is_kept() -> None:
+    world, (name,) = sent(Faults(orders={_name(D1, 1): OrderFault.LOSE_ANSWER}))
+    ref = BlobRef("runs/a/lookup-1.json", "a" * 64)
+    found = OrderLookup(name, None, D2, None, world.broker().lookup("sim-o-1"))
+    path = world.path()
+    first = path._kept(lambda f: ref, found, "execution/recover", D2)
+    again = path._kept(lambda f: ref, found, "execution/recover", D2)
+    assert first == again
+    assert [e.ref for e in world.view().reads.values()].count(ref) == 1

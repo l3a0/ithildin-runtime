@@ -16,7 +16,7 @@ live order reaches. It is the replication's own assumption, named in each fill's
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -37,6 +37,7 @@ from ithildinruntime.core import (
     BlobHeader,
     Book,
     DecisionResult,
+    HaltRecord,
     HardCaps,
     Mode,
     OutputFile,
@@ -260,13 +261,7 @@ def trade(
     )
     risk = risk_handler(**made, stress_moves=records)
     portfolio = portfolio_handler(**made, stress_moves=records)
-    order = [
-        *(name for name in handlers),
-        RECOVER_STAGE,
-        RISK_STAGE,
-        PORTFOLIO_STAGE,
-        SEND_STAGE,
-    ]
+    order = stage_order(handlers)
     handlers |= {
         RECOVER_STAGE: worker.recover,
         RISK_STAGE: risk,
@@ -309,8 +304,16 @@ def _caps(store: FolderStore, caps: HardCaps, written: list[HardCaps]) -> None:
     written.append(caps)
 
 
-def _data(storage: Storage, held: Snapshot) -> None:
-    """Store data's snapshot and result, as the data stage would for this decision."""
+def stage_order(models: Mapping[str, Callable]) -> list[str]:
+    """Every stage after data in the order test 1 runs them: each model's, then execution's."""
+    return [*models, RECOVER_STAGE, RISK_STAGE, PORTFOLIO_STAGE, SEND_STAGE]
+
+
+def _data(storage: Storage, held: Snapshot, halt: HaltRecord | None = None) -> None:
+    """Store data's snapshot and result, as the data stage would for this decision.
+
+    `halt` is the result's halt, where data's own judgement of `held` found one.
+    """
     at = held.decision_at
     header = BlobHeader(
         1, DEPLOYMENT, RUN, DATA_STAGE, "capturing", at, {}, RELEASE, TABLE.hashes_for(DATA_STAGE)
@@ -319,7 +322,7 @@ def _data(storage: Storage, held: Snapshot) -> None:
     key = output_key(DEPLOYMENT, RUN, at, DATA_STAGE, "snapshot")
     ref = storage.put(StageKind.CAPTURING, key, file).ref
     storage.put_result(
-        result_key(DEPLOYMENT, RUN, at, DATA_STAGE), DecisionResult(header, (ref,), None)
+        result_key(DEPLOYMENT, RUN, at, DATA_STAGE), DecisionResult(header, (ref,), halt)
     )
 
 
@@ -363,4 +366,4 @@ class _Report:
         raise AssertionError("the history clock waits for nothing")
 
 
-__all__ = ["CASH", "STRATEGY", "TABLE", "Decided", "Traded", "trade"]
+__all__ = ["CASH", "STRATEGY", "TABLE", "Decided", "Traded", "stage_order", "trade"]

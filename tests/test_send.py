@@ -28,6 +28,7 @@ from ithildinruntime.core import (
     output_key,
 )
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
+from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from ithildinruntime.execution.order_path import OrderPath
 from ithildinruntime.journal import DecisionEntry, ReadEntry
 from tests.support import gates
@@ -718,7 +719,8 @@ def test_a_failure_whose_journal_cannot_be_read_still_names_its_cause_and_every_
     assert "raised RuntimeError" in reason and "could not be read" in reason
     # The leg this call saw acknowledged is named, and the one it cannot read back is not known.
     assert f"stand so: {first} acknowledged, and {second} not known, since the journal" in reason
-    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
+    # The leg whose call failed may be at the broker, so nothing says it was not sent.
+    assert "none of them was sent" not in reason
     assert made.submits() == [first]
     # One alarm for the outage and one naming every leg, and no abandon is tried on it.
     sent = made.alarms.sent[alarms:]
@@ -824,3 +826,59 @@ def gates_names(made: SendWorld, planned_only: bool = False) -> list[str]:
 
 
 _ = (output_key, gates)
+
+
+def test_a_leg_the_broker_took_whose_ack_the_journal_lost_is_never_called_unsent(
+    monkeypatch,
+) -> None:
+    """The journal goes once the broker has the second leg, so only the broker knows its fate."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = SimulatedBroker.submit
+
+    def submit(self, intent):
+        answer = real(self, intent)
+        if intent.client_order_id == second:
+            made.store.refuse(("*", "journal/"))
+        return answer
+
+    monkeypatch.setattr(SimulatedBroker, "submit", submit)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert made.submits() == [first, second]
+    assert "none of them was sent" not in reason
+    assert f"stand so: {first} acknowledged, and {second} not known, since the journal" in reason
+
+
+def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
+    monkeypatch,
+) -> None:
+    """The path raises an `Outage` before the broker's call, so the leg was not sent."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+    tried: list[str] = []
+
+    def send(self, name):
+        if name == second:
+            made.store.refuse(("*", "journal/"))
+            raise self._outage("the journal could not be read: StoreUnavailable")
+        return real(self, name)
+
+    def abandon(self, name, reason):
+        tried.append(name)
+        raise AssertionError("no abandon is tried once the store did not answer")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    monkeypatch.setattr(OrderPath, "abandon", abandon)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert tried == [] and made.submits() == [first]
+    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
+    assert f"stand so: {first} acknowledged, and {second} not known" in reason
+    # The outage's own page and the one naming every leg.
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2 and "The plan's orders stand so" in sent[1]

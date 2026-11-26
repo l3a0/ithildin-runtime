@@ -33,17 +33,13 @@ from ithildinruntime.core import (
     RISK_STAGE,
     SEND_STAGE,
     BarStatus,
-    BlobHeader,
     DecisionResult,
     HaltRecord,
     Mode,
     OrderState,
-    OutputFile,
     Retry,
     SendOutcome,
     Snapshot,
-    StageKind,
-    encode_output,
     output_key,
     result_key,
 )
@@ -66,13 +62,15 @@ from tests.support.trading import (
     SESSIONS,
     TABLE,
     _caps,
-    _Report,
+    _data,
+    _run,
     caps_on,
+    stage_order,
     storage_of,
 )
 from tests.test_storage_contract import Alarms
 
-__all__ = ["Day", "Died", "Dying", "Replay"]
+__all__ = ["Day", "Died", "Dying", "Replay", "counted"]
 
 
 class Died(BaseException):
@@ -103,7 +101,8 @@ class Day:
 
     at: datetime
     halts: Mapping[str, str]
-    sent: tuple[tuple[str, str, OrderState], ...]
+    # Each planned order's id, instrument, type, shares and the state the day left it in.
+    sent: tuple[tuple[str, str, str, str, OrderState | None], ...]
     died: str | None = None
 
 
@@ -135,19 +134,16 @@ class Replay:
         made = dict(
             storage=self.storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=TABLE
         )
+        models: dict[str, Callable] = {**cost_handlers(**made), **alpha_handlers(**made)}
+        self.order = stage_order(models)
         self.handlers: dict[str, Callable] = {
-            **cost_handlers(**made),
-            **alpha_handlers(**made),
+            **models,
             RISK_STAGE: risk_handler(**made, stress_moves=self.records),
             PORTFOLIO_STAGE: portfolio_handler(**made, stress_moves=self.records),
         }
-        self.order = [
-            *(name for name in self.handlers if name not in (RISK_STAGE, PORTFOLIO_STAGE)),
-            RECOVER_STAGE,
-            RISK_STAGE,
-            PORTFOLIO_STAGE,
-            SEND_STAGE,
-        ]
+        # Each order the simulated account was asked to take, with the stage that asked.
+        self.submits: list[tuple[str, str]] = []
+        self.running: str | None = None
         self.start()
 
     def start(self) -> None:
@@ -173,6 +169,10 @@ class Replay:
         )
         self.handlers[RECOVER_STAGE] = self.worker.recover
         self.handlers[SEND_STAGE] = self.worker.send
+
+    def asked(self, client_order_id: str) -> None:
+        """Note one submit, which `faulted.counted` reports from the simulated broker."""
+        self.submits.append((self.running or "no stage", client_order_id))
 
     def decide(
         self,
@@ -210,14 +210,14 @@ class Replay:
         return self._day(at, died)
 
     def _run(self, name: str, at: datetime) -> DecisionResult:
-        from ithildinruntime.runtime.loop import Item
-
-        result = self.handlers[name](Item(at, name), _Report())
-        return self.storage.put_result(result_key(DEPLOYMENT, RUN, at, name), result)
+        self.running = name
+        try:
+            return _run(self.storage, self.handlers[name], name, at)
+        finally:
+            self.running = None
 
     def _data(self, held: Snapshot, fault: str | None) -> None:
         """Store data's snapshot and result, a halt where data's own judgement finds one."""
-        at = held.decision_at
         if fault is not None:
             stale = fault.startswith("stale:")
             instrument = fault.removeprefix("stale:")
@@ -228,27 +228,9 @@ class Replay:
             else:
                 bars.pop(instrument)
             held = replace(held, bars=bars, status={**held.status, instrument: status})
-        header = BlobHeader(
-            1,
-            DEPLOYMENT,
-            RUN,
-            DATA_STAGE,
-            "capturing",
-            at,
-            {},
-            RELEASE,
-            TABLE.hashes_for(DATA_STAGE),
-        )
-        file = encode_output(Snapshot, OutputFile(header, (held,), False))
-        key = output_key(DEPLOYMENT, RUN, at, DATA_STAGE, "snapshot")
-        ref = self.storage.put(StageKind.CAPTURING, key, file).ref
         reasons = judge(held, (GLD, USO), measured=False)
-        halt = None
-        if reasons:
-            halt = HaltRecord("; ".join(reasons), None, (), (), ())
-        self.storage.put_result(
-            result_key(DEPLOYMENT, RUN, at, DATA_STAGE), DecisionResult(header, (ref,), halt)
-        )
+        halt = HaltRecord("; ".join(reasons), None, (), (), ()) if reasons else None
+        _data(self.storage, held, halt)
 
     def _day(self, at: datetime, died: str | None) -> Day:
         halts = {}
@@ -261,12 +243,16 @@ class Replay:
         seq = view.decided.get(at)
         orders = () if seq is None else view.decisions[seq].orders
         sent = tuple(
-            (o.client_order_id, f"{o.qty}", view.orders[o.client_order_id].state)
-            if o.client_order_id in view.orders
-            else (o.client_order_id, f"{o.qty}", None)
+            (
+                o.client_order_id,
+                o.instrument,
+                o.type.value,
+                f"{o.qty}",
+                view.orders[o.client_order_id].state if o.client_order_id in view.orders else None,
+            )
             for o in orders
         )
-        return Day(at, halts, sent, died)  # type: ignore[arg-type]
+        return Day(at, halts, sent, died)
 
     def outcome(self, at: datetime) -> SendOutcome | None:
         """The send stage's outcome of a decision, where it stored one."""
@@ -290,3 +276,21 @@ class Replay:
 
     def view(self):
         return Journal(self.store, ACCOUNT).view()
+
+
+def counted(monkeypatch, replay: Replay) -> None:
+    """Have the simulated broker tell `replay` of each submit, before the account sees it.
+
+    The account refuses an order of another decision's prices, so what it took
+    cannot show a submit made while a later decision settles. This counts what
+    the platform asked.
+    """
+    from ithildinruntime.execution.brokers.simulated import SimulatedBroker
+
+    real = SimulatedBroker.submit
+
+    def submit(self, intent):
+        replay.asked(intent.client_order_id)
+        return real(self, intent)
+
+    monkeypatch.setattr(SimulatedBroker, "submit", submit)

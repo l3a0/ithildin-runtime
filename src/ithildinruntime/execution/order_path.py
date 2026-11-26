@@ -97,6 +97,7 @@ from ithildinruntime.core import (
     StopState,
     Storage,
     StoreError,
+    TimeInForce,
     Verdict,
     caps_key,
     encode,
@@ -455,7 +456,8 @@ class Outage(Halt):
     """A halt on a store that did not answer, whose alarm has already gone.
 
     A caller that meets one stops its other writes, since each would alarm on
-    the same outage again.
+    the same outage again. `Unstored`'s halt on an entry the journal did not take
+    is not one: it comes after a broker's answer, which only this process holds.
     """
 
 
@@ -484,7 +486,7 @@ class Shared:
         """Send one alarm, and say what a halt adds where it could not be sent."""
         return _alarm(self.alerts, reason)
 
-    def outage(self, reason: str) -> Halt:
+    def outage(self, reason: str) -> Outage:
         """A store that did not answer, alarmed here, since no halt blob could be stored either."""
         reason = f"{reason}. The owner's step: {self.storage.owner_step}"
         return Outage(f"{reason}{self.alarm(reason)}")
@@ -829,6 +831,13 @@ class OrderPath:
             )
         rows = tuple(found.rows)
         if found.answer is Outcome.NOT_FOUND and not rows:
+            if order.intent.time_in_force is not TimeInForce.CLS:
+                # A day order a broker takes after its close may wait for the next open.
+                raise Halt(
+                    f"the order {name} is in no row of the broker's whole order list, as "
+                    f"{ref.key}, and only a closing-auction order is given up as lost until a "
+                    "broker's contract test shows what a late order of another kind does"
+                )
             after = lost_from(name)
             if asked < after:
                 raise Halt(
@@ -1447,7 +1456,7 @@ class OrderPath:
                 raise _Unjournaled(f"{code_of(error)}, and {shows}") from None
         raise Halt(f"{name} lost its number {_STARTS_OVER + 1} times")
 
-    def _outage(self, reason: str) -> Halt:
+    def _outage(self, reason: str) -> Outage:
         return self._shared.outage(reason)
 
     def _past(self, reading: LossReading) -> Halt:
@@ -1558,15 +1567,17 @@ def _stop_reason(state: StopState, error: str) -> str:
 def _row_differs(intent: OrderIntent, row: BrokerOrder, broker: str | None = None) -> list[str]:
     """Each detail a broker's row of an order gives another value than its `sending` entry's.
 
-    The client order id, the instrument, the quantity, whose sign is the side, and
-    the type, and the broker's id where one is known. A row of a broker that
-    keeps a client order id and gives none is no match.
+    The client order id, the instrument, the quantity, whose sign is the side, the
+    type and the time in force, as the send path's own comparison reads them, and
+    the broker's id where one is known. A row of a broker that keeps a client
+    order id and gives none is no match.
     """
     pairs = [
         ("client_order_id", row.client_order_id, intent.client_order_id),
         ("instrument", row.instrument, intent.instrument),
         ("qty", row.qty, intent.qty),
         ("type", row.type, intent.type),
+        ("time_in_force", row.time_in_force, intent.time_in_force),
     ]
     if broker is not None:
         pairs.append(("broker_order_id", row.broker_order_id, broker))
