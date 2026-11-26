@@ -288,7 +288,11 @@ def test_the_workers_started_before_the_supervisor_and_in_reverse_store_the_same
     for at in AT:
         for stage in (s.name for s in reverse.table.stages):
             result = reverse.result(stage, at)
-            assert result.halt is None, (stage, at, result.halt.reason)
+            if result.halt is not None:
+                pytest.fail(
+                    f"{stage} at {at:%Y-%m-%dT%H:%M}Z halted: {result.halt.reason}\n"
+                    + "\n".join(reverse.alarms.reasons)
+                )
     assert reverse.blobs().keys() == in_order.blobs().keys()
     assert len(in_order.blobs()) > 3 * len(in_order.table.stages)
     differ = [k for k, v in reverse.blobs().items() if in_order.blobs()[k] != v]
