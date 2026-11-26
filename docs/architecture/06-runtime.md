@@ -635,7 +635,7 @@ flowchart TB
 Three more checks sit inside these steps, as [How a rerun never doubles anything](../design.md#rule-9-how-a-rerun-never-doubles-anything) and [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) say.
 
 1. An instance checks the kill switch when it receives the event.
-2. The sync settles each order in doubt.
+2. The sync settles each order in doubt. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds the lookup, an order in doubt halts the decision instead.
 3. Execution halts before it plans if an entry that changes the book, and that neither its sync nor its own order loop wrote, lies past the entry its sync names.
 
 The steps run in this order.
@@ -673,7 +673,7 @@ The steps run in this order.
 4. The account's lease, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
 5. Settling an order in doubt by lookup at the sync. An order in doubt there halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds it.
 
-A send that answers anything but `Acknowledged` ends that strategy's plan, whichever leg it was, and each later order of the strategy is journaled `Abandoned`. A strategy switched off before any leg of its reached the broker ends as partly sent, and the other strategies' orders go on. Any other answer, a switch with a leg at the broker, and any error after a `sending` halt the stage once every later order of the plan is journaled `Abandoned`, with an alarm naming each leg's state. A leg already at the broker is [#149](https://github.com/l3a0/ithildin-runtime/issues/149)'s to cancel, so until it is built no mode but a backtest runs, as [Which modes build a broker](#which-modes-build-a-broker) says. The stage's result holds a halt or the decision's outcome, never both, and the outcome names each order's end state, each strategy's end and each part of a position no order of the account's share step can trade.
+A send that answers anything but `Acknowledged` ends that strategy's plan, whichever leg it was, and each later order of the strategy is journaled `Abandoned`. A strategy switched off before any leg of its reached the broker ends as partly sent, and the other strategies' orders go on. Any other answer, a switch with a leg at the broker, and any error halt the stage once each order not yet sent, from the one that failed on, is journaled `Abandoned`, with an alarm naming each leg's state. A plan of this decision that another writer journaled, and that is not this stage's, halts the stage before anything is asked, with an alarm naming both plans. A leg already at the broker is [#149](https://github.com/l3a0/ithildin-runtime/issues/149)'s to cancel, so until it is built no mode but a backtest runs, as [Which modes build a broker](#which-modes-build-a-broker) says. The stage's result holds a halt or the decision's outcome, never both, and the outcome names each order's end state, each strategy's end and each part of a position no order of the account's share step can trade.
 
 #### Send, once per order
 
@@ -948,7 +948,7 @@ order `Abandoned` with the reason and halts the decision.
 A refusal is final, and execution halts rather than sending the rest of its
 orders, because portfolio construction sized the rest assuming this one would
 go through. Nothing resizes the order to fit either, since an order cut down
-to pass the risk gate is a trade nobody chose. Clearing the halt sends nothing more for that decision. The gate is asked about the whole plan before any order of it is journaled, so a refusal there sends neither leg of a pair. If the check right before a pair's second leg refuses it after the first was accepted, execution cancels the accepted leg, as for any pair left with one leg. The cancel aims to land before the cancel cutoff, and one that goes late is still sent and its refusal journaled. The next decision plans again from the book. On a shadow or paper account, holding
+to pass the risk gate is a trade nobody chose. Clearing the halt sends nothing more for that decision. The gate is asked about the whole plan before any order of it is journaled, so a refusal there sends neither leg of a pair. If the check right before a pair's second leg refuses it after the first was accepted, the decision halts with the accepted leg at the broker, and execution cancels it, as for any pair left with one leg, once [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds that cancel. The cancel aims to land before the cancel cutoff, and one that goes late is still sent and its refusal journaled. The next decision plans again from the book. On a shadow or paper account, holding
 the account after a refusal until a person clears it waits for a strategy
 that decides minutes apart, as design.md's
 `### Strategies, schedules and decisions` says. A refusal on live holds until the owner clears it.

@@ -19,6 +19,7 @@ from ithildinruntime.core import (
     Halt,
     OrderState,
     Stopped,
+    StoreUnavailable,
     StrategyEnd,
     claim_key,
     kill_switch_key,
@@ -519,6 +520,11 @@ def test_another_writers_plan_for_this_decision_is_never_sent_as_this_ones() -> 
     made.store.before = before
     result = made.send_attempt()
     assert done and result.halt is not None and "another plan" in result.halt.reason
+    first, second = gates_names(made)
+    # Both plans are named, theirs at ten times this one's first leg.
+    assert f"it plans {first} for 30, {second} for -5" in result.halt.reason
+    assert f"this stage planned {first} for 3, {second} for -5" in result.halt.reason
+    assert any("another plan" in reason for reason in made.alarms.sent)
     assert made.submits() == []
 
 
@@ -620,6 +626,70 @@ def test_a_send_that_raises_after_a_sending_abandons_the_rest_and_names_each_leg
     assert result.halt is not None and "raised RuntimeError" in result.halt.reason
     assert made.states() == {first: "Acknowledged", second: "Abandoned"}
     assert f"{first} is Acknowledged" in made.alarms.sent[-1]
+
+
+def test_a_failing_order_left_approved_is_abandoned_with_the_rest(monkeypatch) -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == first:
+            # The order is approved and journaled so, and then the path breaks.
+            self.hold([name])
+            raise RuntimeError("the path broke")
+        return real(self, name)
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    result = made.send_attempt()
+    assert result.halt is not None and "raised RuntimeError" in result.halt.reason
+    assert made.states() == {first: "Abandoned", second: "Abandoned"}
+    assert made.submits() == []
+
+
+def test_an_ended_plans_order_the_journal_will_not_take_still_alarms_on_every_leg() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    switch = off_switch_key("sim-1", CHAN)
+
+    def before(number: int, op: str, key: str) -> None:
+        kinds = made.kinds()
+        if op == "create" and key.startswith("journal/"):
+            if kinds[-1:] == ["decision"]:
+                made.store.put(switch, b"off")
+            elif kinds[-1:] == ["abandoned"]:
+                # The store takes no more of the journal once the first leg is abandoned.
+                raise StoreUnavailable(key, "the store's own text")
+
+    made.store.before = before
+    result = made.send_attempt()
+    assert result.halt is not None
+    assert "The plan's orders stand so" in result.halt.reason
+    assert any("The plan's orders stand so" in reason for reason in made.alarms.sent)
+    assert made.submits() == []
+
+
+def test_a_failure_whose_journal_cannot_be_read_still_names_its_cause_and_every_leg(
+    monkeypatch,
+) -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == second:
+            made.store.refuse(("*", "journal/"))
+            raise RuntimeError("the path broke")
+        return real(self, name)
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert "raised RuntimeError" in reason and "could not be read" in reason
+    assert f"{first}, {second}" in reason
+    assert made.submits() == [first]
 
 
 @pytest.mark.parametrize("leg", [0, 1], ids=["first", "second"])

@@ -22,13 +22,15 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    cannot be read halts.
 5. `OrderPath.loss`, which halts past the stop with no order needed.
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
-   was made from, before anything is asked or sent.
+   was made from, before anything is asked or sent. A plan of this decision the
+   journal already holds that is not this one halts, with an alarm naming both.
 7. `OrderPath.ask` about the whole plan. Where any order is refused or halts,
    nothing is sent, and every order of the plan ends `Refused` or `Abandoned`.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
-   the stage, with each later order abandoned and an alarm naming every leg.
+   the stage, with each order not yet sent, from the one that failed on,
+   abandoned and an alarm naming every leg.
 9. `outcome.json`, and then the result.
 
 A result holds a halt or an outcome, never both.
@@ -231,7 +233,11 @@ class SendStage:
             read=seq,
             synced=view.through.seq,
         )
-        view = recorded(account, view, lambda v: _planned(v, at, entry), report)
+        try:
+            view = recorded(account, view, lambda v: _planned(v, at, entry), report)
+        except _OtherPlan as other:
+            added = account.alarm(other.reason, report)
+            raise Halt(f"{other.reason}{added}") from None
         names = [order.client_order_id for order in plan.orders]
 
         # Step 7
@@ -322,7 +328,7 @@ class SendStage:
         view = self._account.view(report)
         for name in names:
             order = view.orders.get(name)
-            if order is None or order.state in (OrderState.INTENDED, OrderState.APPROVED):
+            if order is None or order.state in NOT_SENT:
                 try:
                     path.abandon(name, why)
                 except Halt as halt:
@@ -340,7 +346,7 @@ class SendStage:
 
         Each is mapped to why. A strategy switched off with no leg at the
         broker ends there, and the other strategies' orders go on. Anything
-        else that stops an order halts the stage once every later order is
+        else that stops an order halts the stage once each order not yet sent is
         journaled `abandoned`, with an alarm naming every leg's state.
         """
         ended: dict[str, str] = {}
@@ -382,30 +388,52 @@ class SendStage:
         it. An order the broker may hold is left as it stands.
         """
         said = [reason]
-        view = self._account.view(report)
+        view = self._read(said, report)
         for order in orders[place:]:
             name = order.client_order_id
-            found = view.orders.get(name)
+            found = None if view is None else view.orders.get(name)
             if found is not None and found.state not in NOT_SENT:
                 continue
             try:
                 path.abandon(name, f"an earlier order of its plan stopped: {reason}")
             except Halt as halt:
                 said.append(halt.reason)
-        view = self._account.view(report)
-        legs = "; ".join(
-            _leg(order.client_order_id, view.orders.get(order.client_order_id)) for order in orders
-        )
+        view = self._read(said, report)
+        if view is None:
+            names = ", ".join(order.client_order_id for order in orders)
+            legs = f"not known, since the journal could not be read: {names}"
+        else:
+            legs = "; ".join(
+                _leg(order.client_order_id, view.orders.get(order.client_order_id))
+                for order in orders
+            )
         what = f"{'. '.join(said)}. The plan's orders stand so: {legs}"
         added = self._account.alarm(what, report)
         raise Halt(f"{what}{added}")
+
+    def _read(self, said: list[str], report: Callable[[], None]) -> View | None:
+        """A view of the journal, or `None` with the reason it could not be read added to `said`."""
+        try:
+            return self._account.view(report)
+        except Halt as halt:
+            said.append(halt.reason)
+            return None
+
+
+class _OtherPlan(Exception):
+    """A plan of this decision in the journal that is not this stage's."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _planned(view: View, at: datetime, entry: DecisionEntry) -> DecisionEntry | None:
     """The plan to record at `at`, or `None` where the journal holds it already.
 
-    A plan another writer journaled for this decision halts, naming both, since
-    its orders share this plan's ids and would go out under them.
+    A different plan journaled for this decision halts, naming both, since its
+    orders share this plan's ids and would go out under them. An identical one is
+    this stage's own, and the claim keeps any other writer out.
     """
     seq = view.decided.get(at)
     if seq is None:
@@ -414,7 +442,7 @@ def _planned(view: View, at: datetime, entry: DecisionEntry) -> DecisionEntry | 
     if held != entry:
         planned = ", ".join(f"{o.client_order_id} for {o.qty}" for o in entry.orders) or "none"
         found = ", ".join(f"{o.client_order_id} for {o.qty}" for o in held.orders) or "none"
-        raise Halt(
+        raise _OtherPlan(
             f"entry {seq} holds another plan of the decision at {at.isoformat()}, so nothing is "
             f"sent: it plans {found}, and this stage planned {planned}"
         )

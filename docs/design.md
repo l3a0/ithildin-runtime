@@ -1279,7 +1279,9 @@ is three things.
    Where the gate is asked about the whole plan, it refuses the smaller leg
    before either goes. Only where the check right before the smaller leg's
    send refuses it, after the larger leg's exit was accepted, does the refusal
-   halt the decision and cancel the larger leg's. If that cancel is
+   halt the decision with the larger leg's at the broker, and
+   [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds the
+   cancel of it. If that cancel is
    late or lost, or the order filled first, the smaller leg is left alone,
    inside its limit or no larger than net was before.
 3. A leg held long whose price reads 100 times too high can have its exit
@@ -4410,7 +4412,8 @@ once rather than re-argued.
 | One hash combining every strategy's in a blob's header | A change to one strategy's file would name a new version on every strategy's blobs. The owner accepted one map from each strategy to its hash, as `## Decisions` records for 2026-11-22 |
 | Portfolio construction calling the cost model for each candidate trade | Each component is a process of its own, so every call would cross a process boundary. The owner accepted a cost schedule per strategy, as `## Decisions` records for 2026-11-22 |
 | A forecast per instrument, with the pair logic in portfolio construction | Two modules would have to know the legs are a pair, and could disagree on the hedge. The owner ruled for one basket per forecast, as `## Decisions` records for 2026-11-24 |
-| Planning again on a rerun of the send stage in one decision | A rerun could plan on a target the first attempt never saw, and send orders under ids the first plan used for others. The send stage claims its decision and journals its plan whole before anything is asked, and a rerun halts at the claim, as `## Decisions` records for 2026-11-25 |
+| Planning again on a rerun of the send stage in one decision | A rerun could plan on a target the first attempt never saw, and send orders under ids the first plan used for others. The send stage journals its plan whole before anything is asked, and a rerun reuses that plan, as `## Decisions` records for 2026-11-25. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds the takeover, a rerun halts at the claim |
+| Matching a fill by its order and quantity alone | Two real fills of one size would read as one repeat. Execution journals each fill under the broker's own fill id, as `## Decisions` records for 2026-11-25 |
 | Order ids from an order's place in a fresh plan | A rerun's fresh plan could give a place, and so an id, to another order than the first plan did. The ids come from the journaled plan, as `## Decisions` records for 2026-11-25 |
 | Planning on recover's read of the broker | The broker can move between recover and send. The send stage reads it afresh and halts on a difference, as `## Decisions` records for 2026-11-25 |
 | Sending a pair's first leg before its second is asked of the gate | A refused second leg would leave the first at the broker, and the only way back is a cancel that can lose a race. At a net cap of 1.0 G that came to 62 of 1,222 order days. The owner accepted asking the gate about the whole plan first, as `## Decisions` records for 2026-11-25 |
