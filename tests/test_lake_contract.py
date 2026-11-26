@@ -23,12 +23,16 @@ beyond these cases.
    and the 21 columns the README publishes, at their types.
 7. `lake.journal`'s `SCHEMA_VERSION`, the newest the pinned reader reads.
 8. `lake.journal`'s `schema_for`, `segment_path`, `SegmentWriter`,
-   `QUOTES_SURFACE` and the two row kinds, and `lake.gap.SEGMENT_STAMP_FORMAT`,
+   `gap_batch`, `QUOTES_SURFACE` and the two row kinds, and `lake.gap.SEGMENT_STAMP_FORMAT`,
    in tests only, which build a segment. `lake.schema_versions` and
    `lake.battery.build_entry`, in tests only, build the two ledgers the reader reads.
-9. `lake.loader.load_quotes`, `SnapAbsent` with its `unreadable`, `NoSpotClose`,
-   `PartitionQuarantined` and `LakePaths.quotes_partition_path`, which the
-   read of a sealed day relies on by their docstrings, beside `captured_by`.
+9. `lake.loader.load_quotes`, `SnapAbsent` with its `unreadable`, `NoSpotClose`
+   with its `tagged_gaps`, `PartitionQuarantined` and
+   `LakePaths.quotes_partition_path`, which the read of a sealed day relies on
+   by their docstrings, beside `captured_by`. l3a0/marketlake#1050 asks for
+   `tagged_gaps` to be published, and for the rule that no row tagged
+   `spot_close` is written before the equity close, which the read relies on
+   from marketlake's code at the pinned commit.
 10. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
    compares it with the one marketlake's `uv.lock` holds at the pinned commit.
 """
@@ -648,15 +652,26 @@ def test_sealed_a_minute_with_no_row_is_snap_absent(lake: Path, unreadable: bool
     assert bool(raised.value.unreadable) is unreadable
 
 
-def test_sealed_a_partition_with_no_equity_close_raises_no_spot_close(lake: Path) -> None:
+@pytest.mark.parametrize(("close", "gaps"), [("none", 0), ("untagged", 0), ("tagged", 1)])
+def test_sealed_a_partition_with_no_equity_close_raises_no_spot_close(
+    lake: Path, close: str, gaps: int
+) -> None:
+    """`tagged_gaps` counts the gap rows tagged `spot_close`, as `NoCloseOfRecord` documents."""
     from lake.loader import NoSpotClose, load_quotes
 
-    from tests.support.segments import AT, MINUTE
+    from tests.support.sealed import gap_close_row
+    from tests.support.segments import AT, MINUTE, SESSION
     from tests.support.segments import DAY as SESSION_DAY
 
-    _sealed(lake, lakes.quote_row("GLD", AT - MINUTE))
-    with pytest.raises(NoSpotClose):
+    rows = [lakes.quote_row("GLD", AT - MINUTE)]
+    if close != "none":
+        rows.append(gap_close_row("GLD", SESSION.close, tagged=close == "tagged"))
+    _sealed(lake, *rows)
+    with pytest.raises(NoSpotClose) as raised:
         load_quotes("GLD", SESSION_DAY, lake_root=lake)
+    assert type(raised.value.tagged_gaps) is int and raised.value.tagged_gaps == gaps
+    # A minute before the close still reads, with the gap row beside it.
+    assert load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake).num_rows == 1
 
 
 def test_sealed_a_quarantined_partition_is_refused_unless_asked_for(lake: Path) -> None:

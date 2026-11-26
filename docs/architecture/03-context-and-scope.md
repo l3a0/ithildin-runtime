@@ -411,7 +411,7 @@ capture host says why.
 The data worker runs its own minimum checks before anything decides. Beside the check on its clock, which [The time servers](#the-time-servers) describes, nine checks halt or flag a decision.
 
 1. A quote that is absent, or that [the judge of a quote](#how-a-quote-is-judged) gives any reason against, halts the decision.
-2. A segment whose bytes do not hash to the SHA-256 the bucket stored with it, on a second download too, halts it, and so does a sealed quotes partition whose bytes differ from the manifest or that holds no row of the session's equity close.
+2. A segment whose bytes do not hash to the SHA-256 the bucket stored with it, on a second download too, halts it, and so does a sealed quotes partition whose bytes differ from the manifest or that holds no row of the session's equity close, neither a data row nor the gap row tagged `spot_close` that a failed capture of the close leaves.
 3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
 4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
@@ -555,7 +555,7 @@ flowchart TD
     m -- "No" --> seg["Read segments, marked provisional"]
     m -- "Yes" --> all{"Does it list every instrument's?"}
     all -- "No" --> fault["Halt, naming the keys listed and not,<br/>with no segment opened"]
-    all -- "Yes" --> close{"Does each partition hold<br/>the session's equity close?"}
+    all -- "Yes" --> close{"Does each partition hold<br/>a row of the session's equity close,<br/>its data or the gap row<br/>of a failed capture?"}
     close -- "No" --> nofault["Halt, naming the partition"]
     close -- "Yes" --> sealed["Read the sealed minutes,<br/>not provisional"]
 ```
@@ -574,11 +574,23 @@ session's close, and the day is uploaded only after it. A backtest over a past
 session reads the sealed day wherever the manifest lists it, and segments
 otherwise.
 
-A listed partition has to hold the session's equity close. marketlake seals at
-close+15, and its repair by hand can seal a day still open, which the gate would
-trade on as healthy with no comparison owed. The check refused none of the 22
-recorded sessions of SPY or QQQ that hold a row. The price is a replay that
-refuses a day whose close cycle was lost, where live may have traded.
+A listed partition has to hold a row of the session's equity close. marketlake
+seals at close+15, and its repair by hand can seal a day still open, which the
+gate would trade on as healthy with no comparison owed. The row is a data row,
+or the gap row tagged `spot_close` that marketlake writes when the close's
+capture fails. marketlake writes that gap row only at or after the close, so a
+day that holds one was sealed after it. Its code holds that rule, and its
+README does not state it, which [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
+asks it to. The read learns of the row from `NoSpotClose.tagged_gaps`, the
+count of such rows, and substitutes no close price for it. The check refused
+none of the 22 recorded sessions of SPY or QQQ that hold a row. Reading the
+gap row frees 32 ticker-days of sealed quotes that the check used to refuse, as
+measured on [#209](https://github.com/l3a0/ithildin-runtime/issues/209#issuecomment-7195190739):
+2026-09-08 to 2026-09-11 for SPY and QQQ, and 2026-11-16 to 2026-11-23 for all
+four tickers. The price is a replay that refuses a day where live may have
+traded, when the day holds no row of the close at all, such as GLD's and USO's
+2026-10-30, or only the untagged gap row that marks a daemon dead across the
+close.
 
 A sealed read is not provisional, so [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 owes it no comparison. Sealed does not mean judged: marketlake's battery writes
@@ -593,7 +605,8 @@ its verdict after the seal, and no verdict reads as a pass.
    recorded, so a partition enters neither the snapshot's `ledgers` nor the
    bars' cache key. Every listed key is linked whatever faults before it.
 2. **Each partition has to answer `load_quotes` with no minute**, which is its
-   equity close. No minute is read where a link or this check faults.
+   equity close, or raise `NoSpotClose` with a `tagged_gaps` above zero. No
+   minute is read where a link or this check faults.
 3. **The walk `data/cycles.py` holds reads five minutes of each leg at a time**,
    from the cut's own minute back to the minute the session opens, counted in
    New York time from the session's own offset. Each minute is read by

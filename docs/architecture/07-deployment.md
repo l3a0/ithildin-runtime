@@ -397,7 +397,7 @@ The grant and the mirror cover every file marketlake's `is_reader_file` names, i
 | --- | --- |
 | A partition not yet in the bucket | It is "data not ready", which halts. For a quotes partition of the decision's day, the snapshot is stored first |
 | No segment of an instrument, no row captured by the cut 15 seconds before the decision, or no capture every instrument has | The snapshot is stored and the decision halts, naming each prefix or partition and what it held |
-| A quotes partition of the decision's day listed beside an instrument's that is not, or one with no row of the session's equity close | The snapshot is stored and the decision halts, naming the partition |
+| A quotes partition of the decision's day listed beside an instrument's that is not, or one with no row of the session's equity close, neither a data row nor a gap row tagged `spot_close` | The snapshot is stored and the decision halts, naming the partition |
 | A partition that fails the check against the manifest's checksum | The decision halts. For a quotes partition of the decision's day, the snapshot is stored first |
 | A capture segment whose bytes do not hash to the SHA-256 the bucket stored, on a second download too | The snapshot is stored with what else was read, and the decision halts |
 | An absent or unreadable file that `is_reader_file` names | The decision stops |

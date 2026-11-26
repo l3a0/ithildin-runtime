@@ -14,7 +14,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from lake.battery import build_entry
-from lake.loader import NoSpotClose
+from lake.loader import NoSpotClose, SnapAbsent
 from lake.manifest import append_quarantine
 
 from ithildinruntime.adapters import FolderBucket, HistoryClock
@@ -39,6 +39,7 @@ from tests.support.sealed import (
     SCHEMA,
     close_row,
     day_rows,
+    gap_close_row,
     part_key,
     partition,
     row,
@@ -382,6 +383,86 @@ def test_2_a_hand_made_partition_with_no_close(small: Path, tmp_path: Path, door
     assert got.quotes == {} == got.rows and len(got.partitions) == 2
     assert doors.loads == [("GLD", None), ("USO", None)] and got.calls == 2
     doors.ok()
+
+
+def test_2_a_close_whose_capture_failed_reads(
+    small: Path, tmp_path: Path, doors: Doors, caplog
+) -> None:
+    """A gap row tagged `spot_close` at the close is written after it, so the day reads."""
+    partition(small, "GLD", *day_rows("GLD", AT - 5 * MINUTE, AT), close_row("GLD", SESSION.close))
+    partition(
+        small, "USO", *day_rows("USO", AT - 5 * MINUTE, AT), gap_close_row("USO", SESSION.close)
+    )
+    with caplog.at_level(logging.INFO, logger=sealed.__name__):
+        got = read(small, tmp_path, report=doors.report)
+    assert got.faults == () and set(got.quotes) == {GLD, USO}
+    assert doors.loads[:2] == [("GLD", None), ("USO", None)]
+    assert f"{part_key('USO')}'s equity close is 1 gap rows tagged spot_close" in caplog.text
+    doors.ok()
+
+
+@pytest.mark.parametrize("rows", ["none", "untagged"])
+def test_2_a_close_with_no_tagged_row_still_faults(
+    small: Path, tmp_path: Path, doors: Doors, rows: str
+) -> None:
+    """No row of the close, or only gap marking's untagged one, is a day that may be open."""
+    partition(small, "GLD", *day_rows("GLD", AT - 5 * MINUTE, AT), close_row("GLD", SESSION.close))
+    kept = [gap_close_row("USO", SESSION.close, tagged=False)] if rows == "untagged" else []
+    partition(small, "USO", *day_rows("USO", AT - 5 * MINUTE, AT), *kept)
+    got = read(small, tmp_path, report=doors.report)
+    assert got.faults == (f"{part_key('USO')} holds no row of the session's equity close",)
+    assert got.quotes == {} == got.rows and got.calls == 2
+
+
+@pytest.mark.parametrize("gaps", ["1", True, -1, 1.0, None, "absent"])
+def test_2_a_count_of_tagged_gaps_of_no_known_shape_is_a_fault(
+    day_small: Path, tmp_path: Path, monkeypatch, gaps
+) -> None:
+    """Only an `int` of zero or more reads as marketlake's count, and nothing else is no fault."""
+    real = sealed.load_quotes
+
+    def shaped(ticker, on, snap=None, **kw):
+        if snap is None and ticker == "USO":
+            error = NoSpotClose(ticker, on.isoformat(), 1)
+            if gaps == "absent":
+                del error.tagged_gaps
+            else:
+                error.tagged_gaps = gaps
+            raise error
+        return real(ticker, on, snap, **kw)
+
+    monkeypatch.setattr(sealed, "load_quotes", shaped)
+    got = read(day_small, tmp_path)
+    assert got.faults == (f"{part_key('USO')} could not be read at the equity close: NoSpotClose",)
+    assert got.quotes == {}
+
+
+def test_2_an_absent_minute_at_the_close_is_still_a_fault(
+    day_small: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """`SnapAbsent` is no answer marketlake gives at the close, and no row there is the fault."""
+    real = sealed.load_quotes
+
+    def absent(ticker, on, snap=None, **kw):
+        if snap is None and ticker == "USO":
+            raise SnapAbsent(ticker, on.isoformat(), "16:00", 0, ())
+        return real(ticker, on, snap, **kw)
+
+    monkeypatch.setattr(sealed, "load_quotes", absent)
+    got = read(day_small, tmp_path)
+    assert got.faults == (f"{part_key('USO')} holds no row of the session's equity close",)
+
+
+def test_5_a_close_whose_capture_failed_reads_through_the_stage(
+    lake: Path, live: Path, tmp_path: Path
+) -> None:
+    partition(lake, "GLD", *good("GLD")["rows"])
+    partition(lake, "USO", *good("USO", close=False)["rows"], gap_close_row("USO", SESSION.close))
+    made, _ = stage(lake, tmp_path, live=Live(live))
+    result = made(Item(AT, "data"), Reports())
+    snap = stored(tmp_path)
+    assert snap.faults == () and set(snap.quotes) == {GLD, USO} and result.halt is None
+    assert snap.provisional is False and len(snap.partitions) == 2
 
 
 # 3. The cut.
