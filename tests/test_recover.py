@@ -947,6 +947,11 @@ UNOWNED = {
         "the fill sim-f-2 is of the broker's order b-unknown, which no order was acknowledged "
         "under",
     ),
+    "no order, and no shares": (
+        {"broker_order_id": "b-unknown", "qty": D(0)},
+        "the fill sim-f-2 is of the broker's order b-unknown, which no order was acknowledged "
+        "under",
+    ),
     "client order id": (
         {"client_order_id": SECRET},
         "fill sim-f-2 names another client order id than",

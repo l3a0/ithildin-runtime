@@ -71,17 +71,22 @@ RANGES = Path(__file__).parent / "records.toml"
 _FORMAT = 1
 # The places a record's amount declares, so a record with more is kept rather than summed.
 _PLACES = places(BrokerRecord, "amount")
+# A bound in records.toml is dollars and cents.
+_CENTS = 2
 
 
 @dataclass(frozen=True)
 class Range:
-    """The least and the most a kind of record may move the cash by, a debit below zero."""
+    """The least and the most a kind of record may move the cash by, a debit below zero.
+
+    A record of no cash is refused by the journal's own bounds, which say so.
+    """
 
     least: Decimal
     most: Decimal
 
     def holds(self, amount: Decimal) -> bool:
-        return amount != 0 and self.least <= amount <= self.most
+        return self.least <= amount <= self.most
 
 
 @cache
@@ -123,7 +128,7 @@ def _amount(where: str, kind: RecordKind, value: object) -> Decimal:
             amount = Decimal(value)
         except InvalidOperation:
             amount = None
-        if amount is not None and amount.is_finite() and -amount.as_tuple().exponent <= 2:
+        if amount is not None and amount.is_finite() and not exceeds_places(amount, _CENTS):
             return amount
     raise Halt(f"{where}'s {kind} holds a bound that is no amount of dollars and cents in quotes")
 

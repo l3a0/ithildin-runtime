@@ -52,7 +52,7 @@ from tests.support.journals import (
     started,
     unmatched_fill,
 )
-from tests.support.recover_world import RecoverWorld
+from tests.support.recover_world import FILES, RecoverWorld
 from tests.support.sim_world import close_of
 from tests.test_recover import (
     CAPTURED,
@@ -159,10 +159,7 @@ UNMATCHED = {
         made(amount="500.01", kind=RecordKind.DIVIDEND),
         "is outside its range of -500.00 to 500.00",
     ),
-    "a record of nothing": (
-        made(amount="0", kind=RecordKind.DIVIDEND),
-        "is outside its range of -500.00 to 500.00",
-    ),
+    "a record of nothing": (made(amount="0", kind=RecordKind.DIVIDEND), "moves no cash"),
     "more places than cash holds": (made(amount="-1.00001"), "carries more places than cash"),
     "an amount the adapter flagged": (
         made(amount="-1.25", excess_places=("amount",)),
@@ -488,3 +485,10 @@ def test_only_the_sort_builds_an_entry_that_moves_cash_from_a_record() -> None:
                 renamed.add(where)
     assert builders == {"execution/outside.py"}
     assert renamed == set()
+
+
+def test_recovers_files_are_of_format_2_whose_capture_holds_the_records_read() -> None:
+    world, brokers = booked(made())
+    assert attempt(world, brokers).halt is None
+    for name in FILES:
+        assert world.file(name).header.format == 2, name

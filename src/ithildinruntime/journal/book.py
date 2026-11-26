@@ -269,6 +269,10 @@ class View:
     def unowned(self, fill: Fill) -> str | None:
         """Why a new fill cannot be any order's the platform sent, or `None` where it is one's.
 
+        A fill past its kind's own bounds, such as one for zero shares, at a
+        price not above zero or carrying a correction's id, gets `None` here,
+        because `entries.past_bounds` refuses it, so a caller asks both.
+
         The words name the fill and the order and none of the broker's text, so
         a halt and an unmatched entry can both hold them.
         """

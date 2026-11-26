@@ -691,7 +691,7 @@ SHA-256, the release's digest and the hash of each strategy's configuration the 
 checks each input's SHA-256 against the header that named it and halts on
 a mismatch. Nothing irreversible rests on an upstream blob alone: execution
 journals the whole target portfolio it acts on, in a journal entry, before
-its first send. Apart from the map above, and data's snapshot file at every format before the first release that runs a worker in an environment, which no environment holds, each release writes only formats
+its first send. Apart from the map above, data's snapshot file at every format before the first release that runs a worker in an environment, which no environment holds, and execution's recover files at format 2 and the journal's four kinds for a broker's record and what the platform did not send, which no environment holds either, each release writes only formats
 the release before it can read, so pinning back to the release before still reads what storage
 holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
 as it dies. The host that runs it, systemd on the VM today, records the
@@ -2187,7 +2187,7 @@ Five rules keep a day of decisions safe.
          3. An amount outside its type's range.
          4. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a repeated record id with different content, which is journaled beside the first.
 
-         This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record that halts under case 1, 3 or 4 enters no book's cash until a person's clear or `ithildin override` brings it in, as replay leaves an unmatched order out.
+         This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a record that halts under case 1, 3 or 4, a deposit or a withdrawal, and an amount with more places than cash holds enter no book's cash until a person's clear or `ithildin override` brings it in, as replay leaves an unmatched order out.
 
          A deposit or a withdrawal still halts, so moving money always reaches a person. This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11), that the daily report names each entry. The price is a list and its ranges to keep current, and a wrong fee inside its range reaches the book unquestioned.
       2. **A tally after each close.** Monitoring's report records every
