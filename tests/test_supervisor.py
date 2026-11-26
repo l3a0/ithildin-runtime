@@ -1233,3 +1233,68 @@ def test_a_standing_hold_on_live_names_the_owner(world: World) -> None:
     world.supervisor(mode=Mode.LIVE).run(TODAY)
     standing = [a for a in world.alarms() if "still held" in a]
     assert standing and "The owner clears it" in standing[0]
+
+
+# Round 2 of the review: what no test reached
+
+
+def test_a_result_missing_at_the_second_decision_stores_no_stop(world: World) -> None:
+    world.opened()
+    world.ran()
+    first, second = to_utc(TODAY, BeforeClose(60), SESSIONS), DECIDED[TODAY]
+    twice = {CHAN: (BeforeClose(60), BeforeClose(20))}
+    for stage in STAGES:
+        world.put(result_key(DEPLOYMENT, TODAY.isoformat(), first, stage), b"{}")
+    world.timer.at = CLOSE
+    outcome = world.supervisor(schedules=twice).run(TODAY)
+    assert outcome.code == EXIT_STALLED and _stop_of(world) is None
+    (alarm,) = world.alarms()
+    assert f"at {second:%Y-%m-%dT%H:%M}Z" in alarm and f"{first:%H:%M}Z" not in alarm
+
+
+def test_halts_that_cannot_be_listed_are_named_and_the_run_goes_on(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    folder = strategy_halts_prefix(ACCOUNT, CHAN)
+    _refusing(world, lambda call, key: call == "list" and key == folder)
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
+    (alarm,) = [a for a in world.alarms() if "still held" in a]
+    assert f"{CHAN}, whose halts could not be read" in alarm
+
+
+def test_a_second_lost_machines_halts_take_the_next_count(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-a")
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    world.supervisor(boot="boot-b").run(TODAY)
+    _clear(world)
+    world.supervisor(boot="boot-c").run(TODAY)
+    second = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, DECIDED[TODAY], 2)
+    assert world.held() == [second.rpartition("/")[2]]
+
+
+def test_a_link_planted_after_the_unlink_is_never_written_through(
+    world: World, monkeypatch
+) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    target = world.root.parent / "elsewhere"
+    target.write_text("untouched\n")
+    partial = world.root / "local" / "release.partial"
+    real = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        real(self, missing_ok=missing_ok)
+        if self == partial:
+            # Someone plants a link between the unlink and the open.
+            self.symlink_to(target)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(OSError):
+        world.supervisor().run(TODAY)
+    assert target.read_text() == "untouched\n"

@@ -68,3 +68,28 @@ def test_no_file_reads_the_default_chain(monkeypatch, no_metadata) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", ENV_KEY)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "e")
     assert AwsClients("us-east-1").method() == "env"
+
+
+def test_the_credential_is_read_again_twenty_minutes_ahead(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from ithildinruntime.adapters.clients import read_credential_file
+
+    before = datetime.now(UTC)
+    read = read_credential_file(_file(tmp_path / "c", FILE_KEY))
+    expiry = datetime.fromisoformat(read["expiry_time"])
+    # botocore refreshes fifteen minutes before an expiry, so five minutes after the read.
+    assert before + timedelta(minutes=20) <= expiry <= datetime.now(UTC) + timedelta(minutes=20)
+
+
+@pytest.mark.parametrize(
+    "text", ["aws_secret_access_key = SECRETVALUE\n", "[default]\nSECRETVALUE\n"]
+)
+def test_a_file_that_does_not_parse_names_none_of_its_text(
+    tmp_path: Path, no_metadata, text: str
+) -> None:
+    path = tmp_path / "c"
+    path.write_text(text)
+    with pytest.raises(CredentialFileError) as refused:
+        AwsClients("us-east-1", path)
+    assert "SECRETVALUE" not in str(refused.value)

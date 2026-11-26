@@ -258,8 +258,10 @@ class Run:
 
 def _ran(run: Run, order: tuple[str, ...]) -> None:
     threads = run.start(order)
+    # One deadline for them all, so a run that stalls fails in minutes rather than one wait each.
+    end = time.monotonic() + 240
     for thread in threads.values():
-        thread.join(240)
+        thread.join(max(0.0, end - time.monotonic()))
     alive = [name for name, thread in threads.items() if thread.is_alive()]
     # Each ended on its own, on the run's stop, before anything stopped it.
     assert alive == [], (alive, run.errors)

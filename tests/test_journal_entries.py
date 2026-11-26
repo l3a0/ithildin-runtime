@@ -503,6 +503,15 @@ BIG = b"x" * RAW_LIMIT
         (decision(ONE, planned(2, 0)), "is for zero shares"),
         (decision(planned(1, "-0.0")), "is for zero shares"),
         (dataclasses.replace(SAMPLES[4], order=planned(1, 0)), "is for zero shares"),
+        # A pause covers either the run's end or the boots of lost machines, each named once.
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", (), True), None),
+        (PauseEntry("p", "2026-11-02", None, (CHAN,), "r", ("b-1", "b-2"), False), None),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-2", "b-1"), False), "boots covered"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-1", "b-1"), False), "boots covered"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-1",), True), "either the run's end"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", (), False), "either the run's end"),
+        (PauseEntry("p", "2026-11-02", AT, (OTHER, CHAN), "r", (), True), "strategies held"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN, CHAN), "r", (), True), "strategies held"),
     ],
 )
 def test_1_each_bound_is_held_one_step_inside_and_outside(record: Record, past: str | None) -> None:
