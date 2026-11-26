@@ -110,7 +110,9 @@ class ExecutionWorker:
             # Recover would read the broker before the last send went out.
             self._brokers = Halt(
                 f"the table's row of {RECOVER_STAGE} is not the one it declares, so set "
-                "recover's row in the deployment's stage table to RECOVER_ROW"
+                "recover's row in the deployment's stage table to "
+                "ithildinruntime.runtime.execution_worker.RECOVER_ROW, which reads data and "
+                f"follows {SEND_STAGE}"
             )
         (data_stage,) = stage.inputs
         self.recover = RecoverStage(
@@ -140,8 +142,10 @@ class ExecutionWorker:
         process alone. So the worker pages before its last tries, naming each
         entry it owes. One that still cannot be stored alarms again, naming each
         entry lost with the process, and ends the process with an error, so the
-        host's restart record says it too. An alarm the channel would not take,
-        and a last settle that failed for any other reason, end it the same way.
+        host's restart record says it too. An alarm the channel would not take
+        ends it the same way. A last settle that failed for any other reason pages
+        with the error's type and the owner's step and ends it the same way, and the
+        error says where that page was not sent.
         """
         try:
             loop.run()

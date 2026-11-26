@@ -498,8 +498,8 @@ def test_10_a_failed_last_settle_whose_alarm_is_refused_says_so(case: Case) -> N
     case.alarms.alarm = refused  # type: ignore[method-assign]
     with pytest.raises(Halt) as raised:
         worker.run(Looped())  # type: ignore[arg-type]
-    said = "its last settle failed: RuntimeError. The owner's step: the broker's site"
-    assert raised.value.reason.endswith(f"{said}. The alarm that says so was not sent")
+    said = "the process ends and its last settle failed: RuntimeError. The owner's step: "
+    assert raised.value.reason == f"{said}the broker's site. The alarm that says so was not sent"
 
 
 def test_10_an_error_that_is_no_halt_at_the_end_names_its_type_alone(case: Case) -> None:
@@ -536,7 +536,8 @@ def test_9_a_table_whose_recover_row_follows_nothing_halts_each_decision(case: C
     assert result.halt is not None
     assert result.halt.reason == (
         "the table's row of execution/recover is not the one it declares, so set recover's row "
-        "in the deployment's stage table to RECOVER_ROW"
+        "in the deployment's stage table to ithildinruntime.runtime.execution_worker.RECOVER_ROW, "
+        "which reads data and follows execution/send"
     )
 
 
