@@ -1,7 +1,8 @@
-"""The data worker's entry point: its row in the stage table, its buckets and its handler.
+"""The data worker's row in the stage table, its buckets and its handler.
 
-Each worker's entry point adds its own stage's row to the table, as
-`runtime.loop.table` says. Data's stage is capturing and reads no other
+Each worker's file declares its own stage's row, and `runtime/deployment.py`
+puts every row into one table, as `runtime.loop.table` says. `runtime.entry`
+starts the worker. Data's stage is capturing and reads no other
 stage's result.
 
 The entry point builds the two read-only buckets and hands them to `data`, which

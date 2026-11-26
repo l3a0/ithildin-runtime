@@ -665,7 +665,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `unmatched_record` | `record`, `read`, `reason` | Execution | A record of the broker's that no rule lets reach the book, kept as it came. It holds the account |
 | `unmatched_fill` | `fill`, `read`, `reason` | Execution | A fill the journal cannot give to any order it sent, kept as it came. It holds the account |
 | `unmatched_order` | `order`, `read`, `reason` | Execution | An order the broker lists open under an id no `ack` mapped, kept as it came. It holds the account |
-| `pause` | `deployment`, `run`, `since`, `strategies`, `reason` | The supervisor | A run that stopped with no clean-shutdown record, from its last journaled decision or `null` where the journal names none, and each strategy held. It moves no order, and a second pause of one run keeps the first |
+| `pause` | `deployment`, `run`, `since`, `strategies`, `reason`, `boots`, `ended` | The supervisor | A run that stopped with no clean-shutdown record, from its last journaled decision or `null` where the journal names none, and each strategy held. It covers the boots of the lost machines it names, or the run's own end, and nothing else. It moves no order |
 
 A `verdict` keeps the caps as the canonical bytes of the parsed `HardCaps`, with the SHA-256 of the blob they came from, because the owner rewrites that blob. The fold never decodes them, so a cap added later leaves old entries readable, and the blob's other sections stay out of entries nobody can delete.
 
@@ -675,7 +675,7 @@ The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `sw
 
 1. **A kind's fields never change**, and neither do those of a `core` type inside it, an enumeration's members or a check its constructor makes, because any of them can make every old entry unreadable. The bounds below, the checks on an entry and the stamp's own rules run on every old entry too, so each may be loosened and never tightened. A changed shape is a new kind under a new name, and every kind ever written stays readable. Until the first journal outside a test is opened, a change rewrites that kind's committed entry instead. `tests/fixtures/orders` holds a committed journal of every kind.
 2. **A body of an unknown kind, or whose fields are not its kind's, halts** with the entry's number and the kind. Skipping one would build a book on part of the record.
-3. **Bounds hold what an entry keeps.** `raw` has at most 65,536 bytes. A longer answer keeps its first part with `cut` true, and the order path journals one to a submit as `in_doubt`. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A `fill`'s price is above zero and its shares are not zero, and neither are a planned order's. A `disputed_fill` moves nothing, so it keeps the price and the shares that came, such as a fill sent again for zero shares, and so does an `unmatched_fill`. A record's id follows the rule for a broker's id. An `outside_record` moves some cash, is a fee, debit interest or a dividend, and names an instrument only by a name. A blob is named by a key and a SHA-256 of 64 lower case hex digits, and a `verdict`'s caps are not empty, because an entry that names nothing can never be run again or repaired.
+3. **Bounds hold what an entry keeps.** `raw` has at most 65,536 bytes. A longer answer keeps its first part with `cut` true, and the order path journals one to a submit as `in_doubt`. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A `fill`'s price is above zero and its shares are not zero, and neither are a planned order's. A `disputed_fill` moves nothing, so it keeps the price and the shares that came, such as a fill sent again for zero shares, and so does an `unmatched_fill`. A record's id follows the rule for a broker's id. An `outside_record` moves some cash, is a fee, debit interest or a dividend, and names an instrument only by a name. A blob is named by a key and a SHA-256 of 64 lower case hex digits, and a `verdict`'s caps are not empty, because an entry that names nothing can never be run again or repaired. A `pause` names its strategies and its boots sorted with none twice, its start in UTC, and either the boots of lost machines or the run's end, never both.
 
 ##### What the writer is for
 
@@ -700,6 +700,7 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id, with a repeat of the same content skipped and a differing one kept beside it |
 | `outside_record` and `unmatched_record` | The broker's own record id, with a repeat of the same content skipped and a differing one kept as unmatched |
+| `pause` | The deployment and the run, with the lost machines' boots it covers or whether it covers the run's end, so a stop a pause already covers is not paused again |
 | `sort` and `sort_done` | The off switch's or halt's id |
 | `override` | The override blob's SHA-256 |
 | `clear` | The halt's id with the release hash, counting only a valid release as already done |

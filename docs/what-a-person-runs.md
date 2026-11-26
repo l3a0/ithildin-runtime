@@ -534,17 +534,20 @@ A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOM
 
 | Code | Meaning | What a person does |
 | --- | --- | --- |
-| 0 | The run's stop is stored, SIGTERM ended the process, or the day has no session | Nothing |
-| 2 | A setting is missing or malformed. The one line on standard error names it | Fix the settings file, then start the unit again |
-| 3 | The supervisor halted the run, past an order's deadline or on a journal it could not read | Read the alarm, settle the order at the broker, and clear the run's halt |
-| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. The next start holds every strategy |
-| 5 | The hold check after an unclean stop could not finish, so no worker started | Read the alarm, which names what failed |
-| 6 | The supervisor could not store the day's plan, such as when another plan is stored | Read the line. A plan of another release means a pin moved during the session |
+| 0 | The run's stop is stored, SIGTERM ended a worker, or the day has no session | Nothing |
+| 2 | A setting is missing or malformed, or the credential file it names cannot be read. The one line on standard error names it | Fix the settings file or the credential file, then start the unit again |
+| 3 | The supervisor halted the run, past an order's deadline or on a journal it could not read | Read the alarm and settle each order it names at the broker. The next session's start holds every strategy |
+| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. The next session's start holds every strategy, unless the result lands and a restart before then stores the stop |
+| 5 | The hold check after an unclean stop could not finish. Before the plan is stored no worker starts, and after it the workers run on with no supervisor | Read the alarm, which names what failed. The strategies it held stay held after a later start succeeds, and each later start alarms on them until they are cleared |
+| 6 | The supervisor could not store the day's plan, or a worker found a plan it cannot read or one of another mode | Read the alarm. A plan of another release means a pin moved during the session |
+| 7 | SIGTERM ended the supervisor before the run's stop was stored, so nothing watches the rest of the session | Start the supervisor's unit again |
 | Any other | A failure, whose traceback is in the host's journal | Read the journal |
+
+The host restarts a process that ends with 1 or 7. The supervisor's unit carries `RestartPreventExitStatus=3 4 5 6`, so a halt, a stall, a failed hold or a plan it cannot store raises its alarm once rather than once for each restart, and spends none of the day's restarts. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
 
 #### After a stop with no clean-shutdown record
 
-A run that ended without its stop, such as one the host's timer ended or a machine that was lost, holds every strategy at the next start. The supervisor writes a halt into each strategy's halts folder, journals one `pause` naming the run, and alarms with each open position, each working order with its broker id, each order in doubt with its client order id and today's cancel cutoff. Until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels a held strategy's working orders that add to a position, cancel any such order at the broker's own site before the cutoff. A held strategy sends no new order. Clearing the hold is `ithildin halt clear`, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds, and until then a shadow strategy stays held. Until [#201](https://github.com/l3a0/ithildin-runtime/issues/201) builds the alert channel, every alarm is a line starting `ALARM` in the host's journal, and reaches no person.
+A run that ended without its stop, such as one the host's timer ended or a machine that was lost, holds every strategy at the next start. The supervisor writes a halt into each strategy's halts folder, journals one `pause` naming the run, and alarms with each open position, each working order with its broker id, each order in doubt with its client order id and today's cancel cutoff. Until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels a held strategy's working orders that add to a position, cancel any such order at the broker's own site before the cutoff. A held strategy sends no new order. Clearing the hold is `ithildin halt clear`, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds, and until then a shadow strategy stays held. A hold that stands past its own start alarms again at each later start, naming each strategy still held. A pause covers only what it names, so a machine lost later in the same run, or the run's own end after a pause written in its session, holds again. Until [#201](https://github.com/l3a0/ithildin-runtime/issues/201) builds the alert channel, every alarm is a line starting `ALARM` in the host's journal, and reaches no person.
 
 ### Set up the test environment
 

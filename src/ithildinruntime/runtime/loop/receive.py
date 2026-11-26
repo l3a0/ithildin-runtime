@@ -118,7 +118,8 @@ How the loop runs, in order.
     ends as `stop` ends it, and `run` returns. A loop that finds the stop
     before its first check runs no handler. A store that does not answer
     reads as no stop yet, so an outage never ends a run early. Another run's
-    stop names another key, so it ends nothing.
+    stop names another key, so it ends nothing. A loop already stopping once
+    its first check is done starts no receiver.
 
 Every limit is measured on the timer's monotonic reading.
 """
@@ -428,7 +429,7 @@ class ReceiveLoop:
         receiver: asyncio.Task | None = None
         try:
             try:
-                if await self._in_io(self._stop_is_stored):
+                if self._stop_key is not None and await self._in_io(self._stop_is_stored):
                     # A loop started after its run's stop runs no handler.
                     self._stopping = True
                 else:

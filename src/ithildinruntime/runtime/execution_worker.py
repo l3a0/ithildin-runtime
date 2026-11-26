@@ -1,4 +1,4 @@
-"""The execution worker's entry point: its stages' rows, its one account and its broker.
+"""The execution worker's rows, its one account and its broker, which `runtime.entry` starts.
 
 The mode builds the broker, and this is the one file that does. It also hands a
 backtest's opening of its account the simulated broker's own, through
@@ -18,8 +18,8 @@ backtest's account goes to no real store, where its opening entry and its
 simulated fills could never be deleted.
 
 `core.Storage` reports nothing while it tries a read again, so the retry's
-deadline has to be below the loop's heartbeat limit. Whoever builds both sets
-them so (#11).
+deadline has to be below the loop's heartbeat limit. `runtime.entry.RETRY`
+sets it so, at 20 seconds against the loop's 30.
 """
 
 from __future__ import annotations
