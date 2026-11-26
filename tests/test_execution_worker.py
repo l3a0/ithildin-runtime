@@ -827,6 +827,13 @@ def test_10_a_real_loop_over_another_storage_than_the_account_is_not_run(case: C
     worker = case.worker(storage=case.storage_over(case.store))
     loop = case.loop({RECOVER_STAGE: worker.recover, SEND_STAGE: worker.send})
     assert loop.storage is case.storage
+    # Stopped before it runs, so a check that let it through fails here rather than hangs.
+    loop.stop()
     with pytest.raises(Halt, match="another storage contract than the account") as raised:
         worker.run(loop)
+    step = "The owner's step: build the worker's loop and its account over one storage contract"
+    assert raised.value.reason.endswith(step)
     assert case.alarms.reasons == [f"account {ACCOUNT}: {raised.value.reason}"]
+    worker._alerts = type("Refused", (), {"alarm": lambda self, reason: 1 / 0})()
+    with pytest.raises(Halt, match=f"{step}. The alarm could not be sent$"):
+        worker.run(loop)

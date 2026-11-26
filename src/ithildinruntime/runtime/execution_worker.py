@@ -109,6 +109,8 @@ class ExecutionWorker:
     ) -> None:
         self._owner_step = storage.owner_step
         self._storage = storage
+        self._alerts = alerts
+        self._alias = account
         writer = secrets.token_hex(16)
         self.account = Account(
             store=store,
@@ -222,10 +224,15 @@ class ExecutionWorker:
         if other is not None and other is not self._storage:
             reason = (
                 "the receive loop holds another storage contract than the account, so a loss "
-                f"stop's blob S3 did not store would keep no process alive. The owner's step: "
-                f"{self._owner_step}"
+                "stop's blob S3 did not store would keep no process alive. The owner's step: "
+                "build the worker's loop and its account over one storage contract"
             )
-            raise Halt(f"{reason}{self.account.alarm(reason, lambda: None)}")
+            # Sent straight to the channel, since an account that cannot be used sends nothing.
+            try:
+                self._alerts.alarm(f"account {self._alias}: {reason}")
+            except BaseException:
+                reason = f"{reason}. The alarm could not be sent"
+            raise Halt(reason)
         try:
             loop.run()
         finally:
