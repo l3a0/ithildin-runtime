@@ -218,6 +218,11 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
     assert "| 0.0005 | 3 of 5 |" in out
     assert "| Reason | Count |" in out
     assert (
+        "**Table:** Sessions refused at each age, with the spread at its widest step of 0.01, then "
+        "those refused for age, with the reasons of age by instrument and session, or by session "
+        "for a fault of the read, exploratory"
+    ) in out
+    assert (
         "A reason a quote gives counts once for each instrument and session it refuses, and "
         "each kind of fault of the read once for each session."
     ) in out
