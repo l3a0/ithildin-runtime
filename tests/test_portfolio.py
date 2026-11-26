@@ -33,6 +33,7 @@ from ithildinruntime.core import (
     SIZING_OUTPUT,
     SNAPSHOT_OUTPUT,
     STRATEGIES,
+    STRESS_MOVES,
     TARGET_OUTPUT,
     VALUATION_OUTPUT,
     Basket,
@@ -67,6 +68,7 @@ from ithildinruntime.core import (
     encode,
     encode_output,
     held,
+    load_records,
     load_strategies,
     output_key,
     parse_strategy,
@@ -199,9 +201,14 @@ HAND = {
     "long": (LEGS, 1, 900, ("-4", "10"), ("-4.000000000", "10.000000000")),
     "short": (LEGS, -1, 900, ("4", "-10"), ("4.000000000", "-10.000000000")),
     "flat": (LEGS, 0, 900, ("0", "0"), ("0.000000000", "0.000000000")),
-    # 899 ÷ 90 = 9.98888… baskets, and 0.4 of that is 3.995555….
-    "toward-zero": (LEGS, 1, 899, ("-3", "9"), ("-3.995555555", "9.988888888")),
-    "toward-zero-short": (LEGS, -1, 899, ("3", "-9"), ("3.995555555", "-9.988888888")),
+    # 899 ÷ 90 = 9.98888… baskets, and 0.4 of that is 3.995555…, each nearest 10 and 4.
+    "to-the-nearest": (LEGS, 1, 899, ("-4", "10"), ("-3.995555556", "9.988888889")),
+    "to-the-nearest-short": (LEGS, -1, 899, ("4", "-10"), ("3.995555556", "-9.988888889")),
+    # 850 ÷ 90 = 9.44444… baskets, nearest 9, and 0.4 of that is 3.777777…, nearest 4.
+    "one-down-one-up": (LEGS, 1, 850, ("-4", "9"), ("-3.777777778", "9.444444444")),
+    # 855 ÷ 90 = 9.5 baskets, half a share past 9 and 3.8 of GLD. Half a step goes toward zero.
+    "half-a-share": (LEGS, 1, 855, ("-4", "9"), ("-3.800000000", "9.500000000")),
+    "half-a-share-short": (LEGS, -1, 855, ("4", "-9"), ("3.800000000", "-9.500000000")),
     # 50 and 30 dollars, 80 in all: 800 ÷ 80 = 10.
     "h-of-0.3": ({USO: 1, GLD: "-0.3"}, 1, 800, ("-3", "10"), ("-3.000000000", "10.000000000")),
     # A hedge ratio below zero puts both legs on one side.
@@ -226,15 +233,15 @@ HAND = {
     "gld-dearer": ({USO: 1, GLD: -2}, 1, 2500, ("-20", "10"), ("-20.000000000", "10.000000000")),
     "gld-cheaper": ({USO: 1, GLD: "-0.1"}, 1, 600, ("-1", "10"), ("-1.000000000", "10.000000000")),
     # One leg rounds to nothing beside one that does not: 110 ÷ 90 = 1.2222…, and 0.4888….
-    "one-leg-to-zero": (LEGS, 1, 110, ("0", "1"), ("-0.488888888", "1.222222222")),
-    "one-leg-to-zero-short": (LEGS, -1, 110, ("0", "-1"), ("0.488888888", "-1.222222222")),
-    # A leg below a billionth of a share is wanted as nothing, unsigned.
+    "one-leg-to-zero": (LEGS, 1, 110, ("0", "1"), ("-0.488888889", "1.222222222")),
+    "one-leg-to-zero-short": (LEGS, -1, 110, ("0", "-1"), ("0.488888889", "-1.222222222")),
+    # A leg below half a billionth of a share is wanted as nothing, unsigned.
     "a-leg-below-a-billionth": (
-        {USO: 1, GLD: "-0.00000001"},
+        {USO: 1, GLD: "-0.000000001"},
         1,
         "4.9999",
         ("0", "0"),
-        ("0.000000000", "0.099997998"),
+        ("0.000000000", "0.099998000"),
     ),
     # A factor common to every leg changes nothing.
     "a-basket-seven-times-larger": (
@@ -266,8 +273,13 @@ def test_1_a_target_at_a_step_of_a_billionth_is_what_is_wanted(case) -> None:
 
 
 def test_1_each_step_rounds_to_its_own_places() -> None:
-    assert counts(sized(step=d("0.1"), config=strategy(text(899)))[0]) == {
-        "GLD": "-3.9",
+    assert counts(sized(step=d("0.1"), config=strategy(text(895)))[0]) == {
+        "GLD": "-4.0",
+        "USO": "9.9",
+    }
+    # 895.5 ÷ 90 = 9.95 baskets, half a step past 9.9, which goes toward zero.
+    assert counts(sized(step=d("0.1"), config=strategy(text("895.5")))[0]) == {
+        "GLD": "-4.0",
         "USO": "9.9",
     }
     assert counts(sized(0, step=d("0.001"))[0]) == {"GLD": "0.000", "USO": "0.000"}
@@ -275,15 +287,24 @@ def test_1_each_step_rounds_to_its_own_places() -> None:
 
 CUT = {
     # At 10 USO and 4 GLD wanted. One below, at and above what binds, each with the other
-    # leg's loose.
-    "position-uso-below": ({"max_position": {USO: 9}}, "-3", "9", (Limit.MAX_POSITION,)),
+    # leg's loose. 9 baskets hold 3.6 of GLD, nearest 4.
+    "position-uso-below": ({"max_position": {USO: 9}}, "-4", "9", (Limit.MAX_POSITION,)),
     "position-uso-at": ({"max_position": {USO: 10}}, "-4", "10", ()),
+    # 9.6 baskets round USO up to 10, past the limit, so every leg goes toward zero, GLD's
+    # 3.84 to 3 though 4 would fit its own limit.
+    "position-uso-between-shares": (
+        {"max_position": {USO: "9.6"}},
+        "-3",
+        "9",
+        (Limit.MAX_POSITION,),
+    ),
     "position-uso-above": ({"max_position": {USO: 11}}, "-4", "10", ()),
     # 3 ÷ 0.4 = 7.5 baskets.
     "position-gld-below": ({"max_position": {GLD: 3}}, "-3", "7", (Limit.MAX_POSITION,)),
     "position-gld-at": ({"max_position": {GLD: 4}}, "-4", "10", ()),
     "position-gld-above": ({"max_position": {GLD: 5}}, "-4", "10", ()),
-    # 900 dollars with room for a move of 0.25 is 1125.
+    # 900 dollars with room for a move of 0.25 is 1125. Below it, 9.99999… baskets round to
+    # the whole 900 dollars, which the limit refuses, so each leg goes toward zero.
     "gross-below": ({"max_gross": "1124.9999"}, "-3", "9", (Limit.MAX_GROSS,)),
     "gross-at": ({"max_gross": 1125}, "-4", "10", ()),
     "gross-above": ({"max_gross": "1125.0001"}, "-4", "10", ()),
@@ -298,7 +319,7 @@ CUT = {
     # The tighter of two is taken, whichever it is, and both are named.
     "position-tighter-than-net": (
         {"max_position": {USO: 7}, "max_net": 500},
-        "-2",
+        "-3",
         "7",
         (Limit.MAX_POSITION, Limit.MAX_NET),
     ),
@@ -356,6 +377,31 @@ def test_1_each_limit_below_at_and_above_what_binds(case, direction) -> None:
     if "max_net" not in changes:
         owners = replace(CAPS, **{k: getattr(limits, k) for k in changes})
         assert sized(direction, owners=owners) == (target, record)
+
+
+# A target rounded up onto a limit exactly. 870 ÷ 90 = 9.666… baskets, nearest 10 USO and
+# 4 GLD: 900 dollars, which with room for a move of 0.25 is 1125, and a USO side of 625.
+ONTO = {
+    "position": {"max_position": {USO: 10}},
+    "gross": {"max_gross": 1125},
+    "net": {"max_net": 625},
+}
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("case", ONTO)
+def test_1_a_target_rounded_up_exactly_onto_a_limit_fits_it(case, direction) -> None:
+    """The gate allows a figure equal to its limit, so the check after rounding does too."""
+    config = strategy(text(870))
+    target, record = sized(direction, config=config, limits=held_to(**ONTO[case]))
+    assert {i: q * direction for i, q in target.shares.items()} == {GLD: d(-4), USO: d(10)}
+    assert record.cut == ()
+    # A hundredth of a cent under the limit sends every leg toward zero, to 9 USO and 3 GLD.
+    under = {k: (v if k == "max_position" else d(v) - d("0.0001")) for k, v in ONTO[case].items()}
+    if case == "position":
+        under = {"max_position": {USO: d("9.9999")}}
+    target, _ = sized(direction, config=config, limits=held_to(**under))
+    assert {i: q * direction for i, q in target.shares.items()} == {GLD: d(-3), USO: d(9)}
 
 
 @pytest.mark.parametrize("direction", [1, -1])
@@ -420,6 +466,7 @@ def oracle(
     limits: Constraints,
     move: Decimal,
     step: Decimal,
+    seen: dict[str, int] | None = None,
 ) -> tuple[dict[InstrumentId, Fraction], list[Limit]]:
     """The shares and the limits that cut them, in exact fractions, sharing no code with `size`.
 
@@ -439,16 +486,35 @@ def oracle(
     ]
     u = min([asked, *(bound for _, bound in bounds)])
     cut = [n for n in Limit if any(limit is n and bound < asked for limit, bound in bounds)]
-    shares = {
-        i: (1 if q > 0 else -1) * (abs(u * q) // Fraction(step)) * Fraction(step)
-        for i, q in x.items()
-    }
-    return shares, cut
+    unit = Fraction(step)
+
+    def steps(q: Fraction) -> Fraction:
+        # The nearest whole number of steps, and the one nearer zero at half a step.
+        a = abs(u * q) / unit
+        return Fraction(-((-(a - Fraction(1, 2))) // 1))
+
+    def signed(counts: Mapping[InstrumentId, Fraction]) -> dict[InstrumentId, Fraction]:
+        return {i: (1 if x[i] > 0 else -1) * n * unit for i, n in counts.items()}
+
+    nearest = signed({i: steps(q) for i, q in x.items()})
+    dollars = {i: abs(q) * Fraction(marks[i]) for i, q in nearest.items()}
+    long = sum((dollars[i] for i in x if x[i] > 0), Fraction(0))
+    short = sum((dollars[i] for i in x if x[i] < 0), Fraction(0))
+    inside = (
+        all(abs(nearest[i]) <= Fraction(limits.max_position[i]) for i in x)
+        and sum(dollars.values(), Fraction(0)) * room <= Fraction(limits.max_gross)
+        and max(long, short) * room <= Fraction(limits.max_net)
+    )
+    down = signed({i: abs(u * q) // unit for i, q in x.items()})
+    if seen is not None:
+        seen["nearest differs"] += nearest != down
+        seen["fallback"] += not inside and nearest != down
+    return (nearest if inside else down), cut
 
 
 def test_1_the_sizing_agrees_with_an_oracle_in_exact_fractions() -> None:
     draw = random.Random(9)
-    seen = {"sized": 0, "cut": 0, "by two": 0, "zero": 0}
+    seen = {"sized": 0, "cut": 0, "by two": 0, "zero": 0, "nearest differs": 0, "fallback": 0}
     for _ in range(1500):
         names = [InstrumentId(f"I{n}") for n in range(draw.choice([1, 2, 2, 2, 3, 5, 10]))]
         legs = {
@@ -480,7 +546,7 @@ def test_1_the_sizing_agrees_with_an_oracle_in_exact_fractions() -> None:
         direction = draw.choice([1, -1])
         config = strategy(text(g, str([str(i) for i in names])))
         turned = {i: q * direction for i, q in legs.items()}
-        expected, cut = oracle(turned, marks, g, limits, move, step)
+        expected, cut = oracle(turned, marks, g, limits, move, step, seen)
         try:
             target, record = sized(
                 direction,
@@ -548,7 +614,7 @@ def test_2_a_larger_v_alone_grows_the_target_to_the_new_cap_less_room(step) -> N
     small, record = sized(owners=owners, v=valuation(5000))
     assert record.cut == (Limit.MAX_NET,)
     assert small.shares[USO] == (6 if step == 1 else d("6.4"))
-    assert small.shares[GLD] == (-2 if step == 1 else d("-2.56"))
+    assert small.shares[GLD] == (-3 if step == 1 else d("-2.56"))
     # 0.02 × 6,250 ÷ 0.25 = 500, less room 400, is 8 baskets.
     large, record = sized(owners=owners, v=valuation(6250))
     assert record.cut == (Limit.MAX_NET,)
@@ -577,7 +643,7 @@ def test_a_raised_record_lowers_the_net_cap_and_widens_the_room() -> None:
     # 0.02 × 5,000 ÷ 0.25 = 400, less room 320, over 50 dollars is 6.4 baskets.
     assert sized(**given, records=(NAMED,))[0].shares == {GLD: d("-2.56"), USO: d("6.4")}
     # 0.02 × 5,000 ÷ 0.4 = 250, and 250 ÷ 1.4 ÷ 50 = 3.571428571428….
-    held = {GLD: d("-1.428571428"), USO: d("3.571428571")}
+    held = {GLD: d("-1.428571429"), USO: d("3.571428571")}
     for records in ((NAMED, RAISED), (RAISED, NAMED)):
         target, cut = sized(**given, records=records)
         assert (target.shares, cut.cut) == (held, (Limit.MAX_NET,))
@@ -1027,8 +1093,8 @@ def test_5_a_decision_at_the_close_is_sized_as_one_before_it() -> None:
 
 
 ZEROS = {
-    # A G below one share of either leg: 49 ÷ 90 = 0.5444… of USO.
-    "a-g-below-a-share": ({"config": strategy(text(49))}, 49, "that no limit cut"),
+    # A G below half a share of either leg: 44 ÷ 90 = 0.4888… of USO.
+    "a-g-below-a-share": ({"config": strategy(text(44))}, 44, "that no limit cut"),
     "with-a-cap-binding-too": (
         {"config": strategy(text(49)), "limits": held_to(max_net=20)},
         49,
@@ -1059,15 +1125,16 @@ def test_5_a_v_read_100_times_low_halts_a_book_on_one_side(direction) -> None:
     """The gate would approve every order to zero there, so this halt is what stops them."""
     owners = replace(CAPS, share=d("0.02"))
     holds = book({"chan": {USO: 10 * direction, GLD: 4 * direction}})
-    # A true V of 100,000 read as 1,000: 0.02 × 1,000 ÷ 0.25 = 80, less room 64, under 90.
+    # A true V of 50,000 read as 500: 0.02 × 500 ÷ 0.25 = 40, less room 32, which holds
+    # 0.36 of a 90-dollar basket and rounds to no share of either leg.
     given = {"legs": {USO: 1, GLD: "0.4"}, "owners": owners, "holds": holds}
-    assert sized(direction, v=valuation(100_000), **given)[1].cut == ()  # type: ignore[arg-type]
-    assert refused(direction=direction, v=valuation(1000), **given) == (
+    assert sized(direction, v=valuation(50_000), **given)[1].cut == ()  # type: ignore[arg-type]
+    assert refused(direction=direction, v=valuation(500), **given) == (
         f"chan forecasts {direction} and its target is zero shares in every leg, at a gross of 900 "
         "cut by max_net"
     )
     first, second = order(-4 * direction, GLD), order(-10 * direction, USO, name="new-2")
-    world = World(first, holds, MARKED).given(caps=owners, valuation=valuation(1000))
+    world = World(first, holds, MARKED).given(caps=owners, valuation=valuation(500))
     sent = replace(holds, open_orders_by_strategy={"chan": (first,)})
     for verdict in (world.check(), world.at(intent=second, book=sent).check()):
         assert verdict.approved and not verdict.adding
@@ -1193,10 +1260,6 @@ def test_8_a_g_that_is_not_finite_halts_where_a_config_is_built_in_memory(bad) -
         gross(config)
 
 
-# Each tracked strategy with no G written yet, and the issue that writes it.
-WITHOUT_G = {"chan_bollinger": "#129"}
-
-
 def readable(folder: Path, names: list[str]) -> list[str]:
     """Each strategy whose `[portfolio]` section is read. One with no section is left out."""
     found = []
@@ -1211,8 +1274,8 @@ def test_8_every_tracked_section_is_one_the_reader_reads(tmp_path) -> None:
     names = tracked()
     assert names, "no strategy file is tracked"
     read = readable(STRATEGIES, names)
-    assert set(names) - set(read) == set(WITHOUT_G)
-    # No tracked file holds a section until #129, so a fixture runs the same check on one.
+    assert read == names
+    # A fixture beside them shows the same check refuses a section the form refuses.
     for name in names:
         (tmp_path / f"{name}.toml").write_bytes((STRATEGIES / f"{name}.toml").read_bytes())
     (tmp_path / "fixture.toml").write_text(text())
@@ -1222,11 +1285,26 @@ def test_8_every_tracked_section_is_one_the_reader_reads(tmp_path) -> None:
         readable(tmp_path, [*names, "fixture"])
 
 
-@pytest.mark.parametrize("name", WITHOUT_G)
-def test_8_a_tracked_strategy_with_no_section_halts(name) -> None:
-    (config,) = load_strategies(STRATEGIES, [name])
-    with pytest.raises(Halt, match=f"{name}.toml has no \\[portfolio\\] section, or an empty one"):
-        sized(config=config, given=forecast(0, name=name), deployed=[name])
+# The stress move `chan_bollinger`'s G was sized at, so that 1.45 G fits the net cap s × V ÷ m.
+SIZED_AT = d("0.34703196")
+
+
+def test_chan_bollingers_g_was_sized_at_a_stress_move_no_record_of_it_passes() -> None:
+    """A record with a larger m shrinks the net cap s × V ÷ m under a fixed G.
+
+    Test 1's largest net exposure, 1.45 G, then no longer fits it, so this fails
+    until G is checked again and this figure moves with it. A smaller m leaves G
+    inside the cap.
+    """
+    (config,) = load_strategies(STRATEGIES, ["chan_bollinger"])
+    moves = [
+        record.stress_move
+        for record in load_records(STRESS_MOVES)
+        if record.counts_for(config.name, config.instruments)
+    ]
+    assert moves, "no record of chan_bollinger's stress move is tracked"
+    assert max(moves) <= SIZED_AT, f"a record's m of {max(moves)} checks G again"
+    assert gross(config) > 0
 
 
 # What `core` gained for this stage

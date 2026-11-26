@@ -533,7 +533,7 @@ The promotion job's schedule is a GitHub Actions cron, which runs in UTC, so it 
 **A value the platform computes is rounded once, in one place.** The types in `core` hold `Decimal`.
 
 - A statistic is converted once, at the stage's output, by `core.to_decimal`, which rounds it half to even to the field's declared places. One computed in floats is taken in the float's shortest form first. The alpha model computes its hedge ratio and z-score in `Decimal` at 28 digits, inside a context of its own, and decides on the unrounded values.
-- Portfolio construction rounds each leg's shares toward zero, to the account's `share_step` for a target and to nine places for what was wanted. It is one division of exact products, so a target exactly on a step is kept, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
+- Portfolio construction rounds each leg's shares to the nearest step, the account's `share_step` for a target and nine places for what was wanted, with half a step going toward zero. A target that the rounding would take past a limit is rounded toward zero instead, in every leg. It is one division of exact products, so a target exactly on a step is kept, as [How a target is sized](05-building-blocks.md#how-a-target-is-sized) says.
 - The risk gate, the order manager, `Journal.replay` and reconciliation compute in `Decimal` throughout, and the quantity journaled for an order is the exact string the broker adapter sends and the gate checks.
 
 A `dict` field's values take the declared places of their value type, such as a share count in `TargetPortfolio.shares`. A field's declared places never shrink in a later release.

@@ -39,10 +39,11 @@ two runs differ in two ways.
    quote's midpoint at close−20, another kind of price and twenty minutes before
    the close the backtest's signal uses, and a price that moves in those minutes
    can flip the unit.
-2. **Rounding.** Portfolio construction rounds each leg toward zero to the
-   account's share step, so a whole-share leg is off by less than one share.
-   Whole shares miss the replication's pins, by 1.56e-3 on the APR and 4.99e-3
-   on the Sharpe ratio at a G of $10,000, which is exploratory. So test 1's
+2. **Rounding.** Portfolio construction rounds each leg to the nearest step of
+   the account's share step, so a whole-share leg is off by up to half a share,
+   and by up to one where a limit sends every leg toward zero. Whole shares miss
+   the replication's pins, by 3.67e-4 on the APR and 1.65e-3 on the Sharpe ratio
+   at a G of $10,000, which is exploratory. So test 1's
    account alone has a step of a billionth, as
    [The step a share count moves in](05-building-blocks.md#the-step-a-share-count-moves-in) says.
 
