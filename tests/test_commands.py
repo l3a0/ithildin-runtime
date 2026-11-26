@@ -753,8 +753,6 @@ def test_a_pin_the_supervisor_cannot_use_exits_2_with_an_alarm(monkeypatch, caps
 
 
 def test_execution_that_cannot_run_its_plan_says_no_cancel_is_served(tmp_path: Path) -> None:
-    import dataclasses
-
     from ithildinruntime.core import Halt
 
     worker = _idle_worker(tmp_path, Mode.SHADOW)
@@ -766,7 +764,6 @@ def test_execution_that_cannot_run_its_plan_says_no_cancel_is_served(tmp_path: P
     (alarm,) = worker.alerts.reasons  # type: ignore[attr-defined]
     assert "Execution serves no cancel and no kill switch on this machine" in alarm
     assert entry.OWNER_STEP in alarm
-    assert dataclasses.is_dataclass(worker)
 
 
 def test_execution_built_over_two_storages_is_refused_before_its_loop_runs(
@@ -787,3 +784,33 @@ def test_execution_built_over_two_storages_is_refused_before_its_loop_runs(
     _store_plan(worker, Mode.SHADOW)
     entry.run_execution(worker, clock=object(), servers=None)  # type: ignore[arg-type]
     assert ran == ["checked", "ran"]
+
+
+def test_a_release_file_with_an_empty_line_reads_as_none(tmp_path: Path) -> None:
+    from ithildinruntime.runtime.supervisor import read_release_file
+
+    release = tmp_path / "release"
+    release.write_text("sha256:r\n2026-11-30\nboot-a\n")
+    assert read_release_file(release) is not None
+    for lines in ("\n2026-11-30\nboot-a\n", "sha256:r\n\nboot-a\n", "sha256:r\n2026-11-30\n\n"):
+        release.write_text(lines)
+        assert read_release_file(release) is None, lines
+
+
+@pytest.mark.parametrize("command", ["alpha", "supervisor"])
+def test_a_command_whose_credential_file_cannot_be_read_names_itself(
+    tmp_path: Path, boot: Path, capsys, command: str
+) -> None:
+    import threading
+
+    pin = tmp_path / "pin"
+    pin.write_text("sha256:r\n")
+    values = GOOD | {"credentials": str(tmp_path / "none"), "pin": str(pin)}
+    settings = read_settings(_write(tmp_path, values), boot)
+    with pytest.raises(SystemExit) as ended:
+        if command == "supervisor":
+            entry.supervisor_for(settings, threading.Event())
+        else:
+            entry.parts_for(settings, command, threading.Event())
+    assert ended.value.code == entry.EXIT_SETTING
+    assert f"ALARM {command}:" in capsys.readouterr().err

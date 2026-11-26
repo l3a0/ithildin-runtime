@@ -1314,6 +1314,29 @@ def test_a_link_planted_after_the_unlink_is_never_written_through(
     assert outcome.code == EXIT_PLAN and target.read_text() == "untouched\n"
     (alarm,) = [a for a in world.alarms() if "release file could not be written" in a]
     assert "Start the supervisor's unit again once its directory is writable" in alarm
+    assert "no worker on this machine starts" in alarm and "run on" not in alarm
+
+
+def test_a_release_file_that_cannot_be_rewritten_says_the_workers_released_earlier_run_on(
+    world: World, monkeypatch
+) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    _start_on(world, "boot-a")
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_text(f"{RELEASE}\n{TODAY}\nboot-a\n")
+
+    def refused(*args, **kwargs):
+        raise PermissionError("the directory is read-only")
+
+    monkeypatch.setattr(Supervisor, "_write_release_file", refused)
+    outcome = world.supervisor(boot="boot-a").run(TODAY)
+    assert outcome.code == EXIT_PLAN
+    (alarm,) = [a for a in world.alarms() if "release file could not be written" in a]
+    assert "the workers it released earlier run on with no supervisor" in alarm
+    assert "no worker on this machine starts" not in alarm
 
 
 def test_a_release_file_that_is_not_utf_8_reads_as_not_released(world: World) -> None:
@@ -1353,6 +1376,11 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert outcome.code == EXIT_FAILED and "could not be stored" in outcome.line
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
+    assert any(
+        "which tries the halt again once the store answers" in a
+        and "A restart that ends with 5 does not" in a
+        for a in world.alarms()
+    )
     assert _stop_of(world) is None
     # A halt of each strategy stands in its place, which execution's controls refuse orders on.
     assert world.held() and "supervisor-run_halt-" in world.held()[0]
@@ -1455,6 +1483,7 @@ def test_a_supervised_restart_whose_record_fails_watches_on(world: World) -> Non
     outcome = world.supervisor(boot="boot-b").run(TODAY)
     assert outcome.code == EXIT_STOPPED and _stop_of(world) is not None
     assert not any("no worker of it starts" in a for a in world.alarms())
+    assert any("the start record of" in a and "could not be written" in a for a in world.alarms())
 
 
 def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on(
@@ -1470,6 +1499,7 @@ def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on
     world.supervisor().run(TODAY)
     (alarm,) = [a for a in world.alarms() if "no start record" in a]
     assert "the workers it released earlier run on" in alarm and "no worker" not in alarm
+    assert "Start the supervisor's unit again once the store answers" in alarm
 
 
 def test_a_plan_that_cannot_be_read_with_unreadable_records_holds(world: World) -> None:

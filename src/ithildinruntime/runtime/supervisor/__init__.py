@@ -240,7 +240,8 @@ class Supervisor:
                 else "no worker of it starts"
             )
             self._alerts.alarm(
-                f"{self._deployment}: no start record of {run} names this machine, so it "
+                f"{self._deployment}: no start record of {run} that names this machine could be "
+                "read or written, so it "
                 f"writes no plan and no release file, and {after}. Start the supervisor's unit "
                 "again once the store answers"
             )
@@ -335,7 +336,7 @@ class Supervisor:
         except Exception as error:
             self._alerts.alarm(
                 f"{self._deployment}: the start record of {run} could not be written: "
-                f"{_said(error)}"
+                f"{_said(error)}. This boot's first record stands, so it watches on"
             )
             return False
         return True
@@ -499,7 +500,8 @@ class Supervisor:
                 f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
                 f"{_said(error)}. In its place a halt of each strategy holds {said}. "
                 "Pull the account's kill switch now. The host restarts the supervisor, which "
-                "tries the halt again"
+                "tries the halt again once the store answers. A restart that ends with 5 does "
+                "not, so start the supervisor's unit by hand once the store answers"
             )
             return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")

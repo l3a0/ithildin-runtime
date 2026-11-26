@@ -6,8 +6,8 @@ one where every stage writes outputs rather than halts. Each worker's core,
 its own named pipe and the history clock, and the supervisor's core writes the
 plan and the stop. Three decisions at close−20 read a made lake of captured
 bars, made-up quotes and a made-up quote-kind row, under the tracked strategy
-file, its G and its limits, with a made-up `[data.quotes]` and an entry
-threshold low enough that the first decision trades. Every price is made up,
+file, its G, its limits and its `[data.quotes]`, with an entry threshold
+low enough that the first decision trades. Every price is made up,
 so no figure here says anything of an edge.
 
 Starting the workers before the supervisor and in reverse order must store the
@@ -69,10 +69,7 @@ THROUGH = date(2027, 1, 28)
 NAME = "chan_bollinger"
 # The tracked file, with an entry low enough that the first decision trades.
 TRACKED = (STRATEGIES / f"{NAME}.toml").read_text()
-FILE = (
-    TRACKED.replace("entry = 1\n", "entry = 0.01\n")
-    + "\n[data.quotes]\nmax_age_seconds = 90\nmax_spread_share = 0.02\n"
-)
+FILE = TRACKED.replace("entry = 1\n", "entry = 0.01\n")
 KINDS = QuoteKinds(
     (QuoteKindRow(DAYS[0], QUOTE_SOURCE, DAYS[0], DAYS[-1], segments.KIND, "a test"),)
 )
