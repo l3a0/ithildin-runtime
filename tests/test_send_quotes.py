@@ -15,9 +15,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ithildinruntime.core import Snapshot, StoreUnavailable, readable_until
+from ithildinruntime.core import Halt, Snapshot, StoreUnavailable, readable_until
 from ithildinruntime.execution import order_path
-from ithildinruntime.execution.send import MARGIN
+from ithildinruntime.execution.account import Account
+from ithildinruntime.execution.send import MARGIN, SendStage
 from tests.support.send_world import CHAN, SendWorld
 from tests.support.sim_world import FULL, GLD, USO, after, close_of
 
@@ -297,6 +298,13 @@ def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
     made.store.before = before
     result = made.send_attempt()
     assert result.halt is not None and "next decision trades" not in result.halt.reason
+    if refused == "each":
+        # The first refusal is an outage, which stops the rest: the second is not tried.
+        first, second = [
+            o.client_order_id for o in made.view().decisions[made.view().decided[at]].orders
+        ]
+        assert first in result.halt.reason and second not in result.halt.reason
+        assert first not in made.states() and second not in made.states()
     made.store.before = lambda number, op, key: None
     sent = list(made.submits())
     later = early(DAYS[2])
@@ -312,3 +320,36 @@ def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
     nxt = made.send_attempt()
     assert nxt.halt is None, nxt.halt.reason
     assert len(made.submits()) == len(sent) + 2
+
+
+def test_a_quote_halt_whose_journal_cannot_be_read_abandons_nothing_and_promises_nothing(
+    monkeypatch,
+) -> None:
+    """A fold that refuses an entry at the quote check pages its cause, and nothing is abandoned.
+
+    The halt says nothing of the next decision, because a journal the stage cannot read
+    is one the next decision cannot read either.
+    """
+    made = world()
+    at = early(DAYS[1])
+    made.ready(at, PAIR)
+    made.clock.at = at + timedelta(seconds=20) + TICK
+    real = SendStage._none_sent
+
+    def none_sent(self, *args, **kwargs):
+        monkeypatch.setattr(
+            Account, "view", lambda *a: (_ for _ in ()).throw(Halt("entry 9 is refused"))
+        )
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(SendStage, "_none_sent", none_sent)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    monkeypatch.undo()
+    assert result.halt is not None and "entry 9 is refused" in result.halt.reason
+    assert "would not last" in result.halt.reason
+    assert "next decision trades" not in result.halt.reason
+    (page,) = [a for a in made.alarms.sent[alarms:] if "nothing is sent" in a]
+    assert "entry 9 is refused" in page
+    assert "abandoned" not in made.kinds()
+    assert made.submits() == []

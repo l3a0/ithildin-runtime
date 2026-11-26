@@ -30,7 +30,8 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    quotes the snapshot holds of each instrument the book holds or has a working
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
-   `Abandoned` where the journal takes it. Where any of those quotes fails at
+   `Abandoned`, by this stage or, where the journal stops answering, by the
+   next recover. Where any of those quotes fails at
    `now` itself, the whole plan is left to the gate. Then `OrderPath.ask`
    about the whole plan. Where any order is refused or halts, nothing is
    sent, and every order of the plan ends `Refused` or `Abandoned`, by this

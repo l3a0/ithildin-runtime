@@ -493,10 +493,11 @@ own bound on one pass of a submit's checks. Where any of those quotes already fa
 at `now`, the whole plan is left to the gate, whose halt on it is the quote's own
 fault, so no such fault hides behind another quote's margin. Where every one passes
 at `now` and one would not last the margin, the decision halts, nothing is asked or sent, and
-every order of the plan is journaled `Abandoned` where the journal takes each entry.
-An `abandoned` the store refuses is named in the halt, which then says nothing of the
-next decision. The next recover reads what the journal holds, and settles a plan left
-unfinished, journaling each order of it with no entry `Abandoned` and sending none, as
+every order of the plan is journaled `Abandoned`. An `abandoned` the store refuses is
+named in the halt, which then says nothing of the next decision, and a store that stops
+answering stops the abandons at that one. The next recover reads what the journal
+holds, and settles a plan left unfinished where any order of it has an entry,
+journaling each order of it with no entry `Abandoned` and sending none, as
 [How recover settles an unfinished plan](06-runtime.md#how-recover-settles-an-unfinished-plan)
 says.
 
