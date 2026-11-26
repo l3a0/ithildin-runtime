@@ -648,8 +648,27 @@ classDiagram
         +bool whole
     }
     class RecordsRead {
+        +list records
         +list received
         +bool whole
+    }
+    class BrokerRecord {
+        +str record_id
+        +RecordKind kind
+        +Decimal amount
+        +str or None instrument
+        +datetime at
+        +datetime received_at
+        +list excess_places
+    }
+    class RecordKind {
+        <<enumeration>>
+        FEE
+        INTEREST
+        DIVIDEND
+        DEPOSIT
+        WITHDRAWAL
+        OTHER
     }
     class ReceivedPage {
         +bytes body
@@ -723,6 +742,7 @@ classDiagram
         +OrdersRead open_orders
         +CashRead cash
         +datetime since
+        +RecordsRead records
         +FillsRead fills
     }
     class Valuation {
@@ -863,6 +883,8 @@ classDiagram
     FillsRead o-- Fill
     CashRead o-- ReceivedPage
     RecordsRead o-- ReceivedPage
+    RecordsRead o-- BrokerRecord
+    BrokerRecord --> RecordKind
     StoredBlob o-- BlobRef
     DecisionResult o-- BlobHeader
     DecisionResult o-- HaltRecord
@@ -1151,8 +1173,13 @@ classDiagram
         +dict reads
         +dict fills
         +list disputes
+        +dict records
+        +list unmatched
         +Book book
         +repeats(Fill) Repeat
+        +record_repeats(BrokerRecord) Repeat
+        +unmatched_repeats(kind, name, held) Repeat
+        +unowned(Fill) str or None
         +acknowledged(broker_order_id) OrderRecord or None
     }
     class Account {
@@ -1181,6 +1208,7 @@ classDiagram
         +positions() PositionsRead
         +open_orders() OrdersRead
         +account() CashRead
+        +activities(since) RecordsRead
         +fills(since) FillsRead
         +lookup(broker_order_id) Ack
         -submit(JournalAck) answer
@@ -1386,7 +1414,9 @@ A broker moves cash on its own, and an order or a fill can reach the account tha
 1. `outside_record` holds a fee, debit interest or a dividend inside its range, which moves the book's cash by its amount. `View.records` holds each by the broker's record id, and an identical repeat is skipped.
 2. `unmatched_record`, `unmatched_fill` and `unmatched_order` each hold what no rule lets reach a book, kept as it came, with the platform's own words for why. `View.unmatched` holds each, and the book halts while any stands, naming each one.
 
-A repeat of a held id with other content is kept beside the first as unmatched. The fold refuses a fill or a record kept as unmatched that is later applied, an applied one later kept as unmatched, and an order kept as unmatched that a later `ack` maps, and the reverse.
+A repeat of a held id with other content is kept beside the first as unmatched. The fold refuses a fill or a record kept as unmatched that is later applied, an applied fill later kept as unmatched, an applied record later kept as unmatched with its own content, and an order kept as unmatched that a later `ack` maps, and the reverse.
+
+Like a dispute, an unmatched entry holds up no answer, abandonment or cancel, because every other entry can still be journaled beside it. The kill switch cancels every resting order, an order kept as unmatched included, as design.md's [Orders the platform did not send](../design.md#orders-the-platform-did-not-send) says, and [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds it so that no hold stops a cancel. Recover's `outside.py` is the one place an `outside_record` is built, because the fold reads no range, so an old entry replays the same after a range moves. A test fails any other builder under `src`.
 
 ##### What each call returns, and what is journaled first
 

@@ -333,6 +333,8 @@ def shown(view: View) -> dict[str, object]:
         "reads": dict(view.reads),
         "fills": list(view.fills.items()),
         "disputes": view.disputes,
+        "records": list(view.records.items()),
+        "unmatched": view.unmatched,
         "book": view.book,
     }
 

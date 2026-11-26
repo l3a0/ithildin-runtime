@@ -101,8 +101,9 @@ from .outside import fill_entry, load_ranges, order_entry, record_entry
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
-# The format of the stage's four files and of its result header.
-_FORMAT = 1
+# The format of the stage's four files and of its result header. Format 2's capture holds the
+# records read, which format 1's does not.
+_FORMAT = 2
 # How many numbers one entry may lose to another writer.
 _NUMBERS = 100
 # How long before the bound's own time the records and the fills are asked from, so one the
@@ -424,7 +425,7 @@ def _undated(read: AccountRead) -> dict[str, object]:
         "cash": read.cash.cash,
         "records": records,
         "fills": fills,
-        "the time the fills were asked from": read.since,
+        "the time the records and fills were asked from": read.since,
         "whether each came whole": [part.whole for part in read.reads.values()],
         "the pages' bytes": [[p.body for p in part.received] for part in read.reads.values()],
     }
@@ -433,7 +434,7 @@ def _undated(read: AccountRead) -> dict[str, object]:
 # The parts of two reads that may differ while the account stands still: when the pages
 # came, and their bytes. A later read that did not come whole could hide a fill, so it
 # counts as a move.
-_UNMOVED = frozenset({"the time the fills were asked from", "the pages' bytes"})
+_UNMOVED = frozenset({"the time the records and fills were asked from", "the pages' bytes"})
 
 
 def _moved(first: AccountRead, later: AccountRead) -> list[str]:

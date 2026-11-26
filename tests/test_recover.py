@@ -962,7 +962,7 @@ UNOWNED = {
     "no price": ({"price": D(0)}, "the fill sim-f-2 has a price of 0, not above zero"),
     "a correction": (
         {"correction_id": SECRET},
-        "the fill sim-f-2 carries a correction's id, which no rule reads yet",
+        "the fill sim-f-2 carries a correction's id",
     ),
 }
 
@@ -978,7 +978,10 @@ def test_2_a_fill_no_order_of_the_platforms_takes_is_kept_as_unmatched_and_holds
     brokers = doctored(world, fills=lambda since: read)
     result = world.attempt(world.stage(brokers=brokers))
     reason = halts(world, said, ["account.json"], ["read", "unmatched_fill"], CAPTURED, result)
-    assert "keeps an unmatched fill, which holds the account until a person releases it" in reason
+    assert (
+        "keeps an unmatched fill, which holds the account until a person releases it, and "
+        "nothing releases one yet" in reason
+    )
     assert SECRET not in reason
     (row,) = [r for r in world.rows() if r["body"]["kind"] == "unmatched_fill"]
     # Kept as it came.
@@ -1601,7 +1604,7 @@ def test_3_what_two_captures_differ_in_is_named() -> None:
     )
     assert differences(read, later) == "These differ: the pages' bytes"
     assert differences(read, replace(read, since=read.since + MICRO)) == (
-        "These differ: the time the fills were asked from"
+        "These differ: the time the records and fills were asked from"
     )
     short = replace(read, cash=replace(read.cash, whole=False))
     assert differences(read, short) == "These differ: whether each came whole"

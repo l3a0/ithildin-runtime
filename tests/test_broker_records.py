@@ -8,6 +8,7 @@ simulated cash the way the record says the broker did. Every figure is made up.
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterable
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -49,6 +50,7 @@ from tests.support.journals import (
     planned,
     route,
     started,
+    unmatched_fill,
 )
 from tests.support.recover_world import RecoverWorld
 from tests.support.sim_world import close_of
@@ -65,7 +67,7 @@ from tests.test_recover import (
     ready,
 )
 
-HELD = "which holds the account until a person releases it"
+HELD = "which holds the account until a person releases it, and nothing releases one yet"
 # The decision `ready` makes.
 AT = close_of(DAYS[3])
 
@@ -107,6 +109,7 @@ def attempt(world: RecoverWorld, brokers) -> DecisionResult:
     [
         (RecordKind.FEE, "-0.03"),
         (RecordKind.FEE, "-50.00"),
+        (RecordKind.FEE, "-1.2345"),
         (RecordKind.INTEREST, "-0.01"),
         (RecordKind.DIVIDEND, "12.5"),
         (RecordKind.DIVIDEND, "-500"),
@@ -160,8 +163,9 @@ UNMATCHED = {
         made(amount="0", kind=RecordKind.DIVIDEND),
         "is outside its range of -500.00 to 500.00",
     ),
-    "more places than cash holds": (
-        made(amount="-1.00001", excess_places=("amount",)),
+    "more places than cash holds": (made(amount="-1.00001"), "carries more places than cash"),
+    "an amount the adapter flagged": (
+        made(amount="-1.25", excess_places=("amount",)),
         "carries more places than cash holds",
     ),
     "an unnamed instrument": (
@@ -199,14 +203,24 @@ def test_1_an_identical_repeat_is_skipped_at_every_later_read() -> None:
     assert world.kinds(world.before).count("outside_record") == 1
 
 
-def test_1_a_repeat_with_other_content_is_kept_beside_the_first_and_holds() -> None:
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"amount": D("-1.30")},
+        {"at": AT - timedelta(hours=19)},
+        {"instrument": GLD},
+        {"kind": RecordKind.INTEREST},
+    ],
+    ids=["amount", "date", "instrument", "kind"],
+)
+def test_1_a_repeat_with_other_content_is_kept_beside_the_first_and_holds(changes) -> None:
     first = made()
     world, brokers = booked(first)
     first_result = world.recover(world.stage(brokers=brokers))
     assert first_result.halt is None, first_result.halt.reason
     world.plan(())
     world.prepare(world.at + DAY)
-    other = replace(first, amount=D("-1.30"))
+    other = replace(first, **changes)
     result = attempt(world, doctored(world, activities=listing([other])))
     said = "repeats an id the journal holds with other content"
     halts(world, said, ["account.json"], ["read", "unmatched_record"], CAPTURED, result)
@@ -309,17 +323,23 @@ def _fills(*fills: Fill) -> FillsRead:
 # What is kept as unmatched is never kept while an order may be with the broker unmapped
 
 
-def test_3_nothing_is_kept_as_unmatched_while_an_order_is_in_doubt() -> None:
+@pytest.mark.parametrize("state", ["Sending", "InDoubt"])
+def test_3_nothing_is_kept_as_unmatched_while_an_order_is_in_doubt(state: str) -> None:
     one = planned(1, 4)
     journal = started(one)
     view = journal.view()
-    for record in route("InDoubt", one):
+    for record in route(state, one):
         _, view = journal.record(view, placed(journal, record), AT)
     name = one.client_order_id
     with pytest.raises(Halt, match=f"not kept as unmatched while the order {name} may be"):
         fill_entry(view, fill("f1", "x1"), 2)
     with pytest.raises(Halt, match=f"not kept as unmatched while the order {name} may be"):
         order_entry(view, foreign(), 2)
+    # A repeat of a fill kept as unmatched, with other content, waits the same way.
+    kept = fill("f2", "x2")
+    _, view = journal.record(view, unmatched_fill(kept), AT)
+    with pytest.raises(Halt, match=f"not kept as unmatched while the order {name} may be"):
+        fill_entry(view, replace(kept, price=kept.price + 1), 2)
     # A record is never the platform's order, so an order in doubt changes nothing for one.
     assert record_entry(view, broker_record(), 2, load_ranges()) is not None
 
@@ -411,3 +431,54 @@ def test_a_second_attempt_whose_read_holds_a_new_record_halts_as_a_move() -> Non
     later = replace(without, since=record.at + timedelta(microseconds=1))
     assert _moved(first, later) == []
     assert _moved(first, replace(without, since=record.at)) == ["records"]
+
+
+def test_a_second_attempt_that_reads_a_record_again_later_is_no_move() -> None:
+    from ithildinruntime.execution.recover import _moved, differences
+
+    world, brokers = booked(made())
+    attempt(world, brokers)
+    first = world.entry(ACCOUNT_OUTPUT)
+    stamped = tuple(replace(r, received_at=r.received_at + DAY) for r in first.records.records)
+    later = replace(first, records=replace(first.records, records=stamped))
+    assert _moved(first, later) == []
+    assert differences(first, later).startswith("Only the times the pages came differ")
+
+
+def test_3_an_order_the_platform_did_not_send_that_stays_open_is_kept_once() -> None:
+    world = ready()
+    stray = foreign("x-stray", 7, submitted_at=AT - DAY)
+    listed = world.broker().open_orders()
+    reads = {"open_orders": lambda: replace(listed, orders=(*listed.orders, stray))}
+    said = "the broker lists its order x-stray open, 7 of GLD"
+    first = attempt(world, doctored(world, **reads))
+    assert first.halt is not None and said in first.halt.reason
+    assert world.kinds(world.before)[-1] == "unmatched_order"
+    world.prepare(world.at + DAY)
+    listed = world.broker().open_orders()
+    again = attempt(world, doctored(world, **reads))
+    assert again.halt is not None and said in again.halt.reason
+    assert world.kinds(world.before) == ["read"]
+
+
+def test_a_range_of_one_value_loads(tmp_path: Path) -> None:
+    path = tmp_path / "records.toml"
+    path.write_text(GOOD.replace('least = "-50.00"', 'least = "-0.01"', 1))
+    assert load_ranges(path)[RecordKind.FEE] == Range(D("-0.01"), D("-0.01"))
+
+
+def test_only_the_sort_builds_an_entry_that_moves_cash_from_a_record() -> None:
+    """The ranges are checked where an `outside_record` is built, so nothing else in src builds one.
+
+    The fold reads no range, so an old entry replays the same after a range moves.
+    """
+    src = Path(__file__).parent.parent / "src" / "ithildinruntime"
+    builders = sorted(
+        {
+            str(path.relative_to(src))
+            for path in src.rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text()))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "OutsideRecordEntry"
+        }
+    )
+    assert builders == ["execution/outside.py"]

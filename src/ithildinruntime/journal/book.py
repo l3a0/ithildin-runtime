@@ -642,7 +642,11 @@ def _disputed_fill(step: Step, record: DisputedFillEntry) -> None:
 
 
 def _unowned(view: View, fill: Fill) -> str | None:
-    """Why a fill cannot be applied to any order the journal sent, from `the fill`, or `None`."""
+    """Why a fill cannot be applied to any order the journal sent, from `the fill`, or `None`.
+
+    A fill past its kind's own bounds, such as one for zero shares, is refused
+    by `entries.past_bounds`, which `record_of` runs before the fold.
+    """
     what = f"fill {broker_id_shown(fill.fill_id)}"
     order = view.acknowledged(fill.broker_order_id)
     if order is None:
@@ -650,13 +654,6 @@ def _unowned(view: View, fill: Fill) -> str | None:
             f"{what} is of the broker's order {broker_id_shown(fill.broker_order_id)}, which no "
             "order was acknowledged under"
         )
-    if fill.qty == 0:
-        return f"{what} is for zero shares"
-    if not fill.price > 0:
-        return f"{what} has a price of {fill.price}, not above zero"
-    if fill.correction_id is not None:
-        # Nothing of the broker's text is said. A person reads it in the stored read.
-        return f"{what} carries a correction's id, which no rule reads yet"
     intent, name = order.intent, order.intent.client_order_id
     if (Move.PART_FILL, order.state) not in MOVES:
         return f"{what} is of the order {name}, which is {order.state.value}"
@@ -729,7 +726,7 @@ def _unmatched(
 def _held(one: Unmatched) -> str:
     return (
         f"entry {one.seq} keeps an unmatched {one.kind}, which holds the account until a person "
-        f"releases it: {one.reason}"
+        f"releases it, and nothing releases one yet: {one.reason}"
     )
 
 

@@ -44,7 +44,9 @@ from ithildinruntime.core import (
     Halt,
     RecordKind,
     broker_id_shown,
+    exceeds_places,
     is_broker_id,
+    places,
     read_order_id,
     shows_instrument,
 )
@@ -59,6 +61,7 @@ from ithildinruntime.journal import (
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
     View,
+    past_bounds,
 )
 
 __all__ = ["RANGES", "Range", "fill_entry", "load_ranges", "order_entry", "record_entry"]
@@ -66,8 +69,8 @@ __all__ = ["RANGES", "Range", "fill_entry", "load_ranges", "order_entry", "recor
 # The tracked ranges, which ship inside the package.
 RANGES = Path(__file__).parent / "records.toml"
 _FORMAT = 1
-# The places a cash amount declares, so a record with more is kept rather than summed.
-_MONEY_PLACES = 4
+# The places a record's amount declares, so a record with more is kept rather than summed.
+_PLACES = places(BrokerRecord, "amount")
 
 
 @dataclass(frozen=True)
@@ -148,10 +151,12 @@ def record_entry(
         return UnmatchedRecordEntry(
             record, read, f"{what}, is outside its range of {bounds.least} to {bounds.most}"
         )
-    if record.excess_places or -record.amount.as_tuple().exponent > _MONEY_PLACES:  # type: ignore[operator]
+    if record.excess_places or exceeds_places(record.amount, _PLACES):
         return UnmatchedRecordEntry(record, read, f"{what}, carries more places than cash holds")
-    if record.instrument is not None and not shows_instrument(record.instrument):
-        return UnmatchedRecordEntry(record, read, f"{what}, names an instrument whose name is none")
+    entry = OutsideRecordEntry(record, read)
+    # What the journal itself refuses, such as an instrument that is no name, is said there.
+    if past := past_bounds(entry):
+        return UnmatchedRecordEntry(record, read, f"{what}: {past[0]}")
     return OutsideRecordEntry(record, read)
 
 
@@ -180,10 +185,18 @@ def fill_entry(
     if kept is Repeat.DIFFERS:
         reason = f"the fill {fill.fill_id} repeats a fill kept as unmatched, with other content"
         return UnmatchedFillEntry(fill, read, _unless_doubtful(view, reason))
+    entry = FillEntry(fill, read)
     why = view.unowned(fill)
-    if why is None:
-        return FillEntry(fill, read)
-    return UnmatchedFillEntry(fill, read, _unless_doubtful(view, f"the {why}"))
+    # A fill of no order the platform acknowledged says so first, ahead of its own bounds.
+    if why is not None and view.acknowledged(fill.broker_order_id) is None:
+        reason = f"the {why}"
+    elif past := past_bounds(entry):
+        reason = past[0]
+    elif why is not None:
+        reason = f"the {why}"
+    else:
+        return entry
+    return UnmatchedFillEntry(fill, read, _unless_doubtful(view, reason))
 
 
 def order_entry(view: View, order: BrokerOrder, read: int) -> UnmatchedOrderEntry | None:

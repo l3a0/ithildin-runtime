@@ -609,6 +609,10 @@ The risk and portfolio workers' entry points take the file's path and hand on th
 
 [How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured) and [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record) say what writes a record and what reads it.
 
+#### The ranges of a broker's records
+
+`execution/records.toml` is a tracked file the release carries, at `format = 1`. It names exactly the kinds on the closed list, `fee`, `interest` and `dividend`, each with a `least` and a `most` in US dollars as quoted strings of at most two places, a debit below zero. A record of its kind moves the book's cash only inside that range, and never at zero. A file that cannot be read, of another format, naming other kinds, or holding a bound of another form or a least above its most halts every recover decision, and [What recover does, step by step](06-runtime.md#what-recover-does-step-by-step) says how a record is sorted. The fold reads no range, so a range moved later changes no entry already journaled. The price is that each range is one fixed amount for every account and bounds one record at a time, so a dividend grows past its range as the position grows, and halts until a pull request raises it, and many records each inside their range move the cash with no bound on their sum.
+
 #### How a journal entry is hashed and checked
 
 **A journal entry hashes its whole blob.** Each entry is one blob holding `seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those bytes exactly as stored, which the next entry carries as its `prev_hash`, and the first entry of an account carries sixty-four zeros. A hash of the body alone would leave an entry's number and its link outside what the next entry vouches for.
@@ -663,7 +667,7 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 
 A `verdict` keeps the caps as the canonical bytes of the parsed `HardCaps`, with the SHA-256 of the blob they came from, because the owner rewrites that blob. The fold never decodes them, so a cap added later leaves old entries readable, and the blob's other sections stay out of entries nobody can delete.
 
-The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull`, `outside_fill` and `outside_order`, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format.
+The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull`, `outside_fill` and `outside_order`, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format. The four kinds `outside_record`, `unmatched_record`, `unmatched_fill` and `unmatched_order` are the one exception: the release that first reads them also writes them, because no environment builds a broker outside a backtest over a folder, so no journal outside a test holds one. A pin back past that release halts on any such entry, which [Rule 6: a rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) lists.
 
 ##### What holds a kind still
 

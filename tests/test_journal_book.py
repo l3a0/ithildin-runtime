@@ -75,7 +75,7 @@ def refuses(journal: Journal, record: Record, match: str) -> None:
     """`record` stores nothing and halts, and a replay of the same entry halts the same way."""
     record = placed(journal, record)
     view, before = journal.view(), dict(journal._store.blobs)
-    was = shown(view) if view.through.seq and not view.disputes else None
+    was = shown(view) if view.through.seq and not (view.disputes or view.unmatched) else None
     with pytest.raises(Halt, match=match) as at_record:
         journal.record(view, record, AT)
     assert journal._store.blobs == before
@@ -99,8 +99,9 @@ def accepts(journal: Journal, record: Record):
     assert len(journal._store.blobs) == before + 1
     again = Journal(journal._store, ACCOUNT).view()
     assert again.through == view.through == journal.view().through
-    if view.disputes:
-        assert (again.orders, again.disputes) == (view.orders, view.disputes)
+    if view.disputes or view.unmatched:
+        held = ("orders", "disputes", "unmatched", "records", "_cash")
+        assert [getattr(again, name) for name in held] == [getattr(view, name) for name in held]
     else:
         assert shown(again) == shown(view) == shown(journal.view())
     return view

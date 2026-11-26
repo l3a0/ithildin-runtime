@@ -377,7 +377,7 @@ sequenceDiagram
     X->>B: reads positions, open orders, cash and<br/>the broker's records, then the fills,<br/>from before any not yet journaled
     B-->>X: returns positions, open orders, cash,<br/>the broker's records and the fills
     X->>F: stores the account file as read
-    X->>J: journals the account file's hash, each new fill<br/>and each record as an outside entry, which #35;151 builds
+    X->>J: journals the account file's hash, then each new record,<br/>fill and open order: a listed record moves the cash,<br/>and anything else is kept as unmatched, which halts
     X->>B: looks up each order it no longer lists
     B-->>X: returns how each one ended
     X->>J: journals each one that expired or was rejected
@@ -514,7 +514,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 1. **Data reads the bars and the quotes.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, then, for a decision inside its session, one capture's quote of each, and records which ones it read before any model sees them.
 2. **Execution waits for that snapshot,** and for its own send result of the decision before, a halt included, so it reads the broker at the decision's own time and after the last decision's orders went out.
-3. **Execution recovers,** in the steps below. They end in a comparison of the book, replayed from the journal, with the broker's positions, open orders and cash. Ahead of the comparison, recover reads the broker's own records, such as fees and dividends, and journals each one. A fee, debit interest or a dividend inside its written range moves the book's cash, so a cash difference it explains in full passes, and any other difference halts. Those rules are proposals of this doc for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that [#151](https://github.com/l3a0/ithildin-runtime/issues/151) built, and they await the owner's ruling in [09-decisions.md](09-decisions.md#proposals-awaiting-a-ruling).
+3. **Execution recovers,** in the steps below. They end in a comparison of the book, replayed from the journal, with the broker's positions, open orders and cash. Ahead of the comparison, recover reads the broker's own records, such as fees and dividends, and journals each one. A fee, debit interest or a dividend inside its written range moves the book's cash, so a cash difference it explains in full passes, and any other difference halts. The closed list and the records read are settled, as design.md's `## Decisions` records for [2026-11-05](../design.md#2026-11-05) and [2026-11-24](../design.md#2026-11-24). How a record that halts is kept, how a repeat is treated and how a late record is fetched are proposals of this doc for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) that [#151](https://github.com/l3a0/ithildin-runtime/issues/151) built, and they await the owner's ruling in [09-decisions.md](09-decisions.md#proposals-awaiting-a-ruling), as do the ranges' values.
 4. **Execution stores what the risk model and portfolio construction read:** the book, the hard caps as it read them and the session's valuation.
 5. **Monitoring repeats the same check** for its report, and nothing waits on it.
 
@@ -538,7 +538,7 @@ The stage is `execution/recover.py`. It waits for the decision's time, having wr
 9. It reads the owner's hard caps.
 10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
 
-A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, so a record posted up to a day late is fetched again and skipped by its id, and one posted later halts as a difference in cash. A split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) reconciles one, and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
+A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) reconciles one, and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
 
 Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 

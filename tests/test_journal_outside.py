@@ -8,12 +8,20 @@ figure is made up.
 from __future__ import annotations
 
 import dataclasses
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 
-from ithildinruntime.core import Halt, RecordKind
-from ithildinruntime.journal import Journal
+from ithildinruntime.core import (
+    BrokerState,
+    Halt,
+    InstrumentId,
+    OrderType,
+    RecordKind,
+    TimeInForce,
+)
+from ithildinruntime.journal import Journal, Repeat
 from tests.support.journals import (
     AT,
     GLD,
@@ -31,6 +39,7 @@ from tests.support.journals import (
     unmatched_order,
     unmatched_record,
 )
+from tests.test_journal_book import accepts
 
 ONE = planned(1, 4)
 NAME = ONE.client_order_id
@@ -177,3 +186,88 @@ def test_a_fill_on_an_order_that_ended_is_no_orders_the_platform_sent() -> None:
 def test_a_read_entry_is_needed_before_any_unmatched_entry() -> None:
     with pytest.raises(Halt, match="names entry 9, which is no read before it"):
         journal(unmatched_order(foreign(), read=9)).view()
+
+
+# What a repeat must repeat: every field of its content, one at a time
+
+RECORD_CHANGES = {
+    "kind": RecordKind.INTEREST,
+    "amount": Decimal("-1.26"),
+    "instrument": GLD,
+    "at": AT + timedelta(seconds=1),
+}
+ORDER_CHANGES = {
+    "client_order_id": NAME,
+    "instrument": InstrumentId("USO"),
+    "qty": Decimal(8),
+    "type": OrderType.MARKET,
+    "time_in_force": TimeInForce.DAY,
+    "submitted_at": AT + timedelta(seconds=1),
+}
+FILL_CHANGES = {
+    "broker_order_id": "x2",
+    "instrument": InstrumentId("USO"),
+    "qty": Decimal(3),
+    "price": Decimal("10.26"),
+    "at": AT + timedelta(seconds=1),
+}
+
+
+@pytest.mark.parametrize("field", RECORD_CHANGES)
+def test_a_record_that_repeats_an_id_with_any_field_of_its_content_changed_differs(
+    field: str,
+) -> None:
+    fee = broker_record()
+    other = dataclasses.replace(fee, **{field: RECORD_CHANGES[field]})
+    assert journal(outside(fee)).view().record_repeats(other) is Repeat.DIFFERS
+    assert journal(unmatched_record(fee)).view().record_repeats(other) is Repeat.DIFFERS
+
+
+@pytest.mark.parametrize("field", ORDER_CHANGES)
+def test_an_unmatched_order_listed_with_any_field_of_its_content_changed_differs(
+    field: str,
+) -> None:
+    order = foreign()
+    other = dataclasses.replace(order, **{field: ORDER_CHANGES[field]})
+    view = journal(unmatched_order(order)).view()
+    assert view.unmatched_repeats("order", "x1", other) is Repeat.DIFFERS
+
+
+@pytest.mark.parametrize("field", FILL_CHANGES)
+def test_an_unmatched_fill_listed_with_any_field_of_its_content_changed_differs(
+    field: str,
+) -> None:
+    made = fill("f1", "x1")
+    other = dataclasses.replace(made, **{field: FILL_CHANGES[field]})
+    view = journal(unmatched_fill(made)).view()
+    assert view.unmatched_repeats("fill", "f1", other) is Repeat.DIFFERS
+
+
+def test_what_a_repeat_need_not_repeat_leaves_it_held() -> None:
+    fee, order, made = broker_record(), foreign(), fill("f1", "x1")
+    later = AT + timedelta(hours=1)
+    view = journal(outside(fee), unmatched_order(order), unmatched_fill(made)).view()
+    assert view.record_repeats(dataclasses.replace(fee, received_at=later)) is Repeat.HELD
+    moved = dataclasses.replace(order, filled=Decimal(3), state=BrokerState.FILLED)
+    assert view.unmatched_repeats("order", "x1", moved) is Repeat.HELD
+    again = dataclasses.replace(made, received_at=later, client_order_id=NAME)
+    assert view.unmatched_repeats("fill", "f1", again) is Repeat.HELD
+
+
+def test_an_older_view_shows_no_record_applied_after_it() -> None:
+    made = journal(outside(broker_record()))
+    whole = made.view()
+    older = made.view(through=whole.through.seq - 1)
+    assert dict(older.records) == {} and dict(whole.records) == {"r::1": broker_record()}
+    assert older.book.cash == CASH
+
+
+def test_each_new_kind_replays_to_what_its_record_gave() -> None:
+    made = journal()
+    for record in (
+        outside(broker_record()),
+        unmatched_record(broker_record("r::2", 5000, RecordKind.DEPOSIT)),
+        unmatched_fill(fill("f1", "x1")),
+        unmatched_order(foreign()),
+    ):
+        accepts(made, record)

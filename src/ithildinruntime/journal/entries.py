@@ -72,6 +72,7 @@ __all__ = [
     "body_of",
     "is_writer",
     "kind_of",
+    "past_bounds",
     "record_of",
 ]
 
@@ -376,6 +377,15 @@ def record_of(entry: JournalEntry) -> Record:
     for past in _past_bounds(record):
         raise Halt(f"entry {entry.seq} is past a bound of its kind {name}: {past}")
     return record
+
+
+def past_bounds(record: Record) -> tuple[str, ...]:
+    """Each bound of its kind's fields that a record is past, which `record_of` halts on.
+
+    A writer asks it before it builds an entry, so what the journal refuses is
+    said in one place.
+    """
+    return tuple(_past_bounds(record))
 
 
 def _past_bounds(record: Record) -> Iterator[str]:
