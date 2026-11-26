@@ -820,3 +820,13 @@ def test_10_a_loop_that_holds_another_storage_than_the_account_is_not_run(case: 
     loop.storage = worker.account._shared.storage  # type: ignore[attr-defined]
     worker.run(loop)  # type: ignore[arg-type]
     assert loop.ran == 1
+
+
+def test_10_a_real_loop_over_another_storage_than_the_account_is_not_run(case: Case) -> None:
+    """The real loop names its own storage, so the check above cannot pass it by."""
+    worker = case.worker(storage=case.storage_over(case.store))
+    loop = case.loop({RECOVER_STAGE: worker.recover, SEND_STAGE: worker.send})
+    assert loop.storage is case.storage
+    with pytest.raises(Halt, match="another storage contract than the account") as raised:
+        worker.run(loop)
+    assert case.alarms.reasons == [f"account {ACCOUNT}: {raised.value.reason}"]

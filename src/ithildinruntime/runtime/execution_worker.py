@@ -217,12 +217,15 @@ class ExecutionWorker:
         than the account, since a stop's blob the account could not store would
         then keep no process alive.
         """
+        # A loop that names no storage is a test's stand-in, and the real one is pinned.
         other = getattr(loop, "storage", None)
         if other is not None and other is not self._storage:
-            raise Halt(
+            reason = (
                 "the receive loop holds another storage contract than the account, so a loss "
-                "stop's blob S3 did not store would keep no process alive"
+                f"stop's blob S3 did not store would keep no process alive. The owner's step: "
+                f"{self._owner_step}"
             )
+            raise Halt(f"{reason}{self.account.alarm(reason, lambda: None)}")
         try:
             loop.run()
         finally:
