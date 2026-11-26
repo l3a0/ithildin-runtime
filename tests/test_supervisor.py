@@ -1099,7 +1099,7 @@ def test_a_start_record_that_cannot_be_written_makes_the_next_start_hold(world: 
     # The plan stands with no start recorded, so the next start, on any boot, holds.
     _refusing(world, lambda call, key: False)
     world.supervisor().run(TODAY)
-    assert world.held() and [p.boots for p in world.pauses()] == [("unrecorded",)]
+    assert world.held() and [p.boots for p in world.pauses()] == [("unrecorded-1",)]
 
 
 def test_a_runs_halt_that_cannot_be_read_stores_no_stop(world: World) -> None:
@@ -1260,7 +1260,7 @@ def test_halts_that_cannot_be_listed_are_named_and_the_run_goes_on(world: World)
     _refusing(world, lambda call, key: call == "list" and key == folder)
     assert world.supervisor().run(TODAY).code == EXIT_STOPPED
     (alarm,) = [a for a in world.alarms() if "still held" in a]
-    assert f"{CHAN}, whose halts could not be read" in alarm
+    assert f"{CHAN} (whose halts could not be read:" in alarm
 
 
 def test_a_second_lost_machines_halts_take_the_next_count(world: World) -> None:
@@ -1308,3 +1308,21 @@ def test_a_release_file_that_is_not_utf_8_reads_as_not_released(world: World) ->
     (world.root / "local" / "release").write_bytes(b"\xff\n")
     assert world.supervisor()._released_here(TODAY.isoformat()) is False
     assert world.supervisor().run(TODAY).code == EXIT_STOPPED
+
+
+def test_a_second_stop_with_no_start_record_holds_again(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    starts = lambda call, key: call == "create" and "/starts/" in key  # noqa: E731
+    # X stores the plan, and its start record cannot be written.
+    _refusing(world, starts)
+    world.supervisor(boot="boot-x").run(TODAY)
+    # Y finds no record and holds, and its own record cannot be written either.
+    world.supervisor(boot="boot-y").run(TODAY)
+    _clear(world)
+    # Y is lost too. Z, with writes working again, still finds no record, and holds.
+    _refusing(world, lambda call, key: False)
+    world.supervisor(boot="boot-z").run(TODAY)
+    assert [p.boots for p in world.pauses()] == [("unrecorded-1",), ("unrecorded-2",)]
+    assert world.held()

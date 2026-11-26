@@ -12,7 +12,7 @@ How a worker runs, in order.
 
 1. **It waits for its run's plan.** A worker that starts before the supervisor
    has stored the plan, or before the local release file names the plan's
-   release, reads both every `PLAN_EVERY` seconds, beating its heartbeat, and
+   release, its run and this boot, reads both every `PLAN_EVERY` seconds, beating its heartbeat, and
    never exits for want of them, as design.md's `### Rule 7: how a run starts`
    says. The supervisor writes that file only after its hold check.
    `ReceiveLoop` and every handler take the plan's run and release when they
@@ -45,9 +45,12 @@ Each command ends with one of these codes, which #202's units read.
 
 #202's units restart a process that ends with 1 or 7 or by a signal. The
 supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6` and each worker's
-`RestartPreventExitStatus=2 6`, because a restart into the same setting, halt,
-stall, failed hold or plan raises the same alarm again and spends the day's
-restarts. After 4 or 5 a person starts the supervisor's unit again once the
+but execution's `RestartPreventExitStatus=2 6`, because a restart into the same
+setting, halt, stall, failed hold or plan raises the same alarm again and spends
+the day's restarts. Execution's units have no start limit and restart on any
+exit while a session is open, so a cancel and the kill switch are always served,
+as design.md's `#### Automatic restarts: the two components that keep on past
+their cap` says. After 4 or 5 a person starts the supervisor's unit again once the
 cause is fixed.
 """
 

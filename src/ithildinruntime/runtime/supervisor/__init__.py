@@ -239,7 +239,7 @@ class Supervisor:
                 if self._store.list(strategy_halts_prefix(self._account, strategy), None):
                     held.append(strategy)
             except StoreError as error:
-                held.append(f"{strategy}, whose halts could not be read ({_said(error)}),")
+                held.append(f"{strategy} (whose halts could not be read: {_said(error)})")
         if held:
             self._alerts.alarm(
                 f"{self._deployment}: on {today.isoformat()} {', '.join(held)} is still held by a "

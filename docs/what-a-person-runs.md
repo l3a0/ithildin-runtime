@@ -543,7 +543,7 @@ A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOM
 | 7 | SIGTERM ended the supervisor before the run's stop was stored, so nothing watches the rest of the session. It alarms | The host restarts it. After a `systemctl stop`, start it by hand |
 | Any other | A failure, whose traceback is in the host's journal | Read the journal |
 
-The host restarts a process that ends with 1 or 7, or that a signal ends, such as one killed for running out of memory. The supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6`, and each worker's `RestartPreventExitStatus=2 6`, so a setting, a halt, a stall, a failed hold or a plan it cannot run raises its alarm once rather than once for each restart, and spends none of the day's restarts. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
+The host restarts a process that ends with 1 or 7, or that a signal ends, such as one killed for running out of memory. The supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6`, and each worker's but execution's `RestartPreventExitStatus=2 6`, so a setting, a halt, a stall, a failed hold or a plan it cannot run raises its alarm once rather than once for each restart, and spends none of the day's restarts. Execution's units restart on any exit while a session is open, with no start limit, so a cancel and the kill switch are always served. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
 
 #### After a stop with no clean-shutdown record
 

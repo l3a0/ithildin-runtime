@@ -721,7 +721,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | A run's plan, which only the supervisor's role may create | `runs/<deployment>/<run>/plan.json` |
 | The session-start comparison's result, holding the sequence number and hash it compared | `runs/<deployment>/<run>/comparison.json` |
 | A halt of the run, and the run's stop | `runs/<deployment>/<run>/halt.json`, `runs/<deployment>/<run>/stop.json` |
-| A supervisor's start record, one per start of the supervisor on a boot of its machine | `runs/<deployment>/<run>/starts/<boot>/<count>.json`, with the count padded to six digits |
+| A supervisor's start record, one per start of the supervisor on a boot of its machine whose hold finished | `runs/<deployment>/<run>/starts/<boot>/<count>.json`, with the count padded to six digits |
 | A stage's decision result, which holds its halt when it has one | `runs/<deployment>/<run>/<decision>/<stage>/result.json` |
 | A stage's output file, including data's snapshot, alpha's forecast and its signal records, risk's constraints, portfolio construction's target and the record of how it was sized, and monitoring's report | `runs/<deployment>/<run>/<decision>/<stage>/<name>.json` |
 | The broker's account as recover read it, an `AccountRead`, the recover stage's capture | `runs/<deployment>/<run>/<decision>/execution/recover/account.json` |

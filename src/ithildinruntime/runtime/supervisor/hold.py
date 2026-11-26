@@ -14,8 +14,11 @@ timer ended stored none.
    record read before this start names another boot no pause covers, and none
    names this boot. A start records itself only once its hold has finished, so
    a record of this boot is a restart the host supervised, which holds nothing,
-   and a start that died mid-hold leaves none. An account whose journal has no
-   entry has never traded, so its first run holds nothing.
+   and a start that died mid-hold leaves none. Two more cases read as a lost
+   machine, each under a boot of its own so no pause of one covers another: a
+   stored plan with no start record of any boot, whose start's record was lost,
+   and start records that cannot be read. An account whose journal has no entry
+   has never traded, so its first run holds nothing.
 2. **Which strategies it holds.** Every strategy of the deployment's table,
    and every strategy the journal's book holds a position or an order that has
    not ended for.
@@ -24,8 +27,8 @@ timer ended stored none.
    strategy, "supervisor", "unclean_stop", at, n)`, created once, where `at` is
    the run's last journaled decision, or the plan's first decision where the
    journal names none, and `n` counts the run's pauses from 1, so each pause's
-   halts have keys of their own. Then one `pause` journal entry for each stop,
-   the oldest first, then the alarms. A crash anywhere leaves halts a rerun
+   halts have keys of their own. Then for each stop, the oldest first, one
+   `pause` journal entry and its alarm. A crash anywhere leaves halts a rerun
    finds, as #33 asks of every strategy halt, and a pause of a newer run never
    lands before the older run's.
 4. **Safe to repeat.** A pause covers only what it names: the boots of the lost
@@ -122,7 +125,8 @@ class Starts:
     plan_stored: bool
     other_boots: tuple[str, ...]
     this_boot: bool
-    # Whether this machine's local release file names a release, so its workers run.
+    # Whether this machine's local release file names this run and this boot, so its
+    # workers already run.
     released: bool = False
 
 
@@ -267,8 +271,9 @@ def _unclean(
     lost = tuple(b for b in starts.other_boots if b not in covered)
     if starts.plan_stored and not starts.other_boots and not starts.this_boot:
         # The plan is stored and no start recorded itself, so the record of the start that
-        # stored it was lost, and nothing tells its machine from this one.
-        lost = tuple(b for b in ("unrecorded",) if b not in covered)
+        # stored it was lost, and nothing tells its machine from this one. Each such stop
+        # takes a name of its own, so a pause of one never covers a later one.
+        lost = (f"unrecorded-{made + 1}",)
     if starts.plan_stored and lost and not starts.this_boot:
         boots = ", ".join(lost)
         yield _judged(
