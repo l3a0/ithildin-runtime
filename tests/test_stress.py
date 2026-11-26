@@ -636,7 +636,8 @@ _YAHOO, _MOVE = (
 )
 # The records the file held when each was added, by hand. Removing or changing one fails.
 PINNED: list[StressRecord] = [
-    # #137's first record, of 2026-11-26.
+    # #137's first record, printed by the run of 2026-11-26 at `main`'s e4fd6a8, which
+    # https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7181369603 holds.
     StressRecord(
         strategy="chan_bollinger",
         instruments=(GLD, USO),
@@ -686,24 +687,27 @@ PINNED: list[StressRecord] = [
                 date(2020, 3, 9),
                 "close",
                 _MOVE,
-                "a real move: the close fell 25.32% from 2020-03-06, and Alpha Vantage's daily "
-                "closes give the same return to six places, read on 2026-11-26",
+                "a close a second vendor agrees with: it fell 25.32% from 2020-03-06, and Alpha "
+                "Vantage's daily closes give the same return to six places, read on 2026-11-26. "
+                "Exploratory, and an error both vendors share would pass unseen",
             ),
             FlaggedBar(
                 USO,
                 date(2020, 4, 21),
                 "close",
                 _MOVE,
-                "a real move: the close fell 25.07% from 2020-04-20, and Alpha Vantage's daily "
-                "closes give the same return to six places, read on 2026-11-25",
+                "a close a second vendor agrees with: it fell 25.07% from 2020-04-20, and Alpha "
+                "Vantage's daily closes give the same return to six places, read on 2026-11-25. "
+                "Exploratory, and an error both vendors share would pass unseen",
             ),
             FlaggedBar(
                 GLD,
                 date(2026, 1, 30),
                 "close",
                 _MOVE,
-                "a real move: the close fell 10.27% from 2026-01-29, and Massive's daily "
-                "closes give the same return to six places, read on 2026-11-26",
+                "a close a second vendor agrees with: it fell 10.27% from 2026-01-29, and "
+                "Massive's daily aggregates give the same return to six places, read on "
+                "2026-11-26. Exploratory, and an error both vendors share would pass unseen",
             ),
         ),
         manifest="d6b1bc2dab67329a4963fab86b4ce94b14c79c4b763a18b37c50b251b4e2d77b",

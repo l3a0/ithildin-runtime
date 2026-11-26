@@ -1447,8 +1447,15 @@ def test_the_tracked_record_passes_caps_that_name_it_and_halts_on_caps_that_do_n
         records=load_records(STRESS_MOVES),
     ).held_to(strategy=bollinger)
     named = world.capped(stress_through=date(2026, 9, 3), **NAMES_IT)
-    verdict = named.check()
-    assert verdict.approved and verdict.stress_move == d("0.34703196")
+    assert named.check().approved
+    # The record's m binds the net cap: at V of 1,000 and a share of 0.5 it is 500 / m.
+    valued = named.given(valuation=valuation(1000))
+    assert valued.at(intent=order(1440, strategy=bollinger)).check().approved
+    assert refusal(valued.at(intent=order(1441, strategy=bollinger))) == (
+        Limit.MAX_NET,
+        1441,
+        d("1440.789400000"),
+    )
     for wrong, why in (
         ({"stress_move": d("0.34703195")}, "stress_move is 0.34703195, below"),
         ({"stress_vintage": "c" * 64}, "stress_vintage is c+, of no record of chan_bollinger"),

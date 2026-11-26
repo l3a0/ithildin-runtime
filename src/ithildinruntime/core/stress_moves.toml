@@ -30,9 +30,9 @@ left_out = [
     { instrument = "USO", sessions = 2, moved_from = 2012-04-09, moved_to = 2012-04-11 },
 ]
 flagged = [
-    { instrument = "USO", session = 2020-03-09, field = "close", rule = "close-to-close move past the written multiple", what = "a real move: the close fell 25.32% from 2020-03-06, and Alpha Vantage's daily closes give the same return to six places, read on 2026-11-26" },
-    { instrument = "USO", session = 2020-04-21, field = "close", rule = "close-to-close move past the written multiple", what = "a real move: the close fell 25.07% from 2020-04-20, and Alpha Vantage's daily closes give the same return to six places, read on 2026-11-25" },
-    { instrument = "GLD", session = 2026-01-30, field = "close", rule = "close-to-close move past the written multiple", what = "a real move: the close fell 10.27% from 2026-01-29, and Massive's daily closes give the same return to six places, read on 2026-11-26" },
+    { instrument = "USO", session = 2020-03-09, field = "close", rule = "close-to-close move past the written multiple", what = "a close a second vendor agrees with: it fell 25.32% from 2020-03-06, and Alpha Vantage's daily closes give the same return to six places, read on 2026-11-26. Exploratory, and an error both vendors share would pass unseen" },
+    { instrument = "USO", session = 2020-04-21, field = "close", rule = "close-to-close move past the written multiple", what = "a close a second vendor agrees with: it fell 25.07% from 2020-04-20, and Alpha Vantage's daily closes give the same return to six places, read on 2026-11-25. Exploratory, and an error both vendors share would pass unseen" },
+    { instrument = "GLD", session = 2026-01-30, field = "close", rule = "close-to-close move past the written multiple", what = "a close a second vendor agrees with: it fell 10.27% from 2026-01-29, and Massive's daily aggregates give the same return to six places, read on 2026-11-26. Exploratory, and an error both vendors share would pass unseen" },
 ]
 manifest = "d6b1bc2dab67329a4963fab86b4ce94b14c79c4b763a18b37c50b251b4e2d77b"
 measured_on = 2026-11-26
