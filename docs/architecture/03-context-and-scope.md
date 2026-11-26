@@ -451,8 +451,9 @@ one side that froze pass under the other's. `last` has a stamp of its own and
 nothing here reads it. The price is a refusal when one side of a liquid fund
 stands still for longer than the maximum. In
 [#133's exploratory count](https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7193657427) at close−20,
-`chan_bollinger`'s maximum of 180 seconds refused none of the 12 sessions of GLD
-and USO it could read, and none of 34 of SPY and QQQ, for age.
+a maximum of 180 seconds refused none of the 12 sessions of GLD and USO it could
+read from 2026-11-02 to 2026-11-25, and none of 34 of SPY and QQQ from
+2026-09-15 to 2026-10-30, for age.
 
 ##### What the clock bound covers
 

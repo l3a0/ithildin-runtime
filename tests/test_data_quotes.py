@@ -262,7 +262,7 @@ def test_7_the_entry_points_default_source_reads_the_quote_kind_contract(
 ) -> None:
     """The source reads `load_quote_kinds()` by default, so a row covering the session reads.
 
-    The tracked row covers 2026 sessions and this one is in 2012, so a loader that
+    The tracked row covers 2026-09-15 to 2027-02-25 and this session is in 2012, so a loader that
     returns a row covering it stands in for the tracked file, which
     tests/test_data_files.py reads at each edge of its row.
     """
@@ -270,7 +270,13 @@ def test_7_the_entry_points_default_source_reads_the_quote_kind_contract(
     result, snap = _entry_point(lake, tmp_path)
     assert set(snap.quotes) == {GLD, USO}
     for q in snap.quotes.values():
-        stated = QuoteKind(q.price_kind, q.last_kind, q.venues, q.volume_counted, q.normal_status)
+        stated = QuoteKind(
+            price_kind=q.price_kind,
+            last_kind=q.last_kind,
+            venues=q.venues,
+            volume_counted=q.volume_counted,
+            normal_status=q.normal_status,
+        )
         assert stated == KIND
     assert result.halt is None
 
