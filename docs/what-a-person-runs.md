@@ -12,6 +12,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [Measure a stress move](#measure-a-stress-move)
   - [Count how often quotes would be refused](#count-how-often-quotes-would-be-refused)
   - [Measure the capture lag](#measure-the-capture-lag)
+  - [The processes a VM runs](#the-processes-a-vm-runs)
   - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
@@ -507,6 +508,41 @@ python -m lake.live_upload lag --date <YYYY-MM-DD>
 
 Nothing runs this on a schedule. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 is asked for the alarm.
+
+### The processes a VM runs
+
+Each component runs as its own process, from a command that `pyproject.toml` installs. The host's units start them, which [#202](https://github.com/l3a0/ithildin-runtime/issues/202) builds, so a person runs one only to try it. [The supervisor](architecture/05-building-blocks.md#package-layout-and-the-import-rule) explains why the supervisor starts no worker itself.
+
+**Table:** The commands a VM runs, and what each does
+
+| Command | What it does |
+| --- | --- |
+| `ithildin-supervisor` | Holds every strategy after a stop that left no clean-shutdown record, writes the day's plan and the local release file, halts the run past an order's deadline, and writes the run's stop after the close |
+| `ithildin-data` | Starts the time servers, waits for the day's plan and cuts each decision's snapshot |
+| `ithildin-alpha`, `ithildin-cost`, `ithildin-risk`, `ithildin-portfolio` | Wait for the day's plan and run their stages |
+| `ithildin-execution` | Starts the time servers, waits for the day's plan, recovers and sends |
+
+#### What a command reads
+
+A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, and may name the unit user's AWS credential file and the local heartbeat file. `runtime/settings.py` lists each key. Everything else about an environment is in the release's table in `runtime/deployment.py`.
+
+#### What each exit code means
+
+**Table:** Each exit code of a command, and what a person does about it
+
+| Code | Meaning | What a person does |
+| --- | --- | --- |
+| 0 | The run's stop is stored, SIGTERM ended the process, or the day has no session | Nothing |
+| 2 | A setting is missing or malformed. The one line on standard error names it | Fix the settings file, then start the unit again |
+| 3 | The supervisor halted the run, past an order's deadline or on a journal it could not read | Read the alarm, settle the order at the broker, and clear the run's halt |
+| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. The next start holds every strategy |
+| 5 | The hold check after an unclean stop could not finish, so no worker started | Read the alarm, which names what failed |
+| 6 | The supervisor could not store the day's plan, such as when another plan is stored | Read the line. A plan of another release means a pin moved during the session |
+| Any other | A failure, whose traceback is in the host's journal | Read the journal |
+
+#### After a stop with no clean-shutdown record
+
+A run that ended without its stop, such as one the host's timer ended or a machine that was lost, holds every strategy at the next start. The supervisor writes a halt into each strategy's halts folder, journals one `pause` naming the run, and alarms with each open position, each working order with its broker id, each order in doubt with its client order id and today's cancel cutoff. Until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels a held strategy's working orders that add to a position, cancel any such order at the broker's own site before the cutoff. A held strategy sends no new order. Clearing the hold is `ithildin halt clear`, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds, and until then a shadow strategy stays held. Until [#201](https://github.com/l3a0/ithildin-runtime/issues/201) builds the alert channel, every alarm is a line starting `ALARM` in the host's journal, and reaches no person.
 
 ### Set up the test environment
 
