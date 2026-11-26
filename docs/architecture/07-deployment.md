@@ -609,6 +609,25 @@ prices.
 3. The price of waiting for a deploy is a run that stays red until it is known, so
    a higher version that arrives meanwhile shows only in the run's text.
 
+The run does not watch how marketlake writes a gap row tagged `spot_close`,
+which the sealed read's close check relies on, as
+[Which decisions read the sealed day](03-context-and-scope.md#which-decisions-read-the-sealed-day)
+says. marketlake's README does not state that rule, and watching its code would
+make the runtime depend on marketlake's internals. At marketlake `8565362`, its
+`main` on 2026-11-26, two writers write such a row, and both write it at or
+after the equity close.
+
+1. The capture cycle of the equity close's own minute.
+2. The close+5 guard, which runs five minutes after the option close.
+
+Until [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
+publishes the rule, the pull request that raises the pin re-reads it at the new
+commit and names that commit. This has two prices.
+
+1. The re-read is a step a person can skip, and no check catches a skipped one.
+2. A change to those writers that marketlake deploys before any raise goes
+   unseen until the next raise.
+
 #### How the image reaches each environment
 
 The diagram under `### Four environments` draws the path from the owner's merge to each environment's pin.

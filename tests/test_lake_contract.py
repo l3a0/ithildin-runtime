@@ -32,7 +32,10 @@ beyond these cases.
    by their docstrings, beside `captured_by`. l3a0/marketlake#1050 asks for
    `tagged_gaps` to be published, and for the rule that no row tagged
    `spot_close` is written before the equity close, which the read relies on
-   from marketlake's code at the pinned commit.
+   from marketlake's code, read at `8565362` with its writers unchanged since
+   the pin. A raise of the pin re-reads it, and a writer change deployed before
+   a raise goes unseen until then, as docs/architecture/07-deployment.md's
+   `#### What says the marketlake pin is due a raise` says.
 10. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
    compares it with the one marketlake's `uv.lock` holds at the pinned commit.
 """

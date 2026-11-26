@@ -453,7 +453,7 @@ def test_2_an_absent_minute_at_the_close_is_still_a_fault(
     assert got.faults == (f"{part_key('USO')} holds no row of the session's equity close",)
 
 
-def test_5_a_close_whose_capture_failed_reads_through_the_stage(
+def test_2_a_close_whose_capture_failed_reads_through_the_stage(
     lake: Path, live: Path, tmp_path: Path
 ) -> None:
     partition(lake, "GLD", *good("GLD")["rows"])

@@ -555,7 +555,7 @@ flowchart TD
     m -- "No" --> seg["Read segments, marked provisional"]
     m -- "Yes" --> all{"Does it list every instrument's?"}
     all -- "No" --> fault["Halt, naming the keys listed and not,<br/>with no segment opened"]
-    all -- "Yes" --> close{"Does each partition hold<br/>a row of the session's equity close,<br/>its data or the gap row<br/>of a failed capture?"}
+    all -- "Yes" --> close{"Does each partition hold<br/>a row of the session's equity close,<br/>its data or the gap row<br/>tagged spot_close?"}
     close -- "No" --> nofault["Halt, naming the partition"]
     close -- "Yes" --> sealed["Read the sealed minutes,<br/>not provisional"]
 ```
@@ -579,13 +579,13 @@ seals at close+15, and its repair by hand can seal a day still open, which the
 gate would trade on as healthy with no comparison owed. The row is a data row,
 or the gap row tagged `spot_close` that marketlake writes when the close's
 capture fails. marketlake writes that gap row only at or after the close, so a
-day that holds one was sealed after it. Its code holds that rule, and its
-README does not state it, which [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
+day that holds one was sealed after it. Its code at `8565362`, marketlake's
+`main` on 2026-11-26, holds that rule, and its README does not state it, which [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
 asks it to. The read learns of the row from `NoSpotClose.tagged_gaps`, the
 count of such rows, and substitutes no close price for it. The check refused
-none of the 22 recorded sessions of SPY or QQQ that hold a row. Reading the
-gap row frees 32 ticker-days of sealed quotes that the check used to refuse, as
-measured on [#209](https://github.com/l3a0/ithildin-runtime/issues/209#issuecomment-7195190739):
+none of the 22 recorded sessions of SPY or QQQ that hold a data row of the
+close. 32 ticker-days of sealed quotes that the check used to refuse hold a
+tagged gap row at the close, as measured on [#209](https://github.com/l3a0/ithildin-runtime/issues/209#issuecomment-7195190739):
 2026-09-08 to 2026-09-11 for SPY and QQQ, and 2026-11-16 to 2026-11-23 for all
 four tickers. The price is a replay that refuses a day where live may have
 traded, when the day holds no row of the close at all, such as GLD's and USO's
