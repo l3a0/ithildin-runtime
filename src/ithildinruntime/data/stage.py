@@ -22,10 +22,10 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote, segment, row, fault or provisional mark, and whether the clock was
-   past a bound, or says that a capture holds other than one snapshot, that the
-   first capture is no snapshot the codec reads, or that only the read time or
-   the clock's reading differs, as on a redelivery after a crash.
+   quote, segment, partition, row, fault or provisional mark, and whether the
+   clock was past a bound, or says that a capture holds other than one
+   snapshot, that the first capture is no snapshot the codec reads, or that only
+   the read time or the clock's reading differs, as on a redelivery after a crash.
    Where only the segments and their rows differ, the later capture names one
    the first lacks, and every segment both name kept its version and SHA-256,
    it says so, and that a later listing adds them where it names all the first does.
@@ -89,7 +89,7 @@ __all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
 STAGE = DATA_STAGE
 SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
-_FORMAT = 3
+_FORMAT = 4
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)
 
 
@@ -257,6 +257,7 @@ def differences(first: bytes, later: bytes, *, measured: bool) -> str:
         "ledgers",
         "quotes",
         "segments",
+        "partitions",
         "rows",
         "faults",
         "provisional",

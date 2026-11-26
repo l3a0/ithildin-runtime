@@ -207,7 +207,7 @@ def test_1_an_instrument_that_lists_nothing_opens_nothing(
     assert read.quotes == {} and reader.live.reads == [] and reader.door == []
     said = {t: f"{t} has {0 if t in empty else 2} segments under" for t in ("GLD", "USO")}
     assert read.faults == (
-        f"no capture by {AT.isoformat()} holds a row of every instrument: "
+        f"no capture by {(AT - 15 * SECOND).isoformat()} holds a row of every instrument: "
         f"{said['GLD']} {PREFIX[GLD]}, 0 of them opened, and no row read; "
         f"{said['USO']} {PREFIX[USO]}, 0 of them opened, and no row read",
     )
@@ -261,7 +261,8 @@ def test_1_an_older_cycle_both_legs_have_is_taken_over_a_newer_one_only_one_has(
 def no_cycle(reader: Reader, read: QuoteRead) -> str:
     assert read.quotes == {}
     (reason,) = read.faults
-    assert reason.startswith(f"no capture by {AT.isoformat()} holds a row of every instrument: ")
+    cut = (AT - 15 * SECOND).isoformat()
+    assert reason.startswith(f"no capture by {cut} holds a row of every instrument: ")
     return reason
 
 
@@ -354,7 +355,7 @@ def test_1_a_cycle_run_by_hand_and_late_is_seen_only_inside_the_segments_opened(
     reader: Reader, back: int, seen: bool
 ) -> None:
     """It started `back` minutes before the decision and landed after the newer cycles did."""
-    late = AT - 10 * SECOND
+    late = AT - 20 * SECOND
     for ticker in ("GLD", "USO"):
         reader.capture(ticker, [n for n in range(1, 9) if n != back])
         reader.capture(ticker, [back], fetch_end_ts=late.isoformat(), bid=77.0)
@@ -400,10 +401,24 @@ def test_1_a_row_landed_after_the_decision_is_never_read(reader: Reader, after: 
     assert read.cycle_age == AT - landed(1)
 
 
-def test_1_a_row_landed_at_the_decision_is_read(reader: Reader) -> None:
+@pytest.mark.parametrize("step", [timedelta(0), -timedelta(microseconds=1)])
+def test_1_a_row_landed_at_the_cut_is_read(reader: Reader, step: timedelta) -> None:
+    """The cut is 15 seconds before the decision."""
+    cut = AT - 15 * SECOND + step
     for ticker in ("GLD", "USO"):
-        reader.capture(ticker, [0], fetch_end_ts=AT.isoformat())
-    assert captured(reader.read()) == AT
+        reader.capture(ticker, [0], fetch_end_ts=cut.isoformat())
+    assert captured(reader.read()) == cut
+
+
+@pytest.mark.parametrize("after", [timedelta(microseconds=1), 14 * SECOND])
+def test_1_a_row_landed_after_the_cut_and_before_the_decision_is_not_read(
+    reader: Reader, after: timedelta
+) -> None:
+    reader.both([1])
+    for ticker in ("GLD", "USO"):
+        reader.capture(ticker, [0], fetch_end_ts=(AT - 15 * SECOND + after).isoformat())
+    read = reader.read()
+    assert captured(read) == landed(1) and read.rows == {}
 
 
 def test_1_rows_spelled_in_another_zone_are_one_instant(reader: Reader) -> None:

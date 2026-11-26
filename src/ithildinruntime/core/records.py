@@ -384,12 +384,13 @@ class Snapshot(_Record):
 
     - `provisional` is true exactly when the decision read capture segments,
       whatever they held, because marketlake had not sealed the day.
-    - `segments` names each segment opened.
-    - `rows` maps an instrument to every row marketlake's reader returned that
-      is not its quote's own, in the form of `Quote.received`.
+    - `segments` names each segment opened, and `partitions` each sealed quotes
+      partition linked, by its vintage id, sorted.
+    - `rows` maps an instrument to every row the cut 15 seconds before the
+      decision kept that is not its quote's own, in the form of `Quote.received`.
     - `faults` holds each reason the read of the quotes failed, in order.
-    - `quotes_read_at` is the data worker's clock after the read's last answer
-      from the bucket, and `None` exactly when `provisional` is false.
+    - `quotes_read_at` is the data worker's clock after the last answer of the
+      read of the quotes, and `None` exactly when the decision read none.
     - `clock` is the reading of the machine's clock, taken after the last answer
       the read waited on, which `core.clock_faults` judges.
     """
@@ -401,6 +402,7 @@ class Snapshot(_Record):
     provisional: bool
     flags: Mapping[InstrumentId, tuple[SpikeFlag, ...]]
     segments: tuple[Segment, ...]
+    partitions: tuple[str, ...]
     ledgers: Mapping[str, str]
     rows: Mapping[InstrumentId, tuple[Mapping[str, str | None], ...]]
     faults: tuple[str, ...]
@@ -416,11 +418,12 @@ class Snapshot(_Record):
         if len(captures := {quote.captured_at for quote in self.quotes.values()}) > 1:
             named = ", ".join(sorted(at.isoformat() for at in captures))
             raise ValueError(f"a snapshot's quotes are of one capture, not of {named}")
-        if (self.quotes_read_at is None) is bool(self.provisional):
-            raise ValueError(
-                f"a snapshot with provisional {self.provisional} has quotes_read_at "
-                f"{self.quotes_read_at!r}"
-            )
+        if self.provisional and self.partitions:
+            raise ValueError("a provisional snapshot names no sealed partition")
+        if self.segments and not self.provisional:
+            raise ValueError("a snapshot that names a segment is provisional")
+        if self.quotes_read_at is None and (self.provisional or self.partitions):
+            raise ValueError("a snapshot that read quotes has quotes_read_at None")
         for instrument, by_interval in self.bars.items():
             for interval, bars in by_interval.items():
                 for bar in bars:

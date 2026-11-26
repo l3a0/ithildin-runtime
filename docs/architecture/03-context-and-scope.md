@@ -131,8 +131,8 @@ reach a lookback.
 ### Reading the day before it is sealed
 
 A decision at close−20, 15:40 on a full day, needs today's quotes, but
-marketlake runs its validation battery only when it seals a day, at the close
-plus fifteen minutes. So the runtime may read the day's data before marketlake
+marketlake seals a day at the close plus fifteen minutes, and runs its validation
+battery after that. So the runtime may read the day's data before marketlake
 seals it, as a provisional read, and it checks that data twice: its own minimum
 checks before anything decides, and a comparison with the sealed day afterwards.
 The skeleton decides this way because it trades the close, so its fill lands on
@@ -195,13 +195,12 @@ close−20 is one such time, and the shadow run on SPY and QQQ that
 same minute. A decision at or after the close reads none. A decision at the open
 itself always halts, because nothing is captured by then.
 
-Until [#132](https://github.com/l3a0/ithildin-runtime/issues/132) builds the read
-of a quote from a sealed day, a decision inside its session reads segments
-whenever it runs, so a backtest of one reads them from a folder too. The cut is
-each row's own landing time, so such a backtest can read a capture that reached
-the bucket after its decision time, and [#132](https://github.com/l3a0/ithildin-runtime/issues/132) holds the lag it should allow. A snapshot's
-`provisional` is true exactly when its decision read segments, an empty listing
-included.
+Such a decision reads segments where its day is not sealed, and the sealed day
+where it is, as [Which read a decision uses](#which-read-a-decision-uses) says.
+Either read keeps only rows whose capture landed at least 15 seconds before the
+decision, as [Why every read cuts 15 seconds before its decision](#why-every-read-cuts-15-seconds-before-its-decision)
+says. A snapshot's `provisional` is true exactly when its decision read
+segments, an empty listing included.
 
 An instrument with no written maximum age or spread halts such a decision before
 either bucket is called, because a quote read under no maximum is stale.
@@ -211,7 +210,9 @@ either bucket is called, because a quote read under no maximum is stale.
 The data worker reads an unsealed day through the one reader marketlake
 publishes, in [Read an unsealed day](https://github.com/l3a0/marketlake/blob/2d41793ab92028cf3b746a681394bb3df6db4ee0/README.md#read-an-unsealed-day).
 The reader comes from marketlake's package, a dependency at a pinned commit. The
-read takes five steps. `data/source.py` holds the first and `data/segments.py` the rest.
+read takes five steps. `data/source.py` holds the first, `data/segments.py` the
+second to the fourth, and `data/cycles.py` the walk and the last, which the read
+of a sealed day shares.
 
 1. **The bars are read first**, and a halt in that read ends the decision before
    any quote is read.
@@ -225,9 +226,9 @@ read takes five steps. `data/source.py` holds the first and `data/segments.py` t
    It is handed the SHA-256 the bucket stored with each segment, and its verdict
    is the check [The runtime has a VM of its own](07-deployment.md#rule-8-the-runtime-has-a-vm-of-its-own)
    requires. The object's user metadata is read nowhere, because marketlake
-   publishes nothing about it. The reader returns the rows captured by the
-   decision time, the same rows the seal would produce for those minutes, so
-   joining a ticker-day's segments has one implementation.
+   publishes nothing about it. The reader returns the rows captured by the cut,
+   15 seconds before the decision, the same rows the seal would produce for those
+   minutes, so joining a ticker-day's segments has one implementation.
 5. **The quotes are the newest capture every instrument has.** The rows of one
    capture share one `fetch_end_ts`, the instant the response landed. An older
    capture they all have is taken over a newer one only some have, because a
@@ -240,7 +241,7 @@ flowchart TD
     list["List each instrument's segments"] --> any{"Does every instrument<br/>list one?"}
     any -- "No" --> halt["Halt, naming each prefix"]
     any -- "Yes" --> open["Download the next five segments<br/>of each, newest first"]
-    open --> read["marketlake's reader checks each SHA-256<br/>and gives the rows captured by the decision"]
+    open --> read["marketlake's reader checks each SHA-256<br/>and gives the rows captured<br/>15 seconds before the decision"]
     read -- "It refuses a segment" --> again["Download that segment once more"]
     again --> read
     read -- "It refuses again" --> fault["Halt, naming the segment"]
@@ -284,13 +285,90 @@ seconds. Nothing enforces it, and the largest of 1,624 segments measured 10.7
 seconds. The newest capture at 15:40:00 is 15:39's, under a minute old. Waiting
 for 15:40's would cost every decision about a minute and a half before the
 market-on-close cutoff, and would have it decide on data from after its own time.
-So the read takes the newest capture by the decision time, whenever the listing
-is made. The price is a quote up to a minute old at the decision. A row that lands
-later is for [the comparison after the seal](#what-is-compared-after-the-seal) to
-find.
+So the read takes the newest capture by the cut, 15 seconds before the decision,
+whenever the listing is made. The price is a quote up to a minute old at
+close−20, and up to about 75 seconds old for a decision off the minute. A row
+that lands later is for [the comparison after the seal](#what-is-compared-after-the-seal)
+to find.
 
 A capture run by hand and late can land after a newer one started, and outside
 the segments opened it is not seen.
+
+##### Why every read cuts 15 seconds before its decision
+
+A capture takes seconds to reach the bucket. A live read lists only what has
+landed by its decision, while a replay over the sealed day holds every row. With
+no cut, a replay could take a capture that a live decision at the same time
+could not have listed, and a backtest would trade on a quote live never saw. So
+every read of quotes, sealed or of segments, in every mode, keeps only rows whose
+`fetch_end_ts` is at or before the decision less `CAPTURE_LAG`, which is 15
+seconds and lives in `data/cycles.py`. The judge, the walk's stop and every age
+still read the decision time. A row after the cut is in no snapshot, by either
+read, since a snapshot holds no value its decision could not know, and
+marketlake's partition keeps it.
+
+The cut on both reads is what keeps a slow upload from making a backtest read
+what live could not, apart from the shapes [What a replay cannot show](#what-a-replay-cannot-show)
+and [How a sealed day becomes one quote of each instrument](#how-a-sealed-day-becomes-one-quote-of-each-instrument)
+name. With uploads of 1 to 14 seconds planted on 3,696 decisions over 22
+recorded sessions, the two picks differed on 0 with the cut on both, and on 190
+with it on the backtest alone. That 0 checks the cut's logic, since the cut
+rules out a difference from an upload under 15 seconds, and it is no
+measurement of live. An upload past 15 seconds is a capture the sealed day holds
+and live did not, and with uploads of up to 20 seconds the two differed on 140.
+All three counts are exploratory.
+
+Every count in this section was made in [#132's plan](https://github.com/l3a0/ithildin-runtime/issues/132#issuecomment-7170961785), whose comment holds
+the script, over capture stamps alone, on a copy of the lake whose manifest's
+SHA-256 is `96c023035150117b44f74a7bef67e2789ba89457ddec10ca1ded9830fe8312dd`.
+No code in this repository reproduces them.
+
+Two measures bound the lag.
+
+1. **From below,** the largest time from a cycle's start to its segment in the
+   bucket was 10.7 seconds, of 1,624 on 2026-11-03
+   ([l3a0/marketlake#984](https://github.com/l3a0/marketlake/issues/984)), and up
+   to a second more where S3 states the time in whole seconds. A cut under 12
+   seconds can read a row no live listing held.
+2. **From above,** 15:39's capture is 20.5 seconds old at the youngest at
+   15:40:00, and a decision at close−20 reads 15:39's. marketlake's bound of 90
+   seconds, which nothing enforces, would read 15:38's or older on every session.
+
+**Table:** What bounds the lag, from the capture stamps of 22 sessions, exploratory
+
+| Lag, in seconds | Decisions of 8,580 on whole minutes whose capture differs from no lag | Sessions of the twenty from 2026-09-15 to 2026-10-12 that read 15:39's quote at 15:40 |
+| --- | --- | --- |
+| 0 | 0 | 20 |
+| 11 | 16 | 20 |
+| 15 | 25 | 20 |
+| 20 | 34 | 20 |
+| 30 | 76 | 18 |
+| 60 | 8,538 | 0 |
+| 90 | 8,551 | 0 |
+
+The 25 sit in four sessions, 15 of them on 2026-10-05, so 8,580 is no count of
+independent decisions. The sessions are 2026-09-14 to 2026-10-13, captured by
+the laptop before the live upload existed, so one host's lower bound meets
+another's upper bound.
+
+The price is one whole capture on every decision with a capture in those 15
+seconds, because it reads the capture before. That quote is about 60 seconds
+older: at a median of 60.0 seconds and at most 737 where minutes were missing, on
+25,482 of 102,432 decisions every 5 seconds and 25 of the 8,580 on whole minutes,
+counted where both instruments hold a capture with no lag, and 0 of 22 at
+close−20, all exploratory. So the greatest usual age is 75 seconds and
+not 60, an order has that much less of its maximum left, and sizing, the caps and
+the loss stop read the older mark. A capture in those seconds that shows a
+halted, crossed or wide quote halts nothing and holds no account.
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) is asked to report one,
+and [#173](https://github.com/l3a0/ithildin-runtime/issues/173) stores the sealed
+rows it needs.
+
+`python -m lake.live_upload lag --date D` measures any of the last seven days, as
+[What a person runs](../what-a-person-runs.md#measure-the-capture-lag) says. A
+largest above 13 seconds moves the constant, in a pull request of its own,
+reviewed as a raised maximum age is. A value that stops a close−20 decision
+reading 15:39's quote is the owner's.
 
 ##### What the read does with each answer
 
@@ -316,7 +394,7 @@ loses none of another's rows.
 | A segment that cannot be written into the decision's lake root, such as on a full disk | A halt naming the segment | The machine's operator |
 | A published column of another type than marketlake publishes. One that is absent reads as null | A halt naming it | A release |
 | No security master row for the day, or two rows of `data/quote_kinds.csv` for it | A halt naming the instrument or the source | A release |
-| No segment listed, no row by the decision, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, and each instrument's newest capture | The next decision |
+| No segment listed, no row by the cut, or no capture every instrument has | A halt naming each prefix, the segments listed and opened, each instrument's newest capture and the cut | The next decision |
 | Two rows of one instrument at the capture taken | A halt naming the instrument | The next decision |
 
 Data's stage ends its own decision on each of these. [A fill is measured from the
@@ -333,7 +411,7 @@ capture host says why.
 The data worker runs its own minimum checks before anything decides. Beside the check on its clock, which [The time servers](#the-time-servers) describes, nine checks halt or flag a decision.
 
 1. A quote that is absent, or that [the judge of a quote](#how-a-quote-is-judged) gives any reason against, halts the decision.
-2. A segment whose bytes do not hash to the SHA-256 the bucket stored with it, on a second download too, halts it.
+2. A segment whose bytes do not hash to the SHA-256 the bucket stored with it, on a second download too, halts it, and so does a sealed quotes partition whose bytes differ from the manifest or that holds no row of the session's equity close.
 3. A bar whose prices contradict each other, such as a price at or below zero or a high below the close, is flagged in the snapshot beside the price and halts the decision.
 4. A close past the written multiple of the lookback's standard deviation is flagged beside the price. The owner is alerted, and the decision trades on the price as it arrived.
 5. A close below its bar's low is flagged beside the price, however little it moved. The owner is alerted, and the decision trades on the price as it arrived.
@@ -429,29 +507,111 @@ measurement can count how often that happens. Unstated coverage is shown on the 
 
 #### Which read a decision uses
 
-Whether the day is sealed when the read
-happens picks the read. A live decision before the seal reads segments,
-because no partition exists yet. A replay reads the sealed partitions, up to
-the decision's time, because the partition is what stays.
+The manifest the decision downloaded picks the read, so the choice and the check
+of the bytes read one file. Where it lists the quotes partition of any
+instrument the settings read, for the session's day, the read is of the sealed
+day. Where it lists none, the read is of segments. A partition's key is
+`LakePaths.quotes_partition_path` of the ticker the security master gives for
+that day. Nothing branches on the mode, so a backtest, shadow, paper and live
+choose alike.
 
 The figure below is a component-level flowchart of the choice between the two reads.
 
 ```mermaid
 flowchart TD
-    t{"Is the day sealed<br/>when the read happens?"}
-    t -- "No" --> seg["Read segments, marked provisional"]
-    t -- "Yes" --> part["Read sealed partitions<br/>up to the decision time"]
-    part --> same["A replay of a decision<br/>read before sealing lands here"]
+    m{"Does the decision's manifest list<br/>any instrument's quotes partition<br/>for the session's day?"}
+    m -- "No" --> seg["Read segments, marked provisional"]
+    m -- "Yes" --> all{"Does it list every instrument's?"}
+    all -- "No" --> fault["Halt, naming the keys listed and not,<br/>with no segment opened"]
+    all -- "Yes" --> close{"Does each partition hold<br/>the session's equity close?"}
+    close -- "No" --> nofault["Halt, naming the partition"]
+    close -- "Yes" --> sealed["Read the sealed minutes,<br/>not provisional"]
 ```
 
-The diagram shows the choice once [#132](https://github.com/l3a0/ithildin-runtime/issues/132)
-builds the read of sealed quotes. Look for the replay: a backtest that replays a
-close−20 decision reads the sealed rows up to that decision's time. Those are
-the rows the live decision read, unless a row's segment landed after the decision, or [the comparison after the seal](#what-is-compared-after-the-seal) found a
-difference. On such a day a replay shows the sealed rows rather than what the
-decision read, and the journal holds the difference. Test 2 covers both reads, with a sealed stretch for the replay and
-a fixture day left unsealed for the read of segments. A decision after the
-seal needs none of this.
+The diagram shows the choice. Look for the two halts on the sealed side: a mix
+of the two reads would price one leg from a sealed day and the other from one
+that is not, and a week later would find no segment.
+
+##### Which decisions read the sealed day
+
+A live decision before the seal finds no partition listed, and reads segments.
+One that runs after the day's upload reads the sealed day under the same cut.
+Data does not stop it, because the judge measures the age at the decision. What
+refuses its orders is the gate's window, which halts on a `now` past the
+session's close, and the day is uploaded only after it. A backtest over a past
+session reads the sealed day wherever the manifest lists it, and segments
+otherwise.
+
+A listed partition has to hold the session's equity close. marketlake seals at
+close+15, and its repair by hand can seal a day still open, which the gate would
+trade on as healthy with no comparison owed. The check refused none of the 22
+recorded sessions of SPY or QQQ that hold a row. The price is a replay that
+refuses a day whose close cycle was lost, where live may have traded.
+
+A sealed read is not provisional, so [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
+owes it no comparison. Sealed does not mean judged: marketlake's battery writes
+its verdict after the seal, and no verdict reads as a pass.
+
+##### How a sealed day becomes one quote of each instrument
+
+`data/sealed.py` reads it, in four steps.
+
+1. **Each listed partition is linked into the decision's lake root**, one
+   `Mirror.partitions` call a key, after the bars are read and their ledgers
+   recorded, so a partition enters neither the snapshot's `ledgers` nor the
+   bars' cache key. Every listed key is linked whatever faults before it.
+2. **Each partition has to answer `load_quotes` with no minute**, which is its
+   equity close. No minute is read where a link or this check faults.
+3. **The walk `data/cycles.py` holds reads five minutes of each leg at a time**,
+   from the cut's own minute back to the minute the session opens, counted in
+   New York time from the session's own offset. Each minute is read by
+   `load_quotes(T, D, "HH:MM")`, then `captured_by` at the cut. It is the walk
+   the read of segments takes, with a minute in place of a segment.
+4. **Each row the cut kept has to carry the instrument's ticker.** `load_quotes`
+   checks neither the published types nor whose rows a partition holds, so the
+   shared check of types stands and the sealed read checks the ticker.
+
+Reading five minutes at a time, and not one, is what makes the two reads agree.
+On 2,684 decisions over 22 recorded sessions and 18,960 seeded ones, on and off
+the minute, the sealed walk gave the capture the walk of segments gives, every
+time, and the brute force's wherever that was inside every maximum. Two shapes
+differ, and neither is fixed.
+
+1. Where a capture landed after a later minute's, a fifth style of seeded day
+   missed the newest usable capture on 250 of 4,740.
+2. Where minutes are missing beside such a capture, the newest five segments
+   reach past the newest five minutes.
+
+All these counts are exploratory. A quote of a sealed row equals the segment's
+in every field, `received` included on each column both hold, so the judge reads
+either with no branch. A sealed partition can hold a column a later segment
+added, which is null in an earlier row's `received`.
+
+##### What a replay cannot show
+
+The decision's own snapshot is the only record of what it read. The price of
+reading the sealed day through `load_quotes`, which answers a minute by its
+`snap_ts`, is three things a replay of it cannot show.
+
+1. **It can take a newer row than the decision could see, or an older one**,
+   with no refusal. A row whose `snap_ts` is 30 seconds past its minute came back
+   from marketlake's reader of segments, and `load_quotes` at that minute
+   answered no row, so a replay takes an older row. A row of another day the
+   reader of segments refuses, and the sealed read does not find.
+2. **It and live refuse different sessions.** A verdict written after the
+   decision refuses the replay, a listing or a digest refuses live, and a row
+   after the decision whose stamp or kind cannot be read can refuse the replay,
+   because `load_quotes` reads the whole partition for both. [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s report keeps
+   each refused session with its reason and a count.
+3. **An upload past 15 seconds is read by a replay and was not by live**, so
+   the measure in [Why every read cuts 15 seconds before its decision](#why-every-read-cuts-15-seconds-before-its-decision)
+   is what keeps the two reads one.
+
+The log line of a sealed read ends "A decision before the seal may have read
+another row". [What the sealed read does with each answer](../halts-and-drills.md#what-the-sealed-read-does-with-each-answer)
+lists every fault and what ends the halt it causes. Test 2 covers both reads,
+with a sealed stretch for the replay and a fixture day left unsealed for the read
+of segments.
 
 #### What is compared after the seal
 
@@ -461,7 +621,7 @@ against the sealed day, after the decision has already acted.
 ##### Who reads and who compares after the seal
 
 Two roles share the work, so data stays the one reader of marketlake, as
-[#11](https://github.com/l3a0/ithildin-runtime/issues/11) and [#132](https://github.com/l3a0/ithildin-runtime/issues/132) hold. Three steps
+[#11](https://github.com/l3a0/ithildin-runtime/issues/11) and [#173](https://github.com/l3a0/ithildin-runtime/issues/173) hold. Three steps
 follow the seal.
 
 1. The data worker's role, in the next session's run, reads the sealed row and
@@ -475,8 +635,9 @@ A missing result, or a sealed day that never arrives, pages and stops no
 decision.
 
 This doc proposes, for [#11](https://github.com/l3a0/ithildin-runtime/issues/11),
-that the comparison also takes the newest sealed row at or before the decision
-time, so a row whose segment landed after the decision shows as a difference.
+that the comparison also takes the newest sealed row at or before the cut, 15
+seconds before the decision, so a row whose segment landed after the cut shows
+as a difference.
 
 ##### What the comparison reads
 

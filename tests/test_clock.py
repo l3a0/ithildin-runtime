@@ -294,7 +294,7 @@ def test_8_a_fault_halts_the_decision_with_its_snapshot_stored(
     result = made(Item(close(LAST), "data"), Reports())
     (ref,) = result.outputs
     stored = decode_output((tmp_path / "store" / ref.key).read_bytes(), Snapshot)
-    assert stored.header.format == 3
+    assert stored.header.format == 4
     assert stored.entries[0].clock == reading
     assert result.halt is not None and result.halt.cause == ref
     # The clock's fault comes first.
@@ -424,9 +424,9 @@ def test_8_differences_names_a_clock_past_a_bound(first, later, said: str) -> No
 
 def _capture(clock: ClockReading, status=()) -> bytes:
     header = BlobHeader(
-        3, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
+        4, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
     )
-    snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), {}, {}, (), None, clock)
+    snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), (), {}, {}, (), None, clock)
     return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
 

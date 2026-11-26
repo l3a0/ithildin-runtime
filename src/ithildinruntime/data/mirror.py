@@ -2,8 +2,8 @@
 
 The mirror is a directory and a cache. Losing it costs a download, so the
 machine holds no state a run needs. Each decision checks what it reads before
-marketlake's reader opens any of it, because `lake.loader.load_bars` lists
-partitions from disk and checks none against the manifest.
+marketlake's reader opens any of it, because `lake.loader.load_bars` and
+`load_quotes` list partitions from disk and check none against the manifest.
 
 How one decision fills its lake root, in order.
 
@@ -38,7 +38,8 @@ How one decision fills its lake root, in order.
    version it came from, and each decision reads its own lake root of hard
    links to the files it checked.
 6. **A file the bucket reports with no version, or with no stored SHA-256,
-   halts**, because a bar's `vintage_id` names its partition by that version.
+   halts**, because a bar's `vintage_id` and a snapshot's `partitions` name a
+   partition by that version.
    A manifest SHA-256 that is not 64 lowercase hex digits halts as well,
    because the mirror names its stored files by it.
 
@@ -62,7 +63,7 @@ from lake.paths import is_reader_file
 
 from ithildinruntime.core import BlobMissing, Bucket, BucketObject, Halt, StoreError
 
-__all__ = ["LEDGERS", "MANIFEST", "Checked", "LakeRoot", "Mirror"]
+__all__ = ["LEDGERS", "MANIFEST", "Checked", "LakeRoot", "Mirror", "vintage_id"]
 
 MANIFEST = "manifest.jsonl"
 QUARANTINE = "quarantine.jsonl"
@@ -85,6 +86,11 @@ class Checked:
     key: str
     sha256: str
     version: str
+
+
+def vintage_id(checked: Checked) -> str:
+    """What names one partition's bytes, on a bar and on a snapshot."""
+    return f"{checked.key}#sha256={checked.sha256}#version={checked.version}"
 
 
 @dataclass
@@ -223,7 +229,7 @@ def _manifest_sha(entry: Mapping[str, object], key: str) -> str:
 def _check(got: BucketObject, want: str | None) -> str:
     key = got.key
     if got.version is None:
-        raise Halt(f"{key} has no version in the bucket, so no bar read from it can name one")
+        raise Halt(f"{key} has no version in the bucket, so nothing read from it can name one")
     if got.sha256 is None:
         raise Halt(f"{key} has no SHA-256 stored in the bucket, so its download cannot be checked")
     actual = hashlib.sha256(got.data).hexdigest()
