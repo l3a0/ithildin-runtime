@@ -543,6 +543,7 @@ def test_a_claim_alarms_on_a_leg_a_kill_left_sending() -> None:
     made.restart()
     again = made.send_attempt(made.sender(writer="f" * 32))
     assert again.halt is not None and f"{first} is in doubt" in again.halt.reason
+    assert f"{first} of {CHAN} went and its partner" in again.halt.reason
     assert any(first in reason and "in doubt" in reason for reason in made.alarms.sent)
     assert made.submits() == [first]
 
@@ -560,6 +561,17 @@ def test_a_claim_names_every_planned_order_however_the_loss_reads(why) -> None:
     reason = again.halt.reason
     for name in gates_names(made):
         assert f"{name} is Acknowledged" in reason
+    if why == "after the close":
+        # The loss's own halt joins the reason after the orders, and skips neither.
+        assert reason.index("Acknowledged") < reason.index("session's close at")
+
+
+def test_a_run_with_no_broker_halts_the_send_stage_before_its_claim() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    result = made.send_attempt(made.sender(brokers=Halt("no broker is built on shadow")))
+    assert result.halt is not None and result.halt.reason == "no broker is built on shadow"
+    assert claim_key(DEPLOYMENT, made.run, made.at) not in made.store.blobs
 
 
 def test_a_strategy_switch_that_cannot_be_read_halts() -> None:

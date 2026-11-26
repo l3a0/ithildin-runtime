@@ -63,8 +63,9 @@ jobs:
   # .github/rulesets/default.json lists and scripts/setup-repo.sh applies.
   replication:
     runs-on: ubuntu-latest
-    # Test 1 took about 10 minutes on a laptop. The folder store lists a folder whole on each
-    # read, so the run's time grows with the journal, and this leaves room for a slower runner.
+    # Test 1 took 5 to 8 minutes in this job on the first runs, and about 10 on a laptop. The
+    # folder store lists a folder whole on each read, so the run's time grows with the journal,
+    # and this leaves room for a slower runner.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
