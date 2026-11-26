@@ -310,8 +310,6 @@ asks.
    on a short's proceeds and buying power read as unknown, never as zero. A split
    is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
 
-That an order fills this way is this doc's proposal for [#144](https://github.com/l3a0/ithildin-runtime/issues/144), in [Proposals awaiting a ruling](09-decisions.md#proposals-awaiting-a-ruling).
-
 The figure below is a C4 dynamic diagram.
 
 ```mermaid
@@ -1926,7 +1924,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 ##### What a plan, a journal entry and a lease hold
 
 - `Plan` holds the run's decisions, each with its time and the strategies deciding at it. One function in `core` builds it from the schedules and the trading calendar.
-- `JournalEntry` is the one numbered record, chained to the entry before it.
+- `JournalEntry` is the one numbered record of what the platform did, chained to the entry before it.
 - `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`.
 
 ##### How the storage port rewrites a blob
