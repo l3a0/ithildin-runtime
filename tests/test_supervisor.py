@@ -1298,3 +1298,13 @@ def test_a_link_planted_after_the_unlink_is_never_written_through(
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_PLAN and target.read_text() == "untouched\n"
     assert any("release file could not be written" in a for a in world.alarms())
+
+
+def test_a_release_file_that_is_not_utf_8_reads_as_not_released(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_bytes(b"\xff\n")
+    assert world.supervisor()._released_here(TODAY.isoformat()) is False
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED

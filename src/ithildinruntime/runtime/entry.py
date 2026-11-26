@@ -227,7 +227,8 @@ def _released(path: Path | None, release: str, run: str, boot: str | None) -> bo
         return True
     try:
         lines = path.read_text().split("\n")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # A file that cannot be read or decoded releases nothing.
         return False
     named = lines[:3] if boot is not None else lines[:2]
     wanted = [release, run, boot] if boot is not None else [release, run]

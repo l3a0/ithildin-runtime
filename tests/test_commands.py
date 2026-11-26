@@ -618,3 +618,14 @@ def test_the_supervisors_command_runs_todays_run_and_ends_with_its_code(
     timer = FixedTimer(datetime(2026, 12, 1, 1, 30, tzinfo=UTC))
     outcome = entry.supervise(settings, threading.Event(), StandInClients(), timer)
     assert asked == [date(2026, 11, 30)] and outcome.code == 4
+
+
+def test_a_release_file_that_is_not_utf_8_releases_nothing(tmp_path: Path) -> None:
+    import dataclasses
+
+    release = tmp_path / "local" / "release"
+    release.parent.mkdir(parents=True)
+    release.write_bytes(b"\xff\n")
+    assert not entry._released(release, "sha256:r", "2026-11-30", None)
+    worker = dataclasses.replace(_idle_worker(tmp_path, Mode.SHADOW), release_file=release)
+    assert entry._released(worker.release_file, "sha256:r", "2026-11-30", None) is False

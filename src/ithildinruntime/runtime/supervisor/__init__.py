@@ -267,7 +267,8 @@ class Supervisor:
             return False
         try:
             lines = self._release_file.read_text().split("\n")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # A file that cannot be read or decoded released nothing.
             return False
         return lines[1:3] == [run, self._boot]
 

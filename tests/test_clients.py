@@ -117,3 +117,10 @@ def test_a_bad_file_swapped_in_mid_run_raises_and_falls_back_to_nothing(
     found._expiry_time = datetime.now(UTC)
     with pytest.raises(CredentialFileError):
         found.get_frozen_credentials()
+
+
+def test_a_file_that_is_not_utf_8_refuses_the_start(tmp_path: Path, no_metadata) -> None:
+    path = tmp_path / "c"
+    path.write_bytes(b"[default]\naws_access_key_id = k\naws_secret_access_key = \xff\xfe\n")
+    with pytest.raises(CredentialFileError, match="UnicodeDecodeError"):
+        AwsClients("us-east-1", path)

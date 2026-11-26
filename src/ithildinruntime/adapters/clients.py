@@ -67,7 +67,7 @@ def read_credential_file(path: Path) -> dict[str, str]:
             key: section.get(key, "").strip()
             for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token")
         }
-    except (OSError, configparser.Error) as error:
+    except (OSError, UnicodeDecodeError, configparser.Error) as error:
         raise CredentialFileError(
             f"the credential file {path} cannot be read: {type(error).__name__}"
         ) from None
