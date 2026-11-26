@@ -363,11 +363,6 @@ class ReceiveLoop:
                 reason += ". Halts not stored: " + "; ".join(self._dropped)
             raise LoopFailed(reason) from self._failure
 
-    @property
-    def storage(self) -> Storage:
-        """The storage contract whose held blobs keep this process alive, as rule 9 says."""
-        return self._storage
-
     def stop(self) -> None:
         """Stop receiving and drain the pool. Safe to call from any thread, at any time."""
         self._stop_asked.set()

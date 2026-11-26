@@ -108,9 +108,6 @@ class ExecutionWorker:
         stress_moves: Path,
     ) -> None:
         self._owner_step = storage.owner_step
-        self._storage = storage
-        self._alerts = alerts
-        self._alias = account
         writer = secrets.token_hex(16)
         self.account = Account(
             store=store,
@@ -215,24 +212,10 @@ class ExecutionWorker:
         error says where that page was not sent. While a firing of the loss stop is
         owed, each page and the error tell the owner to pull the kill switch at once.
 
-        It halts before the loop runs where the loop holds another `core.Storage`
-        than the account, since a stop's blob the account could not store would
-        then keep no process alive.
+        A loss stop's blob that S3 has not stored keeps the process alive only
+        where the loop holds the account's own `core.Storage`, so whatever
+        builds the two builds them over one (#200).
         """
-        # A loop that names no storage is a test's stand-in, and the real one is pinned.
-        other = getattr(loop, "storage", None)
-        if other is not None and other is not self._storage:
-            reason = (
-                "the receive loop holds another storage contract than the account, so a loss "
-                "stop's blob S3 did not store would keep no process alive. The owner's step: "
-                "build the worker's loop and its account over one storage contract"
-            )
-            # Sent straight to the channel, since an account that cannot be used sends nothing.
-            try:
-                self._alerts.alarm(f"account {self._alias}: {reason}")
-            except BaseException:
-                reason = f"{reason}. The alarm could not be sent"
-            raise Halt(reason)
         try:
             loop.run()
         finally:
