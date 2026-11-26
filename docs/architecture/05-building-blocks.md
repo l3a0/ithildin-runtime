@@ -1880,11 +1880,11 @@ Here a strategy is flat when the book holds no share of it and it has no order `
 2. It keeps each approving verdict's worst loss under its order's client order id.
 3. A `sending` entry of an order of a flat strategy opens a position, and every `sending` entry inside a position counts that order with its verdict's worst loss. An order counts whatever came after its sending, so one the broker rejected, one abandoned by the writer of its sending, one that expired unfilled and one still in doubt all count, and one refused or abandoned before its sending never does. Only a fill moves a strategy's shares, and a fill follows a `sending`, so no position opens any other way.
 4. After each entry, a position whose strategy is flat closes at that entry. One still open at the journal's end has no closing entry.
-5. At the end it reads the newest view's book, which halts on a journal with no entry, a fill in dispute or anything kept as unmatched. Neither of the last two is ever released, so the read halts as the book does, rather than give a position that could close where the record does not say it did.
+5. At the end it reads the newest view's book, which halts on a journal with no entry, a fill in dispute or anything kept as unmatched. No entry releases either of the last two yet, so the read halts as the book does, rather than give a position that could close where the record does not say it did. The entries that release them, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds for a dispute and [#150](https://github.com/l3a0/ithildin-runtime/issues/150) for an unmatched entry, are read here before either ships. A report that reads this halt still completes, with the account's figures shown as missing, as the rule's preamble says of a figure that cannot be computed, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and [#33](https://github.com/l3a0/ithildin-runtime/issues/33) say how their reports show it.
 
-A live order in a state that is neither working nor unsent halts the read. A test fails when a release adds a state of any kind, so each new one is read on purpose.
+A live order in any state other than the six named above halts the read. A test writes out which states are unsent, which keep a position open and which have ended, so a state a release adds, or one moved between them, fails it until this read is told what the state is.
 
-Initial risk is the largest figure a position counted, and missing where any one is not finite and positive. `core.Verdict` refuses an approval with no finite worst loss and an adding approval at or below zero, so only an approval that reduces can carry such a figure. A verdict entry written by hand with an adding approval at or below zero halts the read, because the fold cannot read it as a verdict. The figure below is a C4 code diagram of what the read gives.
+Initial risk is the largest figure a position counted, and missing where any one is not finite and positive. `core.Verdict` refuses an approval with no finite worst loss and an adding approval at or below zero, so only an approval that reduces can carry such a figure. A verdict entry written by hand with either figure `core.Verdict` refuses halts the read, because the fold cannot read it as a verdict. The figure below is a C4 code diagram of what the read gives.
 
 ```mermaid
 classDiagram
@@ -1894,9 +1894,9 @@ classDiagram
         +str account
         +str strategy
         +int opened
-        +Optional~int~ closed
+        +int or None closed
         +tuple~Counted~ counted
-        +Optional~Decimal~ initial_risk
+        +Decimal or None initial_risk
     }
     class Counted {
         +str client_order_id

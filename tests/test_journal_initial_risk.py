@@ -387,9 +387,15 @@ def test_a_fill_kept_as_unmatched_halts_the_read() -> None:
 
 
 def test_every_state_is_read_on_purpose() -> None:
-    """A state a release adds fails here until the reading of initial risk is told what it is."""
+    """A state a release adds fails here until the reading of initial risk is told what it is.
+
+    The three sets are written out, so a state added to any of them, or to none, fails.
+    """
+    s = OrderState
+    assert NOT_SENT == {s.INTENDED, s.APPROVED}
+    assert WORKING == {s.SENDING, s.IN_DOUBT, s.ACKNOWLEDGED, s.PARTLY_FILLED}
+    assert ENDED == {s.REFUSED, s.ABANDONED, s.FILLED, s.REJECTED, s.EXPIRED}
     assert NOT_SENT | WORKING | ENDED == set(OrderState)
-    assert not NOT_SENT & WORKING and not WORKING & ENDED and not NOT_SENT & ENDED
 
 
 def test_a_live_order_in_a_state_the_read_does_not_list_halts(
@@ -401,4 +407,23 @@ def test_a_live_order_in_a_state_the_read_does_not_list_halts(
     (gld,) = written.decide(Leg(GLD, 10, "400"))
     written.send(gld)
     with pytest.raises(Halt, match="is Acknowledged, which the reading of initial risk does not"):
+        positions(written.journal)
+
+
+@pytest.mark.parametrize("kind", ["dispute", "unmatched"])
+def test_a_journal_held_after_every_position_closed_halts_the_read(kind: str) -> None:
+    """No position is open to read the book, so the read's last look at it halts."""
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    made = fill(f"{broker(gld)}-10", broker(gld), 10, "200", GLD)
+    written.put(filled(made, written.reading))
+    (sell,) = written.decide(Leg(GLD, -10, "400", False))
+    written.send(sell)
+    written.fill(sell, -10, "200")
+    if kind == "dispute":
+        written.put(disputed(replace(made, qty=D(4)), written.reading))
+    else:
+        written.put(unmatched_fill(fill("x-1", "x-1", -10, "200"), written.reading))
+    with pytest.raises(Halt, match="is in dispute|keeps an unmatched fill"):
         positions(written.journal)

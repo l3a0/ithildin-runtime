@@ -113,8 +113,9 @@ def positions(journal: Journal) -> tuple[Position, ...]:
                         position.account, strategy, position.opened, entry.seq, position.counted
                     )
                 )
-    # Neither a dispute nor an unmatched entry is ever released, so the newest view's book halts
-    # on each one the read passed, and on a journal that holds no entry.
+    # No entry releases a dispute or an unmatched entry yet, so the newest view's book halts on
+    # each one the read passed, and on a journal that holds no entry. The entries #203 and #150
+    # build to release them are read here before either ships.
     view.book  # noqa: B018
     found.extend(held.values())
     return tuple(sorted(found, key=lambda position: position.opened))
