@@ -1924,7 +1924,7 @@ Each result must carry the configuration hashes the stage table gives its stage.
 The stage stores two files, each with one entry per strategy, and computes both before it stores either.
 
 1. `target.json` holds the `TargetPortfolio`. A flat forecast gives an explicit zero for each leg.
-2. `sizing.json` holds the `Sizing`, the record of how the target came out that size. `wanted` is each leg's shares before any limit. `cut` names each limit that alone would make the target smaller, before rounding.
+2. `sizing.json` holds the `Sizing`, the record of how the target came out that size. `wanted` is each leg's shares before any limit. `cut` names each limit that alone would make the target smaller, before rounding. Neither says whether the check after rounding sent every leg toward zero, which the target and the limits show.
 
 ##### How many baskets are held
 

@@ -36,7 +36,7 @@ from ithildinruntime.core import (
 from ithildinruntime.journal import Journal, record_of
 from tests.support.chan_return import PERIODS, chan_figures
 from tests.support.replication import FIRST_DECISION, GLD, ROWS_BEFORE, USO
-from tests.support.trading import ACCOUNT, AFTER, CASH, STEP, G, Traded, trade
+from tests.support.trading import ACCOUNT, AFTER, CASH, STEP, STRATEGY, G, Traded, trade
 
 pytestmark = pytest.mark.replication
 
@@ -192,11 +192,68 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
         assert bar_close(snapshot.key, snapshot.sha256, fill.instrument, day) == fill.price
 
 
+def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) -> None:
+    """The figures `chan_bollinger.toml` quotes for its `[risk]` limits, each inside its limit.
+
+    Each is exploratory, read at the tracked G over test 1's decisions. The net
+    counts one leg's order filled and the other's not, as the gate counts a leg
+    with the other unfilled. A loss is a day's move on what the close before held.
+    """
+    limits = STRATEGY.section("risk")
+    most_held = dict.fromkeys((GLD, USO), ZERO)
+    most_order = dict.fromkeys((GLD, USO), ZERO)
+    most_orders = 0
+    most_net = worst_loss = ZERO
+    before: dict[InstrumentId, Decimal] = {}
+    for n, (day, after) in enumerate(held):
+        moved = [i for i in (GLD, USO) if after.get(i, ZERO) != before.get(i, ZERO)]
+        most_orders = max(most_orders, len(moved))
+        for i in (GLD, USO):
+            most_held[i] = max(most_held[i], abs(after.get(i, ZERO)))
+            most_order[i] = max(most_order[i], abs(after.get(i, ZERO) - before.get(i, ZERO)))
+            half = {**before, i: after.get(i, ZERO)}
+            net = abs(sum((q * closes[j][day] for j, q in half.items()), ZERO))
+            most_net = max(most_net, net)
+        if n:
+            last = held[n - 1][0]
+            moves = (q * (closes[i][day] - closes[i][last]) for i, q in before.items())
+            worst_loss = max(worst_loss, -sum(moves, ZERO))
+        before = after
+    found = {
+        "largest GLD": round(float(most_held[GLD]), 1),
+        "largest USO": round(float(most_held[USO]), 1),
+        "largest GLD order": round(float(most_order[GLD]), 1),
+        "largest USO order": round(float(most_order[USO]), 1),
+        "most orders a decision": most_orders,
+        "largest net over G": round(float(most_net / G), 3),
+        "worst day over G": round(float(worst_loss / G), 3),
+    }
+    assert found == RANGE, found
+    for i in (GLD, USO):
+        assert most_held[i] <= limits["max_position"][i]
+        assert most_order[i] <= limits["max_order_qty"][i]
+    assert most_orders <= limits["max_open_orders"]
+    assert most_net <= limits["max_net"] and worst_loss < limits["loss_stop"]
+
+
+RANGE = {
+    "largest GLD": 117.7,
+    "largest USO": 327.9,
+    "largest GLD order": 159.7,
+    "largest USO order": 484.0,
+    "most orders a decision": 2,
+    "largest net over G": 1.447,
+    "worst day over G": 0.066,
+}
+
+
 # Regression pins of the code that added them, so a change anywhere on the path shows here.
 
 
 def test_the_runs_record_is_pinned(traded) -> None:
-    """The orders, the fills, the journal's head and the last book, as the run of 359263c gave.
+    """The orders, the fills, the journal's head and the last book, at #129's G and rounding.
+
+    CI's run 45858921846 of 9f9e0d9 reproduced them.
 
     The head is pinned by its record, since each entry's bytes name the
     process's writer, which is drawn afresh at each start.

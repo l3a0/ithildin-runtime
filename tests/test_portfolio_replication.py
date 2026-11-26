@@ -181,7 +181,11 @@ def test_3_each_held_day_is_g_within_half_a_step_of_each_leg(days) -> None:
 
 
 def test_3_whole_shares_miss_the_replications_return(days, closes) -> None:
-    """Why test 1's account alone moves in billionths of a share."""
+    """Why test 1's account alone moves in billionths of a share.
+
+    Pinned at 359263c for #129's rounding to the nearest share, which brought
+    the miss down from 1.56e-3 and 4.99e-3 under rounding toward zero.
+    """
     apr, sharpe = chan_figures(held_rows(days, closes, Decimal(1)), closes)
     assert abs(apr - 0.17824928) == pytest.approx(3.67e-4, abs=5e-6)
     assert abs(sharpe - 0.96467289) == pytest.approx(1.65e-3, abs=5e-6)

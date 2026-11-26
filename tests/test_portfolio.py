@@ -277,6 +277,11 @@ def test_1_each_step_rounds_to_its_own_places() -> None:
         "GLD": "-4.0",
         "USO": "9.9",
     }
+    # 895.5 ÷ 90 = 9.95 baskets, half a step past 9.9, which goes toward zero.
+    assert counts(sized(step=d("0.1"), config=strategy(text("895.5")))[0]) == {
+        "GLD": "-4.0",
+        "USO": "9.9",
+    }
     assert counts(sized(0, step=d("0.001"))[0]) == {"GLD": "0.000", "USO": "0.000"}
 
 
@@ -374,6 +379,31 @@ def test_1_each_limit_below_at_and_above_what_binds(case, direction) -> None:
         assert sized(direction, owners=owners) == (target, record)
 
 
+# A target rounded up onto a limit exactly. 870 ÷ 90 = 9.666… baskets, nearest 10 USO and
+# 4 GLD: 900 dollars, which with room for a move of 0.25 is 1125, and a USO side of 625.
+ONTO = {
+    "position": {"max_position": {USO: 10}},
+    "gross": {"max_gross": 1125},
+    "net": {"max_net": 625},
+}
+
+
+@pytest.mark.parametrize("direction", [1, -1])
+@pytest.mark.parametrize("case", ONTO)
+def test_1_a_target_rounded_up_exactly_onto_a_limit_fits_it(case, direction) -> None:
+    """The gate allows a figure equal to its limit, so the check after rounding does too."""
+    config = strategy(text(870))
+    target, record = sized(direction, config=config, limits=held_to(**ONTO[case]))
+    assert {i: q * direction for i, q in target.shares.items()} == {GLD: d(-4), USO: d(10)}
+    assert record.cut == ()
+    # A hundredth of a cent under the limit sends every leg toward zero, to 9 USO and 3 GLD.
+    under = {k: (v if k == "max_position" else d(v) - d("0.0001")) for k, v in ONTO[case].items()}
+    if case == "position":
+        under = {"max_position": {USO: d("9.9999")}}
+    target, _ = sized(direction, config=config, limits=held_to(**under))
+    assert {i: q * direction for i, q in target.shares.items()} == {GLD: d(-3), USO: d(9)}
+
+
 @pytest.mark.parametrize("direction", [1, -1])
 def test_1_net_is_the_larger_side_and_not_the_difference(direction) -> None:
     """The gate counts each leg with the other unfilled, so either side alone has to fit."""
@@ -436,6 +466,7 @@ def oracle(
     limits: Constraints,
     move: Decimal,
     step: Decimal,
+    seen: dict[str, int] | None = None,
 ) -> tuple[dict[InstrumentId, Fraction], list[Limit]]:
     """The shares and the limits that cut them, in exact fractions, sharing no code with `size`.
 
@@ -474,14 +505,16 @@ def oracle(
         and sum(dollars.values(), Fraction(0)) * room <= Fraction(limits.max_gross)
         and max(long, short) * room <= Fraction(limits.max_net)
     )
-    if inside:
-        return nearest, cut
-    return signed({i: abs(u * q) // unit for i, q in x.items()}), cut
+    down = signed({i: abs(u * q) // unit for i, q in x.items()})
+    if seen is not None:
+        seen["nearest differs"] += nearest != down
+        seen["fallback"] += not inside and nearest != down
+    return (nearest if inside else down), cut
 
 
 def test_1_the_sizing_agrees_with_an_oracle_in_exact_fractions() -> None:
     draw = random.Random(9)
-    seen = {"sized": 0, "cut": 0, "by two": 0, "zero": 0}
+    seen = {"sized": 0, "cut": 0, "by two": 0, "zero": 0, "nearest differs": 0, "fallback": 0}
     for _ in range(1500):
         names = [InstrumentId(f"I{n}") for n in range(draw.choice([1, 2, 2, 2, 3, 5, 10]))]
         legs = {
@@ -513,7 +546,7 @@ def test_1_the_sizing_agrees_with_an_oracle_in_exact_fractions() -> None:
         direction = draw.choice([1, -1])
         config = strategy(text(g, str([str(i) for i in names])))
         turned = {i: q * direction for i, q in legs.items()}
-        expected, cut = oracle(turned, marks, g, limits, move, step)
+        expected, cut = oracle(turned, marks, g, limits, move, step, seen)
         try:
             target, record = sized(
                 direction,
@@ -1252,17 +1285,14 @@ def test_8_every_tracked_section_is_one_the_reader_reads(tmp_path) -> None:
         readable(tmp_path, [*names, "fixture"])
 
 
-# What `core` gained for this stage
-
-
-# The stress move `chan_bollinger`'s G was sized at, G = s × V ÷ (1.45 m) with s at 5%.
+# The stress move `chan_bollinger`'s G was sized at, so that 1.45 G fits the net cap s × V ÷ m.
 SIZED_AT = d("0.34703196")
 
 
 def test_chan_bollingers_g_was_sized_at_a_stress_move_no_record_of_it_passes() -> None:
     """A record with a larger m shrinks the net cap s × V ÷ m under a fixed G.
 
-    Test 1's largest net position, 1.45 G, then no longer fits it, so this fails
+    Test 1's largest net exposure, 1.45 G, then no longer fits it, so this fails
     until G is checked again and this figure moves with it. A smaller m leaves G
     inside the cap.
     """
@@ -1275,6 +1305,9 @@ def test_chan_bollingers_g_was_sized_at_a_stress_move_no_record_of_it_passes() -
     assert moves, "no record of chan_bollinger's stress move is tracked"
     assert max(moves) <= SIZED_AT, f"a record's m of {max(moves)} checks G again"
     assert gross(config) > 0
+
+
+# What `core` gained for this stage
 
 
 def test_held_takes_one_strategy_as_position_does() -> None:
