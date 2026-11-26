@@ -426,7 +426,7 @@ def _capture(clock: ClockReading, status=()) -> bytes:
     header = BlobHeader(
         3, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
     )
-    snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), {}, {}, (), None, clock)
+    snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), (), {}, {}, (), None, clock)
     return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
 

@@ -14,11 +14,13 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 from lake.battery import build_entry
+from lake.loader import NoSpotClose
 from lake.manifest import append_quarantine
 
 from ithildinruntime.adapters import FolderBucket, HistoryClock
 from ithildinruntime.core import (
     Halt,
+    InstrumentId,
     Snapshot,
     Stopped,
     decode,
@@ -212,7 +214,8 @@ def test_1_one_day_two_reads(lake: Path, live: Path, tmp_path: Path, late: bool)
     assert "new_column" in later.quotes[GLD].received
     assert bucket.lists == bucket.reads == []
     assert (first.provisional, later.provisional) == (True, False)
-    assert len(first.segments) == 10 + 2 * 0 and later.segments == ()
+    # Five segments of each of two instruments, the first round, which finds the capture.
+    assert len(first.segments) == 2 * 5 and later.segments == ()
     held = [FolderBucket(lake).read(part_key(t)) for t in BOTH]
     assert first.partitions == ()
     assert later.partitions == tuple(
@@ -247,10 +250,15 @@ def test_1_a_capture_in_the_last_fifteen_seconds(
 
 
 @pytest.mark.parametrize(
-    "bad", [{"security_status": "Halted"}, {"bid": 70.0, "ask": 60.0}, {"bid": 1.0, "ask": 99.0}]
+    ("bad", "said"),
+    [
+        ({"security_status": "Halted"}, "its status is 'Halted'"),
+        ({"bid": 70.0, "ask": 60.0}, "its ask of 60.0 is below its bid of 70.0"),
+        ({"bid": 1.0, "ask": 99.0}, "are further apart than the written 0.02 of their midpoint"),
+    ],
 )
 def test_1_a_bad_capture_exactly_at_the_cut_halts_both(
-    lake: Path, live: Path, tmp_path: Path, bad
+    lake: Path, live: Path, tmp_path: Path, bad, said: str
 ) -> None:
     wide = {i: QuoteLimits(150, Decimal("0.02")) for i in (GLD, USO)}
     for t in BOTH:
@@ -261,7 +269,8 @@ def test_1_a_bad_capture_exactly_at_the_cut_halts_both(
         seal(lake, live, t, close=SESSION.close)
     later = source(lake, tmp_path, quotes=wide).read(AT)
     for one in (first, later):
-        assert one.snapshot.quotes[GLD].captured_at == CUT and one.halts != ()
+        assert one.snapshot.quotes[GLD].captured_at == CUT
+        assert any(h.startswith("GLD") and said in h for h in one.halts), one.halts
 
 
 # 2. The choice.
@@ -333,6 +342,16 @@ def test_2_an_instrument_with_no_ticker_is_a_fault_under_either_read(
     (fault,) = got.faults
     assert "GLD has no security master row" in fault
     assert len(got.partitions) == len(listed)
+
+
+def test_2_an_instrument_with_two_tickers_counts_for_neither_read(
+    small: Path, tmp_path: Path
+) -> None:
+    partition(small, "GLD", row("GLD", AT - MINUTE), close_row("GLD", SESSION.close))
+    twice = (MasterRow(DAY, GLD, "GLD", DAY, None), MasterRow(DAY, GLD, "GLDX", DAY, None))
+    master = SecurityMaster(tuple(r for r in load_master().rows if r.id == USO) + twice)
+    mirror = Mirror(FolderBucket(small), tmp_path / "m")
+    assert sealed.is_listed(mirror.open(), DAY, [GLD, USO], master) is False
 
 
 @pytest.mark.parametrize(
@@ -408,9 +427,7 @@ def test_3_rows_after_the_cut_change_nothing_else(lake: Path, tmp_path: Path, do
     assert readings[0].cycle_age == readings[1].cycle_age and calls[0] == calls[1]
 
 
-def test_3_the_judge_the_stop_and_the_ages_read_the_decision(
-    small: Path, tmp_path: Path, doors: Doors
-) -> None:
+def test_3_the_stop_reads_the_decision(small: Path, tmp_path: Path, doors: Doors) -> None:
     """Every row of the first round is 90 seconds old at the decision plus one step."""
     for step, rounds in ((TICK * 0, 2), (TICK, 1)):
         for t in BOTH:
@@ -716,6 +733,21 @@ def test_5_errors_hide_their_words_and_a_stop_and_memory_leave(
                 patch.setattr(sealed, where, _raises(error))
                 with pytest.raises(type(error)):
                     read(day_small, tmp_path)
+    # A close missing at a minute is no answer marketlake gives today, and a fault where it comes.
+    real = sealed.load_quotes
+
+    def no_close_at_a_minute(ticker, on, snap=None, **kw):
+        if snap is not None:
+            raise NoSpotClose(ticker, on.isoformat(), 0)
+        return real(ticker, on, snap, **kw)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sealed, "load_quotes", no_close_at_a_minute)
+        got = read(day_small, tmp_path)
+    assert got.quotes == {}
+    assert [f.split(" could not be read ")[1] for f in got.faults] == [
+        f"at {minute(1)}: NoSpotClose"
+    ] * 2
     for error in (RuntimeError(f"{tmp_path}/x"), OSError("full")):
         with monkeypatch.context() as patch:
             patch.setattr(Mirror, "partitions", _raises(error))
@@ -835,6 +867,7 @@ def test_8_the_link_comes_after_the_bars(day: Path, tmp_path: Path, monkeypatch)
     counting.read = bucket_read  # type: ignore[method-assign]
     made = source(day, tmp_path, bucket=counting)
     snap = made.read(AT).snapshot
+    # Two instruments, each reading the 40 sessions of the fixture's lookback once.
     assert order.count("bars") == 80 and "bars" not in order[order.index("quotes") :]
     assert not any(k.startswith("quotes/") for k in snap.ledgers)
     made.read(AT + MINUTE)
@@ -991,7 +1024,8 @@ def test_1_one_sealed_quote_in_every_field(small: Path, tmp_path: Path) -> None:
         received=got.quotes[GLD].received,
         excess_places=(),
     )
-    assert len(got.quotes[GLD].received) == 75
+    # Every column of marketlake's published quotes schema, which `SCHEMA` holds.
+    assert len(got.quotes[GLD].received) == len(SCHEMA.names) == 75
 
 
 def test_1_past_a_maximum_both_reads_halt(lake: Path, live: Path, tmp_path: Path) -> None:
@@ -1134,8 +1168,11 @@ def test_5_no_shape_of_answer_leaves_the_read(
     assert len(got.partitions) == 2
     assert got.calls >= 2 + 5
     assert all(str(tmp_path) not in f for f in got.faults)
+    (good,) = {GLD, USO} - {InstrumentId(bad)}
     if got.faults:
         assert got.quotes == {}
+        # The other leg's minutes are read five at a time, and each round is kept whole.
+        assert len(got.rows[good]) >= 5 and len(got.rows[good]) % 5 == 0
     else:
         assert set(got.quotes) == {GLD, USO}
 
