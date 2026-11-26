@@ -57,6 +57,7 @@ from ithildinruntime.core import (
     Alerts,
     BlobHeader,
     BlobStore,
+    CodecError,
     DecisionResult,
     Halt,
     Mode,
@@ -90,6 +91,7 @@ from .hold import HoldFailed, Starts, hold_after_unclean_stops, who
 
 __all__ = [
     "EXIT_ASKED",
+    "EXIT_FAILED",
     "EXIT_HALTED",
     "EXIT_HELD",
     "EXIT_PLAN",
@@ -102,6 +104,7 @@ __all__ = [
 
 # What a start ends with, for the host's unit. 0 is a run stopped, or nothing to do.
 EXIT_STOPPED = 0
+EXIT_FAILED = 1
 EXIT_HALTED = 3
 EXIT_STALLED = 4
 EXIT_HELD = 5
@@ -235,7 +238,8 @@ class Supervisor:
                 f"{self._deployment}: the supervisor could not store the plan of {run}, so "
                 f"nothing watches its orders in doubt and nothing writes its stop: {halt.reason}. "
                 "A plan of another release means the pin moved during the session, and the "
-                "next session runs the new release"
+                "next session runs the new release. Otherwise start the supervisor's unit again "
+                "once the store answers"
             )
             return Outcome(EXIT_PLAN, halt.reason)
         try:
@@ -244,7 +248,8 @@ class Supervisor:
             # No worker starts without the file, so this fails closed, and says so.
             self._alerts.alarm(
                 f"{self._deployment}: the local release file could not be written, so no worker "
-                f"on this machine starts: {type(error).__name__}: {error}"
+                f"on this machine starts: {type(error).__name__}: {error}. Start the "
+                "supervisor's unit again once its directory is writable by the supervisor alone"
             )
             return Outcome(EXIT_PLAN, f"the local release file could not be written: {error}")
         return self._watch(plan)
@@ -332,7 +337,10 @@ class Supervisor:
             raise Halt(f"the plan of {plan.run} holds no decision")
         if self._storage.claim(key, encode(plan)):
             return plan
-        stored = decode(self._storage.read_blob(key), Plan)
+        try:
+            stored = decode(self._storage.read_blob(key), Plan)
+        except CodecError as error:
+            raise Halt(f"{key} holds no plan the codec reads: {error}") from None
         if stored.mode is not self._mode:
             raise Halt(
                 f"the stored plan of {plan.run} is for {stored.mode.value}, and this "
@@ -490,8 +498,13 @@ class Supervisor:
             try:
                 halted = self._storage.find_blob(run_halt_key(self._deployment, plan.run))
             except Halt as halt:
+                # No run was halted, so the host restarts the supervisor to read it again.
+                self._alerts.alarm(
+                    f"{self._deployment}: the run's halt of {plan.run} could not be read, so no "
+                    f"stop is stored yet: {halt.reason}. The host restarts the supervisor"
+                )
                 return Outcome(
-                    EXIT_HALTED, f"the run's halt could not be read, so no stop: {halt.reason}"
+                    EXIT_FAILED, f"the run's halt could not be read, so no stop: {halt.reason}"
                 )
             if halted is not None:
                 return Outcome(EXIT_HALTED, f"{plan.run} is halted, so it stores no stop")

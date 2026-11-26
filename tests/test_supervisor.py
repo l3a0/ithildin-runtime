@@ -53,6 +53,7 @@ from ithildinruntime.journal import Journal, PauseEntry, record_of
 from ithildinruntime.runtime.deployment import Deployment, deployment_table
 from ithildinruntime.runtime.supervisor import (
     EXIT_ASKED,
+    EXIT_FAILED,
     EXIT_HALTED,
     EXIT_HELD,
     EXIT_PLAN,
@@ -1133,8 +1134,10 @@ def test_a_runs_halt_that_cannot_be_read_stores_no_stop(world: World) -> None:
     halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
     _refusing(world, lambda call, key: call == "get" and key == halt)
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_HALTED and "could not be read" in outcome.line
+    # No run was halted, so it ends with the code the host restarts, and alarms.
+    assert outcome.code == EXIT_FAILED and "could not be read" in outcome.line
     assert _stop_of(world) is None
+    assert any("The host restarts the supervisor" in a for a in world.alarms())
 
 
 def test_an_unclean_run_whose_plan_holds_no_decision_holds_everything(world: World) -> None:
@@ -1379,3 +1382,39 @@ def test_unreadable_start_records_before_any_plan_hold_nothing_of_today(world: W
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_STOPPED, outcome.line
     assert world.held() == [] and world.pauses() == []
+
+
+def test_the_exit_codes_are_the_numbers_the_hosts_units_read() -> None:
+    from ithildinruntime.runtime import entry, supervisor
+
+    # #202's units restart on 1 and 7 and never on 2 to 6, so these numbers are a contract.
+    assert (supervisor.EXIT_STOPPED, supervisor.EXIT_FAILED) == (0, 1)
+    assert (entry.EXIT_SETTING, supervisor.EXIT_HALTED, supervisor.EXIT_STALLED) == (2, 3, 4)
+    assert (supervisor.EXIT_HELD, supervisor.EXIT_PLAN, entry.EXIT_PLAN) == (5, 6, 6)
+    assert supervisor.EXIT_ASKED == 7
+
+
+def test_a_hold_that_stores_some_halts_names_the_strategy_it_left_free(world: World) -> None:
+    from ithildinruntime.runtime.supervisor.hold import HoldFailed, Starts, hold_after_unclean_stops
+
+    world.opened()
+    world.ran()
+    world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
+    _refusing(world, lambda call, key: call == "create" and f"/{CHAN}/halts/" in key)
+    with pytest.raises(HoldFailed):
+        hold_after_unclean_stops(
+            storage=world.storage,
+            journal=Journal(world.store, ACCOUNT, WRITER),
+            mode=Mode.PAPER,
+            deployment=DEPLOYMENT,
+            account=ACCOUNT,
+            strategies=[CHAN, OTHER],
+            today=TODAY,
+            starts=Starts(False, (), False),
+            sessions=SESSIONS,
+            now=world.timer.now,
+            alarm=world.alerts.alarm,
+        )
+    (alarm,) = [a for a in world.alarms() if "unclean stop" in a]
+    assert f"{OTHER} stays held" in alarm
+    assert f"No halt of {CHAN} could be stored, so it is not held: pull the kill switch" in alarm

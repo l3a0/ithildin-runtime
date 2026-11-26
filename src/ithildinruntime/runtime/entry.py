@@ -29,9 +29,11 @@ Each command ends with one of these codes, which #202's units read.
 - 0: the run's stop is stored, or SIGTERM ended a worker, or a day with no
   session started nothing.
 - 1, or any other: a failure, whose traceback goes to the host's journal, and
-  so does a crash by a signal.
-- 2: a setting is missing or malformed, or the credential file it names cannot
-  be read, named in one line on standard error.
+  so does a crash by a signal. The supervisor also ends with 1, and alarms, where
+  it cannot read the run's halt, so the host restarts it to read again.
+- 2: a setting is missing or malformed, the credential file it names cannot be
+  read, or the release pin file is missing or empty, named in one line on
+  standard error and in an alarm line.
 - 3: the supervisor halted the run, which stores no stop.
 - 4: the supervisor found a result still missing an hour after the close.
 - 5: the hold check after an unclean stop could not finish, or the start could
@@ -51,8 +53,8 @@ setting, halt, stall, failed hold or plan raises the same alarm again and spends
 the day's restarts. Execution's units have no start limit and restart on any
 exit while a session is open, so a cancel and the kill switch are always served,
 as design.md's `#### Automatic restarts: the two components that keep on past
-their cap` says. After 4 or 5 a person starts the supervisor's unit again once the
-cause is fixed.
+their cap` says. After 4, 5 or 6 a person starts the supervisor's unit again
+once the cause is fixed.
 """
 
 from __future__ import annotations
@@ -65,6 +67,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import NoReturn
 from zoneinfo import ZoneInfo
 
 from ithildinruntime.adapters import (
@@ -243,7 +246,10 @@ def _serve(
         plan = wait_for_plan(worker)
     except Halt as halt:
         # A plan this worker cannot run is no reason to restart into the same plan.
-        worker.alerts.alarm(f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing")
+        worker.alerts.alarm(
+            f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing. Correct the "
+            "plan or the settings' environment, then start the unit again"
+        )
         return EXIT_PLAN
     if plan is None:
         return 0
@@ -395,12 +401,18 @@ def _with_servers(servers: TimeServers | None, serve: Callable[[], int]) -> int:
 # The commands
 
 
-def _settings() -> Settings:
+def _refuse(component: str, error: Exception) -> NoReturn:
+    """End a command on a setting it cannot use: one line, and an alarm line beside it."""
+    print(f"ithildin: {error}", file=sys.stderr)
+    LogAlerts(component).alarm(f"{error}. Fix it, then start the unit again")
+    raise SystemExit(EXIT_SETTING) from None
+
+
+def _settings(component: str = "ithildin") -> Settings:
     try:
         return read_settings()
     except SettingError as error:
-        print(f"ithildin: {error}", file=sys.stderr)
-        raise SystemExit(EXIT_SETTING) from None
+        _refuse(component, error)
 
 
 def _clients(settings: Settings) -> AwsClients:
@@ -408,8 +420,7 @@ def _clients(settings: Settings) -> AwsClients:
     try:
         return AwsClients(settings.environment.region, settings.credentials)
     except CredentialFileError as error:
-        print(f"ithildin: {error}", file=sys.stderr)
-        raise SystemExit(EXIT_SETTING) from None
+        _refuse("ithildin", error)
 
 
 def _stop_on_sigterm() -> threading.Event:
@@ -575,7 +586,7 @@ def supervise(
 
 
 def _main(component: str) -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
+    settings, stop = _settings(component), _stop_on_sigterm()
     raise SystemExit(serve(settings, component, stop))
 
 
@@ -604,11 +615,10 @@ def execution_main() -> None:
 
 
 def supervisor_main() -> None:
-    settings, stop = _settings(), _stop_on_sigterm()
+    settings, stop = _settings("supervisor"), _stop_on_sigterm()
     try:
         outcome = supervise(settings, stop)
     except SettingError as error:
-        print(f"ithildin: {error}", file=sys.stderr)
-        raise SystemExit(EXIT_SETTING) from None
+        _refuse("supervisor", error)
     print(f"ithildin-supervisor: {outcome.line}")
     raise SystemExit(outcome.code)

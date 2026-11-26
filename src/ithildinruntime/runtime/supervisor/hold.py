@@ -185,12 +185,19 @@ def hold_after_unclean_stops(
             after = "the workers run today's plan and no supervisor watches it"
         else:
             after = "no worker starts"
+        free = sorted(set(strategies) - set(held))
         if held:
+            unheld = (
+                f" No halt of {', '.join(free)} could be stored, so it is not held: pull the "
+                "kill switch of the account."
+                if free
+                else ""
+            )
             alarm(
                 f"{deployment}: the check for an unclean stop could not finish, so "
-                f"{', '.join(held)} stays held and {after}: {reason}. The strategies stay held "
-                f"after a later start succeeds. Start the supervisor's unit again once the cause "
-                f"is fixed. {who(mode)}"
+                f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies held "
+                f"stay held after a later start succeeds. Start the supervisor's unit again once "
+                f"the cause is fixed. {who(mode)}"
             )
         else:
             alarm(

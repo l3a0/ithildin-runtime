@@ -103,6 +103,8 @@ The diagram shows the release of a live halt from rule 7, so look for the second
 
 ## Every alarm and its drill
 
+The alarms the supervisor and the commands raise, which `runtime/supervisor/` and `runtime/entry.py` hold, have no rows here yet: a stall, a hold check that could not finish, a plan or a release file that could not be written, a start that could not be recorded, a stop asked before the run's stop, a halt that still stands, a run's halt that could not be stored or read, and a worker's plan it cannot run. [#201](https://github.com/l3a0/ithildin-runtime/issues/201), which builds the alert channel, gives each its row and its drill, and each is fired today by a test in `tests/test_supervisor.py` or `tests/test_commands.py`.
+
 The charter's paper gate asks for every alarm to fire in a drill first. An
 alarm reads zero while it is healthy, so only a drill shows it works. This
 shape adds alarms that one process would not need, and each one gets a row

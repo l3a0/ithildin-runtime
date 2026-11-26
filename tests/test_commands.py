@@ -45,7 +45,12 @@ def test_a_command_with_no_settings_exits_2_naming_them(command: str) -> None:
         [BIN / command], env=env, capture_output=True, text=True, timeout=60, check=False
     )
     assert done.returncode == entry.EXIT_SETTING
-    assert done.stderr.strip() == "ithildin: ITHILDIN_SETTINGS names no settings file"
+    worker = command.removeprefix("ithildin-")
+    assert done.stderr.splitlines() == [
+        "ithildin: ITHILDIN_SETTINGS names no settings file",
+        f"ALARM {worker}: ITHILDIN_SETTINGS names no settings file. Fix it, then start the "
+        "unit again",
+    ]
 
 
 GOOD = {
@@ -686,7 +691,7 @@ def test_a_worker_handed_a_release_file_and_no_boot_is_released_by_nothing(tmp_p
 def test_each_command_ends_with_the_code_its_core_returns(command: str, monkeypatch) -> None:
     from ithildinruntime.runtime.supervisor import Outcome
 
-    monkeypatch.setattr(entry, "_settings", lambda: "settings")
+    monkeypatch.setattr(entry, "_settings", lambda component="ithildin": "settings")
     monkeypatch.setattr(entry, "_stop_on_sigterm", lambda: "stop")
     monkeypatch.setattr(entry, "serve", lambda settings, component, stop: 40 + len(component))
     monkeypatch.setattr(entry, "supervise", lambda settings, stop: Outcome(4, "stalled"))
