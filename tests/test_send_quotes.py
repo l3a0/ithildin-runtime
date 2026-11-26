@@ -271,3 +271,36 @@ def test_an_abandon_the_store_refuses_is_named_in_the_halt_and_the_alarm() -> No
     # An order has no stored end, so the halt promises nothing of the next decision.
     assert "next decision trades" not in result.halt.reason
     assert made.submits() == []
+
+
+@pytest.mark.parametrize(("refused", "halts"), [("the second", True), ("each", False)])
+def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
+    refused: str, halts: bool
+) -> None:
+    """A plan with one order ended and one with no entry is unfinished, and one with none is not."""
+    made = world()
+    at = early(DAYS[1])
+    made.ready(at, PAIR)
+    made.clock.at = at + timedelta(seconds=20) + TICK
+
+    def before(number: int, op: str, key: str) -> None:
+        if op != "create" or not key.startswith("journal/"):
+            return
+        kinds = made.kinds()
+        if (refused == "each" and "decision" in kinds[-1:]) or kinds[-1:] == ["abandoned"]:
+            raise StoreUnavailable(key, "the store's own text")
+
+    made.store.before = before
+    result = made.send_attempt()
+    assert result.halt is not None and "next decision trades" not in result.halt.reason
+    made.store.before = lambda number, op, key: None
+    sent = list(made.submits())
+    later = early(DAYS[2])
+    made.ready(later, PAIR, recover=False)
+    recovered = made.recover()
+    if halts:
+        assert recovered.halt is not None
+        assert f"the decision at {at.isoformat()} is not settled" in recovered.halt.reason
+        return
+    assert recovered.halt is None, recovered.halt.reason
+    assert made.submits() == sent

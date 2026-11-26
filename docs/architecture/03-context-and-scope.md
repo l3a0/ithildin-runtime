@@ -495,11 +495,14 @@ fault, so no such fault hides behind another quote's margin. Where every one pas
 at `now` and one would not last the margin, the decision halts, nothing is asked or sent, and
 every order of the plan is journaled `Abandoned` where the journal takes each entry.
 An `abandoned` the store refuses is named in the halt, which then says nothing of the
-next decision.
+next decision. The next recover reads what the journal holds, and halts where the plan
+is unfinished, as [What a plan a crash left unfinished is](06-runtime.md#what-a-plan-a-crash-left-unfinished-is)
+says.
 
 On shadow and paper that halt holds no account, and neither does a quote that reaches
 its maximum after the gate and before the broker call, because each quote was a price
-when the gate judged it. The next decision trades on its own quotes. On live, as with
+when the gate judged it. Once every order of the plan has ended, the next decision
+trades on its own quotes. On live, as with
 every cause, the account is held until the owner clears it.
 
 The check narrows the case of one leg sent without its partner, and does not close
