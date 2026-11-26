@@ -196,7 +196,7 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
 
 
 def test_the_runs_record_is_pinned(traded) -> None:
-    """The orders, the fills, the journal's head and the last book, as the run of COMMIT gave.
+    """The orders, the fills, the journal's head and the last book, as the run of 359263c gave.
 
     The head is pinned by its record, since each entry's bytes name the
     process's writer, which is drawn afresh at each start.
