@@ -7,7 +7,8 @@ strategy's forecast and schedule. `send_attempt` runs the send stage once and re
 its result unstored, and `send` stores it as the loop does.
 
 `Gatekeeper` stands in for the gate where a case needs it to answer one way at
-the plan's ask and another at the send, or to raise.
+the plan's ask and another at the send, or to raise. `rebuilt` asks the real gate
+again about every `verdict` the journal holds, from what that entry names alone.
 """
 
 from __future__ import annotations
@@ -29,18 +30,26 @@ from ithildinruntime.core import (
     TARGET_OUTPUT,
     BlobHeader,
     BlobRef,
+    Book,
     Broker,
     Constraints,
     DecisionResult,
+    GateInputs,
     Halt,
+    HaltRecord,
+    HardCaps,
     Limit,
     OutputFile,
     Retry,
     SendOutcome,
+    Snapshot,
     StageKind,
+    StopState,
     StrategyConfig,
     TargetPortfolio,
+    Valuation,
     Verdict,
+    decode,
     decode_output,
     encode,
     encode_output,
@@ -50,10 +59,13 @@ from ithildinruntime.core import (
     sha256_of,
 )
 from ithildinruntime.execution.account import Account
+from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from ithildinruntime.execution.send import OUTCOME_OUTPUT, SendStage
+from ithildinruntime.journal import Journal, VerdictEntry, record_of
 from ithildinruntime.risk import Gate
 from ithildinruntime.runtime.loop import Item
 from tests.support import gates
+from tests.support.fake_broker import FakeBroker
 from tests.support.recover_world import HASHES, RecoverWorld, Waits
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT
 
@@ -103,13 +115,58 @@ class Gatekeeper:
         return self._gate.loss(*args, **kwargs)
 
 
-@dataclass
-class SendWorld(RecoverWorld):
-    strategies: tuple[StrategyConfig, ...] = field(default_factory=lambda: (strategy(),))
+@dataclass(eq=False)
+class CheckedBroker(FakeBroker):
+    """The simulated broker behind the fake broker's four refusals.
+
+    Each submit is checked against the stored journal as `FakeBroker` checks
+    it, and then reaches the simulator unchanged. Every read is the
+    simulator's. A refusal fails the test through tests/conftest.py's fixture.
+    """
+
+    to: SimulatedBroker | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.keeper = Gatekeeper(Gate(gates.fitting(self.constraints, self.caps)))
+        to = self.to
+        assert to is not None
+        self.answer = lambda intent, number: to.submit(intent)
+
+    @property
+    def _sim(self) -> SimulatedBroker:
+        assert self.to is not None
+        return self.to
+
+    def positions(self):
+        return self._sim.positions()
+
+    def open_orders(self):
+        return self._sim.open_orders()
+
+    def account(self):
+        return self._sim.account()
+
+    def fills(self, since: datetime):
+        return self._sim.fills(since)
+
+    def activities(self, since: datetime):
+        return self._sim.activities(since)
+
+    def lookup(self, broker_order_id: str):
+        return self._sim.lookup(broker_order_id)
+
+
+@dataclass
+class SendWorld(RecoverWorld):
+    strategies: tuple[StrategyConfig, ...] = field(default_factory=lambda: (strategy(),))
+    # The constraints of each strategy but the first, which `constraints` holds, in risk's file.
+    others: tuple[Constraints, ...] = ()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        records = [r for c in (self.constraints, *self.others) for r in gates.fitting(c, self.caps)]
+        self.gate = Gate(tuple(records))
+        self.keeper = Gatekeeper(self.gate)
         self.account = self.fresh_account()
 
     def fresh_account(self, writer: str | None = None) -> Account:
@@ -150,10 +207,26 @@ class SendWorld(RecoverWorld):
             result = self.recover()
             assert result.halt is None, result.halt.reason
         quiet, self.store.quiet = self.store.quiet, True
-        self._file(at, RISK_STAGE, CONSTRAINTS_OUTPUT, Constraints, self.constraints)
+        self._files(
+            at, RISK_STAGE, CONSTRAINTS_OUTPUT, Constraints, (self.constraints, *self.others)
+        )
         wanted = targets if targets is not None else {CHAN: {gates.GLD: 0, gates.USO: 0}}
         self.targets(at, wanted)
         self.store.quiet = quiet
+
+    def _files(self, at: datetime, stage: str, name: str, kind: type, made: tuple) -> BlobRef:
+        """A stage's file of several entries, and its result, stored as `_file` stores one."""
+        ref = self._file(at, stage, name, kind, made[0])
+        if len(made) == 1:
+            return ref
+        data = self.store.blobs[ref.key]
+        header = decode_output(data, kind).header
+        data = encode_output(kind, OutputFile(header, made, False))
+        self.store.put(ref.key, data)
+        ref = BlobRef(ref.key, sha256_of(data))
+        result = DecisionResult(header, (ref,), None)
+        self.store.put(result_key(DEPLOYMENT, self.run, at, stage), encode(result))
+        return ref
 
     def targets(
         self, at: datetime, wanted: Mapping[str, Mapping[str, object]], named: bool = True
@@ -186,6 +259,14 @@ class SendWorld(RecoverWorld):
         result = DecisionResult(header, (ref,), None)
         self.store.put(result_key(DEPLOYMENT, self.run, at, PORTFOLIO_STAGE), encode(result))
         return ref
+
+    def portfolio_halted(self, at: datetime, reason: str) -> None:
+        """Store portfolio construction's result as a halt, as the loop stores a stage's halt."""
+        self.targets(at, {})
+        key = result_key(DEPLOYMENT, self.run, at, PORTFOLIO_STAGE)
+        header = decode(self.store.blobs[key], DecisionResult).header
+        halted = DecisionResult(header, (), HaltRecord(reason, None, (), (), ()))
+        self.store.put(key, encode(halted))
 
     def sender(
         self,
@@ -226,6 +307,47 @@ class SendWorld(RecoverWorld):
         (made,) = decode_output(self.store.blobs[key], SendOutcome).entries
         return made
 
+    def rebuilt(self) -> int:
+        """Ask the real gate again about every `verdict` the journal holds, and count them.
+
+        Each is rebuilt from what its entry names alone: the book through its
+        entry number, the snapshot, the constraints and the valuation by their
+        SHA-256, the caps it holds, its time and the loss stop's state. The
+        gate is the world's, built with the stress records no entry holds. A
+        verdict the gate would now give otherwise fails the test.
+        """
+        reader = Journal(self.store, ACCOUNT)  # type: ignore[arg-type]
+        entries = [record_of(entry) for entry in reader.read()]
+        count = 0
+        for entry in entries:
+            if not isinstance(entry, VerdictEntry):
+                continue
+            name = entry.client_order_id
+            order = reader.view().orders[name].intent
+            book: Book = reader.view(through=entry.book).book
+            (snapshot,) = self._entries(entry.snapshot, Snapshot)
+            (limits,) = [
+                c
+                for c in self._entries(entry.constraints, Constraints)
+                if c.strategy == order.strategy
+            ]
+            (valuation,) = self._entries(entry.valuation, Valuation)
+            handed = GateInputs(
+                caps=decode(entry.caps, HardCaps),
+                valuation=valuation,
+                stop=StopState(entry.stop),
+                close_entry=entry.close_entry,
+            )
+            again = self.gate.check(order, book, snapshot, limits, handed, entry.now)
+            assert again == entry.verdict, name
+            count += 1
+        return count
+
+    def _entries[T](self, ref: BlobRef, kind: type[T]) -> tuple[T, ...]:
+        data = self.store.blobs[ref.key]
+        assert sha256_of(data) == ref.sha256, ref.key
+        return decode_output(data, kind).entries
+
     def states(self) -> dict[str, str]:
         """Each order of the journal by its id, in its state."""
         return {name: str(o.state) for name, o in self.view().orders.items()}
@@ -238,4 +360,4 @@ class SendWorld(RecoverWorld):
         return found
 
 
-__all__ = ["CHAN", "Gatekeeper", "SendWorld", "strategy"]
+__all__ = ["CHAN", "CheckedBroker", "Gatekeeper", "SendWorld", "strategy"]
