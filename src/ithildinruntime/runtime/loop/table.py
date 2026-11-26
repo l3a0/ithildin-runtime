@@ -34,11 +34,17 @@ _ANY_DECISION = datetime(2000, 1, 3, tzinfo=UTC)
 
 @dataclass(frozen=True)
 class Stage:
-    """One stage: its name, its kind, the stages whose results it reads, its order and strategy.
+    """One stage: its name and kind, the stages it reads and follows, its order and strategy.
 
     `keeps_order` marks a stage that reads a book the decision before changed,
     such as execution's two stages and monitoring's reconcile. Its decision N
     starts only once its own result for decision N−1 is stored.
+
+    `follows` names the other stages whose result for decision N−1 must be
+    stored, a halt included, before this stage starts decision N, such as
+    execution's send stage for its recover stage, which reads the broker after
+    the last decision's orders went out. The first decision of a plan follows
+    nothing. It reads no such result, so `follows` is no input.
 
     `strategy` names the strategy a stage belongs to, such as a strategy's
     alpha stage, which is named `<component>/<strategy>`. A stage with no
@@ -51,10 +57,12 @@ class Stage:
     inputs: tuple[str, ...] = ()
     keeps_order: bool = False
     strategy: str | None = None
+    follows: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", StageKind(self.kind))
         object.__setattr__(self, "inputs", tuple(self.inputs))
+        object.__setattr__(self, "follows", tuple(self.follows))
         # The key builder refuses a name that cannot be part of a key.
         result_key("table", "2000-01-03", _ANY_DECISION, self.name)
         if self.strategy is not None and self.name != f"{self.component}/{self.strategy}":
@@ -142,6 +150,12 @@ class Table:
                     raise ValueError(f"stage {stage.name} reads its own result as an input")
                 if name not in by_name:
                     raise ValueError(f"stage {stage.name} reads {name}, which no row declares")
+            for name in stage.follows:
+                # A stage waits for its own result through `keeps_order`.
+                if name == stage.name:
+                    raise ValueError(f"stage {stage.name} follows itself")
+                if name not in by_name:
+                    raise ValueError(f"stage {stage.name} follows {name}, which no row declares")
         for heard in self.hears:
             if heard.component not in {s.component for s in stages}:
                 raise ValueError(f"{heard.component} hears a blob and runs no stage")
@@ -194,17 +208,17 @@ def _result_pattern(deployment: str, stage: str) -> str:
 def routes(table: Table, deployment: str) -> tuple[Route, ...]:
     """Every route a deployment needs, sorted by reader and key, each once.
 
-    A component hears the result of every stage its stages read, and the
-    result of each of its own stages that keeps the plan's order, so another
+    A component hears the result of every stage its stages read or follow, and
+    the result of each of its own stages that keeps the plan's order, so another
     instance of it learns that decision N−1 is stored. It also hears every
     control blob the table names for it.
     """
     result_key(deployment, "2000-01-03", _ANY_DECISION, "check")
     found: set[Route] = set()
     for stage in table.stages:
-        heard: Iterable[str] = stage.inputs
+        heard: Iterable[str] = (*stage.inputs, *stage.follows)
         if stage.keeps_order:
-            heard = (*stage.inputs, stage.name)
+            heard = (*heard, stage.name)
         for name in heard:
             found.add(Route(stage.component, EventKind.CREATED, _result_pattern(deployment, name)))
     for control in table.hears:

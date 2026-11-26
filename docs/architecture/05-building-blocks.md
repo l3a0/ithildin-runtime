@@ -63,7 +63,7 @@ flowchart TB
     subgraph workers["Workers, one process per module, identical in every mode"]
         direction TB
         data["Data"]
-        exec_recover["Execution, first<br/>settles orders in doubt, reads fills,<br/>positions, open orders, cash and<br/>the broker's records, then reconciles"]
+        exec_recover["Execution, first<br/>settles orders in doubt, reads positions,<br/>open orders, cash, the broker's records<br/>and fills, then reconciles"]
         mon_recon["Monitoring<br/>reconciles again,<br/>and no decision waits on it"]
         alpha["Alpha model<br/>Bollinger band"]
         risk["Risk model"]
@@ -156,8 +156,7 @@ Two groups of workers run at the same time.
 2. Alpha and cost need only the snapshot, and risk also needs the reconciled
    book, the hard caps as recover read them and the session's valuation, so the
    three models overlap. Portfolio construction reads those three files and the
-   snapshot too. That recover stores the three files is this
-   doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10).
+   snapshot too.
 
 Execution sends only what the target portfolio asks for, so nothing it sends
 can come from a snapshot or a book that is not stored yet. When it sends, it
@@ -276,7 +275,7 @@ never shares the paper account's lease.
    call, or before the decision its prices are of, halts, apart from those of
    item 9.
 8. **A price it needs and cannot read halts the call**, apart from those of item
-   9. An order past its close needs one, and so does an order it is sent. A result
+   9. An order past its close needs one, and so does an order it takes. A result
    or a snapshot that is missing, stale or of another decision gives none.
 9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
    a price, and both leave a close that needs one to the next call that reads one.
@@ -708,11 +707,12 @@ classDiagram
         BOTH
         SELL
     }
-    class BrokerAccount {
-        +dict positions
-        +list open_orders
-        +Decimal cash
-        +datetime read_at
+    class AccountRead {
+        +PositionsRead positions
+        +OrdersRead open_orders
+        +CashRead cash
+        +datetime since
+        +FillsRead fills
     }
     class Valuation {
         +date session
@@ -1089,7 +1089,9 @@ classDiagram
         +put(StageKind, key, data, attempt) Stored
         +put_result(key, DecisionResult) DecisionResult
         +exists(key) bool
+        +keep(key, data) BlobRef
         +read_blob(key) bytes
+        +find_blob(key) bytes or None
         +read_result(key, decision_at) DecisionResult
         +read_output(result_key, DecisionResult, BlobRef, decision_at, entry) OutputFile
         +announce(key) bool
@@ -1138,12 +1140,18 @@ classDiagram
         +dict fills
         +list disputes
         +Book book
+        +repeats(Fill) Repeat
+        +acknowledged(broker_order_id) OrderRecord or None
     }
     class Account {
         -Journal journal
         -RiskGate gate
         -Controls controls
+        +str alias
         +path(Broker, report) OrderPath
+        +view(report) View
+        +record(View, record, report) View
+        +alarm(reason, report) str
         +settle(report)
         +unstored() list
     }
@@ -1172,7 +1180,7 @@ classDiagram
     }
     class core {
         <<module>>
-        +reconcile(Book, BrokerAccount) list
+        +reconcile(Book, orders, AccountRead) tuple
     }
 
     Journal o-- BlobStore
@@ -1339,7 +1347,7 @@ Five rules hold whatever a step does.
 1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again. Its state is the answer, apart from one left `Intended` or `Approved`, which halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
 2. **One acknowledgement sends one order.** The account holds the acknowledgement of each `sending` entry its own journal gave, and the private submit takes it out before it does anything else. So one that was used, belongs to another order or was made up from the journal's bytes sends nothing. The journal could not tell a second use apart, because an order whose answer was not stored is still `Sending`.
 3. **No approval and no `sending` is recorded on a book that moved.** Each is the entry right after the one it was decided on. A number another writer took ends the order `abandoned` and halts the decision. After the `sending`, an entry stops the order where it moves this order, halts the book or is a newer `decision`. Any other does not, because the gate counted every open order at its worst case.
-4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which [#145](https://github.com/l3a0/ithildin-runtime/issues/145) and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stages call before their first view. Nothing is sent while it still fails. An alarm about a kept entry that could not be sent is tried again at each of those too, until it goes out or the process ends, and one that fails again halts nothing. Any other alarm of the path is tried once, and its own halt says where it could not be sent. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, or the other way round, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. One exception is an answer the journal refused and whose `in_doubt` landed in its place, with its bytes, before the journal moved on. It is done, with an alarm that says both. An order that may have a `sending` stored and was stopped before the call is kept the same way, because only that process knows nothing left. An alert channel that raises anything at all changes none of this, and neither does a clock read after the call. An error the path does not expect, such as `SystemExit` from the store, may be left to replay: an answer already given stays kept, an order not yet called is left in the state its last stored entry gives it, and the worker's own alarm says the error and names no order. Three answers are let go with no entry of their own bytes, each where another writer has since said what became of the order: an accepted order whose `ack` is already journaled under the same id, a rejection of an order already `Rejected`, and one read as a doubt that is already settled, whose alarm names both. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) is the first to write such entries, and it says where those bytes go.
+4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which recover and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stage call before their first view, and the worker once more as its loop ends. Nothing is sent while it still fails. An alarm about a kept entry that could not be sent is tried again at each of those too, until it goes out or the process ends, and one that fails again halts nothing. An alarm a stage or the worker sends through `Account.alarm` is kept and tried again the same way, and the worker's last error names one still owed. Any other alarm of the path is tried once, and its own halt says where it could not be sent. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, or the other way round, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. One exception is an answer the journal refused and whose `in_doubt` landed in its place, with its bytes, before the journal moved on. It is done, with an alarm that says both. An order that may have a `sending` stored and was stopped before the call is kept the same way, because only that process knows nothing left. An alert channel that raises anything at all changes none of this, and neither does a clock read after the call. An error the path does not expect, such as `SystemExit` from the store, may be left to replay: an answer already given stays kept, an order not yet called is left in the state its last stored entry gives it, and the worker's own alarm says the error and names no order. Three answers are let go with no entry of their own bytes, each where another writer has since said what became of the order: an accepted order whose `ack` is already journaled under the same id, a rejection of an order already `Rejected`, and one read as a doubt that is already settled, whose alarm names both. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) is the first to write such entries, and it says where those bytes go.
 5. **Every call halts unless the broker's `alias` names the journal's account.** Nothing raises while an account is built, because a worker that fails to start is restarted by the host and read by no person.
 
 ##### How a call names an order
@@ -1348,7 +1356,7 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 
 ##### How a late fill is still fetched
 
-`fills(since)` takes a time before any fill not yet journaled, whose rule is [#145](https://github.com/l3a0/ithildin-runtime/issues/145)'s, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id.
+`fills(since)` takes a time before any fill not yet journaled, as [From when fills are read](06-runtime.md#from-when-fills-are-read) says, so a fill the broker posts late is still fetched, and some fills are read twice. Each applies once, under its broker's fill id. `View.repeats` says which of the three a fill is.
 
 1. A repeat with the same broker's order, instrument, shares, price and time is skipped. The other fields may differ, because a second endpoint may leave one out or write it another way.
 2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
@@ -1392,14 +1400,26 @@ A read that fails raises `BrokerUnavailable`, which takes the error or its type,
 
 ##### One function lists the differences from the broker
 
-One reconciliation function in `core`, `core.reconcile(book, broker_account)`, lists the differences. Four stages call it.
+One reconciliation function in `core`, `core.reconcile(book, orders, account)`, lists every difference between a book and a broker's account. `account` is the `AccountRead` the caller stored, and `orders` are the journal's records of the book's open orders, because a book's open order carries no broker's id. It computes nothing it was not handed and reads no clock. Four stages call it.
 
 1. Execution's recover stage.
-2. Execution's send-stage sync.
-3. Execution's reconcile after the close.
-4. Monitoring's reconcile stage.
+2. Execution's send-stage sync ([#146](https://github.com/l3a0/ithildin-runtime/issues/146)).
+3. Execution's reconcile after the close ([#151](https://github.com/l3a0/ithildin-runtime/issues/151)).
+4. Monitoring's reconcile stage ([#11](https://github.com/l3a0/ithildin-runtime/issues/11)).
 
-Each decides only what to do with the differences. Execution journals its own outcomes and halts on the rest, and monitoring alarms. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how `core.reconcile` receives a takeover's stored order list, so it can flag a late order.
+Each decides only what to do with the differences. Execution journals its own outcomes and halts on the rest, and monitoring alarms. Each caller first halts where a read did not come whole, because a missing row would read as a difference of its own. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how `core.reconcile` receives a takeover's stored order list, so it can flag a late order.
+
+Every figure is compared exactly, with no tolerance.
+
+**Table:** What `core.reconcile` compares, in the order it lists the differences
+
+| What | How the two sides are matched | What counts as a difference |
+| --- | --- | --- |
+| Positions | By instrument, the sum of every strategy's book against the broker's. An instrument the book does not hold is zero there | Other shares. An instrument the broker does not list agrees with a sum of zero alone |
+| Open orders | By the broker's order id | Another instrument, signed shares, filled total, client order id, type or time in force, a broker's state other than working, an order on one side alone, one the broker lists twice, and two records the caller hands that hold one broker's id. A record of no order the book holds open is left out, so a caller hands every order that has not ended. An order the book holds open with no record handed in, or with a record that holds no broker's id, such as one that is `Approved`, is on the book's side alone |
+| Cash | One figure each | Any other figure |
+
+What a difference says to a person holds none of the broker's text. It shows an instrument where that is a name, a broker's order id where it is one the journal takes, and a client order id where it is a stamp of the platform's. The broker's own words are in `account.json`.
 
 ##### How the broker's rate limit is shared
 
@@ -1658,7 +1678,7 @@ It reads four files, each holding one entry.
 | File | Stored by | Holds |
 | --- | --- | --- |
 | `snapshot.json` | Data | The decision's `Snapshot` |
-| `book.json` | Execution's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | The decision's `Book` |
+| `book.json` | Execution's recover stage | The decision's `Book` |
 | `caps.json` | The same | The `HardCaps` as recover parsed them, with the owner's blob named by its key and SHA-256 in the file's header |
 | `valuation.json` | The same | The session's `Valuation`, which gives V |
 
@@ -1810,7 +1830,7 @@ It reads the result of every stage below before it opens any file, in this order
 | File | Stored by | What portfolio construction takes from it |
 | --- | --- | --- |
 | `snapshot.json` | Data | Each leg's price |
-| `book.json`, `valuation.json` and `caps.json` | Execution's recover stage, by this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10) | Which instruments each strategy holds or has an order in, the session V was valued at, and the stress move and the share step |
+| `book.json`, `valuation.json` and `caps.json` | Execution's recover stage | Which instruments each strategy holds or has an order in, the session V was valued at, and the stress move and the share step |
 | `constraints.json` | Risk | Each strategy's limits, one `Constraints` per strategy |
 | `forecast.json` | Each strategy's alpha stage | The basket and its direction |
 | `schedule.json` | Each strategy's cost stage | Nothing yet. A strategy with no readable schedule halts, and no estimate is weighed, because every one is zero in slice 1 |
@@ -1887,7 +1907,7 @@ Risk's stage halts on two strategies in one deployment, so a target for each of 
 
 ##### How a type travels
 
-Every type that crosses between workers has a file form, `BrokerAccount` and `SendOutcome` included. Each travels as an output file that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and that its component's `DecisionResult` lists. A test writes each one and reads it back unchanged. A deterministic component's format is canonical, so the same inputs give the same bytes, as [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) defines. Prices and quantities cross between workers as decimals, never floats, for the same reason.
+Every type that crosses between workers has a file form, `AccountRead` and `SendOutcome` included. Each travels as an output file that begins with a `BlobHeader`, naming its inputs by key and SHA-256, and that its component's `DecisionResult` lists. A test writes each one and reads it back unchanged. A deterministic component's format is canonical, so the same inputs give the same bytes, as [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) defines. Prices and quantities cross between workers as decimals, never floats, for the same reason.
 
 ##### How a halt crosses a worker's edge
 
@@ -2007,12 +2027,12 @@ An arrow means "may import". The diagram draws four rules.
      - the one codec and key builders that [File formats and keys](08-crosscutting-concepts.md#file-formats-and-keys) describes;
    - the calendar function, the lookups of the session a decision belongs to and of the one before it, and the plan builder, which read the trading sessions from a committed data file rather than a calendar library, as [Which clock a schedule follows](08-crosscutting-concepts.md#which-clock-a-schedule-follows-and-how-it-becomes-utc) says;
    - `require_utc`, the check that a time is UTC;
-   - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage and the three files risk and portfolio construction read, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
-   - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result;
+   - the names of data's stage and its snapshot, of the alpha and cost components and their output files, of the risk stage and its constraints, of execution's recover stage, its capture and the three files risk and portfolio construction read, of the portfolio stage and its two files, of the daily interval and of a price kind no source states, so a stage that reads them imports no other worker's module;
+   - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result. A capturing stage also stores a capture before it judges it, and goes on from its own stored files in a second attempt;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `moves`, `largest_move` and `stress_vintage`, which measure the stress move and name the bars it read, the tracked stress records and their reader, and `hold_to_record`, which holds the caps to them, because the gate, the risk model and portfolio construction each call it;
    - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and the alpha model's signal reads the price its position is sized at, `quote_faults`, `require_quote`, `readable_until` and `midpoint`, the one judge of a quote, the last moment one can be read and the price read of one, with `CLOCK_BOUND`, the bound added to every age, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
-   - `reconcile`, the one comparison of a book with the broker's account.
+   - `reconcile`, the one comparison of a book and the journal's records of its open orders with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**

@@ -35,7 +35,6 @@ apart from a halt `core.Storage` raises on a decision's files or the hard caps.
 
 from __future__ import annotations
 
-import re
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -80,6 +79,7 @@ from ithildinruntime.core import (
     encode,
     error_name,
     held,
+    is_broker_id,
     journal_entry_key,
     load_sessions,
     parse_caps,
@@ -90,6 +90,8 @@ from ithildinruntime.core import (
     to_utc,
 )
 from ithildinruntime.journal import (
+    DOUBTFUL,
+    NOT_SENT,
     RAW_LIMIT,
     AbandonedEntry,
     AckEntry,
@@ -121,9 +123,8 @@ _NUMBERS = 100
 # How long one pass of a submit's checks may take, in seconds, for its first read to still hold
 # at its last.
 _PASS = 5.0
-_BROKER_ID = re.compile(r"[A-Za-z0-9:_-]{1,128}")
-_NOT_SENT = frozenset({OrderState.INTENDED, OrderState.APPROVED})
-_DOUBTFUL = frozenset({OrderState.SENDING, OrderState.IN_DOUBT})
+_NOT_SENT = NOT_SENT
+_DOUBTFUL = DOUBTFUL
 
 
 def quietly(report: Callable[[], None]) -> Callable[[], None]:
@@ -210,7 +211,8 @@ class Unstored:
     An order's fate is known here alone once the broker has answered, so an
     entry stays until the journal takes it or shows that it already knows. An
     alarm about one that could not be sent waits in a queue of its own, which
-    each `settle` tries once through, and halts nothing.
+    each `settle` tries once through, and halts nothing. So does one sent through
+    `alarm`, as `Account.alarm` sends a stage's and the worker's.
     """
 
     def __init__(
@@ -349,6 +351,15 @@ class Unstored:
         if not self._alarm(reason, report):
             kept.added = ". An alarm about it could not be sent"
 
+    def alarm(self, reason: str, report: Callable[[], None]) -> bool:
+        """Send one alarm, or queue it to be tried at each later settle, and say whether it went."""
+        return self._alarm(reason, report)
+
+    def unsent(self) -> tuple[str, ...]:
+        """Each alarm this process still owes, in the order it was raised."""
+        with self._lock:
+            return tuple(self._alarms)
+
     def _alarm(self, reason: str, report: Callable[[], None]) -> bool:
         """Send one alarm, or queue it, and say whether it was sent."""
         sent = not _alarm(self._alerts, reason)
@@ -416,6 +427,15 @@ class Shared:
     # Each `sending` entry whose order the broker was called with, by its number.
     called: set[int] = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def alarm(self, reason: str) -> str:
+        """Send one alarm, and say what a halt adds where it could not be sent."""
+        return _alarm(self.alerts, reason)
+
+    def outage(self, reason: str) -> Halt:
+        """A store that did not answer, alarmed here, since no halt blob could be stored either."""
+        reason = f"{reason}. The owner's step: {self.storage.owner_step}"
+        return Halt(f"{reason}{self.alarm(reason)}")
 
 
 class _Last(NamedTuple):
@@ -951,7 +971,7 @@ class OrderPath:
             reason = f"its answer is longer than {RAW_LIMIT} bytes"
         elif differs := _differs(answer.order, ack):
             reason = f"the broker's copy differs in {', '.join(differs)}"
-        elif ack.outcome == Outcome.ACCEPTED and not _BROKER_ID.fullmatch(broker or ""):
+        elif ack.outcome == Outcome.ACCEPTED and not is_broker_id(broker):
             reason = "the broker's id is one the journal refuses"
         elif contradicts := _contradicts(ack):
             reason = contradicts
@@ -1104,9 +1124,7 @@ class OrderPath:
         raise Halt(f"{name} lost its number {_STARTS_OVER + 1} times")
 
     def _outage(self, reason: str) -> Halt:
-        """A store that did not answer, alarmed here, since no halt blob could be stored either."""
-        reason = f"{reason}. The owner's step: {self._shared.storage.owner_step}"
-        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
+        return self._shared.outage(reason)
 
     def _past(self, reading: LossReading) -> Halt:
         reason = (
@@ -1198,7 +1216,7 @@ def _stop_reason(state: StopState, error: str) -> str:
 
 def _shown(broker_order_id: str) -> str:
     """A broker's id as an alarm shows it, where it is one the journal would take."""
-    return broker_order_id if _BROKER_ID.fullmatch(broker_order_id) else "id the journal refuses"
+    return broker_order_id if is_broker_id(broker_order_id) else "id the journal refuses"
 
 
 def _text(reason: str) -> str:

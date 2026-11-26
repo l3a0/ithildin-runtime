@@ -38,7 +38,7 @@ from ithildinruntime.journal import (
     kind_of,
 )
 from ithildinruntime.journal.book import after
-from ithildinruntime.journal.orders import DOUBTFUL, ENDED, MOVES, OPEN, Move
+from ithildinruntime.journal.orders import DOUBTFUL, ENDED, MOVES, NOT_SENT, OPEN, Move
 from tests.support.journals import (
     ACCOUNT,
     AT,
@@ -244,6 +244,7 @@ def test_3_the_table_holds_no_other_move() -> None:
         OrderState.PARTLY_FILLED,
     }
     assert DOUBTFUL == {OrderState.SENDING, OrderState.IN_DOUBT}
+    assert NOT_SENT == {OrderState.INTENDED, OrderState.APPROVED}
     assert ENDED == set(OrderState) - OPEN - {OrderState.INTENDED}
     for move, start in MOVES:
         assert start not in ENDED, (move, start)
@@ -434,9 +435,9 @@ NAME = ONE.client_order_id
         (
             fill("new", "b1", 1, client_order_id="ith-x"),
             2,
-            "names the order 'ith-x', and its broker's order",
+            "names another client order id than",
         ),
-        (fill("new", "b1", 1, client_order_id=""), 2, "names the order '', and its broker's order"),
+        (fill("new", "b1", 1, client_order_id=""), 2, "names another client order id than"),
         (fill("new", "b2", 1), 2, "of the broker's order b2, which no order was"),
         (fill("new", "b1", 1), 3, "names entry 3, which is no read before it"),
         (fill("new", "b1", 1), 9, "names entry 9, which is no read before it"),

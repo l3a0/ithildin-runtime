@@ -14,7 +14,7 @@ from types import MappingProxyType
 
 from ithildinruntime.core import Halt, OrderState
 
-__all__ = ["DOUBTFUL", "ENDED", "MOVES", "OPEN", "Move", "moved"]
+__all__ = ["DOUBTFUL", "ENDED", "MOVES", "NOT_SENT", "OPEN", "Move", "moved"]
 
 
 class Move(StrEnum):
@@ -55,6 +55,8 @@ MOVES: Mapping[tuple[Move, OrderState | None], OrderState] = MappingProxyType(
 OPEN = frozenset({_S.APPROVED, _S.SENDING, _S.IN_DOUBT, _S.ACKNOWLEDGED, _S.PARTLY_FILLED})
 # An order in one of these may or may not be with the broker.
 DOUBTFUL = frozenset({_S.SENDING, _S.IN_DOUBT})
+# An order in one of these has no `sending`, so nothing of it can have left.
+NOT_SENT = frozenset({_S.INTENDED, _S.APPROVED})
 # No entry moves an order out of one of these.
 ENDED = frozenset({_S.REFUSED, _S.ABANDONED, _S.FILLED, _S.REJECTED, _S.EXPIRED})
 

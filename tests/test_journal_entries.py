@@ -390,24 +390,24 @@ BIG = b"x" * RAW_LIMIT
         (expired(NAME, 0, BIG + b"x", cut=True), "raw has 65537 bytes"),
         (ack(NAME, "a"), None),
         (ack(NAME, "a" * 128), None),
-        (ack(NAME, "a" * 129), "is not a broker's id"),
-        (ack(NAME, ""), "'' is not a broker's id"),
+        (ack(NAME, "a" * 129), "the broker's order id is not a broker's id"),
+        (ack(NAME, ""), "the broker's order id is not a broker's id"),
         (ack(NAME, "20261103::a_B-9"), None),
-        (ack(NAME, "a.b"), "'a.b' is not a broker's id"),
-        (ack(NAME, "a b"), "is not a broker's id"),
-        (ack(NAME, "a\n"), "is not a broker's id"),
-        (ack(NAME, "é"), "is not a broker's id"),
+        (ack(NAME, "a.b"), "the broker's order id is not a broker's id"),
+        (ack(NAME, "a b"), "the broker's order id is not a broker's id"),
+        (ack(NAME, "a\n"), "the broker's order id is not a broker's id"),
+        (ack(NAME, "é"), "the broker's order id is not a broker's id"),
         *(
             case
             for make in (filled, disputed)
             for case in (
                 (make(fill("f" * 128)), None),
-                (make(fill("f" * 129)), "is not a broker's id"),
-                (make(fill("")), "'' is not a broker's id"),
-                (make(fill("f/1")), "'f/1' is not a broker's id"),
+                (make(fill("f" * 129)), "the fill's id is not a broker's id"),
+                (make(fill("")), "the fill's id is not a broker's id"),
+                (make(fill("f/1")), "the fill's id is not a broker's id"),
                 (make(fill("f", "b" * 128)), None),
-                (make(fill("f", "b" * 129)), "is not a broker's id"),
-                (make(fill("f", "")), "'' is not a broker's id"),
+                (make(fill("f", "b" * 129)), "the broker's order id is not a broker's id"),
+                (make(fill("f", "")), "the broker's order id is not a broker's id"),
                 (make(fill("f", price="0.0001")), None),
                 (make(fill("f", qty="0.000000001")), None),
                 (make(fill("f", qty="-0.000000001")), None),
@@ -420,8 +420,8 @@ BIG = b"x" * RAW_LIMIT
         # A dispute moves nothing, so it keeps what came.
         (disputed(fill("f", price="0")), None),
         (disputed(fill("f", qty="0")), None),
-        (filled(fill("f", correction_id="c")), "the fill f is the correction 'c'"),
-        (filled(fill("f", correction_id="")), "the fill f is the correction ''"),
+        (filled(fill("f", correction_id="c")), "the fill f carries a correction's id"),
+        (filled(fill("f", correction_id="")), "the fill f carries a correction's id"),
         # What a correction means is #151's, so a disputed one is kept as it came.
         (disputed(fill("f", correction_id="c")), None),
         *(
