@@ -2,9 +2,9 @@
 
 `LakeSource` implements `core.DataSource` over the mirror, the live bucket, the
 security master, the two kind contracts and `core.sessions`. Every mode runs it,
-and the modes differ only in the buckets it reads and the clock the stage
-waits on. A snapshot holds only bars whose end and knowable time are at or
-before the decision.
+and the modes differ only in the buckets it reads, the clock the stage waits
+on and, with that clock, whether it is measured. A snapshot holds only bars
+whose end and knowable time are at or before the decision.
 
 How one decision is read, in order.
 
@@ -70,6 +70,10 @@ halts before either bucket is called, because a quote read under none is stale.
 A fault in the read of the quotes never takes the snapshot's place.
 `_quote_halts` gives each one, and each reason a quote cannot be read, once the
 snapshot is stored.
+
+After the last answer the read waits on, the source takes the clock's reading,
+which the snapshot holds. `core.clock_faults` judges it, and its faults come
+first among the reasons the decision halts.
 """
 
 from __future__ import annotations
@@ -104,6 +108,7 @@ from ithildinruntime.core import (
     Snapshot,
     SpikeFlag,
     Timer,
+    clock_faults,
     exceeds_places,
     from_received,
     load_sessions,
@@ -244,6 +249,7 @@ class LakeSource:
         live: Bucket,
         clock: Clock,
         timer: Timer,
+        measured: bool,
         sessions: SessionTable | None = None,
         master: SecurityMaster | None = None,
         kinds: PriceKinds | None = None,
@@ -254,6 +260,7 @@ class LakeSource:
         self._settings = settings
         self._clock = clock
         self._timer = timer
+        self._measured = measured
         self._sessions = sessions or load_sessions()
         self._days = sorted(self._sessions.sessions)
         self._master = master or load_master()
@@ -266,14 +273,20 @@ class LakeSource:
         """The instruments every snapshot of this source must hold."""
         return tuple(self._settings.instruments)
 
+    @property
+    def measured(self) -> bool:
+        """Whether this run measures its clock, so a reading of nothing is a fault."""
+        return self._measured
+
     def snapshot(self, decision_at: datetime) -> Snapshot:
         """The port's read, which halts on any reason a stored snapshot would halt on.
 
         `core.DataSource` returns a snapshot alone, so a caller of this method
-        never sees `Reading.halts`. A missing, stale or unstated input, a bar
-        whose prices contradict each other, two bars of one instrument that
-        are of two series, or a quote that cannot be read, therefore raises here
-        rather than come back as a snapshot that reads as usable.
+        never sees `Reading.halts`. A clock past a bound, a missing, stale or
+        unstated input, a bar whose prices contradict each other, two bars of one
+        instrument that are of two series, or a quote that cannot be read,
+        therefore raises here rather than come back as a snapshot that reads as
+        usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
         """
         reading = self.read(decision_at)
@@ -332,6 +345,8 @@ class LakeSource:
                     found = quote_flags(quote, session.day, held, settings.spike_multiple)
                     if found:
                         flags[instrument] = flags.get(instrument, ()) + found
+            # After the last answer the read waited on, so it judges the clock the read ended on.
+            clock = self._clock.reading()
             snapshot = Snapshot(
                 decision_at=decision_at,
                 bars=bars,
@@ -345,11 +360,12 @@ class LakeSource:
                 rows=quoted.rows if quoted else {},
                 faults=quoted.faults if quoted else (),
                 quotes_read_at=quoted.read_at if quoted else None,
+                clock=clock,
             )
             halts.extend(_quote_halts(snapshot, settings.instruments, self._sessions))
             return Reading(
                 snapshot,
-                tuple(halts),
+                (*clock_faults(clock, measured=self._measured), *halts),
                 root.manifest_bytes,
                 seconds,
                 segments_listed=quoted.listed if quoted else 0,
@@ -635,7 +651,9 @@ class LakeSource:
         return BarStatus.FRESH, None
 
 
-def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str, ...]:
+def judge(
+    snapshot: Snapshot, instruments: Sequence[InstrumentId], *, measured: bool
+) -> tuple[str, ...]:
     """Every reason a stored snapshot halts its decision, read from the snapshot alone.
 
     Data's stage uses it on the capture that counts when a later read differs,
@@ -644,24 +662,26 @@ def judge(snapshot: Snapshot, instruments: Sequence[InstrumentId]) -> tuple[str,
     and halts on any other, so `judge` repeats this release's read under the
     settings those hashes name, data's own among them. These each halt:
 
-    1. an instrument the settings read and the snapshot does not hold;
-    2. an instrument that is not fresh, or is fresh with no bar;
-    3. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
+    1. each time server's fault in the stored reading of the clock, through the
+       same `core.clock_faults`, first;
+    2. an instrument the settings read and the snapshot does not hold;
+    3. an instrument that is not fresh, or is fresh with no bar;
+    4. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
        whose prices contradict each other, one of unstated kind, and one of
        another series than the bar before it in its own instrument;
-    4. each stored flag that is not the move rule's and that this release's
+    5. each stored flag that is not the move rule's and that this release's
        rules do not find in the bars and the quotes. Within one release they
        raise every flag stored beside them, so such a flag means the record is
        not what this release wrote. Its reason states the record as stored
        rather than guess what it meant. A flag the bars raise and the
        record lacks adds no halt of its own;
-    5. each reason `_quote_halts` gives, which is what the first delivery judges
+    6. each reason `_quote_halts` gives, which is what the first delivery judges
        its quotes by.
 
     A stored status keeps no session, so its reason names the stored snapshot
     rather than the session, and it is trusted as recorded.
     """
-    reasons: list[str] = []
+    reasons = list(clock_faults(snapshot.clock, measured=measured))
     for instrument in instruments:
         if instrument not in snapshot.status:
             reasons.append(f"{instrument} is not in the stored snapshot")

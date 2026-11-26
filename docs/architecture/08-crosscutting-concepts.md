@@ -51,6 +51,7 @@ erDiagram
         string rows "every other row the cut kept, as text"
         string faults "each reason the read failed"
         string quotes_read_at "the worker's clock, or null"
+        string clock "the reading the decision was judged by"
         string ledgers "each ledger's SHA-256"
     }
     ACCOUNT_FILE {
@@ -401,7 +402,7 @@ The simulated broker's adapter reads and writes it through a `BlobStore` the ent
 This form has four prices.
 
 1. Each call costs one read for the next number, and one more for each close it asks for, since it lets the log go to read one. On S3 a key that is not there reads as missing only to a role whose grant to list the bucket carries no prefix condition, since a read of one object carries no prefix, as `infra/test/bootstrap/roles.tf` says of the test role. To any other role it reads as access denied, and every call fails. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds each role's grant.
-2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs can differ, so the clock's bound has to stay below that time.
+2. Two instances halt on the clock where theirs differ by more than the time between their calls. One VM has one clock. Two VMs inside [the clock's bound](03-context-and-scope.md#what-halts-on-a-reading) can differ by up to twice it, so twice the bound has to stay below that time.
 3. Nothing here keeps two processes from acting at once. The account's lease does, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
 4. A process that starts reads the whole log, in turn, and reports nothing to the receive loop while it does. Two orders a decision leave three blobs, as `tests/test_simulated_log.py` counts over 100 decisions, so the 1,461 decisions of acceptance test 1 leave at most 4,384. The journal's cold read has the same shape and more entries, and [#154](https://github.com/l3a0/ithildin-runtime/issues/154) holds both.
 

@@ -46,6 +46,8 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.CashRead,
     core.RecordsRead,
     core.Segment,
+    core.TimeAnswer,
+    core.ClockReading,
 ]
 
 
@@ -112,7 +114,7 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
             # A valuation's value is its cash and its positions at their marks.
             fields["value"] = fields["cash"] = Decimal("-0.0004")
             fields["positions"] = {i: Decimal(0) for i in fields["marks"]}
-        if "received" in fields:
+        if "received" in fields and hint is not core.TimeAnswer:
             # A broker read holds at least one page.
             fields["received"] = sample(hints["received"], depth=depth + 1)
         if hint is core.PastLimit:
@@ -124,6 +126,13 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
         if hint is core.LossReading:
             # A loss past its bound is at or over it.
             fields["past"] = True
+        if hint is core.TimeAnswer and not empty:
+            # An error and an age are 0 or more, and the reply is 48 bytes as hex.
+            fields |= {"error_us": 2, "age_us": 3, "received": "24" * 48}
+        if hint is core.ClockReading and not empty:
+            # A reading holds one answer of each server.
+            first, second = fields["answers"]
+            fields["answers"] = (first, dataclasses.replace(second, server="far"))
         if hint is core.Verdict:
             # A verdict agrees with itself: one refused on net, or with nothing set, approved.
             loss = core.LossReading(Decimal(1), Decimal(2), False, date(2026, 11, 2))

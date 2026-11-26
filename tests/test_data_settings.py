@@ -423,12 +423,13 @@ def handles(lake: Path, where: Path, *strategies, store: Path | None = None):
             alerts=Alarms(),
             owner_step="none",
         ),
-        clock=HistoryClock(),
+        clock=HistoryClock(readings=None),
         timer=Timer(),
         deployment=DEPLOYMENT,
         run=RUN,
         release="r1",
         table=Table(stages=(DATA_ROW,), strategies=strategies),
+        measured=False,
     )
 
 
@@ -610,7 +611,7 @@ def test_7_one_source_reads_each_session_once_for_every_decision_of_a_run(
 
 class Waited(HistoryClock):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(readings=None)
         self.waits: list = []
 
     def wait_until(self, at, report) -> None:
@@ -647,6 +648,7 @@ def test_7_a_refused_section_halts_each_decision_through_the_loop(
         run=RUN,
         release="r1",
         table=table,
+        measured=False,
     )
     names = tuple(s.name for s in strategies)
     plan = Plan(

@@ -771,14 +771,14 @@ def test_6_a_redelivery_from_the_other_read(
 
 def test_6_a_partition_restated_and_the_bytes_of_a_backtest(day: Path, tmp_path: Path) -> None:
     for n in (1, 2):
-        made, _ = stage(day, tmp_path / str(n), clock=HistoryClock())
+        made, _ = stage(day, tmp_path / str(n), clock=HistoryClock(readings=None))
         result = made(Item(AT, "data"), Reports())
         assert result.halt is None
         path = tmp_path / str(n) / "store" / result.outputs[0].key
         if n == 1:
             first = path.read_bytes()
         assert path.read_bytes() == first
-    assert decode_output(first, Snapshot).header.format == 3
+    assert decode_output(first, Snapshot).header.format == 4
     made, alarms = stage(day, tmp_path / "r")
     made(Item(AT, "data"), Reports())
     for t in BOTH:
@@ -851,7 +851,7 @@ def test_9_a_backtest_of_an_unlisted_day_reads_segments_under_the_same_cut(
     for t in BOTH:
         segment(live, t, AT - 2 * MINUTE)
         segment(live, t, AT - MINUTE, landed)
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     clock.wait_until(AT, None)  # type: ignore[arg-type]
     snap = source(lake, tmp_path, clock=clock).read(AT).snapshot
     assert snap.provisional and snap.partitions == ()
@@ -923,7 +923,7 @@ def test_6_a_first_capture_of_the_format_before(day: Path, tmp_path: Path) -> No
     made, _ = stage(day, tmp_path)
     result = made(Item(AT, "data"), Reports())
     path = tmp_path / "store" / result.outputs[0].key
-    data = path.read_bytes().replace(b'"format":3', b'"format":2')
+    data = path.read_bytes().replace(b'"format":4', b'"format":3')
     i = data.index(b'"partitions":[')
     data = data[:i] + data[data.index(b"],", i) + 2 :]
     path.write_bytes(data)

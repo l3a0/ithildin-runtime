@@ -11,6 +11,7 @@ This page is section 3 of [the architecture](00-README.md), in the order of the 
   - [The previous session's daily bar](#the-previous-sessions-daily-bar)
   - [Orders and the two outside switches](#orders-and-the-two-outside-switches)
   - [The heartbeat](#the-heartbeat)
+  - [The time servers](#the-time-servers)
 
 ## Context: what the platform talks to
 
@@ -34,6 +35,7 @@ flowchart LR
     alerts["Alert channel"]
     heartbeat["Heartbeat service<br/>outside the machine"]
     github["GitHub<br/>code, issues, board"]
+    times["AWS's two time servers"]
 
     qt -->|"marketlake imports them once"| lake
     yahoo -->|"marketlake imports them once"| lake
@@ -43,6 +45,8 @@ flowchart LR
     broker -->|"answers, fills, positions"| loop
     loop -->|"reports, alarms"| alerts
     loop -->|"pings after each decision"| heartbeat
+    loop -->|"asks the time"| times
+    times -->|"answer, which nothing authenticates"| loop
     heartbeat -->|"alarms when a ping is late"| alerts
     alerts --> owner
     owner -->|"controls the live environment and its pin"| loop
@@ -402,7 +406,7 @@ capture host says why.
 
 #### What is checked before deciding
 
-The data worker runs its own minimum checks before anything decides. Nine checks halt or flag a decision.
+The data worker runs its own minimum checks before anything decides. Beside the check on its clock, which [The time servers](#the-time-servers) describes, nine checks halt or flag a decision.
 
 1. A quote that is absent, or that [the judge of a quote](#how-a-quote-is-judged) gives any reason against, halts the decision.
 2. A segment whose bytes do not hash to the SHA-256 the bucket stored with it, on a second download too, halts it, and so does a sealed quotes partition whose bytes differ from the manifest or that holds no row of the session's equity close.
@@ -451,10 +455,12 @@ owner writes the value.
 
 `core.CLOCK_BOUND` is one second, and it is added to every age, because the
 machine's clock can be off by that much. A written maximum under ten of them is
-refused, so the bound is never more than a tenth of the age it guards. Until
-[#134](https://github.com/l3a0/ithildin-runtime/issues/134) measures the machine's
-offset, a machine whose clock runs further behind than the bound reads an old
-quote as fresh. Schwab's clock and the capture host's have no published bound.
+refused, so the bound is never more than a tenth of the age it guards. Data's stage
+halts a decision whose clock is past the bound, as [The time
+servers](#the-time-servers) says. Until [#165](https://github.com/l3a0/ithildin-runtime/issues/165)
+checks the clock before each submit, one that goes wrong after that read makes an
+old quote read as fresh at the gate. Schwab's clock and the capture host's have no
+published bound.
 
 ##### When the age is measured
 
@@ -717,3 +723,109 @@ The alert channel is how an alarm reaches the owner, and it has three routes.
 3. **Email through an SNS topic** goes with two alarms, the promotion check and the live drill check, which say that a scheduled job stopped running, and with the test account's budget alarm. [Email on two checks](07-deployment.md#environment-rule-9-email-on-two-checks) says how.
 
 A ping says only that a decision finished. The jobs [Faults are expected](../design.md#faults-are-expected-and-the-platform-checks-itself-while-it-runs) lists, such as the daily report, run apart from a decision and get no check of their own. Monitoring reads each job's age and pages through the alert channel, as that section says.
+
+### The time servers
+
+A machine's clock drifts, and nothing on the machine can see it. The clock dates every quote and every order, so a clock 317 seconds slow reads a quote 380 seconds old as fresh. So the platform asks two outside servers the time, over NTP, the Network Time Protocol, and halts where it cannot show that its clock is right. chrony, the program AWS's Linux images already run, sets the clock. The platform only measures it, and asks chrony nothing.
+
+#### Which servers are asked, and what is read from them
+
+**Table:** The two time servers
+
+| Server | Whose | Asked every |
+| --- | --- | --- |
+| `169.254.169.123` | AWS's, at a [link-local address](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-ec2-ntp.html), so the traffic stays inside the environment's own network | 16 seconds |
+| `time.aws.com.` | AWS's, on the public internet. Its trailing dot keeps a resolver from adding a search domain | 64 seconds |
+
+[Both smear a leap second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html), meaning each spreads it out rather than jumping, so they agree through one. An ask that fails is asked again after 2 seconds, then 4, doubling up to the server's own interval.
+
+Each process that judges the clock asks for itself, on one thread per server, and keeps each server's last answer in memory. The code that does this is the sampler, `TimeServers` in `adapters/time_servers.py`. So no handler waits on the network, and a name lookup that hangs holds up neither the other server nor the order path. No cancel waits on a first answer. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) and [#165](https://github.com/l3a0/ithildin-runtime/issues/165) hold when each process starts its threads, waits for a first answer and stops them. [Who judges the clock](#who-judges-the-clock-and-who-records-it) names the processes.
+
+#### How one answer is read
+
+The figure below is a C4 dynamic diagram of one ask.
+
+```mermaid
+sequenceDiagram
+    participant P as Sampler's thread
+    participant K as Raw clock and wall clock
+    participant T as Time server
+    P->>K: reads m1 from the raw clock
+    P->>K: reads w1 from the wall clock
+    P->>K: reads m2 from the raw clock
+    P->>T: sends 48 bytes, 8 of them random
+    Note over T: stamps the request's arrival T2<br/>and the reply's departure T3
+    T-->>P: returns those 8 bytes, T2 and T3
+    P->>K: reads m4 from the raw clock
+    Note over P: works out the offset and its error
+```
+
+The raw clock, `CLOCK_MONOTONIC_RAW`, is the one clock on a Linux machine that no time service adjusts. chrony corrects the wall clock by running it faster or slower, and Linux's ordinary monotonic clock with it, so elapsed time measured on that one would hide the correction.
+
+1. **The address.** An address written out is asked as it is. A name is looked up before any stamp is taken, and its first address has to be a global one, so a poisoned or misconfigured answer cannot point the ask inside the network.
+2. **The packet.** It carries nothing of the machine. Its 8 random bytes come back in the reply, so a reply sent before the ask, or to another one, is refused.
+3. **The socket.** It is connected to the one address, so the system drops a reply from any other. It waits at most one second.
+4. **The offset.** It is the machine's clock less the server's, so a slow clock reads negative. `t4` is `w1` plus the raw time the exchange took, so a step of the wall clock during the exchange cannot enter it.
+
+   ```text
+   delay  = (m4 - m1) - (T3 - T2)
+   offset = ((w1 - T2) + (t4 - T3)) // 2
+   error  = ceil(delay / 2) + ceil(root_delay / 2) + root_dispersion + (m2 - m1) + 2
+   ```
+
+5. **The error.** It is how far off the offset can be: half the time on the network, what the server says of its own error, the gap around the wall clock's stamp, and 2 microseconds of rounding.
+
+Everything is whole microseconds. A reply is refused, and the last answer kept, where it is not 48 bytes, is not a server's reply in version 3 or 4, says its server is unsynchronised, gives a stratum of 0 or above 15, does not return the random bytes, holds a time of zero, or could not have been sent when it says. An answer whose error is past a quarter of a second is refused too, unless it proves the clock wrong all the same.
+
+#### How a reading is made from the last answers
+
+A reading reads the raw clock, the wall clock and the raw clock again, and moves each kept answer forward to now. The offset gains how far the wall clock moved against the raw one since the answer, so a step or a correction shows at the next reading, whoever made it. The error gains the gap between the two raw stamps and what a clock may drift since the answer, at the 500 parts per million Linux allows, which is at most 0.15 seconds over 300. The age is the raw time since the ask began. `ClockReading` holds one `TimeAnswer` per server, with the reply's bytes as they arrived.
+
+#### What halts on a reading
+
+`core.clock_faults` is the one rule, and gives each server's first fault in this order.
+
+**Table:** What faults a server's answer
+
+| Fault | What the reason names |
+| --- | --- |
+| The server has given no answer | The server, and why the newest ask to end failed, or that none has ended |
+| The answer is older than `SYNC_BOUND`, 300 seconds | The server, the age, the bound, and why the newest ask to end failed, or that none has ended since |
+| The offset, taken as positive, plus its error is past `CLOCK_BOUND`, one second | The server, the offset, whether the clock is slow or fast, the error and the bound |
+
+At a bound is no fault. An ask that hangs or a thread that dies after a failed ask still shows that failure, so a reason cannot tell a stuck thread from a server that stays out. A reading with no answers at all, which a history clock gives, is none only where the run was told it does not measure its clock, as [Who judges the clock](#who-judges-the-clock-and-who-records-it) says.
+
+The bound on an answer's age, 300 seconds, is about four asks of the slower server. Both servers have to be fresh and within the bound, so there is no vote to win. A forged or broken answer from one can only halt, apart from hiding what neither of the machine's clocks shows, such as a pause of the virtual machine, until the other server's next answer, or for 300 seconds without one. Both forged hide any fault.
+
+#### Who judges the clock, and who records it
+
+**Table:** Each reader of the clock's reading
+
+| Reader | When | Where the reading is recorded | Built on |
+| --- | --- | --- | --- |
+| Data's stage | Once a decision, after the last answer its read waits on | `Snapshot.clock`, stored before the halt | [#134](https://github.com/l3a0/ithildin-runtime/issues/134) |
+| Execution | At both reads of each submit's controls | As [#165](https://github.com/l3a0/ithildin-runtime/issues/165) proposes | [#165](https://github.com/l3a0/ithildin-runtime/issues/165) |
+| Monitoring | From Startup through the session | As [#11](https://github.com/l3a0/ithildin-runtime/issues/11) proposes | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
+
+Until [#165](https://github.com/l3a0/ithildin-runtime/issues/165) is built, nothing judges the clock against a time server between data's read and a submit. A later capture whose own clock is past a bound halts nothing in data, because the first capture counts. It raises the alarm that names the difference, and the check [#165](https://github.com/l3a0/ithildin-runtime/issues/165) holds is what stops an order then. The receive loop judges no clock, because it serves cancels and the stages that read no clock, and a halt there would stop both.
+
+Whether a run measures its clock is `measured`, which data's handler takes with no default. Shadow, paper and live hand it true, so a history clock wired into a trading run halts. A backtest, the first run over past sessions and the command that measures a stress move hand it false. A replay of a recorded session hands `HistoryClock` the readings that session recorded, passes the `measured` that session passed, and the one rule judges them as it did then. Those readings are data's, each from the capture that counts for its decision.
+
+#### What nothing here can see
+
+1. A pause of the virtual machine that stops both of its clocks, until the next answer. That is about 17 seconds with both servers answering, about 65 with the public one alone, and up to the 300 seconds of `SYNC_BOUND` with neither.
+2. An error common to both of Amazon's servers. The comparison with the broker's clock, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) holds, is the check that is not Amazon's, and shadow has no broker.
+3. A pause of a little over a second where the paths to both servers are slow. The simulation on [#134](https://github.com/l3a0/ithildin-runtime/issues/134)'s plan, which no test holds, left one unfaulted for most of `SYNC_BOUND`, with the true error under 2 seconds.
+4. A step of the clock inside data's read that leaves it right by the end. The reading judges the clock as the read ended, and a stamp the read took before the step is wrong.
+
+#### What measuring the clock costs
+
+The price is seven things.
+
+1. Two threads in each instance of three components, six processes on slice 1's one machine and nine across a cluster. At nine processes an environment sends at most 33.8 asks a minute to the link-local server and 8.4 to the public one while every ask is answered, and more while they fail. AWS allows [1,024 packets a second](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configure-ec2-ntp.html) to its link-local services together, and no page of its read here states a limit for the public one.
+2. A reply of 48 bytes that nothing authenticates, parsed in the process that holds the broker key.
+3. Outbound UDP 123 and DNS, for the public server. Its address comes from a lookup nothing authenticates, so the rule that lets it out reaches any address unless [#32](https://github.com/l3a0/ithildin-runtime/issues/32) can pin the server's.
+4. A 300-second outage of either server, or of DNS for the public one, halts. Each halt is final for its decision, its exits included. Nobody has measured how often that happens, so shadow reports it first, on [#166](https://github.com/l3a0/ithildin-runtime/issues/166).
+5. At scale-out the first capture of a decision wins, so one VM's bad clock halts that decision for the deployment.
+6. A worker started just before a decision, with no answer by then, halts it for good.
+7. Nobody has yet asked `169.254.169.123` from inside a container, which [#166](https://github.com/l3a0/ithildin-runtime/issues/166) does first.

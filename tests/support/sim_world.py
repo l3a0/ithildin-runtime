@@ -27,6 +27,7 @@ from ithildinruntime.core import (
     BlobRef,
     BlobStore,
     BrokerState,
+    ClockReading,
     Constraints,
     DecisionResult,
     HardCaps,
@@ -178,6 +179,7 @@ class SimWorld:
             "segments": (),
             "ledgers": {},
             **read,
+            "clock": ClockReading(at, None),
         }
         return Snapshot(**fields | changes)  # type: ignore[arg-type]
 
