@@ -141,8 +141,27 @@ KIND_ROWS = (
     ]
 )
 
-# #133 adds the first, and until then every live quote halts.
-QUOTE_ROWS: list[str] = []
+_QUOTE_READ_FROM = (
+    "owner's ruling of 2026-11-26 on #133 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7199939899. Schwab's "
+    "Trader API Market Data Production specification at https://developer.schwab.com/products"
+    "/trader-api--individual/details/specifications/Market%20Data%20Production read on "
+    "2026-11-26 behind the owner's developer sign-in. Its QuoteEquity schema calls bidPrice "
+    "and askPrice the current best bid and ask price and totalVolume the shares traded "
+    "through the day including pre-market and post-market hours. It gives lastPrice no "
+    "description. It calls securityStatus the status of the security with Normal as its "
+    "example and gives no list of its values where other fields of the page give one. All 92 "
+    "quotes read in an exploratory count on 2026-11-26 read Normal. They are 24 of GLD and "
+    "USO from 2026-11-02 to 2026-11-25 and 68 of SPY and QQQ from 2026-09-15 to 2026-10-30. "
+    "marketlake's committed test recording of Schwab's answer reads Normal too. The page "
+    "gives each side a MIC code of its venue and each answer a quoteType of NBBO or NFL. "
+    "marketlake's published quote columns carry neither so the venues are unstated"
+)
+QUOTE_ROWS = [
+    "2026-11-26,marketlake:quotes,2026-09-15,2027-02-25,current best bid and ask,unstated,unstated,"
+    "shares traded through the day including pre-market and post-market hours,Normal,"
+    f"{_QUOTE_READ_FROM}"
+]
 
 
 HEAD = "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
@@ -239,6 +258,24 @@ def test_the_schwab_import_row_reads_the_kind_it_should_on_each_side_of_its_edge
         kinds.kind(SCHWAB_IMPORT, day)
         for day in (date(2026, 9, 3), date(2026, 9, 4), date(2026, 10, 30), date(2026, 11, 2))
     ] == [NOTHING, stated, stated, NOTHING]
+
+
+def test_the_quote_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
+    """The row the owner's ruling of 2026-11-26 on #133 states, until #220 renews it."""
+    kinds = load_quote_kinds()
+    # Typed again, so a typo shared by the row and its pin is still caught.
+    stated = QuoteKind(
+        "current best bid and ask",
+        "unstated",
+        "unstated",
+        "shares traded through the day including pre-market and post-market hours",
+        "Normal",
+    )
+    silent = QuoteKind(*["unstated"] * 5)
+    assert [
+        kinds.kind(day)
+        for day in (date(2026, 9, 14), date(2026, 9, 15), date(2027, 2, 25), date(2027, 2, 26))
+    ] == [silent, stated, stated, silent]
 
 
 def unnamed(kinds: PriceKinds, master: SecurityMaster) -> set[tuple[str, date]]:

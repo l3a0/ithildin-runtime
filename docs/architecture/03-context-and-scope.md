@@ -449,9 +449,11 @@ What is read is the midpoint, so it is as old as the older of the bid's stamp
 and the ask's. One stamp for both sides, such as Schwab's `quoteTime`, would let
 one side that froze pass under the other's. `last` has a stamp of its own and
 nothing here reads it. The price is a refusal when one side of a liquid fund
-stands still for longer than the maximum, which
-[#133](https://github.com/l3a0/ithildin-runtime/issues/133) counts before the
-owner writes the value.
+stands still for longer than the maximum. In
+[#133's exploratory count](https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7193657427) at close−20,
+a maximum of 180 seconds refused none of the 12 sessions of GLD and USO it could
+read from 2026-11-02 to 2026-11-25, and none of 34 of SPY and QQQ from
+2026-09-15 to 2026-10-30, for age.
 
 ##### What the clock bound covers
 
@@ -530,8 +532,12 @@ zero, holds it too.
 Venue coverage, volume counting, each side's size, the last sale, its kind and its
 stamp, and the time the request went out are recorded and halt nothing, because
 nothing reads them to decide. A side with no size therefore passes where its price,
-stamp and status do, and [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s
-measurement can count how often that happens. Unstated coverage is shown on the report.
+stamp and status do. [#133's exploratory count](https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7193657427)
+found no side with a size of zero or none among the 92 quotes it read. Unstated coverage is shown on the report.
+The quote's type, which says whether its bid and ask are the national best bid and offer,
+is neither recorded nor judged. On shadow and paper the bid and ask still read as the best
+bid and ask. A live decision may not: the conditions on [the Live step](../team-charter.md#5-release)
+ask for a row that states the type and the owner's ruling on which types live reads, which [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
 
 #### Which read a decision uses
 
