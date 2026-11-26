@@ -125,7 +125,7 @@ class Case:
         )
 
     def opened(self) -> None:
-        clock = HistoryClock()
+        clock = HistoryClock(readings=None)
         clock.wait_until(close_of(DAYS[0]), lambda: None)  # type: ignore[arg-type]
         journal = Journal(self.silent, ACCOUNT, "a" * 32)
         journal.record(journal.view(), OpeningEntry(ACCOUNT, CASH), close_of(DAYS[0]))
@@ -160,7 +160,7 @@ class Case:
             "store": self.store,
             "storage": self.storage,
             "account": ACCOUNT,
-            "clock": HistoryClock(),
+            "clock": HistoryClock(readings=None),
             "alerts": self.alarms,
             "retry": Retry(timedelta(seconds=2), 0.05, 0.2),
             "pause": lambda s: None,
