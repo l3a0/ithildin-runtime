@@ -350,8 +350,8 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
     as of 2026-11-02, reads at the second, which tests/test_data_one_scale.py pins.
     """
     (tracked,) = load_strategies(STRATEGIES, ["chan_bollinger"])
-    # The file writes no maximum age or spread of a quote yet, so these are made up.
-    settings = replace(data_settings([tracked]), quotes=LIMITS)
+    # The lake holds no quotes, so the tracked maximum age and spread judge none.
+    settings = data_settings([tracked])
     seams = (date(2026, 9, 4), date(2026, 11, 2))
     imported = made.days(date(2026, 5, 1), date(2026, 10, 30))
     captured = made.days(seams[1], date(2027, 1, 29))

@@ -83,9 +83,11 @@ def test_1_chans_file_holds_the_ruled_settings() -> None:
         first_sessions={GLD: date(2006, 4, 26), USO: date(2006, 4, 26)},
         stale_lag=0,
         spike_multiple=Decimal(10),
-        quotes={},
+        # The owner's values on #133.
+        quotes={i: QuoteLimits(180, Decimal("0.001")) for i in (GLD, USO)},
     )
     assert type(made.spike_multiple) is Decimal and str(made.spike_multiple) == "10"
+    assert all(str(q.max_spread_share) == "0.001" for q in made.quotes.values())
 
 
 # 2. Each refusal.

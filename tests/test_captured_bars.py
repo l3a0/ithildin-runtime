@@ -3,9 +3,10 @@
 Every price is made up and drawn from a seeded generator. The lake is one
 marketlake's own import writes, with captured bars written as marketlake writes
 one, and each decision runs data's and alpha's stages under the tracked
-strategy and the tracked price-kind rows. The strategy's file writes no maximum
-age or spread of a quote yet, and no quote-kind row is tracked, so those are
-made up too. The numbers in each test's name are the acceptance items' numbers.
+strategy and the tracked price-kind rows. The quotes are made up, so the maximum
+age and spread they are judged under, and their quote-kind row, are the
+fixtures' own rather than the tracked ones. The numbers in each test's name are
+the acceptance items' numbers.
 """
 
 from __future__ import annotations
