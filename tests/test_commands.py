@@ -54,6 +54,7 @@ GOOD = {
     "lake_prefix": "lake",
     "pin": "PIN",
     "release_file": "/tmp/release",
+    "credentials": "/tmp/credentials",
 }
 
 
@@ -87,13 +88,14 @@ def test_good_settings_read_the_environment_from_the_release_table(
     assert settings.environment.mode is Mode.SHADOW
     assert settings.boot == "0f3c9b8e-1d2a-4c5b-9e6f-7a8b9c0d1e2f"
     assert settings.release() == "sha256:abc"
-    assert (settings.credentials, settings.heartbeat) == (None, None)
+    assert (settings.credentials, settings.heartbeat) == (Path("/tmp/credentials"), None)
 
 
 @pytest.mark.parametrize(
     ("values", "raw", "said"),
     [
         ({k: v for k, v in GOOD.items() if k != "mirror"}, None, "has no mirror"),
+        ({k: v for k, v in GOOD.items() if k != "credentials"}, None, "has no credentials"),
         (GOOD | {"mirror": ""}, None, "gives mirror no text"),
         (GOOD | {"mirror": "  "}, None, "gives mirror no text"),
         (GOOD, "WRONG_TYPE", "gives environment no text"),
@@ -102,7 +104,17 @@ def test_good_settings_read_the_environment_from_the_release_table(
         (GOOD | {"environment": "live"}, None, "knows no environment 'live', only shadow"),
         (GOOD, "environment = [", "is not TOML"),
     ],
-    ids=["missing", "empty", "blank", "wrong type", "empty optional", "extra", "unknown", "toml"],
+    ids=[
+        "missing",
+        "no credentials",
+        "empty",
+        "blank",
+        "wrong type",
+        "empty optional",
+        "extra",
+        "unknown",
+        "toml",
+    ],
 )
 def test_a_setting_that_is_missing_or_malformed_is_named(
     tmp_path: Path, boot: Path, values, raw, said: str
@@ -317,6 +329,10 @@ def test_a_plan_of_another_mode_halts_the_worker(tmp_path: Path) -> None:
     _store_plan(worker, Mode.PAPER)
     with pytest.raises(Halt, match="a plan for paper, and this worker runs shadow"):
         entry.wait_for_plan(worker)
+    # Its command alarms and ends with its own code rather than a traceback.
+    assert entry.run_alpha(worker) == entry.EXIT_PLAN
+    (alarm,) = worker.alerts.reasons  # type: ignore[attr-defined]
+    assert "a plan for paper, and this worker runs shadow, so it runs nothing" in alarm
 
 
 def test_a_stop_asked_while_the_loop_runs_ends_it_with_code_0(tmp_path: Path) -> None:
@@ -333,3 +349,25 @@ def test_a_stop_asked_while_the_loop_runs_ends_it_with_code_0(tmp_path: Path) ->
     worker.stop.set()
     thread.join(15)
     assert not thread.is_alive() and ended == [0]
+
+
+def test_a_worker_waits_for_the_release_file_as_well_as_the_plan(tmp_path: Path) -> None:
+    import dataclasses
+    import threading
+
+    release = tmp_path / "local" / "release"
+    worker = dataclasses.replace(_idle_worker(tmp_path, Mode.SHADOW), release_file=release)
+    _store_plan(worker, Mode.SHADOW)
+    found: list[object] = []
+    thread = threading.Thread(target=lambda: found.append(entry.wait_for_plan(worker)), daemon=True)
+    thread.start()
+    thread.join(0.5)
+    # The plan is stored and the supervisor has not yet finished its hold.
+    assert thread.is_alive() and found == []
+    release.parent.mkdir(parents=True)
+    release.write_text("sha256:other\n")
+    thread.join(0.5)
+    assert thread.is_alive(), "a file naming another release is not this plan's"
+    release.write_text("sha256:r\n")
+    thread.join(5)
+    assert not thread.is_alive() and found and found[0].release == "sha256:r"

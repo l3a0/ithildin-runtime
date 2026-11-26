@@ -11,10 +11,12 @@ what CI tests is what a VM runs.
 How a worker runs, in order.
 
 1. **It waits for its run's plan.** A worker that starts before the supervisor
-   has stored the plan reads the plan's key every `PLAN_EVERY` seconds, beating
-   its heartbeat, and never exits for want of it, as design.md's `### Rule 7:
-   how a run starts` says. `ReceiveLoop` and every handler take the plan's run
-   and release when they are built, so they are built once it is read.
+   has stored the plan, or before the local release file names the plan's
+   release, reads both every `PLAN_EVERY` seconds, beating its heartbeat, and
+   never exits for want of them, as design.md's `### Rule 7: how a run starts`
+   says. The supervisor writes that file only after its hold check.
+   `ReceiveLoop` and every handler take the plan's run and release when they
+   are built, so they are built once it is read.
 2. **It builds its handlers and its loop.** Data's and execution's entry points
    start the time servers first and stop them after, and data's measures its
    clock outside a backtest, so no trading decision halts on "no time server
@@ -24,13 +26,22 @@ How a worker runs, in order.
 
 Each command ends with one of these codes, which #202's units read.
 
-- 0: the run's stop is stored, or SIGTERM ended the process, or a day with no
+- 0: the run's stop is stored, or SIGTERM ended a worker, or a day with no
   session started nothing.
-- 2: a setting is missing or malformed, named in one line on standard error.
+- 2: a setting is missing or malformed, or the credential file it names cannot
+  be read, named in one line on standard error.
 - 3: the supervisor halted the run, which stores no stop.
 - 4: the supervisor found a result still missing an hour after the close.
 - 5: the hold check after an unclean stop could not finish, so no worker starts.
-- 6: the supervisor could not store its run's plan.
+- 6: the supervisor could not store its run's plan, or a worker found a plan it
+  cannot read or one of another mode. Each alarms.
+- 7: SIGTERM ended the supervisor before the run's stop was stored, so nothing
+  watches the rest of the session.
+
+#202's units restart a process that ends with 1 or 7, and give the supervisor's
+unit `RestartPreventExitStatus=3 4 5 6`, because a restart into the same halt,
+stall, failed hold or plan raises the same alarm again and spends the day's
+restarts.
 - 1, or any other: a failure, whose traceback goes to the host's journal.
 """
 
@@ -49,6 +60,7 @@ from zoneinfo import ZoneInfo
 from ithildinruntime.adapters import (
     TIME_SERVERS,
     AwsClients,
+    CredentialFileError,
     LogAlerts,
     S3Store,
     SqsQueue,
@@ -91,6 +103,7 @@ from .settings import SettingError, Settings, read_settings
 from .supervisor import Supervisor
 
 __all__ = [
+    "EXIT_PLAN",
     "EXIT_SETTING",
     "PLAN_EVERY",
     "RETRY",
@@ -113,6 +126,7 @@ __all__ = [
 ]
 
 EXIT_SETTING = 2
+EXIT_PLAN = 6
 PLAN_EVERY = 5.0
 # Below the loop's 30-second heartbeat limit, since `core.Storage` reports
 # nothing while it tries a read again, as runtime/execution_worker.py says.
@@ -151,10 +165,18 @@ class Worker:
     pause: Callable[[float], None] = time.sleep
     stress_moves: Path = STRESS_MOVES
     plan_every: float = PLAN_EVERY
+    # The local release file, which the supervisor writes once its hold check is done.
+    release_file: Path | None = None
 
 
 def wait_for_plan(worker: Worker) -> Plan | None:
-    """The run's plan once it is stored, or `None` once SIGTERM asked the process to stop."""
+    """The run's plan once it is stored, or `None` once SIGTERM asked the process to stop.
+
+    Where the worker is handed the local release file, it also waits until that
+    file names the plan's release. The supervisor writes it only after its hold
+    check, so a worker started early, or after a lost machine whose plan is
+    already stored, sends nothing before every strategy that needs one is held.
+    """
     key = plan_key(worker.deployment, worker.run)
     while not worker.stop.is_set():
         worker.beat()
@@ -173,9 +195,20 @@ def wait_for_plan(worker: Worker) -> Plan | None:
                     f"{key} is a plan for {plan.mode.value}, and this worker runs "
                     f"{worker.mode.value}"
                 )
-            return plan
+            if _released(worker.release_file, plan.release):
+                return plan
         worker.stop.wait(worker.plan_every)
     return None
+
+
+def _released(path: Path | None, release: str) -> bool:
+    """Whether the local release file names `release`, or no file is handed in."""
+    if path is None:
+        return True
+    try:
+        return path.read_text().strip() == release
+    except OSError:
+        return False
 
 
 def _serve(
@@ -184,7 +217,12 @@ def _serve(
     handlers_for: Callable[[Plan], Mapping[str, Handler]],
     run: Callable[[ReceiveLoop], None] | None = None,
 ) -> int:
-    plan = wait_for_plan(worker)
+    try:
+        plan = wait_for_plan(worker)
+    except Halt as halt:
+        # A plan this worker cannot run is no reason to restart into the same plan.
+        worker.alerts.alarm(f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing")
+        return EXIT_PLAN
     if plan is None:
         return 0
     loop = ReceiveLoop(
@@ -342,6 +380,15 @@ def _settings() -> Settings:
         raise SystemExit(EXIT_SETTING) from None
 
 
+def _clients(settings: Settings) -> AwsClients:
+    """The clients over the settings' credential file, which must be readable at the start."""
+    try:
+        return AwsClients(settings.environment.region, settings.credentials)
+    except CredentialFileError as error:
+        print(f"ithildin: {error}", file=sys.stderr)
+        raise SystemExit(EXIT_SETTING) from None
+
+
 def _stop_on_sigterm() -> threading.Event:
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -360,7 +407,7 @@ def _beat(path: Path | None) -> Callable[[], None]:
 
 def _worker(settings: Settings, component: str, stop: threading.Event) -> tuple[Worker, AwsClients]:
     place = settings.environment
-    clients = AwsClients(place.region, settings.credentials)
+    clients = _clients(settings)
     timer = SystemTimer()
     alerts = LogAlerts(component)
     store = S3Store(clients.s3(), place.bucket)
@@ -388,6 +435,7 @@ def _worker(settings: Settings, component: str, stop: threading.Event) -> tuple[
         alerts=alerts,
         beat=_beat(settings.heartbeat),
         stop=stop,
+        release_file=settings.release_file,
     )
     return worker, clients
 
@@ -452,7 +500,7 @@ def supervisor_main() -> None:
         print(f"ithildin: {error}", file=sys.stderr)
         raise SystemExit(EXIT_SETTING) from None
     place = settings.environment
-    clients = AwsClients(place.region, settings.credentials)
+    clients = _clients(settings)
     timer = SystemTimer()
     alerts = LogAlerts("supervisor")
     store = S3Store(clients.s3(), place.bucket)

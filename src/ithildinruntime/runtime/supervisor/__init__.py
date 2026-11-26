@@ -53,7 +53,6 @@ from ithildinruntime.core import (
     Alerts,
     BlobHeader,
     BlobStore,
-    CodecError,
     DecisionResult,
     Halt,
     Mode,
@@ -76,15 +75,17 @@ from ithildinruntime.core import (
     run_part,
     run_stop_key,
     starts_prefix,
+    strategy_halts_prefix,
     supervisor_start_key,
 )
 from ithildinruntime.journal import DOUBTFUL, Journal
 from ithildinruntime.runtime.loop import Table
 
 from .deadline import STALL_AFTER_CLOSE, STOP_AFTER_CLOSE, past_deadline
-from .hold import HoldFailed, Starts, hold_after_unclean_stops
+from .hold import HoldFailed, Starts, hold_after_unclean_stops, who
 
 __all__ = [
+    "EXIT_ASKED",
     "EXIT_HALTED",
     "EXIT_HELD",
     "EXIT_PLAN",
@@ -100,6 +101,7 @@ EXIT_HALTED = 3
 EXIT_STALLED = 4
 EXIT_HELD = 5
 EXIT_PLAN = 6
+EXIT_ASKED = 7
 _COMPONENT = "supervisor"
 
 
@@ -133,6 +135,7 @@ class Supervisor:
         tick: float = 10.0,
         sessions: SessionTable | None = None,
         span: tuple[date, date] | None = None,
+        say: Callable[[str], None] = print,
     ) -> None:
         self._mode = Mode(mode)
         if (self._mode is Mode.BACKTEST) != (span is not None):
@@ -152,6 +155,7 @@ class Supervisor:
         self._tick = tick
         self._sessions = sessions or load_sessions()
         self._span = span
+        self._say = say
 
     @property
     def _trading(self) -> bool:
@@ -168,7 +172,7 @@ class Supervisor:
         run = run_part(self._mode, first, last)
         try:
             starts = self._start(run)
-        except (Halt, StoreError, CodecError) as error:
+        except Exception as error:
             # The hold cannot tell a lost machine from a restart, so it holds.
             starts = Starts(plan_stored=True, other_boots=("unknown",), this_boot=False)
             self._alerts.alarm(
@@ -177,7 +181,7 @@ class Supervisor:
             )
         if self._trading:
             try:
-                hold_after_unclean_stops(
+                found = hold_after_unclean_stops(
                     storage=self._storage,
                     journal=Journal(self._store, self._account, secrets.token_hex(16)),
                     mode=self._mode,
@@ -189,15 +193,41 @@ class Supervisor:
                     sessions=self._sessions,
                     now=self._timer.now,
                     alarm=self._alerts.alarm,
+                    say=self._say,
                 )
             except HoldFailed as failed:
                 return Outcome(EXIT_HELD, f"the hold check could not finish: {failed}")
+            if not found:
+                # The hold's own alarm already names what it held on this start.
+                self._name_standing_halts(today)
         try:
             plan = self._store_plan(first, last)
         except Halt as halt:
+            self._alerts.alarm(
+                f"{self._deployment}: the supervisor could not store the plan of {run}, so "
+                f"nothing watches its orders in doubt and nothing writes its stop: {halt.reason}. "
+                "A plan of another release means the pin moved during the session, and the "
+                "next session runs the new release"
+            )
             return Outcome(EXIT_PLAN, halt.reason)
         self._write_release_file(plan.release)
         return self._watch(plan)
+
+    def _name_standing_halts(self, today: date) -> None:
+        """Alarm on each strategy a halt still holds, which a later clean start never clears."""
+        held = []
+        for strategy in sorted(s.name for s in self._table.strategies):
+            try:
+                if self._store.list(strategy_halts_prefix(self._account, strategy), None):
+                    held.append(strategy)
+            except StoreError as error:
+                held.append(f"{strategy} (its halts could not be listed: {_said(error)})")
+        if held:
+            self._alerts.alarm(
+                f"{self._deployment}: on {today.isoformat()} {', '.join(held)} is still held by a "
+                "halt nobody has cleared, so it sends no new order. A person clears it with "
+                "`ithildin halt clear` once each position is confirmed at the broker"
+            )
 
     # Starting
 
@@ -257,7 +287,12 @@ class Supervisor:
             return
         self._release_file.parent.mkdir(parents=True, exist_ok=True)
         partial = self._release_file.with_name(self._release_file.name + ".partial")
-        partial.write_text(release + "\n")
+        partial.unlink(missing_ok=True)
+        # Created afresh and never through a link someone planted at its name.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        descriptor = os.open(partial, flags, 0o644)
+        with os.fdopen(descriptor, "w") as file:
+            file.write(release + "\n")
         os.replace(partial, self._release_file)
 
     # Watching
@@ -281,11 +316,13 @@ class Supervisor:
                 said = "; ".join(f"{stage} at {at:%Y-%m-%dT%H:%M}Z" for stage, at in missing)
                 self._alerts.alarm(
                     f"{self._deployment}: {plan.run} has no result for {said} an hour after the "
-                    "close, so it ends with no stop and its next start holds every strategy"
+                    "close, so the supervisor ends with no stop. The next session's start holds "
+                    "every strategy, unless the missing result lands and a restart before then "
+                    "stores the stop"
                 )
                 return Outcome(EXIT_STALLED, f"{plan.run} stalled with results missing: {said}")
             if self._wait(self._tick):
-                return Outcome(EXIT_STOPPED, f"asked to stop before {plan.run} stopped")
+                return Outcome(EXIT_ASKED, f"asked to stop before {plan.run} stopped")
 
     def _missing(
         self, run: str, stages: list[str], decisions: list[datetime], first_open: dict[str, int]
@@ -315,11 +352,13 @@ class Supervisor:
                 for order in view.live.values()
                 if order.state in DOUBTFUL
             ]
-        except (Halt, StoreError, CodecError, KeyError) as error:
+            return past_deadline(doubtful, now, self._sessions)
+        except Exception as error:
+            # Whatever fails, no order in doubt can be ruled out, so the run halts.
             return [
-                f"the journal cannot be read, so no order in doubt can be ruled out: {_said(error)}"
+                "the journal or an order's deadline cannot be read, so no order in doubt can be "
+                f"ruled out: {_said(error)}"
             ]
-        return past_deadline(doubtful, now, self._sessions)
 
     def _halt_run(
         self, plan: Plan, stages: list[str], decisions: list[datetime], late: list[str]
@@ -343,7 +382,8 @@ class Supervisor:
                 self._storage.put_result(key, self._halt_result(plan, stage, at, halt))
         self._alerts.alarm(
             f"{self._deployment}: the supervisor halted {plan.run}, so no order is sent and the "
-            f"run ends with no stop: {reason}"
+            f"run ends with no stop: {reason}. Settle each order named at the broker. The next "
+            f"session's start holds every strategy. {who(self._mode)}"
         )
         return Outcome(EXIT_HALTED, f"halted {plan.run}: {reason}")
 

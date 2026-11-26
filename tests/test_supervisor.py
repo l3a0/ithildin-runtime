@@ -50,6 +50,7 @@ from ithildinruntime.execution.controls import Controls
 from ithildinruntime.journal import Journal, PauseEntry, record_of
 from ithildinruntime.runtime.deployment import Deployment, deployment_table
 from ithildinruntime.runtime.supervisor import (
+    EXIT_ASKED,
     EXIT_HALTED,
     EXIT_HELD,
     EXIT_PLAN,
@@ -391,8 +392,8 @@ def test_an_order_in_doubt_halts_the_run_only_past_its_deadline(
     outcome = world.supervisor().run(TODAY)
     halt = world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat()))
     if step <= 0:
-        # At the deadline the order is not yet past it.
-        assert halt is None and outcome.code == EXIT_STOPPED, outcome.line
+        # At the deadline the order is not yet past it, and the test's one tick ends the start.
+        assert halt is None and outcome.code == EXIT_ASKED, outcome.line
         return
     assert outcome.code == EXIT_HALTED, outcome.line
     record = decode(halt, RunHalt)
@@ -432,7 +433,7 @@ def test_a_journal_that_cannot_be_read_halts_the_run_on_the_first_tick(world: Wo
 
     world.on_tick = spoil
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_HALTED and "the journal cannot be read" in outcome.line
+    assert outcome.code == EXIT_HALTED and "cannot be read, so no order in doubt" in outcome.line
     assert world.ticks == 1
 
 
@@ -679,11 +680,206 @@ def test_a_journal_that_cannot_be_read_holds_every_strategy_and_starts_nothing(
 def test_the_pause_record_reads_back_and_moves_nothing_in_the_book(world: World) -> None:
     world.opened()
     before = world.journal.view().book
-    pause = PauseEntry(DEPLOYMENT, "2026-10-01", AT, (CHAN,), "a test")
+    pause = PauseEntry(DEPLOYMENT, "2026-10-01", AT, (CHAN,), "a test", (), True)
     _, view = world.journal.record(world.journal.view(), pause, AT)
     _, view = world.journal.record(view, pause, AT)
     after = Journal(world.store, ACCOUNT).view()
     assert after.book.positions_by_strategy == before.positions_by_strategy
     assert after.book.cash == before.cash
-    # A second pause of one run keeps the first, and halts nothing.
-    assert after.paused == {(DEPLOYMENT, "2026-10-01"): 4}
+    # A second pause of one run is kept beside the first, and halts nothing.
+    assert list(after.pauses) == [4, 5]
+
+
+# What a person reads after each way a start ends
+
+
+def test_a_plan_that_cannot_be_stored_alarms(world: World) -> None:
+    world.opened()
+    world.ran()
+    other = Plan(1, DEPLOYMENT, TODAY.isoformat(), Mode.PAPER, "sha256:other", ())
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(other))
+    world.supervisor().run(TODAY)
+    (alarm,) = world.alarms()
+    assert "could not store the plan of 2026-10-02" in alarm and "sha256:other" in alarm
+
+
+def test_a_hold_a_failed_check_left_is_named_at_a_later_clean_start(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    bad = journal_entry_key(ACCOUNT, 4)
+    world.put(bad, b"not an entry")
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    (world.root / bad).unlink()
+    world.lines.truncate(0)
+    world.lines.seek(0)
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
+    (alarm,) = world.alarms()
+    assert f"{CHAN} is still held by a halt nobody has cleared" in alarm
+
+
+def test_a_hold_check_that_fails_mid_session_says_the_workers_run_on(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    world.put(journal_entry_key(ACCOUNT, 4), b"not an entry")
+    assert world.supervisor().run(TODAY).code == EXIT_HELD
+    (alarm,) = world.alarms()
+    assert "the workers run today's plan and no supervisor watches it" in alarm
+    assert "no worker starts" not in alarm
+
+
+def test_a_first_run_says_so_in_a_line(world: World) -> None:
+    said: list[str] = []
+    world.results()
+    world.supervisor(say=said.append).run(TODAY)
+    assert said == [
+        f"{DEPLOYMENT}: account {ACCOUNT} has no journal entry, so this first run holds nothing"
+    ]
+
+
+def test_a_halted_runs_alarm_says_what_to_do_and_who_clears_it(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    world.supervisor().run(TODAY)
+    (alarm,) = world.alarms()
+    assert "Settle each order named at the broker" in alarm
+    assert "The next session's start holds every strategy" in alarm
+    assert "The operator clears it" in alarm
+
+
+def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results(stages=STAGES[:-1])
+    world.timer.at = CLOSE
+    world.supervisor().run(TODAY)
+    (alarm,) = world.alarms()
+    assert "unless the missing result lands and a restart before then stores the stop" in alarm
+
+
+def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_ASKED and "asked to stop before" in outcome.line
+    assert _stop_of(world) is None
+
+
+# A pause covers only what it names
+
+
+def _start_on(world: World, boot: str, count: int = 1, day: date = TODAY) -> None:
+    run = day.isoformat()
+    record = SupervisorStart(RUN_RECORD_FORMAT, DEPLOYMENT, run, boot, count, RELEASE, OPEN)
+    world.put(supervisor_start_key(DEPLOYMENT, run, boot, count), encode(record))
+
+
+def _clear(world: World) -> None:
+    for strategy in (CHAN, OTHER):
+        folder = world.root / strategy_halts_prefix(ACCOUNT, strategy)
+        for path in folder.glob("*.json") if folder.exists() else ():
+            path.unlink()
+
+
+def test_a_second_lost_machine_after_a_cleared_hold_holds_again(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    _start_on(world, "boot-a")
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    # B finds A lost, holds and pauses. A person clears the hold.
+    world.supervisor(boot="boot-b").run(TODAY)
+    assert len(world.pauses()) == 1 and world.held()
+    _clear(world)
+    # Then B is lost too, and C starts on a third boot.
+    world.supervisor(boot="boot-c").run(TODAY)
+    pauses = world.pauses()
+    assert [p.boots for p in pauses] == [("boot-a",), ("boot-b",)]
+    assert world.held(), "the second lost machine holds again"
+
+
+def test_a_run_paused_in_its_session_that_then_ends_uncleanly_holds_at_the_next(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran(stopped=False)
+    _start_on(world, "boot-a", day=YESTERDAY)
+    # Yesterday's run was paused for a lost machine, mid-session, and the hold cleared.
+    from ithildinruntime.journal import PauseEntry as Pause
+
+    mid = Pause(DEPLOYMENT, YESTERDAY.isoformat(), AT, (CHAN,), "lost", ("boot-a",), False)
+    world.journal.record(world.journal.view(), mid, AT)
+    world.results()
+    world.supervisor().run(TODAY)
+    pauses = world.pauses()
+    assert [(p.run, p.ended) for p in pauses] == [
+        (YESTERDAY.isoformat(), False),
+        (YESTERDAY.isoformat(), True),
+    ]
+    assert world.held()
+    # Each pause's halts sit at keys of their own, so a cleared first one is never reused.
+    second = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, AT, 2)
+    assert world.blob(second) is not None
+
+
+def test_an_error_nobody_foresaw_in_the_hold_check_holds(world: World, monkeypatch) -> None:
+    world.opened()
+    world.ran()
+
+    def broken(self):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(Journal, "view", broken)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HELD and "RuntimeError: a bug" in outcome.line
+    assert world.blob(strategy_halt_key(ACCOUNT, CHAN, COMPONENT, CAUSE, OPEN, 1)) is not None
+
+
+def test_a_stray_start_record_key_reads_as_a_lost_machine_and_holds(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    world.put(f"runs/{DEPLOYMENT}/{TODAY}/starts/boot-a/notes.json", b"{}")
+    world.timer.at = OPEN
+    world.most_ticks = 1
+    world.supervisor().run(TODAY)
+    assert world.held()
+    assert any("start records of 2026-10-02 could not be read" in a for a in world.alarms())
+
+
+def test_a_deadline_that_cannot_be_computed_halts_the_run(world: World, monkeypatch) -> None:
+    from ithildinruntime.runtime import supervisor as module
+
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = OPEN
+
+    def broken(*args, **kwargs):
+        raise module.Halt("the session table ends")
+
+    monkeypatch.setattr(module, "past_deadline", broken)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HALTED and "the session table ends" in outcome.line
+    assert world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat())) is not None
+
+
+def test_the_release_file_is_never_written_through_a_planted_link(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    target = world.root.parent / "elsewhere"
+    target.write_text("untouched\n")
+    local = world.root / "local"
+    local.mkdir(parents=True)
+    (local / "release.partial").symlink_to(target)
+    world.supervisor().run(TODAY)
+    assert target.read_text() == "untouched\n"
+    assert (local / "release").read_text() == f"{RELEASE}\n"
+    assert not (local / "release").is_symlink()

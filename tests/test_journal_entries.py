@@ -133,8 +133,8 @@ SAMPLES: tuple[Record, ...] = (
     unmatched_fill(FULL),
     unmatched_order(foreign()),
     unmatched_order(foreign("x2", -3, client_order_id=NAME, type=None, time_in_force=None)),
-    PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing"),
-    PauseEntry("paper", "2026-11-02", None, (), "the run's stop could not be read"),
+    PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing", (), True),
+    PauseEntry("paper", "2026-11-02", None, (), "a machine was lost", ("b-1", "b-2"), False),
 )
 
 
@@ -179,7 +179,7 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         unmatched_order(foreign()),
     ]
     given += [read(AT + timedelta(days=1)), decision(at=AT + timedelta(days=1))]
-    given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "the run's stop is missing")]
+    given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "no stop", (), True)]
     view = journal.view()
     kept = []
     for record in given:
@@ -745,6 +745,8 @@ def _committed() -> list[tuple[Record, datetime]]:
             datetime(2026, 9, 30, 19, 40, tzinfo=UTC),
             (CHAN, OTHER),
             "the run's stop is missing",
+            (),
+            True,
         ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]

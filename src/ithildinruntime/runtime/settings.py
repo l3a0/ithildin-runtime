@@ -16,8 +16,9 @@ The file is TOML with these keys, each a machine value no tracked file holds.
    07-deployment.md's `### Rule 5` says. It holds the release's digest.
 5. `release_file`, the local release file the supervisor writes, which starts
    the workers through the host's path unit.
-6. `credentials`, the AWS credential file of this unit's user. Optional, and
-   the default chain is read without it, as on a laptop.
+6. `credentials`, the AWS credential file of this unit's user, which is the one
+   credential the unit's clients read, as `adapters/clients.py` says. Every
+   environment the release's table names runs on a VM, so it is required.
 7. `heartbeat`, the local file a worker touches while it is healthy, which the
    host's watchdog reads. Optional, and nothing is touched without it.
 
@@ -43,8 +44,16 @@ __all__ = ["BOOT_ID", "SETTINGS_VARIABLE", "SettingError", "Settings", "read_set
 
 SETTINGS_VARIABLE = "ITHILDIN_SETTINGS"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
-_REQUIRED = ("environment", "mirror", "lake_bucket", "lake_prefix", "pin", "release_file")
-_OPTIONAL = ("credentials", "heartbeat")
+_REQUIRED = (
+    "environment",
+    "mirror",
+    "lake_bucket",
+    "lake_prefix",
+    "pin",
+    "release_file",
+    "credentials",
+)
+_OPTIONAL = ("heartbeat",)
 
 
 class SettingError(Exception):
@@ -60,7 +69,7 @@ class Settings:
     pin: Path
     release_file: Path
     boot: str
-    credentials: Path | None = None
+    credentials: Path
     heartbeat: Path | None = None
 
     def release(self) -> str:
@@ -114,5 +123,6 @@ def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BO
         pin=Path(values["pin"]),
         release_file=Path(values["release_file"]),
         boot=boot,
+        credentials=Path(values["credentials"]),
         **optional,
     )

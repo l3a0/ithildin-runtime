@@ -312,6 +312,11 @@ class PauseEntry:
       it records none, which is where the pause runs from.
     - `strategies` names each strategy held, in sorted order.
     - `reason` says why the stop counts as unclean.
+    - `boots` names each boot of the machines a start of the run found lost,
+      in sorted order, and `ended` says whether the run had ended. A pause
+      covers only what it names: one written while the run still went on
+      covers those boots and not the run's own end, so a later unclean end or
+      another lost machine is paused again.
     """
 
     deployment: str
@@ -319,6 +324,8 @@ class PauseEntry:
     since: datetime | None
     strategies: tuple[str, ...]
     reason: str
+    boots: tuple[str, ...]
+    ended: bool
 
 
 Record = (
@@ -461,6 +468,10 @@ def _past_bounds(record: Record) -> Iterator[str]:
                 yield "the strategies held are not sorted, or one is named twice"
             if record.since is not None and record.since.utcoffset() != timedelta(0):
                 yield "the pause's start is not a time in UTC"
+            if list(record.boots) != sorted(set(record.boots)):
+                yield "the boots covered are not sorted, or one is named twice"
+            if record.ended == bool(record.boots):
+                yield "a pause covers either the run's end or the boots of lost machines"
         case VerdictEntry():
             yield from _blobs(record.snapshot, record.constraints, record.valuation)
             if not record.caps or not is_sha256(record.caps_sha256):

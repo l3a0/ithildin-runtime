@@ -68,7 +68,15 @@ from ithildinruntime.journal import DOUBTFUL, Journal, NumberTaken, PauseEntry, 
 
 from .deadline import cancel_cutoff
 
-__all__ = ["CAUSE", "COMPONENT", "HoldFailed", "Starts", "Unclean", "hold_after_unclean_stops"]
+__all__ = [
+    "CAUSE",
+    "COMPONENT",
+    "HoldFailed",
+    "Starts",
+    "Unclean",
+    "hold_after_unclean_stops",
+    "who",
+]
 
 COMPONENT = "supervisor"
 CAUSE = "unclean_stop"
@@ -88,6 +96,14 @@ class Unclean:
     reason: str
     since: datetime | None
     at: datetime
+    # The lost machines' boots this stop covers, or none where it is the run's own end.
+    boots: tuple[str, ...] = ()
+    # How many pauses of the run came before, so each one's halts have keys of their own.
+    count: int = 1
+
+    @property
+    def ended(self) -> bool:
+        return not self.boots
 
 
 @dataclass(frozen=True)
@@ -112,6 +128,7 @@ def hold_after_unclean_stops(
     sessions: SessionTable,
     now: Callable[[], datetime],
     alarm: Callable[[str], None],
+    say: Callable[[str], None] = print,
 ) -> tuple[Unclean, ...]:
     """Hold every strategy after each unclean stop it finds, and return those stops.
 
@@ -132,8 +149,10 @@ def hold_after_unclean_stops(
             sessions,
             now,
             alarm,
+            say,
         )
-    except (Halt, StoreError, CodecError, NumberTaken, OSError) as error:
+    except Exception as error:
+        # Any failure holds, so an error nobody foresaw never reads as nothing to hold.
         reason = error.reason if isinstance(error, Halt) else f"{type(error).__name__}: {error}"
         at = sessions.session(today).open
         held = _write_halts(
@@ -147,9 +166,15 @@ def hold_after_unclean_stops(
             quiet=True,
         )
         said = ", ".join(held) or "no strategy, since no halt could be stored"
+        if starts.plan_stored:
+            # A start in the middle of the session: the workers run today's plan already.
+            after = "the workers run today's plan and no supervisor watches it"
+        else:
+            after = "no worker starts"
         alarm(
             f"{deployment}: the check for an unclean stop could not finish, so {said} stays "
-            f"held and no worker starts: {reason}. {_who(mode)}"
+            f"held and {after}: {reason}. The strategies stay held after a later start "
+            f"succeeds. {who(mode)}"
         )
         raise HoldFailed(reason) from error
 
@@ -166,10 +191,13 @@ def _hold(
     sessions: SessionTable,
     now: Callable[[], datetime],
     alarm: Callable[[str], None],
+    say: Callable[[str], None],
 ) -> tuple[Unclean, ...]:
     view = journal.view()
     if view.through.seq == 0:
-        # An account that has never been opened has nothing to hold.
+        say(
+            f"{deployment}: account {account} has no journal entry, so this first run holds nothing"
+        )
         return ()
     found = list(_unclean(storage, view, mode, deployment, today, starts, sessions))
     if not found:
@@ -181,7 +209,16 @@ def _hold(
     held |= {o.intent.strategy for o in view.live.values()}
     names = sorted(held)
     for unclean in found:
-        _write_halts(storage, account, names, unclean.run, unclean.reason, unclean.at, now())
+        _write_halts(
+            storage,
+            account,
+            names,
+            unclean.run,
+            unclean.reason,
+            unclean.at,
+            now(),
+            count=unclean.count,
+        )
         view = _pause(journal, view, deployment, unclean, names, now)
         alarm(_alarm(mode, deployment, unclean, names, view, today, sessions))
     return tuple(found)
@@ -196,20 +233,25 @@ def _unclean(
     starts: Starts,
     sessions: SessionTable,
 ):
-    """Each run that left no clean-shutdown record and no pause names, newest first."""
-    paused = view.paused
+    """Each unclean stop no pause covers yet, newest first.
+
+    A pause covers the boots it names, or the run's own end, and nothing else.
+    """
     today_run = run_part(mode, today, today)
-    if starts.plan_stored and starts.other_boots and not starts.this_boot:
-        if (deployment, today_run) not in paused:
-            boots = ", ".join(starts.other_boots)
-            yield _judged(
-                storage,
-                view,
-                deployment,
-                today_run,
-                f"the machine running {today_run} was lost: it started on boot {boots}, "
-                "and this start is on another",
-            )
+    covered, _, made = _covered(view, deployment, today_run)
+    lost = tuple(b for b in starts.other_boots if b not in covered)
+    if starts.plan_stored and lost and not starts.this_boot:
+        boots = ", ".join(lost)
+        yield _judged(
+            storage,
+            view,
+            deployment,
+            today_run,
+            f"the machine running {today_run} was lost: it started on boot {boots}, "
+            "and this start is on another",
+            boots=tuple(sorted(lost)),
+            count=made + 1,
+        )
     opened = view.opened_at
     day = today
     while True:
@@ -220,7 +262,9 @@ def _unclean(
         if opened is not None and day < sessions.opened_by(opened).day:
             return
         run = run_part(mode, day, day)
-        if (deployment, run) in paused:
+        _, ended, made = _covered(view, deployment, run)
+        if ended:
+            # A pause written after the run ended covers it, and every run before it.
             return
         if not storage.exists(plan_key(deployment, run)):
             continue
@@ -228,7 +272,21 @@ def _unclean(
         if stop is not None and _is_stop_of(stop, deployment, run):
             return
         why = "it stored no stop" if stop is None else "its stop is not this run's stop record"
-        yield _judged(storage, view, deployment, run, f"{run} ended uncleanly: {why}")
+        yield _judged(
+            storage, view, deployment, run, f"{run} ended uncleanly: {why}", count=made + 1
+        )
+
+
+def _covered(view: View, deployment: str, run: str) -> tuple[set[str], bool, int]:
+    """The boots the run's pauses cover, whether one covers its end, and how many there are."""
+    boots: set[str] = set()
+    ended, made = False, 0
+    for pause in view.pauses.values():
+        if (pause.deployment, pause.run) == (deployment, run):
+            boots |= set(pause.boots)
+            ended = ended or pause.ended
+            made += 1
+    return boots, ended, made
 
 
 def _is_stop_of(data: bytes, deployment: str, run: str) -> bool:
@@ -239,7 +297,16 @@ def _is_stop_of(data: bytes, deployment: str, run: str) -> bool:
     return (stop.format, stop.deployment, stop.run) == (RUN_RECORD_FORMAT, deployment, run)
 
 
-def _judged(storage: Storage, view: View, deployment: str, run: str, reason: str) -> Unclean:
+def _judged(
+    storage: Storage,
+    view: View,
+    deployment: str,
+    run: str,
+    reason: str,
+    *,
+    boots: tuple[str, ...] = (),
+    count: int = 1,
+) -> Unclean:
     """The unclean run, from its last journaled decision or else its plan's first."""
     decided = [
         entry.decision_at
@@ -247,12 +314,12 @@ def _judged(storage: Storage, view: View, deployment: str, run: str, reason: str
         if (entry.deployment, entry.run) == (deployment, run)
     ]
     if decided:
-        return Unclean(run, reason, max(decided), max(decided))
+        return Unclean(run, reason, max(decided), max(decided), boots, count)
     data = storage.read_blob(plan_key(deployment, run))
     plan = decode(data, Plan)
     if not plan.decisions:
         raise Halt(f"the plan of {run} holds no decision, so no halt can name one")
-    return Unclean(run, reason, None, plan.decisions[0].at)
+    return Unclean(run, reason, None, plan.decisions[0].at, boots, count)
 
 
 def _write_halts(
@@ -264,6 +331,7 @@ def _write_halts(
     at: datetime,
     written_at: datetime,
     *,
+    count: int = 1,
     quiet: bool = False,
 ) -> list[str]:
     """Create each strategy's halt once, and return the strategies whose halt stands."""
@@ -278,7 +346,7 @@ def _write_halts(
             run=run,
             halted_at=written_at,
         )
-        key = strategy_halt_key(account, strategy, COMPONENT, CAUSE, at, 1)
+        key = strategy_halt_key(account, strategy, COMPONENT, CAUSE, at, count)
         try:
             storage.keep(key, encode(record))
         except (Halt, StoreError):
@@ -299,10 +367,18 @@ def _pause(
 ) -> View:
     """Journal the stop as a pause once, viewing again where another writer took the number."""
     for _ in range(_TRIES):
-        if (deployment, unclean.run) in view.paused:
+        boots, ended, _ = _covered(view, deployment, unclean.run)
+        if (unclean.ended and ended) or (unclean.boots and set(unclean.boots) <= boots):
+            # Another writer's pause covers this stop already.
             return view
         entry = PauseEntry(
-            deployment, unclean.run, unclean.since, tuple(strategies), unclean.reason
+            deployment,
+            unclean.run,
+            unclean.since,
+            tuple(strategies),
+            unclean.reason,
+            unclean.boots,
+            unclean.ended,
         )
         try:
             _, view = journal.record(view, entry, now())
@@ -312,7 +388,8 @@ def _pause(
     raise Halt(f"the pause of {unclean.run} lost its number {_TRIES} times to other writers")
 
 
-def _who(mode: Mode) -> str:
+def who(mode: Mode) -> str:
+    """Who clears a hold in `mode`, as an alarm says it."""
     if mode is Mode.LIVE:
         return "The owner clears it, after confirming each position at the broker"
     return "The operator clears it, after confirming each position at the broker"
@@ -348,6 +425,6 @@ def _alarm(
         f"Working orders: {'; '.join(working) or 'none'}",
         f"Orders in doubt, by client order id: {'; '.join(doubtful) or 'none'}",
         f"An order to cancel goes out at the broker by {cutoff:%H:%M} UTC today",
-        _who(mode),
+        who(mode),
     ]
     return ". ".join(parts)

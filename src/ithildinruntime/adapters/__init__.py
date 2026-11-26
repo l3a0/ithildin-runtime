@@ -8,7 +8,7 @@ the runtime's clients.
 
 from .alerts import LogAlerts
 from .bucket import FolderBucket, S3Bucket
-from .clients import AwsClients
+from .clients import AwsClients, CredentialFileError
 from .clocks import HistoryClock, SystemTimer, WallClock
 from .folder import Faults, FolderStore
 from .pipe import PipeQueue
@@ -27,6 +27,7 @@ __all__ = [
     "TIME_SERVERS",
     "AskFailed",
     "AwsClients",
+    "CredentialFileError",
     "Exchange",
     "Faults",
     "FolderBucket",
