@@ -54,6 +54,9 @@ from ithildinruntime.journal import (
     Record,
     RejectedEntry,
     SendingEntry,
+    StopClearedEntry,
+    StopFiredEntry,
+    StopStoredEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -98,6 +101,7 @@ from tests.support.journals import (
 )
 
 ONE = planned(1, 4)
+PAST = LossReading(Decimal("100.0001"), Decimal("100.0000"), True, date(2026, 9, 30))
 NAME = ONE.client_order_id
 FULL = fill(
     "f::1",
@@ -133,6 +137,12 @@ SAMPLES: tuple[Record, ...] = (
     unmatched_fill(FULL),
     unmatched_order(foreign()),
     unmatched_order(foreign("x2", -3, client_order_id=NAME, type=None, time_in_force=None)),
+    StopFiredEntry("a" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
+    StopFiredEntry(
+        "b" * 32, None, None, None, None, "stop.json holds no firing this release reads"
+    ),
+    StopStoredEntry(2, '"9b2cf535f27731c974343645a3985328"'),
+    StopClearedEntry(2),
     PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing", (), True),
     PauseEntry("paper", "2026-11-02", None, (), "a machine was lost", ("b-1", "b-2"), False),
 )
@@ -140,7 +150,7 @@ SAMPLES: tuple[Record, ...] = (
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 18
+    assert len(KINDS) == 21
 
 
 # Acceptance 1: each kind there and back.
@@ -179,6 +189,12 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         unmatched_order(foreign()),
     ]
     given += [read(AT + timedelta(days=1)), decision(at=AT + timedelta(days=1))]
+    fired = len(given) + 1
+    given += [
+        StopFiredEntry("c" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
+        StopStoredEntry(fired, "tag-1"),
+        StopClearedEntry(fired),
+    ]
     given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "no stop", (), True)]
     view = journal.view()
     kept = []
@@ -747,6 +763,17 @@ def _committed() -> list[tuple[Record, datetime]]:
             "the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack "
             "mapped",
         ),
+        # Entry 45's verdict read the day's loss past its stop, and belongs to this firing.
+        StopFiredEntry(
+            "0f" * 16,
+            "fixture",
+            "2026-10-01",
+            at,
+            stopped.loss,
+            "the day's loss read past its stop",
+        ),
+        StopStoredEntry(54, '"5d41402abc4b2a76b9719d911017c592"'),
+        StopClearedEntry(54),
         # A pause comes last, so no entry before it is written again.
         PauseEntry(
             "fixture",
@@ -830,6 +857,11 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
         "cash": format(whole._cash, "f"),
         "records": list(whole.records),
         "unmatched": [[one.seq, one.kind, one.name] for one in whole.unmatched],
+        "stop": {
+            "standing": whole.stop.standing,
+            "alone": [seq for seq, _ in whole.stop.alone],
+            "covered": sorted(whole.stop.covered),
+        },
     } == afterwards
     with pytest.raises(Halt) as halted:
         journal.replay()
@@ -861,6 +893,7 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
         },
         "fills": list(view.fills),
         "newest_sent_at": view.sent_at.isoformat(),
+        "stop_alone": [seq for seq, _ in view.stop.alone],
     } == expected
 
 

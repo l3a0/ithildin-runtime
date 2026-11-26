@@ -239,8 +239,11 @@ def test_2_the_calls_of_one_send_are_the_ones_the_steps_name() -> None:
         for name in ("result.json", f"{file}.json")
     ]
     assert names == [
+        # The settle's view, and its look for a blob of the loss stop no entry names.
         ("list", ACCOUNT),
         *(("get", f"{n:012d}.json") for n in (1, 2, 3)),
+        ("head", "stop.json"),
+        ("list", ACCOUNT),
         ("get", "caps.json"),
         ("create", "000000000004.json"),
         *control,
@@ -259,7 +262,7 @@ def test_2_the_calls_of_one_send_are_the_ones_the_steps_name() -> None:
         ("list", ACCOUNT),
         ("create", "000000000007.json"),
     ]
-    assert CALLS == len(names) and CREATES == [6, 21, 22, CALLS]
+    assert CALLS == len(names) and CREATES == [8, 23, 24, CALLS]
 
 
 @pytest.mark.parametrize("after", [False, True], ids=["before", "after"])
@@ -1844,7 +1847,11 @@ def test_8_each_try_ahead_of_the_call_ends_by_the_cutoff(step: str) -> None:
     calls = [None, *EVERY]
     number, key = {
         "first control": (0, kill_switch_key(ACCOUNT)),
-        "second view": (calls.index(("list", "journal/paper-1/"), 5), "journal/paper-1/"),
+        # Past the settle's view and the path's first, both before the caps are read.
+        "second view": (
+            calls.index(("list", "journal/paper-1/"), CAPS_READS[0]),
+            "journal/paper-1/",
+        ),
         "gate's stop": (0, loss_stop_key(ACCOUNT)),
         "verdict": (0, journal_entry_key(ACCOUNT, 5)),
         "sending": (0, journal_entry_key(ACCOUNT, 6)),
@@ -1905,7 +1912,8 @@ def test_8_the_tries_end_by_the_cutoff_and_one_at_it_is_made() -> None:
 
         world.clock.wait = wait  # type: ignore[method-assign]
         halted(world, "the intent of")
-        tries = world.store.calls[5:]
+        # Past the settle's view and its look for the blob, the path's view and the caps.
+        tries = world.store.calls[CAPS_READS[0] :]
         first = [op for op, _ in tries].index("list")
         assert sum(told[: first - 1]) == waited
         assert first == len(told[: first - 1]) + 1

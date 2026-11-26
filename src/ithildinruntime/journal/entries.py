@@ -33,6 +33,7 @@ from ithildinruntime.core import (
     Fill,
     Halt,
     JournalEntry,
+    LossReading,
     Money,
     OrderIntent,
     Quantity,
@@ -66,6 +67,9 @@ __all__ = [
     "Record",
     "RejectedEntry",
     "SendingEntry",
+    "StopClearedEntry",
+    "StopFiredEntry",
+    "StopStoredEntry",
     "UnmatchedFillEntry",
     "UnmatchedOrderEntry",
     "UnmatchedRecordEntry",
@@ -81,6 +85,8 @@ __all__ = [
 # `cut` true.
 RAW_LIMIT = 65_536
 _WRITER = re.compile(r"[0-9a-f]{32}")
+# A firing's id, drawn at random when the firing is first held.
+_FIRING = re.compile(r"[0-9a-f]{32}")
 # How much of a value from outside a halt shows, since its reason is stored and sent.
 _SHOWN = 80
 # The kinds of a broker's own record that move the book's cash with no halt: the closed list.
@@ -300,6 +306,45 @@ class UnmatchedOrderEntry:
 
 
 @dataclass(frozen=True)
+class StopFiredEntry:
+    """The account's loss stop fired, and holds until a person clears it.
+
+    docs/architecture/06-runtime.md's `#### What happens when the stop fires`
+    gives the rules the fold applies to the three kinds of the stop.
+
+    - `firing` is drawn at random when the firing is first held, and the blob
+      at `accounts/<account>/stop.json` holds it too. Two firings on one
+      reading are then two blobs, with two tags.
+    - `reading` is the day's loss past its stop, or `None` for a firing with
+      no reading, where `reason` says why.
+    - `deployment`, `run` and `decision_at` name the decision it was read at,
+      and are all `None` for a blob that names none.
+    """
+
+    firing: str
+    deployment: str | None
+    run: str | None
+    decision_at: datetime | None
+    reading: LossReading | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class StopStoredEntry:
+    """The blob with the tag `etag` holds the firing at entry `fired`."""
+
+    fired: int
+    etag: str
+
+
+@dataclass(frozen=True)
+class StopClearedEntry:
+    """A person cleared the firing at entry `fired`, whose blob is then deleted."""
+
+    fired: int
+
+
+@dataclass(frozen=True)
 class PauseEntry:
     """A run that stopped with no clean-shutdown record, journaled as a pause of the account.
 
@@ -346,6 +391,9 @@ Record = (
     | UnmatchedRecordEntry
     | UnmatchedFillEntry
     | UnmatchedOrderEntry
+    | StopFiredEntry
+    | StopStoredEntry
+    | StopClearedEntry
     | PauseEntry
 )
 
@@ -368,6 +416,9 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "unmatched_record": UnmatchedRecordEntry,
         "unmatched_fill": UnmatchedFillEntry,
         "unmatched_order": UnmatchedOrderEntry,
+        "stop_fired": StopFiredEntry,
+        "stop_stored": StopStoredEntry,
+        "stop_cleared": StopClearedEntry,
         "pause": PauseEntry,
     }
 )
@@ -476,6 +527,23 @@ def _past_bounds(record: Record) -> Iterator[str]:
             yield from _blobs(record.snapshot, record.constraints, record.valuation)
             if not record.caps or not is_sha256(record.caps_sha256):
                 yield "the caps are empty, or their SHA-256 is none"
+        case StopFiredEntry():
+            if _FIRING.fullmatch(record.firing) is None:
+                yield "the firing's id is not 32 lower case hex characters"
+            named = (record.deployment, record.run, record.decision_at)
+            if any(part is None for part in named) and any(part is not None for part in named):
+                yield "it names a part of a decision and not the whole of one"
+            if record.decision_at is not None and record.decision_at.utcoffset() != timedelta(0):
+                yield "the decision's time is not in UTC"
+            if not record.reason:
+                yield "it gives no reason"
+            if record.reading is not None and not record.reading.past:
+                yield "its reading is not past its stop"
+        case StopStoredEntry() | StopClearedEntry():
+            if record.fired < 1:
+                yield f"it names entry {record.fired}, which no journal holds"
+            if isinstance(record, StopStoredEntry) and not record.etag:
+                yield "it names no tag"
         case _:
             pass
 

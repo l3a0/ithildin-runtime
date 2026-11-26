@@ -95,8 +95,10 @@
   },
   "fills": ["sim-f-1", "sim-f-2", "f::2", "f9"],
   "newest_sent_at": "2026-10-01T19:40:42+00:00",
+  "stop_alone": [45],
   "afterwards": {
-    "through": 54,
+    "through": 57,
+    "stop": {"standing": null, "alone": [], "covered": ["\"5d41402abc4b2a76b9719d911017c592\""]},
     "cash": "97440.859552",
     "records": ["20261001::f1e2"],
     "unmatched": [[51, "record", "20261001::d3c4"], [52, "fill", "f::x"], [53, "order", "x-1"]]

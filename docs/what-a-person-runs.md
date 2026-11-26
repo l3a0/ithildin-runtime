@@ -171,7 +171,7 @@ Writing commands take more friction the more they can resume trading, so they ar
 | 3 | Correct the record | `ithildin override` | Records a correction the book cannot work out alone |
 | 4 | Resume trading | `ithildin halt clear` | Records that a person has looked at a halt |
 | 5 | Resume trading | `ithildin strategy on` | Deletes a strategy's off switch |
-| 6 | Resume trading | `ithildin stop clear` | Deletes a fired loss stop's blob |
+| 6 | Resume trading | `ithildin stop clear` | Journals the clear of a fired loss stop, then deletes its blob |
 | 7 | Resume trading | `ithildin switch clear` | Deletes the switch |
 | 8 | Recover from a dead host | `ithildin lease clear` | Rewrites a lease another VM holds to clear its holder |
 | 9 | Change the release | `ithildin pin set` | Rolls an environment back |
@@ -277,7 +277,7 @@ On a live account only the owner may. On shadow and paper this doc proposes that
 
 ###### `ithildin stop clear --account <a>`
 
-This deletes a fired loss stop's blob and journals the clear, so the gate takes new orders again. On a live account only the owner may, and on shadow and paper the operator may too.
+This journals the clear of a fired loss stop, then deletes its blob, so the gate takes new orders again. Deleting the blob by hand clears nothing, because the journal keeps the firing, as [When a clear counts](architecture/06-runtime.md#when-a-clear-counts) says. [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds the command, and until it does a fired stop holds the account. On a live account only the owner may, and on shadow and paper the operator may too.
 
 ###### `ithildin switch clear --account <a>`
 
@@ -449,18 +449,18 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 ### Count how often quotes would be refused
 
-A decision before the close halts until its strategy writes, under `[data.quotes]`, the oldest quote it may read and the widest spread. This command counts what each choice would have refused on past sessions, which bounds each limit from below. The bounds from above, and the steps it counts at, are on [#133](https://github.com/l3a0/ithildin-runtime/issues/133), and [When the age is measured](architecture/03-context-and-scope.md#when-the-age-is-measured) says why the age is judged again at the gate.
+A decision before the close halts unless its strategy writes, under `[data.quotes]`, the oldest quote it may read and the widest spread. This command counts what each choice would have refused on past sessions, which bounds each limit from below. The bounds from above, and the steps it counts at, are on [#133](https://github.com/l3a0/ithildin-runtime/issues/133), and [When the age is measured](architecture/03-context-and-scope.md#when-the-age-is-measured) says why the age is judged again at the gate.
 
 #### Run the command
 
 It reads a folder that holds a copy of marketlake's lake, so it needs no credential, and it writes nothing but what it prints.
 
 ```bash
-uv run python -m ithildinruntime.runtime.quote_refusals --lake <folder> --instruments <ticker> <ticker> --from <YYYY-MM-DD> --through <YYYY-MM-DD> --normal-status <status>
+uv run python -m ithildinruntime.runtime.quote_refusals --lake <folder> --instruments <ticker> <ticker> --from <YYYY-MM-DD> --through <YYYY-MM-DD> [--normal-status <status>]
 ```
 
 1. The folder needs `manifest.jsonl`, `quarantine.jsonl`, `actions/corporate_actions.jsonl`, each file under `reference/` that the manifest lists, and each instrument's sealed quotes, `quotes/ticker=<ticker>/date=<YYYY-MM-DD>.parquet`, for every session from `--from` to `--through`. Each file must have the SHA-256 the manifest records.
-2. `--normal-status` is the security status a stand-in row states, for each session no row of `data/quote_kinds.csv` covers. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
+2. `--normal-status` is needed only for a session no row of `data/quote_kinds.csv` covers, and a run without it stops naming the first such session. It is the security status a stand-in row states for each such session. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
 3. A run reads each session once for each age, so it takes a minute or more.
 4. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. A session the manifest lists no quotes for, a file the manifest lists and the folder lacks, and a file whose bytes differ from the manifest, each refuse the run, because none is a refusal a decision would meet.
 

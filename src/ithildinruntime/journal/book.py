@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from functools import cached_property
 from itertools import islice
 from types import MappingProxyType
 from typing import NamedTuple
@@ -58,8 +59,12 @@ from .entries import (
     OutsideRecordEntry,
     PauseEntry,
     ReadEntry,
+    Record,
     RejectedEntry,
     SendingEntry,
+    StopClearedEntry,
+    StopFiredEntry,
+    StopStoredEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -69,6 +74,7 @@ from .entries import (
     record_of,
 )
 from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, moved
+from .stop import Latched, is_latch_entry, latched, refusal
 
 __all__ = ["Dispute", "Repeat", "Unmatched", "View", "after", "empty"]
 
@@ -188,6 +194,8 @@ class _Shared:
         self.fills: _Kept[str, Fill] = _Kept()
         self.records: _Kept[str, BrokerRecord] = _Kept()
         self.brokers: _Kept[str, str] = _Kept()
+        # Each entry the loss stop's state is worked out from, by its number.
+        self.stops: _Kept[int, Record] = _Kept()
         self.pauses: _Kept[int, PauseEntry] = _Kept()
 
 
@@ -251,6 +259,12 @@ class View:
     @property
     def records(self) -> Mapping[str, BrokerRecord]:
         return _Upto(self._shared.records, self.through.seq)
+
+    @cached_property
+    def stop(self) -> Latched:
+        """The loss stop's state as the journal holds it, which `journal.stop` works out."""
+        kept = _Upto(self._shared.stops, self.through.seq)
+        return latched((seq, kept[seq]) for seq in kept)
 
     def record_repeats(self, record: BrokerRecord) -> Repeat:
         """Whether a broker's record is new, held as applied or as unmatched, or differs from each.
@@ -461,6 +475,13 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
             if record.close_entry is not None and not 1 <= record.close_entry < seq:
                 raise Halt(f"entry {seq} names entry {record.close_entry}, no entry before it")
             step.order(kind, order, state)
+            if is_latch_entry(record):
+                step.add(view._shared.stops, seq, record)
+        case StopFiredEntry() | StopStoredEntry() | StopClearedEntry():
+            refused = refusal(view.stop, seq, record)
+            if refused is not None:
+                raise Halt(refused)
+            step.add(view._shared.stops, seq, record)
         case AbandonedEntry():
             order, state = _next(step, record.client_order_id, Move.ABANDONED)
             # No other writer can know that an order whose `sending` is stored never left.

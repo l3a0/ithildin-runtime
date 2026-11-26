@@ -9,6 +9,7 @@ call, before it lands or after, and `refuse` answers as a store that is down.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -26,6 +27,7 @@ from ithildinruntime.core import (
     SNAPSHOT_OUTPUT,
     VALUATION_OUTPUT,
     BlobHeader,
+    BlobMissing,
     BlobRef,
     Constraints,
     DecisionResult,
@@ -39,6 +41,7 @@ from ithildinruntime.core import (
     Retry,
     Snapshot,
     StageKind,
+    StaleTag,
     StopState,
     Storage,
     StoredBlob,
@@ -94,10 +97,18 @@ class Kill(BaseException):
 
 
 class Wired(Memory):
-    """A store whose every call a test can hook, by its number, its operation and its key."""
+    """A store whose every call a test can hook, by its number, its operation and its key.
+
+    Each blob a create or a `put` makes gets the MD5 of its bytes as its tag,
+    which `head` answers with, as S3 does for a blob stored in one part. `head`
+    is hooked as the other calls are.
+    """
 
     def __init__(self, blobs: Mapping[str, bytes] | None = None) -> None:
         super().__init__(blobs)
+        self.tags: dict[str, str] = {}
+        for key in self.blobs:
+            self._tagged(key)
         self.calls: list[tuple[str, str]] = []
         self.before: Callable[[int, str, str], None] = lambda n, op, key: None
         self.after: Callable[[int, str, str], None] = lambda n, op, key: None
@@ -115,7 +126,16 @@ class Wired(Memory):
             self.after(number, op, key)
 
     def create(self, key: str, data: bytes, sha256: str) -> str:
-        return self._hooked("create", key, lambda: super(Wired, self).create(key, data, sha256))
+        def made() -> str:
+            super(Wired, self).create(key, data, sha256)
+            return self._tagged(key)
+
+        return self._hooked("create", key, made)
+
+    def _tagged(self, key: str) -> str:
+        # S3 gives a blob stored in one part the MD5 of its bytes as its tag.
+        self.tags[key] = f'"{hashlib.md5(self.blobs[key]).hexdigest()}"'
+        return self.tags[key]
 
     def get(self, key: str) -> bytes:
         return self._hooked("get", key, lambda: super(Wired, self).get(key))
@@ -124,8 +144,12 @@ class Wired(Memory):
         return self._hooked("list", prefix, lambda: super(Wired, self).list(prefix, after))
 
     def head(self, key: str) -> StoredBlob:
-        data = self.blobs[key]
-        return StoredBlob(BlobRef(key, sha256_of(data)), "", AT)
+        def read() -> StoredBlob:
+            if key not in self.blobs:
+                raise BlobMissing(key, "NoSuchKey: the store's own text")
+            return StoredBlob(BlobRef(key, sha256_of(self.blobs[key])), self.tags[key], AT)
+
+        return self._hooked("head", key, read)
 
     def put(self, key: str, data: bytes) -> None:
         """Write a blob by hand, around every rule the store keeps and every hook."""
@@ -133,10 +157,18 @@ class Wired(Memory):
             self.blobs[key] = data
         else:
             Memory.create(self, key, data, "")
+        self._tagged(key)
 
     def drop(self, key: str) -> None:
         del self.blobs[key]
         self._keys.remove(key)
+        self.tags.pop(key, None)
+
+    def delete_if_match(self, key: str, etag: str) -> None:
+        """Delete a blob only while it carries `etag`, as #203's clear will."""
+        if self.tags.get(key) != etag:
+            raise StaleTag(key, f"the blob's tag is {self.tags.get(key)}, not {etag}")
+        self.drop(key)
 
     def refuse(self, *ops_and_keys: tuple[str, str]) -> None:
         """Answer as a store that is down, for each operation and the start of its key."""

@@ -16,6 +16,7 @@ call with the reason instead.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 
 from ithildinruntime.core import (
@@ -46,6 +47,7 @@ from ithildinruntime.journal import (
 )
 
 from .controls import Controls
+from .latch import Latch
 from .order_path import Named, OrderPath, Shared, Unstored, quietly
 from .patience import Patience, code_of
 
@@ -96,6 +98,7 @@ class Account:
             self._shared = Halt(f"the account {account!r} is no alias a journal is kept under")
         else:
             named = Named(alerts, account)
+            lock = threading.Lock()
             self._shared = Shared(
                 account=account,
                 store=store,
@@ -107,6 +110,8 @@ class Account:
                 patience=patience,
                 controls=Controls(store, account),
                 unstored=Unstored(journal, named, patience, storage.owner_step),
+                latch=Latch(account, journal, store, storage, patience, clock, lock),
+                lock=lock,
             )
 
     def path(self, broker: Broker, report: Callable[[], None]) -> OrderPath:
@@ -153,7 +158,7 @@ class Account:
         """Each alarm this process owes, which the channel would not take."""
         return () if isinstance(self._shared, Halt) else self._shared.unstored.unsent()
 
-    def settle(self, report: Callable[[], None]) -> None:
+    def settle(self, report: Callable[[], None], *, stop: bool = False) -> None:
         """Store each entry the journal has not taken, or halt naming each still owed.
 
         An alarm about one that could not be sent is tried again here too, and
@@ -161,13 +166,26 @@ class Account:
 
         Each stage's handler calls it before its first view of the journal. An
         order in doubt halts recover, so an answer held back until the next
-        send would never be written.
+        send would never be written. It leaves the loss stop's firing to the
+        order path's own settle, so a blob S3 will not take holds up no read of
+        the broker. `stop` completes the firing too, as the worker's last
+        settle does, whose failure joins the entries'.
         """
-        self._held().unstored.settle(quietly(report))
+        held = self._held()
+        if stop:
+            held.settle(quietly(report))
+        else:
+            held.unstored.settle(quietly(report))
 
     def unstored(self) -> tuple[str, ...]:
-        """Each entry this process holds that the journal has not taken."""
-        return () if isinstance(self._shared, Halt) else self._shared.unstored.names()
+        """Each entry this process holds that the journal has not taken, a firing included."""
+        if isinstance(self._shared, Halt):
+            return ()
+        held = tuple(
+            f"the loss stop's firing {entry.firing}, which the journal has not taken"
+            for entry in self._shared.latch.held()
+        )
+        return (*self._shared.unstored.names(), *held)
 
     def _held(self) -> Shared:
         if isinstance(self._shared, Halt):

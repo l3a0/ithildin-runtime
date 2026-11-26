@@ -1365,7 +1365,7 @@ A `Quote` is one row of one capture, with what it was read under. `core.quote_fa
 | `bid_at`, `ask_at`, `last_at` | The UTC instant of Schwab's own stamp on each price, or `None` where the stamp is null or no instant |
 | `fetched_at`, `captured_at` | When the request left and when the response landed, by the capture host's clock. The first is `None` where its stamp is null or no instant, and nothing reads it to decide |
 | `realtime`, `status` | Schwab's flag and its security status, or `None` |
-| `price_kind`, `last_kind`, `venues`, `volume_counted`, `normal_status` | Copied from the data module's quote-kind contract, `data/quote_kinds.csv`, a tracked file under the price-kind contract's rules. `price_kind` is the bid's and the ask's. It ships with no row, so every live quote halts until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) adds the first |
+| `price_kind`, `last_kind`, `venues`, `volume_counted`, `normal_status` | Copied from the data module's quote-kind contract, `data/quote_kinds.csv`, a tracked file under the price-kind contract's rules. `price_kind` is the bid's and the ask's. Its first row, for Schwab's quotes as marketlake captures them, covers 2026-09-15 to 2027-02-25, and a quote of a session no row covers halts |
 | `max_age`, `max_spread_share` | The maximum age in seconds and the maximum spread as a share of the midpoint that its strategies write, or `None` |
 | `received` | Every column of the row by name, as text, a float as its shortest form and a null as `None` |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
@@ -2030,7 +2030,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 | A renewal | The one its holder's own last write returned |
 | A release | The one its holder's own last write returned |
 
-No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.
+No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch or an off switch reach S3, and [#203](https://github.com/l3a0/ithildin-runtime/issues/203) how its delete of a fired loss stop does. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.
 
 ## Package layout and the import rule
 
