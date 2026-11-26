@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     RECOVER_STAGE,
     RISK_STAGE,
     SEND_STAGE,
+    SIZING_OUTPUT,
     STRATEGIES,
     TARGET_OUTPUT,
     BeforeClose,
@@ -41,6 +42,7 @@ from ithildinruntime.core import (
     OutputFile,
     Retry,
     SendOutcome,
+    Sizing,
     Snapshot,
     StageKind,
     Storage,
@@ -192,6 +194,7 @@ class Decided:
     day: date
     at: datetime
     target: TargetPortfolio
+    sizing: Sizing
     outcome: SendOutcome
 
 
@@ -339,6 +342,7 @@ def _read(storage: Storage, day: date, at: datetime) -> Decided:
         day,
         at,
         one(PORTFOLIO_STAGE, TARGET_OUTPUT, TargetPortfolio),
+        one(PORTFOLIO_STAGE, SIZING_OUTPUT, Sizing),
         one(SEND_STAGE, "outcome", SendOutcome),
     )
 

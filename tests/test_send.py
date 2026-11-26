@@ -7,7 +7,8 @@ broker hold afterwards, never only what the stage returned.
 
 from __future__ import annotations
 
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -20,12 +21,14 @@ from ithildinruntime.core import (
     Stopped,
     StrategyEnd,
     claim_key,
+    kill_switch_key,
     off_switch_key,
     order_id,
     output_key,
 )
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
-from ithildinruntime.journal import ReadEntry
+from ithildinruntime.execution.order_path import OrderPath
+from ithildinruntime.journal import DecisionEntry, ReadEntry
 from tests.support import gates
 from tests.support.send_world import CHAN, SendWorld, strategy
 from tests.support.sim_world import DEPLOYMENT, FULL, GLD, USO, after, close_of
@@ -146,7 +149,7 @@ def test_a_strategy_that_is_off_gets_no_order_and_is_named() -> None:
     assert entry.off == (CHAN,) and entry.orders == ()
 
 
-def test_an_entry_another_writer_journaled_after_recovers_book_halts_the_sync() -> None:
+def test_a_read_journaled_after_recovers_book_moves_nothing_and_lets_the_sync_on() -> None:
     made = world()
     made.ready(close_of(FULL), PAIR)
     made._record(ReadEntry(RECOVER_STAGE, made.at, made.ref(RECOVER_STAGE, CAPS_OUTPUT), made.at))
@@ -415,6 +418,241 @@ def test_a_kill_after_any_write_and_a_rerun_send_each_order_once_at_most() -> No
                 assert name in again.halt.reason, n
         # The rerun sent nothing of its own.
         assert made.submits() == placed, n
+
+
+# Round 1's cases: each guard of the stage, held by a test that fails without it
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [{"max_open_orders": 1}, {"max_gross": Decimal(350)}],
+    ids=["open-orders", "gross"],
+)
+def test_a_pair_whose_legs_fit_alone_and_not_together_sends_nothing(limits) -> None:
+    made = world()
+    made.constraints = gates.constraints(**limits)
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    result = made.send_attempt()
+    assert result.halt is not None and "nothing is sent" in result.halt.reason
+    assert made.submits() == []
+    assert made.states() == {first: "Abandoned", second: "Refused"}
+
+
+def _short_then(made: SendWorld, day2: dict) -> None:
+    """Short GLD at the first close, which fills there, and a loss stop of 1 at the second."""
+    sent(made, FULL, {CHAN: {GLD: -3, USO: 0}})
+    made.constraints = gates.constraints(loss_stop=Decimal(1))
+    made.ready(close_of(DAYS[1]), day2)
+
+
+def test_a_loss_past_its_stop_halts_a_decision_that_plans_no_order() -> None:
+    made = world()
+    _short_then(made, {CHAN: {GLD: -3, USO: 0}})
+    result = made.send_attempt()
+    assert result.halt is not None and "past its stop" in result.halt.reason
+    assert "decision" not in made.kinds(made.before)
+
+
+def test_a_loss_past_its_stop_at_the_ask_sends_nothing() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    made.keeper.planted[first] = ["loss_past"]
+    result = made.send_attempt()
+    assert result.halt is not None and "past its stop" in result.halt.reason
+    assert made.submits() == []
+
+
+def test_the_ask_halts_on_an_order_the_journal_already_holds() -> None:
+    made = world()
+    sent(made, FULL)
+    with pytest.raises(Halt, match="has an entry already"):
+        made.path().ask(gates_names(made))
+
+
+def test_another_writers_entry_after_recovers_book_halts_before_any_plan() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    view = made.view()
+    read = max(view.reads)
+    earlier = made.at - timedelta(minutes=1)
+    made._record(
+        DecisionEntry(
+            deployment=DEPLOYMENT,
+            run=made.run,
+            decision_at=earlier,
+            targets=(),
+            orders=(),
+            off=(),
+            inputs={},
+            read=read,
+            synced=view.through.seq,
+        )
+    )
+    result = made.send_attempt()
+    assert result.halt is not None and "another writer moved the book" in result.halt.reason
+    assert made.submits() == []
+
+
+def test_another_writers_plan_for_this_decision_is_never_sent_as_this_ones() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    planned = world()
+    planned.ready(close_of(FULL), PAIR)
+    assert planned.send_attempt().halt is None
+    (theirs,) = planned.view().decisions.values()
+    done = []
+
+    def before(number: int, op: str, key: str) -> None:
+        # Once this stage's own read is journaled, another writer journals a plan for the
+        # decision, at ten times the size.
+        if done or op != "create" or not key.startswith("journal/"):
+            return
+        if made.kinds().count("read") >= 2:
+            done.append(True)
+            read = max(made.view().reads)
+            gld, uso = theirs.orders
+            bigger = (replace(gld, qty=gld.qty * 10), uso)
+            made._record(replace(theirs, orders=bigger, read=read, synced=read))
+
+    made.store.before = before
+    result = made.send_attempt()
+    assert done and result.halt is not None and "another plan" in result.halt.reason
+    assert made.submits() == []
+
+
+def test_a_claim_alarms_on_a_leg_a_kill_left_sending(monkeypatch) -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    real = OrderPath._submit
+
+    def killed(self, ack):
+        real(self, ack)
+        raise _Killed
+
+    monkeypatch.setattr(OrderPath, "_submit", killed)
+    with pytest.raises(_Killed):
+        made.send_attempt()
+    monkeypatch.setattr(OrderPath, "_submit", real)
+    first = gates_names(made)[0]
+    assert made.states() == {first: "Sending"} and made.submits() == [first]
+    made.alarms.sent.clear()
+    made.restart()
+    again = made.send_attempt(made.sender(writer="f" * 32))
+    assert again.halt is not None and f"{first} is in doubt" in again.halt.reason
+    assert any(first in reason and "in doubt" in reason for reason in made.alarms.sent)
+    assert made.submits() == [first]
+
+
+@pytest.mark.parametrize("why", ["after the close", "with the snapshot unreadable"])
+def test_a_claim_names_every_planned_order_however_the_loss_reads(why) -> None:
+    made = world()
+    sent(made, FULL)
+    if why == "after the close":
+        made.clock.at = made.at + timedelta(hours=1)
+    else:
+        made.store.drop(output_key(DEPLOYMENT, made.run, made.at, "data", "snapshot"))
+    again = made.send_attempt(made.sender(writer="f" * 32))
+    assert again.halt is not None
+    reason = again.halt.reason
+    for name in gates_names(made):
+        assert f"{name} is Acknowledged" in reason
+
+
+def test_a_strategy_switch_that_cannot_be_read_halts() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    made.store.refuse(("get", off_switch_key("sim-1", CHAN)))
+    result = made.send_attempt()
+    assert result.halt is not None and "off switch unreadable" in result.halt.reason
+    assert "decision" not in made.kinds(made.before)
+
+
+def test_a_switch_cleared_between_the_legs_never_sends_the_second_alone() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    switch = off_switch_key("sim-1", CHAN)
+
+    def before(number: int, op: str, key: str) -> None:
+        kinds = made.kinds()
+        if op == "create" and key.startswith("journal/"):
+            if kinds[-1:] == ["decision"]:
+                made.store.put(switch, b"off")
+            elif kinds[-1:] == ["abandoned"] and switch in made.store.blobs:
+                made.store.drop(switch)
+
+    made.store.before = before
+    outcome = made.outcome(made.send_attempt())
+    assert outcome.strategies[0].end is StrategyEnd.PARTLY_SENT
+    assert made.submits() == []
+
+
+def test_a_send_that_raises_after_a_sending_abandons_the_rest_and_names_each_leg(
+    monkeypatch,
+) -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == second:
+            raise RuntimeError("the path broke")
+        return real(self, name)
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    result = made.send_attempt()
+    assert result.halt is not None and "raised RuntimeError" in result.halt.reason
+    assert made.states() == {first: "Acknowledged", second: "Abandoned"}
+    assert f"{first} is Acknowledged" in made.alarms.sent[-1]
+
+
+@pytest.mark.parametrize("leg", [0, 1], ids=["first", "second"])
+@pytest.mark.parametrize(
+    ("fault", "state"),
+    [(OrderFault.REJECT, "Rejected"), (OrderFault.LOSE_ANSWER, "InDoubt")],
+    ids=["rejected", "in-doubt"],
+)
+def test_a_leg_the_broker_rejects_or_leaves_in_doubt_ends_the_plan(leg, fault, state) -> None:
+    planned = [order_id(CHAN, close_of(FULL), 1), order_id(CHAN, close_of(FULL), 2)]
+    made = world(faults=Faults(orders={planned[leg]: fault}))
+    made.ready(close_of(FULL), PAIR)
+    result = made.send_attempt()
+    assert result.halt is not None and f"the order {planned[leg]} is {state}" in result.halt.reason
+    # The broker placed each leg before the one that failed, that one too where it took it
+    # and its answer was lost, and none after it. A rejected leg is never placed.
+    taken = [planned[leg]] if fault is OrderFault.LOSE_ANSWER else []
+    assert made.submits() == planned[:leg] + taken
+    states = made.states()
+    assert states[planned[leg]] == state
+    if leg == 0:
+        assert states[planned[1]] == "Abandoned"
+
+
+def test_a_kill_switch_pulled_before_the_second_leg_halts_with_the_first_at_the_broker() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/") and made.kinds()[-1:] == ["ack"]:
+            made.store.put(kill_switch_key("sim-1"), b"pulled")
+
+    made.store.before = before
+    result = made.send_attempt()
+    assert result.halt is not None and "kill switch stands" in result.halt.reason
+    assert made.submits() == [first]
+    assert made.states()[second] == "Abandoned"
+
+
+def test_a_portfolio_result_that_names_no_forecast_halts_before_any_plan() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    made.targets(made.at, PAIR, named=False)
+    result = made.send_attempt()
+    assert result.halt is not None and "names no" in result.halt.reason
+    assert "decision" not in made.kinds(made.before)
 
 
 # Helpers

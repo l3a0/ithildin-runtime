@@ -87,7 +87,7 @@ from ithildinruntime.core import (
     reconcile,
     result_key,
 )
-from ithildinruntime.journal import DecisionEntry, View
+from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
 
 from .account import Account
 from .inputs import read_inputs
@@ -241,7 +241,7 @@ class SendStage:
             read=seq,
             synced=view.through.seq,
         )
-        view = recorded(account, view, lambda v: None if at in v.decided else entry, report)
+        view = recorded(account, view, lambda v: _planned(v, at, entry), report)
         names = [order.client_order_id for order in plan.orders]
 
         # Step 7
@@ -357,10 +357,10 @@ class SendStage:
         went: dict[str, list[str]] = {}
         for place, order in enumerate(orders):
             name, strategy = order.client_order_id, order.strategy
-            if strategy in ended:
-                self._left(path, name, f"{strategy}'s plan ended: {ended[strategy]}")
-                continue
             try:
+                if strategy in ended:
+                    path.abandon(name, f"{strategy}'s plan ended: {ended[strategy]}")
+                    continue
                 state = path.send(name)
             except Halt as halt:
                 self._failed(path, orders, place, halt.reason, report)
@@ -377,9 +377,6 @@ class SendStage:
             self._failed(path, orders, place, f"the order {name} is {state}", report)
         return ended
 
-    def _left(self, path: OrderPath, name: str, reason: str) -> None:
-        path.abandon(name, reason)
-
     def _failed(
         self,
         path: OrderPath,
@@ -388,13 +385,21 @@ class SendStage:
         reason: str,
         report: Callable[[], None],
     ) -> None:
-        """Abandon every order after `place`, alarm naming each leg's state, and halt."""
+        """Abandon every order not yet sent from `place` on, alarm naming each leg, and halt.
+
+        The order at `place` is abandoned only where it has no entry or was
+        left before its `sending`, as an error the path did not expect can leave
+        it. An order the broker may hold is left as it stands.
+        """
         said = [reason]
-        for order in orders[place + 1 :]:
+        view = self._account.view(report)
+        for order in orders[place:]:
+            name = order.client_order_id
+            found = view.orders.get(name)
+            if found is not None and found.state not in NOT_SENT:
+                continue
             try:
-                path.abandon(
-                    order.client_order_id, f"an earlier order of its plan stopped: {reason}"
-                )
+                path.abandon(name, f"an earlier order of its plan stopped: {reason}")
             except Halt as halt:
                 said.append(halt.reason)
         view = self._account.view(report)
@@ -406,12 +411,32 @@ class SendStage:
         raise Halt(f"{what}{added}")
 
 
+def _planned(view: View, at: datetime, entry: DecisionEntry) -> DecisionEntry | None:
+    """The plan to record at `at`, or `None` where the journal holds it already.
+
+    A plan another writer journaled for this decision halts, naming both, since
+    its orders share this plan's ids and would go out under them.
+    """
+    seq = view.decided.get(at)
+    if seq is None:
+        return entry
+    held = view.decisions[seq]
+    if held != entry:
+        planned = ", ".join(f"{o.client_order_id} for {o.qty}" for o in entry.orders) or "none"
+        found = ", ".join(f"{o.client_order_id} for {o.qty}" for o in held.orders) or "none"
+        raise Halt(
+            f"entry {seq} holds another plan of the decision at {at.isoformat()}, so nothing is "
+            f"sent: it plans {found}, and this stage planned {planned}"
+        )
+    return None
+
+
 def _leg(name: str, order: object) -> str:
     if order is None:
         return f"{name} has no entry"
     state = order.state  # type: ignore[attr-defined]
     sent = order.sent_at  # type: ignore[attr-defined]
-    said = "in doubt" if state is OrderState.IN_DOUBT else f"{state}"
+    said = "in doubt" if state in DOUBTFUL else f"{state}"
     if sent is None:
         return f"{name} is {said}"
     return f"{name} is {said}, its sending stored at {sent.isoformat()}"
@@ -432,7 +457,7 @@ def _standing(view: View, at: datetime) -> tuple[str, list[str]]:
         found = view.orders.get(name)
         line = _leg(name, found)
         said.append(line)
-        if found is not None and found.state is OrderState.IN_DOUBT:
+        if found is not None and found.state in DOUBTFUL:
             doubts.append(f"the order {line}")
     by_strategy: dict[str, tuple[list[str], list[str]]] = {}
     for order in orders:
@@ -461,6 +486,9 @@ def _synced(view: View, recovered: int, seq: int, ref: BlobRef, read: AccountRea
             "this stage's read, so another writer moved the book"
         )
     book = view.book
+    # Recover halts on any order in doubt, and the check above on any entry but a read before
+    # this sync's own. So only another writer's entries after it reach this, which the
+    # account's lease (#148) is to rule out.
     if book.in_doubt:
         raise Halt(f"an order is in doubt in {', '.join(book.in_doubt)}")
     if found := reconcile(book, view.live.values(), read):

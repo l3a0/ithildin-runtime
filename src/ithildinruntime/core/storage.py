@@ -49,7 +49,8 @@ __all__ = [
 ]
 
 
-# How many decoded output files one `Storage` keeps, which covers every file of a decision.
+# How many decoded output files one `Storage` keeps, which covers every file of a decision at
+# today's count of strategies. More strategies cost only speed.
 _DECODED = 32
 
 

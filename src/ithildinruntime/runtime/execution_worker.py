@@ -6,7 +6,8 @@ backtest's opening of its account the simulated broker's own, through
 
 1. A backtest over a folder trades through the simulated broker, with no fault.
 2. Every other mode, a backtest over any other store, and a stage table whose row of
-   recover or of send is not the one this file declares, build no broker. Each
+   recover is not the one this file declares, build no broker. A row of send that is
+   not the one this file declares halts send alone. Each
    decision of each of this worker's stages halts with the reason stored, and the
    worker starts all the same, because a start that fails only restarts it. The
    reason names the parts of #10 that lift it.

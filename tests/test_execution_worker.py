@@ -555,6 +555,22 @@ def test_9_a_table_whose_recover_row_is_another_halts_each_decision(
     )
 
 
+def test_9_a_table_whose_send_row_is_another_halts_send_alone(case: Case) -> None:
+    # This file's own row of send reads data and recover alone, so it is not the worker's.
+    case.opened()
+    worker = case.worker()
+    case.data(0, case.silent)
+    assert worker.send is not None
+    result = worker.send(Item(AT[0], SEND_STAGE), _Quiet())
+    assert result.halt is not None
+    assert result.halt.reason.startswith(
+        "the table's row of execution/send is not the one it declares, so set send's row in the "
+        "deployment's stage table to ithildinruntime.runtime.execution_worker.SEND_ROW"
+    )
+    # Recover still runs, since its row is the one the worker declares.
+    assert worker.recover(Item(AT[0], RECOVER_STAGE), _Quiet()).halt is None
+
+
 # Acceptance 5: the order of stages
 
 

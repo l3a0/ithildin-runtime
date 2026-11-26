@@ -70,8 +70,9 @@ class Gatekeeper:
 
     `planted` maps an order's id to a list of answers, one per call of
     `check` for it, oldest first: `None` asks the real gate, a `Halt` is
-    raised, and `"refuse"` turns the real answer into a refusal on the order's
-    size. A call past the list asks the real gate.
+    raised, `"refuse"` turns the real answer into a refusal on the order's
+    size, and `"loss_past"` reads the day's loss past its stop. A call past
+    the list asks the real gate.
     """
 
     def __init__(self, gate: Gate) -> None:
@@ -87,6 +88,10 @@ class Gatekeeper:
         if isinstance(answer, Halt):
             raise answer
         verdict = self._gate.check(intent, book, snapshot, constraints, inputs, now)
+        if answer == "loss_past":
+            loss = verdict.loss
+            past = replace(loss, loss=loss.bound + 1, past=True)
+            return replace(verdict, loss=past)
         if answer == "refuse":
             size = abs(intent.qty)
             return replace(
@@ -150,10 +155,12 @@ class SendWorld(RecoverWorld):
         self.targets(at, wanted)
         self.store.quiet = quiet
 
-    def targets(self, at: datetime, wanted: Mapping[str, Mapping[str, object]]) -> BlobRef:
+    def targets(
+        self, at: datetime, wanted: Mapping[str, Mapping[str, object]], named: bool = True
+    ) -> BlobRef:
         """Store the targets, under a header naming each strategy's forecast and schedule."""
         inputs = {}
-        for name in sorted(wanted):
+        for name in sorted(wanted) if named else ():
             for component, output in (("alpha", FORECAST_OUTPUT), ("cost", SCHEDULE_OUTPUT)):
                 key = output_key(DEPLOYMENT, self.run, at, f"{component}/{name}", output)
                 inputs[key] = sha256_of(key.encode())

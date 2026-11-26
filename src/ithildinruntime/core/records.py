@@ -1277,9 +1277,11 @@ class StrategySent(_Record):
 
 @dataclass(frozen=True)
 class Remainder(_Record):
-    """What a target leaves of a position because it is no multiple of the account's share step.
+    """What a target leaves undone because it is no multiple of the account's share step.
 
-    `qty` is the part no order trades, signed as the position is.
+    `qty` is the trade no order makes: the target less what is held and open,
+    less the planned order. So a long fraction left held reads as a sale not
+    made, below zero.
     """
 
     strategy: str

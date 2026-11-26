@@ -93,12 +93,15 @@ flowchart TD
     resize --> gate
     gate -- "Yes" --> out["Send both legs<br/>as market-on-close orders"]
     gate -- "No" --> held["Send neither leg"]
+    out --> again{"Does the gate approve<br/>each leg again right before it goes?"}
+    again -- "No, after its partner went" --> lone["Halt with the partner at the broker"]
 ```
 
 The diagram shows one close, from the refit to what trades. Look for the two
 paths that keep the same units, and for the gate at the end. The risk gate is
-asked about both legs before either is journaled, so a refused leg sends
-neither. A refit moves `h` even when the units hold
+asked about both legs before either is journaled, so a leg refused there
+sends neither. The gate is asked again right before each leg goes, and a leg
+it refuses then halts the decision with its partner already at the broker. A refit moves `h` even when the units hold
 still, so the target moves too, and the engine trades the difference as it
 would for any strategy. The engine holds as many baskets, each one share of
 USO against `h` of GLD, as come to G, a fixed amount of gross dollars. The figure

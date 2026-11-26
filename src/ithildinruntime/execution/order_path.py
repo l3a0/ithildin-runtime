@@ -644,8 +644,9 @@ class OrderPath:
         a journal holding its `verdict` would count it. It stops at the first
         order the gate refuses or that raises `Halt`, and returns the answer of
         each it reached. An order the journal already holds an entry of halts,
-        because a plan is asked about before any of it is journaled. Nothing
-        here reads a control, since `send` reads every one again.
+        because a plan is asked about before any of it is journaled. It reads
+        no control but the loss stop, which the gate is handed, and `send`
+        reads every one again.
         """
         self._one_account()
         shared = self._shared

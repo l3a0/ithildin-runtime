@@ -78,7 +78,7 @@ from ithildinruntime.journal import (
 )
 
 from .account import Account
-from .sync import _UNSETTLED, journal_read, read_broker
+from .sync import UNSETTLED, journal_read, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
@@ -372,7 +372,7 @@ def _by_id(read: AccountRead) -> list[BrokerOrder]:
 def _finished(orders: Iterable[OrderRecord | None]) -> bool:
     """Whether a plan's orders each stand where a lookup or a fill alone moves them on."""
     found = list(orders)
-    if any(order is not None and order.state in _UNSETTLED for order in found):
+    if any(order is not None and order.state in UNSETTLED for order in found):
         return False
     missing = found.count(None)
     return missing in (0, len(found))

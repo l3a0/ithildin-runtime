@@ -118,11 +118,12 @@ def test_a_gap_below_one_step_plans_no_order_and_names_its_remainder() -> None:
     assert made.orders == () and made.remainders == (Remainder(CHAN, GLD, d("0.4")),)
 
 
-def test_the_open_remainder_counts_toward_the_gap() -> None:
-    opened = gates.order(6, GLD)
-    book = gates.book({CHAN: {GLD: 4, USO: 0}}, opens=[opened])
-    # 10 wanted, 4 held, 6 open: nothing more is needed.
-    assert plan([target({GLD: 10, USO: 0})], book).orders == ()
+@pytest.mark.parametrize(("held", "open_qty", "wanted"), [(4, 6, 10), (4, -6, -2)])
+def test_the_open_remainder_counts_toward_the_gap(held, open_qty, wanted) -> None:
+    opened = gates.order(open_qty, GLD)
+    book = gates.book({CHAN: {GLD: held, USO: 0}}, opens=[opened])
+    # What is held and what is open together come to the target, so nothing more is needed.
+    assert plan([target({GLD: wanted, USO: 0})], book).orders == ()
 
 
 @pytest.mark.parametrize("open_qty", [6, -6], ids=["buy-open", "sell-open"])

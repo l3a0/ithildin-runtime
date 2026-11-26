@@ -57,7 +57,7 @@ from ithildinruntime.journal import (
 from .account import Account, StageRecord
 from .order_path import OrderPath
 
-__all__ = ["journal_read", "read_broker", "recorded"]
+__all__ = ["AT_THE_BROKER", "UNSETTLED", "journal_read", "read_broker", "recorded"]
 
 # How many numbers one entry may lose to another writer.
 _NUMBERS = 100
@@ -65,8 +65,8 @@ _ZERO = Decimal(0)
 # An order the broker has, as the journal's own groups of states give it, and every other
 # state that has not ended, which only a lookup, a person or #147 settles.
 # A state no group names is unsettled, so it halts rather than being looked up.
-_AT_THE_BROKER = OPEN - NOT_SENT - DOUBTFUL
-_UNSETTLED = frozenset(OrderState) - ENDED - _AT_THE_BROKER
+AT_THE_BROKER = OPEN - NOT_SENT - DOUBTFUL
+UNSETTLED = frozenset(OrderState) - ENDED - AT_THE_BROKER
 
 
 def read_broker(path: OrderPath, since: datetime) -> AccountRead:
@@ -109,7 +109,7 @@ def journal_read(
     _ = view.book
     listed = {order.broker_order_id for order in read.open_orders.orders}
     for name, order in view.live.items():
-        if order.state in _AT_THE_BROKER and order.broker_order_id not in listed:
+        if order.state in AT_THE_BROKER and order.broker_order_id not in listed:
             view = _ended(account, view, name, order, path, report)
     return view, seq
 

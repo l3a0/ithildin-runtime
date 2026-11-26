@@ -36,7 +36,7 @@ from ithildinruntime.core import (
 from ithildinruntime.journal import Journal, record_of
 from tests.support.chan_return import PERIODS, chan_figures
 from tests.support.replication import FIRST_DECISION, GLD, ROWS_BEFORE, USO
-from tests.support.trading import ACCOUNT, AFTER, CASH, STEP, Traded, trade
+from tests.support.trading import ACCOUNT, AFTER, CASH, STEP, G, Traded, trade
 
 pytestmark = pytest.mark.replication
 
@@ -79,6 +79,21 @@ def test_each_position_after_its_fill_is_the_decisions_target(traded, held) -> N
         wanted = decided.target.shares
         for leg in (GLD, USO):
             assert abs(shares.get(leg, ZERO) - wanted[leg]) < STEP, (decided.day, leg)
+
+
+def test_no_limit_cuts_a_target_and_each_held_day_is_g(traded, closes) -> None:
+    """Nothing binds, so a figure that divides by gross, as both ways here do, sees the whole run.
+
+    The stress records are made up and read through dates of their own, which
+    matters only if a limit cuts a target, and none does.
+    """
+    for decided in traded.decided:
+        assert decided.sizing.cut == (), decided.day
+        gross = sum(
+            (abs(q) * closes[i][decided.day] for i, q in decided.target.shares.items()), ZERO
+        )
+        if gross:
+            assert Decimal(G) - Decimal("0.01") < gross <= G, decided.day
 
 
 def test_the_units_are_the_replications(held, replicated) -> None:
