@@ -95,6 +95,7 @@ flowchart TD
     gate -- "No" --> held["Send neither leg"]
     again -- "Yes" --> out["Send that leg<br/>as a market-on-close order"]
     out -- "The first leg went,<br/>so the second is asked" --> again
+    out -- "The second leg went" --> both["Both legs<br/>at the broker"]
     again -- "No, on the first leg" --> abandon["Halt, and abandon<br/>the second leg unsent"]
     again -- "No, on the second leg" --> lone["Halt with the first leg<br/>at the broker"]
 ```

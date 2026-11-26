@@ -59,13 +59,11 @@ from ithildinruntime.core import (
     sha256_of,
 )
 from ithildinruntime.execution.account import Account
-from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from ithildinruntime.execution.send import OUTCOME_OUTPUT, SendStage
 from ithildinruntime.journal import Journal, VerdictEntry, record_of
 from ithildinruntime.risk import Gate
 from ithildinruntime.runtime.loop import Item
 from tests.support import gates
-from tests.support.fake_broker import FakeBroker
 from tests.support.recover_world import HASHES, RecoverWorld, Waits
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT
 
@@ -113,47 +111,6 @@ class Gatekeeper:
 
     def loss(self, *args, **kwargs):
         return self._gate.loss(*args, **kwargs)
-
-
-@dataclass(eq=False)
-class CheckedBroker(FakeBroker):
-    """The simulated broker behind the fake broker's four refusals.
-
-    Each submit is checked against the stored journal as `FakeBroker` checks
-    it, and then reaches the simulator unchanged. Every read is the
-    simulator's. A refusal fails the test through tests/conftest.py's fixture.
-    """
-
-    to: SimulatedBroker | None = None
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        to = self.to
-        assert to is not None
-        self.answer = lambda intent, number: to.submit(intent)
-
-    @property
-    def _sim(self) -> SimulatedBroker:
-        assert self.to is not None
-        return self.to
-
-    def positions(self):
-        return self._sim.positions()
-
-    def open_orders(self):
-        return self._sim.open_orders()
-
-    def account(self):
-        return self._sim.account()
-
-    def fills(self, since: datetime):
-        return self._sim.fills(since)
-
-    def activities(self, since: datetime):
-        return self._sim.activities(since)
-
-    def lookup(self, broker_order_id: str):
-        return self._sim.lookup(broker_order_id)
 
 
 @dataclass
@@ -360,4 +317,4 @@ class SendWorld(RecoverWorld):
         return found
 
 
-__all__ = ["CHAN", "CheckedBroker", "Gatekeeper", "SendWorld", "strategy"]
+__all__ = ["CHAN", "Gatekeeper", "SendWorld", "strategy"]

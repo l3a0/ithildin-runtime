@@ -1,18 +1,25 @@
-"""A broker between the order path and the simulator, for a case whose clock moves first.
+"""Brokers between the order path and the simulator, which reach a `SimulatedBroker` alone.
 
-The path reads the clock last before its one call, so an order that arrives after
-its close needs the clock moved between the two. The relay forwards the one order
-it is handed, once and unchanged, and reaches a `SimulatedBroker` alone.
+1. `RelayBroker`, for a case whose clock moves first. The path reads the clock
+   last before its one call, so an order that arrives after its close needs the
+   clock moved between the two. The relay forwards the one order it is handed,
+   once and unchanged.
+2. `CheckedBroker`, for a day of orders behind the fake broker's four refusals.
+   Each submit is checked against the stored journal as `FakeBroker` checks it,
+   and then reaches the simulator unchanged.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 
 from ithildinruntime.core import Ack, OrderIntent
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
+from tests.support.fake_broker import FakeBroker
 
-__all__ = ["RelayBroker"]
+__all__ = ["CheckedBroker", "RelayBroker"]
 
 
 class RelayBroker:
@@ -33,3 +40,59 @@ class RelayBroker:
         self._went = True
         self._first()
         return self._to.submit(intent)
+
+
+@dataclass(eq=False)
+class CheckedBroker(FakeBroker):
+    """The simulated broker behind the fake broker's four refusals.
+
+    A submit the checks pass reaches the simulator unchanged. A refusal fails
+    the test through tests/conftest.py's fixture. The account's reads, the
+    order list, a lookup and the clock are the simulator's. A cancel and a
+    search for an order are not forwarded, since no case here sends either,
+    and each fails the test.
+    """
+
+    to: SimulatedBroker | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        to = self.to
+        if type(to) is not SimulatedBroker:
+            raise TypeError("a checked broker reaches a simulated broker alone")
+        self.answer = lambda intent, number: to.submit(intent)
+
+    @property
+    def _sim(self) -> SimulatedBroker:
+        assert self.to is not None
+        return self.to
+
+    def positions(self):
+        return self._sim.positions()
+
+    def open_orders(self):
+        return self._sim.open_orders()
+
+    def account(self):
+        return self._sim.account()
+
+    def fills(self, since: datetime):
+        return self._sim.fills(since)
+
+    def orders(self, since: datetime):
+        return self._sim.orders(since)
+
+    def activities(self, since: datetime):
+        return self._sim.activities(since)
+
+    def lookup(self, broker_order_id: str):
+        return self._sim.lookup(broker_order_id)
+
+    def clock(self) -> datetime:
+        return self._sim.clock()
+
+    def find_order(self, intent: OrderIntent, since: datetime, mapped: object):
+        raise AssertionError("no case behind a checked broker searches for an order")
+
+    def cancel(self, broker_order_id: str):
+        raise AssertionError("no case behind a checked broker sends a cancel")

@@ -17,21 +17,30 @@ import pytest
 
 from ithildinruntime.core import (
     DATA_STAGE,
+    PORTFOLIO_STAGE,
     SEND_STAGE,
     SNAPSHOT_OUTPUT,
+    TARGET_OUTPUT,
     Basket,
+    BlobRef,
     DecisionResult,
     Forecast,
     Halt,
     HaltRecord,
     Limit,
+    OutputFile,
+    Snapshot,
     StrategyEnd,
+    TargetPortfolio,
     decode,
+    decode_output,
     encode,
+    encode_output,
     off_switch_key,
     order_id,
     output_key,
     result_key,
+    sha256_of,
 )
 from ithildinruntime.execution.brokers.faults import Faults, OrderFault
 from ithildinruntime.execution.inputs import read_inputs
@@ -40,7 +49,8 @@ from ithildinruntime.execution.send import OUTCOME_OUTPUT
 from ithildinruntime.journal import Journal, VerdictEntry, record_of
 from ithildinruntime.portfolio.sizing import size
 from tests.support import gates
-from tests.support.send_world import CHAN, EXECUTION, CheckedBroker, SendWorld, strategy
+from tests.support.relay_broker import CheckedBroker
+from tests.support.send_world import CHAN, EXECUTION, SendWorld, strategy
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT, FULL, GLD, USO, after, close_of
 
 DAYS = [FULL, after(FULL), after(FULL, 2), after(FULL, 3), after(FULL, 4)]
@@ -78,7 +88,9 @@ def verdicts(made: SendWorld) -> dict[str, list]:
 
 @pytest.mark.parametrize(
     ("held", "refused", "value"),
-    [({GLD: 3, USO: -5}, 1, "303"), ({GLD: 1, USO: -10}, 0, "200")],
+    # At the second close net is 3 × 101 − 5 × 20 = 203, and 1 × 101 − 15 × 20 = −199, both past
+    # the cap of 150.
+    [({GLD: 3, USO: -5}, 1, "303"), ({GLD: 1, USO: -15}, 0, "300")],
     ids=["larger-leg-first", "larger-leg-second"],
 )
 def test_an_exit_while_net_is_past_its_cap_widens_net_on_one_leg_and_sends_nothing(
@@ -88,6 +100,9 @@ def test_an_exit_while_net_is_past_its_cap_widens_net_on_one_leg_and_sends_nothi
     sent(made, FULL, {CHAN: held})
     made.constraints = gates.constraints(max_net=Decimal(150))
     made.ready(close_of(DAYS[1]), {CHAN: {GLD: 0, USO: 0}})
+    book = made.view().book
+    net = sum(q * CLOSES[i][DAYS[1]] for i, q in book.positions_by_strategy[CHAN].items())
+    assert abs(net) > 150, net
     exits = planned(made)
     result = made.send_attempt()
     assert result.halt is not None and "nothing is sent" in result.halt.reason
@@ -192,19 +207,24 @@ def test_a_second_leg_past_its_market_on_close_cutoff_at_the_ask_sends_nothing()
 # 2. Hard limit 2 again, through the stage
 
 
+def checked(made: SendWorld, writer: str = "e" * 32):
+    """A send stage whose broker is the simulator behind the fake broker's four refusals."""
+    return made.sender(
+        brokers=lambda at: CheckedBroker(lambda: made.store.blobs, ACCOUNT, at, to=made.broker()),
+        writer=writer,
+    )
+
+
 def test_no_order_of_a_day_reaches_the_broker_but_as_its_journal_and_plan_say() -> None:
     made = world()
-
-    def checked(at):
-        return CheckedBroker(lambda: made.store.blobs, ACCOUNT, at, to=made.broker())
-
     for day, target in ((FULL, PAIR), (DAYS[1], {CHAN: {GLD: -2, USO: 4}})):
         made.ready(close_of(day), target)
-        result = made.send_attempt(made.sender(brokers=checked))
+        result = made.send_attempt(checked(made))
         assert result.halt is None, result.halt.reason
     # Each order of both days reached the simulator once, through the checks. The fixture in
     # tests/conftest.py fails this test on any refusal.
     assert len(made.submits()) == 4 and len(set(made.submits())) == 4
+    assert made.rebuilt() == 4
 
 
 # 7. The halt's words when a call raises
@@ -373,6 +393,31 @@ def test_a_price_wrong_100_times_sends_no_order_past_a_share_cap(leg, factor, st
         assert sizing is not None and Limit.MAX_POSITION in sizing.cut
         assert result.halt is None, result.halt.reason
         assert len(placed) == (2 if start == "flat" else 0)
+    made.rebuilt()
+
+
+@pytest.mark.parametrize("start", ["flat", "held"])
+def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start) -> None:
+    # The target sizing would give at GLD's price 100 times low, had no cap cut it: 400 /
+    # (3 × 1.00 + 5 × 20) baskets, each leg rounded toward zero. The gate's share caps, which
+    # read no price, are what stop it.
+    made = SendWorld(_priced(GLD, Decimal("0.01"), DAYS[1]), strategies=(SIZED,))
+    made.constraints = gates.constraints(max_order_qty=TRUE, max_position=TRUE)
+    if start == "held":
+        result, _ = _tried(made, DAYS[0], 1)
+        assert result.halt is None, result.halt.reason
+    else:
+        made.ready(close_of(DAYS[0]), {CHAN: {GLD: 0, USO: 0}})
+        assert made.send_stage().halt is None
+    before = len(made.submits())
+    made.ready(close_of(DAYS[1]), {CHAN: {GLD: 11, USO: -19}})
+    first, second = planned(made)
+    result = made.send_attempt()
+    assert result.halt is not None and "nothing is sent" in result.halt.reason
+    assert f"the gate refused {first} on max_order_qty" in result.halt.reason
+    assert made.submits()[before:] == []
+    assert made.states()[first] == "Refused" and made.states()[second] == "Abandoned"
+    assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
 
 
 # 5. The trace's halt: a plan whose snapshot is not the one it names
@@ -405,6 +450,31 @@ def _other_bytes(made: SendWorld) -> None:
     made.store.put(key, made.store.blobs[key] + b" ")
 
 
+def _twice(made: SendWorld) -> None:
+    _, key = _snapshot_ref(made)
+    stored = decode(made.store.blobs[key], DecisionResult)
+    made.store.put(key, encode(replace(stored, outputs=stored.outputs * 2)))
+
+
+def _relisted(made: SendWorld) -> None:
+    """Another snapshot of the decision, stored whole and listed by data's result as its own.
+
+    The store's own checks pass, so only the `decision` entry's SHA-256 tells it apart.
+    """
+    key, result = _snapshot_ref(made)
+    stored = decode_output(made.store.blobs[key], Snapshot)
+    (snapshot,) = stored.entries
+    # GLD's newest close doubled, which still reads as a valid bar of its session.
+    *older, newest = snapshot.bars[GLD]["1d"]
+    doubled = replace(newest, high=newest.high * 2, close=newest.close * 2)
+    bars = {**snapshot.bars, GLD: {"1d": (*older, doubled)}}
+    other = replace(snapshot, bars=bars)
+    data = encode_output(Snapshot, OutputFile(stored.header, (other,), False))
+    made.store.put(key, data)
+    held = decode(made.store.blobs[result], DecisionResult)
+    made.store.put(result, encode(replace(held, outputs=(BlobRef(key, sha256_of(data)),))))
+
+
 @pytest.mark.parametrize(
     ("spoil", "why"),
     [
@@ -412,8 +482,17 @@ def _other_bytes(made: SendWorld) -> None:
         (_unlisted, "0 times, not once"),
         (_halted, "holds a halt"),
         (_other_bytes, "has SHA-256"),
+        (_twice, "2 times, not once"),
+        (_relisted, "planned on .* with SHA-256"),
     ],
-    ids=["missing", "unconfirmed-unlisted", "unconfirmed-halted", "other-bytes"],
+    ids=[
+        "missing",
+        "unconfirmed-unlisted",
+        "unconfirmed-halted",
+        "other-bytes",
+        "unconfirmed-listed-twice",
+        "other-snapshot-listed",
+    ],
 )
 def test_a_plan_whose_snapshot_is_not_the_one_it_names_sends_nothing(spoil, why) -> None:
     made = world()
@@ -447,18 +526,20 @@ def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault)
     made = world(faults=Faults(orders={short: fault}))
     made.ready(close_of(FULL), PAIR)
     first = planned(made)[0]
-    result = made.send_attempt()
+    result = made.send_attempt(checked(made))
     if fault is OrderFault.REJECT:
         assert result.halt is not None and f"the order {short} is Rejected" in result.halt.reason
     else:
         assert result.halt is None, result.halt.reason
-    # A rerun at the same decision, by another process, sends nothing.
+    # A rerun at the same decision, by another process, sends nothing, and the claim is what
+    # stops it.
     made.restart()
-    again = made.send_attempt(made.sender(writer="f" * 32))
+    again = made.send_attempt(checked(made, writer="f" * 32))
     assert again.halt is not None and "holds another call's claim" in again.halt.reason
     # The next decision's recover settles the refusal, and its plan asks for the short again
     # under that decision's own id, a new order rather than a resend.
-    result = sent(made, DAYS[1])
+    made.ready(close_of(DAYS[1]), PAIR)
+    result = made.send_attempt(checked(made))
     assert result.halt is None, result.halt.reason
     states = made.states()
     assert states[short] == "Rejected" and states[first] == "Filled"
@@ -470,12 +551,21 @@ def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault)
     renewed = order_id(CHAN, close_of(DAYS[1]), 1)
     assert made.view().orders[renewed].intent.qty == Decimal(-5)
     assert made.submits()[-1] == renewed
+    assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
 
 
 def test_a_strategys_part_ends_in_one_of_four_ways_and_none_is_a_skip() -> None:
     # #33 asks that a skip come from a closed list in the strategy's specification. No
     # strategy names one yet, so the list of ends holds none.
-    assert [end.value for end in StrategyEnd] == ["sent", "no order needed", "partly sent", "off"]
+    assert [end.name for end in StrategyEnd] == ["SENT", "NO_ORDER_NEEDED", "PARTLY_SENT", "OFF"]
+
+
+def _of_the_day_before(made: SendWorld) -> dict:
+    """The targets stored again under this decision's key, each of the decision before it."""
+    key = output_key(DEPLOYMENT, made.run, made.at, PORTFOLIO_STAGE, TARGET_OUTPUT)
+    stored = decode_output(made.targets(made.at, PAIR) and made.store.blobs[key], TargetPortfolio)
+    earlier = tuple(replace(t, decision_at=close_of(FULL)) for t in stored.entries)
+    return {"stored": earlier}
 
 
 def _switch_unreadable(made: SendWorld) -> dict:
@@ -490,16 +580,38 @@ def _switch_unreadable(made: SendWorld) -> dict:
         (lambda made: {}, 'no entries and no "trade nothing" mark'),
         (lambda made: {**PAIR, TWO: {GLD: 1}}, "a strategy of no deployment"),
         (_switch_unreadable, "off switch unreadable"),
+        (_of_the_day_before, "is of the decision at"),
     ],
-    ids=["leaves-out-a-leg", "no-target-at-all", "target-of-no-strategy", "switch-unreadable"],
+    ids=[
+        "leaves-out-a-leg",
+        "no-target-at-all",
+        "target-of-no-strategy",
+        "switch-unreadable",
+        "target-of-another-decision",
+    ],
 )
 def test_bad_input_halts_and_never_ends_a_strategys_part_with_no_order(bad, why) -> None:
     made = world()
     sent(made, FULL)
     made.ready(close_of(DAYS[1]), PAIR)
-    made.targets(made.at, bad(made))
+    wanted = bad(made)
+    if "stored" in wanted:
+        _store_targets(made, wanted["stored"])
+    else:
+        made.targets(made.at, wanted)
     result = made.send_attempt()
     assert result.halt is not None and why in result.halt.reason
     outcome = output_key(DEPLOYMENT, made.run, made.at, SEND_STAGE, OUTCOME_OUTPUT)
     assert outcome not in made.store.blobs
     assert "decision" not in made.kinds(made.before)
+
+
+def _store_targets(made: SendWorld, entries: tuple) -> None:
+    """Store target entries as they are, under this decision's file and its result."""
+    key = output_key(DEPLOYMENT, made.run, made.at, PORTFOLIO_STAGE, TARGET_OUTPUT)
+    header = decode_output(made.store.blobs[key], TargetPortfolio).header
+    data = encode_output(TargetPortfolio, OutputFile(header, entries, False))
+    made.store.put(key, data)
+    result = result_key(DEPLOYMENT, made.run, made.at, PORTFOLIO_STAGE)
+    held = decode(made.store.blobs[result], DecisionResult)
+    made.store.put(result, encode(replace(held, outputs=(BlobRef(key, sha256_of(data)),))))
