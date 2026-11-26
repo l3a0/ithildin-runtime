@@ -38,7 +38,6 @@ from ithildinruntime.core import (
     OrderIntent,
     OrderRecord,
     OrderState,
-    TimeInForce,
     broker_id_shown,
     exact_product,
     exact_total,
@@ -69,7 +68,7 @@ from .entries import (
     named,
     record_of,
 )
-from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, lost_from, moved
+from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, lost_from, may_be_lost, moved
 
 __all__ = ["Dispute", "Repeat", "Unmatched", "View", "after", "empty"]
 
@@ -589,7 +588,7 @@ def _lost(step: Step, record: LostEntry) -> None:
     """A closing-auction order in doubt that a whole list, asked for after its close, omitted."""
     order, state = _next(step, record.client_order_id, Move.LOST)
     _require_read(step, record.read)
-    if order.intent.time_in_force is not TimeInForce.CLS:
+    if not may_be_lost(order.intent):
         raise Halt(
             f"entry {step.seq} gives up on {record.client_order_id}, which is no closing-auction "
             "order, and a broker may hold one of another kind for the next session's open"

@@ -97,7 +97,6 @@ from ithildinruntime.core import (
     StopState,
     Storage,
     StoreError,
-    TimeInForce,
     Verdict,
     caps_key,
     encode,
@@ -135,6 +134,7 @@ from ithildinruntime.journal import (
     View,
     kind_of,
     lost_from,
+    may_be_lost,
     record_of,
 )
 
@@ -833,7 +833,7 @@ class OrderPath:
             )
         rows = tuple(found.rows)
         if found.answer is Outcome.NOT_FOUND and not rows:
-            if order.intent.time_in_force is not TimeInForce.CLS:
+            if not may_be_lost(order.intent):
                 # A day order a broker takes after its close may wait for the next open.
                 raise Halt(
                     f"the order {name} is in no row of the broker's whole order list, as "
@@ -942,7 +942,8 @@ class OrderPath:
 
         A row the journal keeps already with this content is not kept twice, so a
         later decision's halt says the same. A store that does not answer is raised
-        as it came, since every later write would meet it too.
+        as an `Outage` that names the row's reason first, since every later write
+        would meet it too.
         """
         said = [reason]
         for row in rows:
@@ -958,8 +959,9 @@ class OrderPath:
 
             try:
                 self._appended(row.broker_order_id, made)
-            except Outage:
-                raise
+            except Outage as outage:
+                # It paged already, and the halt still says why the row was kept.
+                raise Outage(f"{reason}. {outage.reason}") from None
             except Halt as halt:
                 said.append(halt.reason)
         return Halt(". ".join(said))
@@ -1576,9 +1578,11 @@ def copy_differs(
 ) -> list[str]:
     """Each detail a broker's copy of an order gives another value than its `sending` entry's.
 
-    It is the one comparison of a broker's copy against the order the platform
-    sent, which a submit's answer, a settling list's row and lookup, and recover's
-    lookup of an order the broker no longer lists each run. It reads the client
+    It is the order path's one comparison of a single copy the broker returns
+    for an order against the order the platform sent, which a submit's answer, a
+    settling list's row and lookup, and recover's lookup of an order the broker
+    no longer lists each run. `core.reconcile` compares the open orders a broker
+    lists by fields of its own, because `core` imports nothing of `execution`. It reads the client
     order id, the instrument, the quantity, whose sign is the side, the type, the
     time in force and the broker's id, which is `broker` where `known`, and any
     id the journal takes otherwise. A copy of a broker that keeps a client order

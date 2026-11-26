@@ -832,12 +832,20 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     shutil.copytree(ORDERS / "journal", tmp_path / "journal")
     journal = Journal(FolderStore(tmp_path), FIXED)
     whole = journal.view()
-    # After the dispute come a fee that moves the cash and three entries that move nothing.
+    # After the dispute come a fee that moves the cash, three entries that move nothing, and a
+    # plan of the next day whose one closing-auction order a crash leaves sending and the recover
+    # after it gives up as lost.
+    late = afterwards["lost"]["order"]
     assert {
         "through": whole.through.seq,
         "cash": format(whole._cash, "f"),
         "records": list(whole.records),
         "unmatched": [[one.seq, one.kind, one.name] for one in whole.unmatched],
+        "lost": {
+            "order": late,
+            "state": whole.orders[late].state.value,
+            "entries": " ".join(f"{e.seq}:{e.kind}" for e in whole.orders[late].entries),
+        },
     } == afterwards
     with pytest.raises(Halt) as halted:
         journal.replay()

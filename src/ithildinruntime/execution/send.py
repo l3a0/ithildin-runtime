@@ -322,19 +322,24 @@ class SendStage:
             return
         reason = refused.reason
         said = [reason]
+        why = f"a partner in its plan was refused: {reason}"
+        # A store that stopped answering alarmed once already, and each later read or abandon
+        # would page the same outage, so none is tried once one is met.
+        down = False
         try:
             path.hold(names)
+        except Outage as outage:
+            said.append(outage.reason)
+            down = True
         except Halt as halt:
             said.append(halt.reason)
-        why = f"a partner in its plan was refused: {reason}"
-        view = self._account.view(report)
-        for name in names:
+        view = None if down else self._read(said, report)
+        for name in [] if view is None else names:
             order = view.orders.get(name)
             if order is None or order.state in NOT_SENT:
                 try:
                     path.abandon(name, why)
                 except Outage as outage:
-                    # Its alarm went, and each later abandon would page the same outage.
                     said.append(outage.reason)
                     break
                 except Halt as halt:
@@ -431,17 +436,17 @@ class SendStage:
         if left:
             said.append(
                 f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
-                "since the journal did not answer, and none of them was sent"
+                "since the journal could not be read, and none of them was sent"
             )
         if view is None:
-            names = [order.client_order_id for order in orders]
-            rest = [name for name in names if name not in sent and name not in left]
-            parts = [
-                f"{', '.join(group)} {word}"
-                for group, word in ((sent, "acknowledged"), (left, "not sent"), (rest, "not known"))
-                if group
-            ]
-            legs = f"{', '.join(parts)}, since the journal could not be read"
+
+            def stands(name: str) -> str:
+                if name in sent:
+                    return f"{name} acknowledged"
+                return f"{name} not sent" if name in left else f"{name} not known"
+
+            named = ", ".join(stands(order.client_order_id) for order in orders)
+            legs = f"{named}, since the journal could not be read"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))

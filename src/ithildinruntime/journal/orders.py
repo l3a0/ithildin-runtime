@@ -13,9 +13,27 @@ from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 
-from ithildinruntime.core import CLOCK_BOUND, Halt, OrderState, load_sessions, read_order_id
+from ithildinruntime.core import (
+    CLOCK_BOUND,
+    Halt,
+    OrderIntent,
+    OrderState,
+    TimeInForce,
+    load_sessions,
+    read_order_id,
+)
 
-__all__ = ["DOUBTFUL", "ENDED", "MOVES", "NOT_SENT", "OPEN", "Move", "lost_from", "moved"]
+__all__ = [
+    "DOUBTFUL",
+    "ENDED",
+    "MOVES",
+    "NOT_SENT",
+    "OPEN",
+    "Move",
+    "lost_from",
+    "may_be_lost",
+    "moved",
+]
 
 
 class Move(StrEnum):
@@ -87,3 +105,13 @@ def lost_from(client_order_id: str) -> datetime:
     """
     _, decided, _ = read_order_id(client_order_id)
     return load_sessions().opened_by(decided).close + 2 * CLOCK_BOUND
+
+
+def may_be_lost(intent: OrderIntent) -> bool:
+    """Whether an order in doubt is of a kind a whole list can ever give up, which settle and the
+    fold both read.
+
+    Only a closing-auction order is, because a broker may hold a day order that
+    came after its close for the next session's open.
+    """
+    return intent.time_in_force is TimeInForce.CLS

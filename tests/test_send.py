@@ -27,8 +27,9 @@ from ithildinruntime.core import (
     order_id,
     output_key,
 )
+from ithildinruntime.execution.account import Account
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
-from ithildinruntime.execution.order_path import OrderPath
+from ithildinruntime.execution.order_path import Asked, OrderPath
 from ithildinruntime.journal import DecisionEntry, ReadEntry
 from tests.support import gates
 from tests.support.send_world import CHAN, SendWorld, strategy
@@ -874,7 +875,7 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     result = made.send_attempt()
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
-    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
+    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
     assert f"stand so: {first} acknowledged, {second} not sent, since the journal" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
@@ -897,5 +898,64 @@ def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_u
     result = made.send_attempt()
     reason = result.halt.reason
     assert made.submits() == []
-    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
-    assert f"stand so: {second} not sent, {first} not known, since the journal" in reason
+    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
+    assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
+
+
+@pytest.mark.parametrize("at", ["hold", "abandon"], ids=["at the hold", "at the first abandon"])
+def test_a_refused_plan_stops_its_writes_at_the_first_outage(monkeypatch, at: str) -> None:
+    """A store that stopped answering paged once, and each later write would page it again."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    names = [f"ith-{CHAN}-x-{n}" for n in (1, 2, 3)]
+    tried: list[str] = []
+
+    def outage(self) -> Halt:
+        return self._outage("the journal could not be read: StoreUnavailable")
+
+    def hold(self, client_order_ids):
+        if at == "hold":
+            raise outage(self)
+        return ()
+
+    def abandon(self, name, reason):
+        tried.append(name)
+        raise outage(self)
+
+    monkeypatch.setattr(OrderPath, "ask", lambda self, n: (Asked(n[0], None, "refused"),))
+    monkeypatch.setattr(OrderPath, "hold", hold)
+    monkeypatch.setattr(OrderPath, "abandon", abandon)
+    stage = made.sender()
+    path = made.account.path(made.broker(), lambda: None)
+    alarms = len(made.alarms.sent)
+    with pytest.raises(Halt) as halted:
+        stage._asked(path, names, lambda: None)
+    assert tried == ([] if at == "hold" else names[:1])
+    assert halted.value.reason.count("the journal could not be read") == 1
+    # The outage's own page and the one that says nothing is sent.
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2 and sent[1].startswith("account sim-1: nothing is sent: refused")
+
+
+def test_a_journal_whose_fold_refuses_an_entry_names_its_cause_and_every_leg_in_order(
+    monkeypatch,
+) -> None:
+    """The journal answers and cannot be read, which is no outage, and nothing is abandoned."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = Account.view
+
+    def send(self, name):
+        monkeypatch.setattr(
+            Account, "view", lambda *a: (_ for _ in ()).throw(Halt("entry 9 is refused"))
+        )
+        raise RuntimeError("the path broke")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    result = made.send_attempt()
+    monkeypatch.setattr(Account, "view", real)
+    reason = result.halt.reason
+    assert "entry 9 is refused" in reason and "did not answer" not in reason
+    assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
+    assert made.submits() == []

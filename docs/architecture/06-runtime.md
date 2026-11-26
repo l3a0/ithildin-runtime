@@ -797,7 +797,7 @@ Each answer is stored as it came before anything judges it, at `lookup-<n>.json`
 | --- | --- |
 | The list fails | Nothing is stored or settled, and the decision halts naming the read |
 | The list does not come whole | It is stored, nothing is settled, and the decision halts |
-| A whole list omits the order, asked for at or after its session's close plus twice the clock's bound | A `lost` entry names the list's `read` entry, and the order is `Lost`, with an alarm that says whether it was sent is unproved |
+| A whole list omits a closing-auction order, asked for at or after its session's close plus twice the clock's bound | A `lost` entry names the list's `read` entry, and the order is `Lost`, with an alarm that says whether it was sent is unproved |
 | A whole list omits the order, asked for earlier | It stays `InDoubt`, and the decision halts |
 | A whole list omits an order whose time in force is not the closing auction | It stays `InDoubt`, and the decision halts, because a broker may hold a day order that came after its close for the next session's open. Giving one up waits on a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs |
 | More than one row, or one row that differs in client order id, instrument, quantity, whose sign is the side, type or time in force, or a row under an id the journal refuses | Each row the journal can key is journaled as an `unmatched_order` and holds the account, and the decision halts |
@@ -1236,7 +1236,7 @@ stateDiagram-v2
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
     Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read, that was cut short, that differs<br/>from the order or that says two things of it
     InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first, or the process<br/>that sent it journals the answer it kept
-    InDoubt --> Lost: still not found once its time in force has run out
+    InDoubt --> Lost: a closing-auction order still not found<br/>once its session has closed
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill

@@ -197,7 +197,7 @@ def test_2_a_fill_made_while_execution_was_down_applies_once_and_a_redelivery_dr
     nothing_twice(replay)
 
 
-# The pins of the code that added them, at the merge of main's PR #212 into PR #214, under
+# The pins of the code that added them, at `1808c31`, which merged main's PR #212, under
 # chan_bollinger.toml's own G and limits and test 1's share step. Both data days halt every
 # stage and send nothing, so they pin alike, and so do the three kills of recover.
 PINS = {
