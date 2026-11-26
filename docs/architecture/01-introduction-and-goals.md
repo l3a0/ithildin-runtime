@@ -113,7 +113,7 @@ calls that count `k`. So a new `h` or a new price changes `k`, and both legs
 resize.
 
 These numbers are made up to show the mechanics, at a G of $10,000 and whole
-shares rounded toward zero. USO closes at $50 and GLD at $100 each day, except
+shares rounded to the nearest share. USO closes at $50 and GLD at $100 each day, except
 that USO closes at $51 on Wednesday:
 
 **Table:** How the position and its legs resize, day by day, with made-up numbers

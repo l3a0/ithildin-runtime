@@ -64,6 +64,7 @@ from ithildinruntime.core import (
     sha256_of,
     valuation_key,
 )
+from ithildinruntime.portfolio import gross
 from ithildinruntime.risk import SECTION as NAME
 from ithildinruntime.risk import LimitRisk, RiskStage
 from ithildinruntime.runtime.data_worker import DATA_ROW
@@ -538,9 +539,6 @@ def test_2_a_number_the_strategy_reader_refuses_fails_the_load(written) -> None:
 
 
 # The tracked strategy files
-
-# Each tracked strategy with no limits written yet, and the issue that writes them.
-WITHOUT_LIMITS = {"chan_bollinger": "#129"}
 # Each field of the hard caps that a strategy's limits lack, and the caps blob's own names.
 CAP_NAMES = (
     {f.name for f in dataclasses.fields(HardCaps)}
@@ -589,8 +587,8 @@ def test_2_every_tracked_risk_section_is_one_the_model_reads(tmp_path) -> None:
     names = tracked()
     assert names, "no strategy file is tracked"
     read = readable(STRATEGIES, names)
-    assert set(names) - set(read) == set(WITHOUT_LIMITS)
-    # No tracked file holds a section until #129, so a fixture runs the same check on one.
+    assert read == names
+    # A fixture beside them shows the same check refuses a section the form refuses.
     for name in names:
         (tmp_path / f"{name}.toml").write_bytes((STRATEGIES / f"{name}.toml").read_bytes())
     (tmp_path / "fixture.toml").write_text(TEXT)
@@ -600,11 +598,20 @@ def test_2_every_tracked_risk_section_is_one_the_model_reads(tmp_path) -> None:
         readable(tmp_path, [*names, "fixture"])
 
 
-@pytest.mark.parametrize("name", WITHOUT_LIMITS)
-def test_a_tracked_strategy_with_no_section_halts(name) -> None:
-    (config,) = load_strategies(STRATEGIES, [name])
-    with pytest.raises(Halt, match=f"{name}.toml has no \\[risk\\] section, or an empty one"):
-        limits(config)
+def test_chan_bollingers_limits_follow_its_g() -> None:
+    """Each dollar limit is a share of G, and each order size twice its leg's position.
+
+    The tracked file writes every figure out, because a section holds numbers
+    alone, so this is where a change of G that leaves a limit behind fails.
+    """
+    (config,) = load_strategies(STRATEGIES, ["chan_bollinger"])
+    written, g = config.section(NAME), gross(config)
+    assert (written["max_gross"], written["max_net"]) == (g * d("1.5"), g * d("1.5"))
+    assert written["loss_stop"] == g / 10
+    assert (written["max_open_orders"], written["moc_cutoff"]) == (4, 0)
+    positions = written["max_position"]
+    assert written["max_order_qty"] == {i: 2 * q for i, q in positions.items()}
+    assert sorted(positions) == sorted(config.instruments)
 
 
 def caps_held(data: bytes) -> set[str]:
