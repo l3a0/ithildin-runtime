@@ -1027,12 +1027,12 @@ A blob that cannot be read reads as unreadable, whatever the other two say, beca
 3. Create the blob. Any blob already at the key stands for it.
 4. Journal `stop_stored` with the blob's tag. A tag that a covered firing's `stop_stored` names belongs to a clear between its entry and its delete, so the new firing stays unstored until that blob is gone.
 
-Each step runs whether the one before it failed or not. The alarm on the reading goes out first, so an outage that holds the writes does not hold the page. Each settle of the order path, before every send, hold, ask and loss, completes what is missing. It journals a firing held in memory, gives a past `verdict` that stands alone its `stop_fired`, gives a firing its blob and its `stop_stored`, and journals a firing for a blob no entry names. It lets go of a blob `core.Storage` holds once nothing needs it, so a held copy is not stored after a clear. A stage's own settle leaves the latch alone, so a blob S3 will not take holds up no read of the broker. The worker's last settle tries the firing once more, and names it among what it owes if the journal has not taken it. Its page then tells the owner to pull the account's kill switch before any restart, since the next process would start with no record of the firing.
+Each step runs whether the one before it failed or not. The alarm on the reading goes out first, so an outage that holds the writes does not hold the page. Each settle of the order path, before every send, hold, ask and loss, completes what is missing. It journals a firing held in memory, gives a past `verdict` that stands alone its `stop_fired`, gives a firing its blob and its `stop_stored`, and journals a firing for a blob no entry names. It lets go of a blob `core.Storage` holds once nothing needs it, so a held copy is not stored after a clear. A stage's own settle leaves the latch alone, so a blob S3 will not take holds up no read of the broker. The worker's last settle tries the firing once more, and names it among what it owes if the journal has not taken it. Its pages then tell the owner to pull the account's kill switch at once, because the host restarts execution on its own.
 
 The price has three parts.
 
 1. A settle with nothing owed costs one listing of the journal and one `head` of the blob, each tried once, before every order.
-2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone.
+2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone. A clean end does not, because the receive loop keeps the process alive until S3 stores the blob, and the restarted worker reads that blob as fired.
 3. A crash while the journal refuses a firing and a clear is mid-delete loses that firing too.
 
 ##### When a clear counts

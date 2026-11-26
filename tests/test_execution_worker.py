@@ -782,6 +782,28 @@ def test_10_a_firing_that_may_end_with_the_process_pages_to_hold_the_account(cas
     latch.complete = lambda report: None  # type: ignore[method-assign]
     with pytest.raises(Halt) as raised:
         worker.run(Looped())  # type: ignore[arg-type]
-    hold = "pull the account's kill switch before any restart"
+    hold = "pull the account's kill switch at once"
     assert hold in raised.value.reason
     assert all(hold in reason for reason in case.alarms.reasons)
+
+
+def test_10_the_hold_step_follows_what_is_still_owed_after_the_last_settle(case: Case) -> None:
+    """A firing the last settle journals drops the step, and one it leaves owed keeps it."""
+    hold = "pull the account's kill switch at once"
+    for before, stays in ((True, False), (False, True)):
+        worker, _, sent = owing(case, refuse=True)
+        latch = worker.account._shared.latch
+        entry = StopFiredEntry("b" * 32, DEPLOYMENT, RUN, AT[0], None, "no write took")
+        if before:
+            latch._pending.append(entry)
+
+        def settled(report, before=before, latch=latch, entry=entry):  # type: ignore[no-untyped-def]
+            # The journal takes the firing held before, or a firing comes during the settle.
+            latch._pending[:] = [] if before else [entry]
+
+        latch.complete = settled  # type: ignore[method-assign]
+        with pytest.raises(Halt) as raised:
+            worker.run(Looped())  # type: ignore[arg-type]
+        assert (hold in raised.value.reason) is stays
+        assert (hold in sent[-1]) is stays and (hold in sent[0]) is before
+        assert ACK in raised.value.reason
