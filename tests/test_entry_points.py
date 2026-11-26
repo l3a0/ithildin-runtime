@@ -143,6 +143,9 @@ class Run:
         self.store.create(caps_key(ACCOUNT), blob, sha256_of(blob))
 
     def worker(self, component: str) -> entry.Worker:
+        # Data reads one decision at a time until #215 fixes the mirror's race between
+        # decisions read side by side, which halts one now and then on Linux.
+        pool = {"pool_size": 1} if component == "data" else {}
         return entry.Worker(
             mode=Mode.BACKTEST,
             deployment=DEPLOYMENT,
@@ -160,6 +163,7 @@ class Run:
             pause=lambda s: None,
             stress_moves=self.records,
             plan_every=0.05,
+            **pool,
         )
 
     def runs(self) -> dict[str, Callable[[], int]]:

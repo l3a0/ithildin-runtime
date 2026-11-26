@@ -170,6 +170,8 @@ class Worker:
     plan_every: float = PLAN_EVERY
     # The local release file, which the supervisor writes once its hold check is done.
     release_file: Path | None = None
+    # How many of the worker's decisions its loop runs side by side.
+    pool_size: int = 4
 
 
 def wait_for_plan(worker: Worker) -> Plan | None:
@@ -240,6 +242,7 @@ def _serve(
         alerts=worker.alerts,
         timer=worker.timer,
         beat=worker.beat,
+        pool_size=worker.pool_size,
         stop_key=run_stop_key(worker.deployment, plan.run),
     )
     done = threading.Event()
