@@ -1088,16 +1088,24 @@ def test_a_result_read_that_does_not_answer_waits_for_the_next_tick(world: World
     assert world.ticks == 1 and _stop_of(world) is not None
 
 
-def test_a_start_record_that_cannot_be_written_makes_the_next_start_hold(world: World) -> None:
+def test_a_start_record_that_cannot_be_written_releases_no_worker(world: World) -> None:
     world.opened()
     world.ran()
     world.results()
     _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
-    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
-    assert any("start record of 2026-10-02 could not be written" in a for a in world.alarms())
-    assert world.held() == []
-    # The plan stands with no start recorded, so the next start, on any boot, holds.
-    _refusing(world, lambda call, key: False)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HELD and "start record" in outcome.line
+    assert world.blob(plan_key(DEPLOYMENT, TODAY.isoformat())) is None
+    assert not (world.root / "local" / "release").exists()
+    assert any("no worker of it starts" in a for a in world.alarms())
+
+
+def test_a_stored_plan_with_no_start_record_holds(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    # A plan stands with no start recorded, as when the records were lost.
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
     world.supervisor().run(TODAY)
     assert world.held() and [p.boots for p in world.pauses()] == [("unrecorded-1",)]
 
@@ -1212,21 +1220,6 @@ def test_two_unclean_runs_have_their_halts_stored_before_either_pause_oldest_fir
     assert [p.run for p in world.pauses()] == ["2026-09-30", "2026-10-01"]
 
 
-def test_a_runs_halt_that_cannot_be_stored_still_alarms_naming_the_order(world: World) -> None:
-    world.opened()
-    world.ran()
-    held = _doubtful(world, DECIDED[TODAY])
-    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
-    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
-    _refusing(world, lambda call, key: call == "create" and key == halt)
-    from ithildinruntime.core import Halt
-
-    # Storage halts on a create it cannot store, and the process ends and restarts.
-    with pytest.raises(Halt):
-        world.supervisor().run(TODAY)
-    assert any(held in a and "Settle each order" in a for a in world.alarms())
-
-
 def test_a_standing_hold_on_live_names_the_owner(world: World) -> None:
     world.opened()
     world.put(_hold_key(), b"{}")
@@ -1314,15 +1307,26 @@ def test_a_second_stop_with_no_start_record_holds_again(world: World) -> None:
     world.opened()
     world.ran()
     world.results()
-    starts = lambda call, key: call == "create" and "/starts/" in key  # noqa: E731
-    # X stores the plan, and its start record cannot be written.
-    _refusing(world, starts)
-    world.supervisor(boot="boot-x").run(TODAY)
-    # Y finds no record and holds, and its own record cannot be written either.
-    world.supervisor(boot="boot-y").run(TODAY)
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), encode(_plan(TODAY)))
+    # Y finds the plan with no start record and holds, and its own record cannot be written.
+    _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
+    assert world.supervisor(boot="boot-y").run(TODAY).code == EXIT_HELD
     _clear(world)
-    # Y is lost too. Z, with writes working again, still finds no record, and holds.
-    _refusing(world, lambda call, key: False)
+    # Z still finds no start record, and holds again under a name of its own.
     world.supervisor(boot="boot-z").run(TODAY)
     assert [p.boots for p in world.pauses()] == [("unrecorded-1",), ("unrecorded-2",)]
     assert world.held()
+
+
+def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: World) -> None:
+    world.opened()
+    world.ran()
+    held = _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(world, lambda call, key: call == "create" and key == halt)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HALTED and "could not be stored" in outcome.line
+    assert any(held in a for a in world.alarms())
+    assert any("Pull the account's kill switch" in a for a in world.alarms())
+    assert _stop_of(world) is None

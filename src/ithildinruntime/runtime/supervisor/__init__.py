@@ -206,10 +206,11 @@ class Supervisor:
             if not found:
                 # The hold's own alarm already names what it held on this start.
                 self._name_standing_halts(today)
-        if count is not None:
-            # Recorded only once the hold has finished, so a start that died mid-hold, or
-            # whose hold failed, never makes its restart read as one the host supervised.
-            self._record_start(run, count)
+        if count is not None and not self._record_start(run, count):
+            # A machine whose start is not recorded could be lost unseen, so it releases no
+            # worker. Recorded only once the hold has finished, so a start that died
+            # mid-hold, or whose hold failed, never makes its restart read as supervised.
+            return Outcome(EXIT_HELD, f"the start record of {run} could not be written")
         try:
             plan = self._store_plan(first, last)
         except Halt as halt:
@@ -272,8 +273,8 @@ class Supervisor:
             return False
         return lines[1:3] == [run, self._boot]
 
-    def _record_start(self, run: str, count: int) -> None:
-        """Record this start on its boot, which a later start reads."""
+    def _record_start(self, run: str, count: int) -> bool:
+        """Record this start on its boot, which a later start reads, and say whether it landed."""
         record = SupervisorStart(
             format=RUN_RECORD_FORMAT,
             deployment=self._deployment,
@@ -288,11 +289,13 @@ class Supervisor:
                 supervisor_start_key(self._deployment, run, self._boot, count), encode(record)
             )
         except Exception as error:
-            # A restart then reads as a lost machine and holds, which errs toward stopping.
             self._alerts.alarm(
-                f"{self._deployment}: the start record of {run} could not be written: "
-                f"{_said(error)}. A restart on this machine holds every strategy"
+                f"{self._deployment}: the start record of {run} could not be written, so this "
+                f"machine writes no plan and no release file and no worker of it starts: "
+                f"{_said(error)}. Start the supervisor's unit again once the store answers"
             )
+            return False
+        return True
 
     def _store_plan(self, first: date, last: date) -> Plan:
         built = build_plan(
@@ -416,9 +419,9 @@ class Supervisor:
         reason = "; ".join(late)
         # Alarmed first, so the orders are named even where the halt cannot be stored.
         self._alerts.alarm(
-            f"{self._deployment}: the supervisor halts {plan.run}, so no order is sent and the "
-            f"run ends with no stop: {reason}. Settle each order named at the broker. The next "
-            f"session's start holds every strategy. {who(self._mode)}"
+            f"{self._deployment}: the supervisor halts {plan.run}, and the run ends with no "
+            f"stop: {reason}. Settle each order named at the broker. The next session's start "
+            f"holds every strategy. {who(self._mode)}"
         )
         record = RunHalt(
             format=RUN_RECORD_FORMAT,
@@ -427,7 +430,17 @@ class Supervisor:
             reason=reason,
             halted_at=self._timer.now(),
         )
-        self._storage.keep(run_halt_key(self._deployment, plan.run), encode(record))
+        try:
+            self._storage.keep(run_halt_key(self._deployment, plan.run), encode(record))
+        except Exception as error:
+            # Without the run's halt execution's orders are not stopped. The supervisor ends
+            # with no stop and is not restarted, so the run ends unclean and the next start holds.
+            self._alerts.alarm(
+                f"{self._deployment}: the run's halt of {plan.run} could not be stored, so "
+                f"execution's orders are not stopped: {_said(error)}. Pull the account's kill "
+                "switch now"
+            )
+            return Outcome(EXIT_HALTED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")
         for at in decisions:
             for stage in stages:

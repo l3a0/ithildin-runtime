@@ -34,9 +34,10 @@ Each command ends with one of these codes, which #202's units read.
   be read, named in one line on standard error.
 - 3: the supervisor halted the run, which stores no stop.
 - 4: the supervisor found a result still missing an hour after the close.
-- 5: the hold check after an unclean stop could not finish, so the supervisor
-  writes no plan and no release file. Workers this machine released before run
-  on with no supervisor, and no other worker starts.
+- 5: the hold check after an unclean stop could not finish, or the start could
+  not be recorded, so the supervisor writes no plan and no release file.
+  Workers this machine released before run on with no supervisor, and no
+  other worker starts.
 - 6: the supervisor could not store its run's plan or write the local release
   file, or a worker found a plan it cannot read or one of another mode. Each
   alarms.
