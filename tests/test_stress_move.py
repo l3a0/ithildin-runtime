@@ -735,6 +735,7 @@ def test_3_a_split_in_captured_bars_is_listed_and_a_read_across_the_seam_is_blin
         live=FolderBucket(root.with_name("no-live")),
         clock=Clock(),
         timer=Timer(),
+        measured=False,
         kinds=made.KINDS,
     ).read(close(days[-1]))
     flagged = spike_flags(whole.snapshot.bars[USO]["1d"], Decimal(10))

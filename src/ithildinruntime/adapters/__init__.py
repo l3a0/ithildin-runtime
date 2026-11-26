@@ -1,4 +1,4 @@
-"""The adapters behind `core`'s ports: stores, read-only buckets, queues and clocks.
+"""The adapters behind `core`'s ports: stores, read-only buckets, queues, clocks and time servers.
 
 Only `runtime` imports this package, and it imports nothing from
 `ithildinruntime` but `core`, so no module builds an adapter and picks its own
@@ -12,8 +12,19 @@ from .folder import Faults, FolderStore
 from .pipe import PipeQueue
 from .s3 import S3Store
 from .sqs import SqsQueue
+from .time_servers import (
+    TIME_SERVERS,
+    AskFailed,
+    Exchange,
+    TimeServer,
+    TimeServers,
+    exchange,
+)
 
 __all__ = [
+    "TIME_SERVERS",
+    "AskFailed",
+    "Exchange",
     "Faults",
     "FolderBucket",
     "FolderStore",
@@ -22,5 +33,8 @@ __all__ = [
     "S3Bucket",
     "S3Store",
     "SqsQueue",
+    "TimeServer",
+    "TimeServers",
     "WallClock",
+    "exchange",
 ]

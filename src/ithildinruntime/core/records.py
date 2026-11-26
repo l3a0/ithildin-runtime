@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -42,6 +43,7 @@ __all__ = [
     "BrokerState",
     "BucketObject",
     "CashRead",
+    "ClockReading",
     "Constraints",
     "Correction",
     "CostKind",
@@ -97,6 +99,7 @@ __all__ = [
     "StopState",
     "StoredBlob",
     "TargetPortfolio",
+    "TimeAnswer",
     "TimeInForce",
     "Valuation",
     "Verdict",
@@ -117,6 +120,9 @@ Quantity = Annotated[Decimal, Places(9)]
 Money = Annotated[Decimal, Places(_MONEY_PLACES)]
 Rate = Annotated[Decimal, Places(8)]
 Statistic = Annotated[Decimal, Places(8)]
+
+# The 48 bytes of a time server's reply, as hex.
+_REPLY = re.compile(r"[0-9a-f]{96}")
 
 
 def _freeze(value: object) -> object:
@@ -302,6 +308,72 @@ class Segment(_Record):
 
 
 @dataclass(frozen=True)
+class TimeAnswer(_Record):
+    """What one time server's last answer says of the machine's clock, in whole microseconds.
+
+    - `server` is the configured name.
+    - `offset_us` is the machine's clock less the server's, so a slow clock
+      reads negative, and `error_us` is how far off that can be.
+    - `age_us` is the time since the exchange began.
+    - `received` is the reply's 48 bytes as hex.
+    - `failed` is why the newest ask to end failed, not empty, or `None` when it
+      did not.
+
+    The four from `offset_us` to `received` are all `None` where the server has
+    given no answer yet.
+    """
+
+    server: str
+    offset_us: int | None
+    error_us: int | None
+    age_us: int | None
+    received: str | None
+    failed: str | None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.server, str) or not self.server:
+            raise ValueError("a time answer names its server")
+        if self.failed is not None and (not isinstance(self.failed, str) or not self.failed):
+            raise ValueError("a time answer's failure is text")
+        measured = (self.offset_us, self.error_us, self.age_us)
+        if all(v is None for v in (*measured, self.received)):
+            return
+        if any(type(v) is not int for v in measured):
+            raise ValueError(f"{measured} are not all whole microseconds")
+        if self.error_us < 0 or self.age_us < 0:  # type: ignore[operator]
+            raise ValueError("a time answer's error and age are 0 or more")
+        if not isinstance(self.received, str) or not _REPLY.fullmatch(self.received):
+            raise ValueError("a time answer holds the 48 bytes it was read from, as hex")
+
+
+@dataclass(frozen=True)
+class ClockReading(_Record):
+    """The machine's clock against each time server, at `read_at`.
+
+    `answers` is `None` where nothing measured the clock, which is a history
+    clock or a wall clock built with no servers, and otherwise holds two servers
+    or more.
+    """
+
+    read_at: datetime
+    answers: tuple[TimeAnswer, ...] | None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.read_at, datetime) or self.read_at.utcoffset() != timedelta(0):
+            raise ValueError("a clock is read at a UTC time")
+        if self.answers is None:
+            return
+        if not isinstance(self.answers, tuple) or len(self.answers) < 2:
+            raise ValueError("a clock reading holds two time servers' answers or more")
+        if any(type(a) is not TimeAnswer for a in self.answers):
+            raise ValueError("a clock reading holds time answers")
+        if len({a.server for a in self.answers}) != len(self.answers):
+            raise ValueError("a clock reading holds one answer of each server")
+
+
+@dataclass(frozen=True)
 class Snapshot(_Record):
     """The bars and quotes one decision read, with each instrument's status.
 
@@ -318,6 +390,8 @@ class Snapshot(_Record):
     - `faults` holds each reason the read of the quotes failed, in order.
     - `quotes_read_at` is the data worker's clock after the read's last answer
       from the bucket, and `None` exactly when `provisional` is false.
+    - `clock` is the reading of the machine's clock, taken after the last answer
+      the read waited on, which `core.clock_faults` judges.
     """
 
     decision_at: datetime
@@ -331,6 +405,7 @@ class Snapshot(_Record):
     rows: Mapping[InstrumentId, tuple[Mapping[str, str | None], ...]]
     faults: tuple[str, ...]
     quotes_read_at: datetime | None
+    clock: ClockReading
 
     def __post_init__(self) -> None:
         super().__post_init__()

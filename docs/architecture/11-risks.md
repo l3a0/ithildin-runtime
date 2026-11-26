@@ -13,6 +13,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 - [Why no decision waits for a listing to fill](03-context-and-scope.md#why-no-decision-waits-for-a-listing-to-fill)
 - [Which stamp dates a quote](03-context-and-scope.md#which-stamp-dates-a-quote)
+- [What measuring the clock costs](03-context-and-scope.md#what-measuring-the-clock-costs)
 
 ## Prices in Building blocks
 
