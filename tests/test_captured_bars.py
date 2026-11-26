@@ -124,6 +124,7 @@ def decide(
             live=FolderBucket(live),
             clock=Clock(),
             timer=Timer(),
+            measured=False,
             kinds=kinds,
             quote_kinds=QuoteKinds(
                 (QuoteKindRow(day, QUOTE_SOURCE, day, day, segments.KIND, "a test"),)
