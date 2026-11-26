@@ -111,10 +111,11 @@ class ExecutionWorker:
             self._brokers = Halt(
                 f"the table's row of {RECOVER_STAGE} is not the one it declares, so set "
                 "recover's row in the deployment's stage table to "
-                "ithildinruntime.runtime.execution_worker.RECOVER_ROW, which reads data and "
-                f"follows {SEND_STAGE}"
+                "ithildinruntime.runtime.execution_worker.RECOVER_ROW, which captures, reads "
+                f"data, keeps the plan's order and follows {SEND_STAGE}"
             )
-        (data_stage,) = stage.inputs
+        # A row that reads nothing still builds the stage, which then halts each decision.
+        data_stage = (stage.inputs or RECOVER_ROW.inputs)[0]
         self.recover = RecoverStage(
             self.account,
             self._brokers,
@@ -143,7 +144,7 @@ class ExecutionWorker:
         entry it owes. One that still cannot be stored alarms again, naming each
         entry lost with the process, and ends the process with an error, so the
         host's restart record says it too. An alarm the channel would not take
-        ends it the same way. A last settle that failed for any other reason pages
+        ends it the same way. A last settle that raised an error other than a halt pages
         with the error's type and the owner's step and ends it the same way, and the
         error says where that page was not sent.
         """
@@ -158,7 +159,7 @@ class ExecutionWorker:
         if owed := account.unstored():
             # Paged ahead of the tries, which can outlast the host's stop.
             account.alarm(
-                f"the process is ending with {'; '.join(owed)} not yet in the journal, and "
+                f"the process is ending before the journal holds {'; '.join(owed)}, and "
                 f"tries once more. {step}",
                 lambda: None,
             )

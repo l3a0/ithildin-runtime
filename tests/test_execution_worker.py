@@ -433,7 +433,10 @@ def test_10_an_answer_still_owed_is_stored_once_the_loop_ends(case: Case, error)
     assert held.state is OrderState.ACKNOWLEDGED
     # It paged ahead of the tries, which can outlast the host's stop, naming what it owed.
     (first,) = said
-    assert first.startswith(f"account sim-1: the process is ending with {ACK}") and STEP in first
+    assert (
+        first.startswith(f"account sim-1: the process is ending before the journal holds {ACK}")
+        and STEP in first
+    )
 
 
 @pytest.mark.parametrize("error", [None, RuntimeError("the loop failed")])
@@ -466,7 +469,7 @@ def test_10_an_answer_and_its_alarm_both_lost_are_named_as_the_process_ends(case
         worker.run(Looped())  # type: ignore[arg-type]
     said = raised.value.reason
     assert f"the journal was not given {ACK}" in said
-    assert "the alarm 'the process is ending with" in said
+    assert "the alarm 'the process is ending before the journal holds" in said
     assert "the alarm 'the process ends and the journal was not given" in said
     assert "PKFAKEKEY" not in said
 
@@ -527,9 +530,20 @@ def test_10_an_account_that_cannot_be_used_loses_nothing_as_the_process_ends(cas
     assert case.alarms.reasons == []
 
 
-def test_9_a_table_whose_recover_row_follows_nothing_halts_each_decision(case: Case) -> None:
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"follows": ()},
+        {"keeps_order": False},
+        {"kind": StageKind.DETERMINISTIC},
+        {"inputs": ()},
+    ],
+)
+def test_9_a_table_whose_recover_row_is_another_halts_each_decision(
+    case: Case, changed: dict
+) -> None:
     case.opened()
-    rows = (DATA_ROW, replace(RECOVER_ROW, follows=()), SEND_ROW)
+    rows = (DATA_ROW, replace(RECOVER_ROW, **changed), SEND_ROW)
     worker = case.worker(table=Table(stages=rows, strategies=(CHAN,)))
     case.data(0, case.silent)
     result = worker.recover(Item(AT[0], RECOVER_STAGE), _Quiet())
@@ -537,7 +551,7 @@ def test_9_a_table_whose_recover_row_follows_nothing_halts_each_decision(case: C
     assert result.halt.reason == (
         "the table's row of execution/recover is not the one it declares, so set recover's row "
         "in the deployment's stage table to ithildinruntime.runtime.execution_worker.RECOVER_ROW, "
-        "which reads data and follows execution/send"
+        "which captures, reads data, keeps the plan's order and follows execution/send"
     )
 
 
