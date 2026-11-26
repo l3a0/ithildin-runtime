@@ -31,9 +31,9 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
    `Abandoned`, by this stage or, where the journal stops answering, by the
-   next recover. Where any of those quotes fails at
-   `now` itself, the whole plan is left to the gate. Then `OrderPath.ask`
-   about the whole plan. Where any order is refused or halts, nothing is
+   next recover where any order of the plan has an entry. Where any of those
+   quotes fails at `now` itself, the whole plan is left to the gate. Then
+   `OrderPath.ask` about the whole plan. Where any order is refused or halts, nothing is
    sent, and every order of the plan ends `Refused` or `Abandoned`, by this
    stage or, where the journal stops answering, by the next recover. A plan
    none of whose orders has an entry stays so, with nothing sent.

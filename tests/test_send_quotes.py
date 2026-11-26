@@ -322,34 +322,41 @@ def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
     assert len(made.submits()) == len(sent) + 2
 
 
+@pytest.mark.parametrize("cause", ["fold", "store"])
 def test_a_quote_halt_whose_journal_cannot_be_read_abandons_nothing_and_promises_nothing(
-    monkeypatch,
+    monkeypatch, cause: str
 ) -> None:
-    """A fold that refuses an entry at the quote check pages its cause, and nothing is abandoned.
+    """A journal the quote check cannot read takes no abandon, and its cause is paged.
 
-    The halt says nothing of the next decision, because a journal the stage cannot read
-    is one the next decision cannot read either.
+    The test makes the read fail once the stage starts ending the plan's orders: as a
+    fold that refuses an entry, which pages once, or as a store that stops answering,
+    whose outage pages before the page that nothing is sent. The halt says nothing of
+    the next decision, because a journal the stage cannot read is one the next
+    decision cannot read either.
     """
     made = world()
     at = early(DAYS[1])
     made.ready(at, PAIR)
     made.clock.at = at + timedelta(seconds=20) + TICK
     real = SendStage._none_sent
+    said = "entry 9 is refused" if cause == "fold" else "the journal could not be read"
 
     def none_sent(self, *args, **kwargs):
-        monkeypatch.setattr(
-            Account, "view", lambda *a: (_ for _ in ()).throw(Halt("entry 9 is refused"))
-        )
+        if cause == "fold":
+            monkeypatch.setattr(Account, "view", lambda *a: (_ for _ in ()).throw(Halt(said)))
+        else:
+            made.store.refuse(("*", "journal/"))
         return real(self, *args, **kwargs)
 
     monkeypatch.setattr(SendStage, "_none_sent", none_sent)
     alarms = len(made.alarms.sent)
     result = made.send_attempt()
     monkeypatch.undo()
-    assert result.halt is not None and "entry 9 is refused" in result.halt.reason
+    assert result.halt is not None and said in result.halt.reason
     assert "would not last" in result.halt.reason
     assert "next decision trades" not in result.halt.reason
-    (page,) = [a for a in made.alarms.sent[alarms:] if "nothing is sent" in a]
-    assert "entry 9 is refused" in page
+    pages = [a for a in made.alarms.sent[alarms:] if a.startswith("account")]
+    assert len(pages) == (1 if cause == "fold" else 2)
+    assert said in pages[0] and "nothing is sent" in pages[-1] and said in pages[-1]
     assert "abandoned" not in made.kinds()
     assert made.submits() == []
