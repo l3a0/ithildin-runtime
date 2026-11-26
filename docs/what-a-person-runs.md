@@ -459,7 +459,7 @@ uv run python -m ithildinruntime.runtime.quote_refusals --lake <folder> --instru
 ```
 
 1. The folder needs `manifest.jsonl`, `quarantine.jsonl`, `actions/corporate_actions.jsonl`, each file under `reference/` that the manifest lists, and each instrument's sealed quotes, `quotes/ticker=<ticker>/date=<YYYY-MM-DD>.parquet`, for every session from `--from` to `--through`. Each file must have the SHA-256 the manifest records.
-2. `--normal-status` is needed only for a session no row of `data/quote_kinds.csv` covers, which is any before 2026-09-15 or after 2027-02-25. It is the security status a stand-in row states for each such session. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
+2. `--normal-status` is needed only for a session no row of `data/quote_kinds.csv` covers, and a run without it stops naming the first such session. It is the security status a stand-in row states for each such session. The stand-in also holds a placeholder for the price kind, the last sale's kind, the venues and the volume, so no session it covers is refused for an unstated kind. Once a row covers every session, leave it out.
 3. A run reads each session once for each age, so it takes a minute or more.
 4. A run that refuses prints one line to stderr, nothing to stdout, and exits nonzero. A session the manifest lists no quotes for, a file the manifest lists and the folder lacks, and a file whose bytes differ from the manifest, each refuse the run, because none is a refusal a decision would meet.
 

@@ -268,9 +268,11 @@ def test_7_the_entry_points_default_source_reads_the_quote_kind_contract(
     """
     monkeypatch.setattr(source_module, "load_quote_kinds", lambda: KINDS)
     result, snap = _entry_point(lake, tmp_path)
-    assert {q.price_kind for q in snap.quotes.values()} == {KIND.price_kind}
-    assert result.halt is None or "quote_kinds.csv" not in result.halt.reason
-    assert result.halt is None or "unstated" not in result.halt.reason
+    assert set(snap.quotes) == {GLD, USO}
+    for q in snap.quotes.values():
+        stated = QuoteKind(q.price_kind, q.last_kind, q.venues, q.volume_counted, q.normal_status)
+        assert stated == KIND
+    assert result.halt is None
 
 
 # 5 to 8. Which decisions read quotes.
