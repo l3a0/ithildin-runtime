@@ -807,3 +807,16 @@ def test_10_the_hold_step_follows_what_is_still_owed_after_the_last_settle(case:
         assert (hold in raised.value.reason) is stays
         assert (hold in sent[-1]) is stays and (hold in sent[0]) is before
         assert ACK in raised.value.reason
+
+
+def test_10_a_loop_that_holds_another_storage_than_the_account_is_not_run(case: Case) -> None:
+    """A stop's blob the account holds keeps the process alive only through the loop's own."""
+    worker = case.worker()
+    loop = Looped()
+    loop.storage = object()  # type: ignore[attr-defined]
+    with pytest.raises(Halt, match="another storage contract than the account"):
+        worker.run(loop)  # type: ignore[arg-type]
+    assert loop.ran == 0
+    loop.storage = worker.account._shared.storage  # type: ignore[attr-defined]
+    worker.run(loop)  # type: ignore[arg-type]
+    assert loop.ran == 1

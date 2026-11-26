@@ -1032,7 +1032,7 @@ Each step runs whether the one before it failed or not. The alarm on the reading
 The price has three parts.
 
 1. A settle with nothing owed costs one listing of the journal and one `head` of the blob, each tried once, before every order.
-2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone. A clean end does not, because the receive loop keeps the process alive until S3 stores the blob, and the restarted worker reads that blob as fired.
+2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone. A clean end does not, because the receive loop keeps the process alive until S3 stores the blob, and the restarted worker reads that blob as fired. A host that kills the process first, such as at the unit's stop timeout that [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets, loses it as a crash does. The worker halts before its loop runs where the two hold different storage contracts, since the claim rests on one.
 3. A crash while the journal refuses a firing and a clear is mid-delete loses that firing too.
 
 ##### When a clear counts

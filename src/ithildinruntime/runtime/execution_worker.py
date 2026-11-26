@@ -108,6 +108,7 @@ class ExecutionWorker:
         stress_moves: Path,
     ) -> None:
         self._owner_step = storage.owner_step
+        self._storage = storage
         writer = secrets.token_hex(16)
         self.account = Account(
             store=store,
@@ -211,7 +212,17 @@ class ExecutionWorker:
         with the error's type and the owner's step and ends it the same way, and the
         error says where that page was not sent. While a firing of the loss stop is
         owed, each page and the error tell the owner to pull the kill switch at once.
+
+        It halts before the loop runs where the loop holds another `core.Storage`
+        than the account, since a stop's blob the account could not store would
+        then keep no process alive.
         """
+        other = getattr(loop, "storage", None)
+        if other is not None and other is not self._storage:
+            raise Halt(
+                "the receive loop holds another storage contract than the account, so a loss "
+                "stop's blob S3 did not store would keep no process alive"
+            )
         try:
             loop.run()
         finally:
