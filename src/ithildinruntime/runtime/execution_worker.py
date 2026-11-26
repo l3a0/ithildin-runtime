@@ -219,7 +219,11 @@ class ExecutionWorker:
     def _settle(self) -> None:
         # The loop has ended, so there is nothing left to report to, and nothing beats.
         account, step = self.account, f"The owner's step: {self._owner_step}"
+        held = f"{_HOLD} {step}"
         if owed := account.unstored():
+            if _fired(owed):
+                # The next process starts with no record of it, and would trade.
+                step = held
             # Paged ahead of the tries, which can outlast the host's stop.
             account.alarm(
                 f"the process is ending before the journal holds {'; '.join(owed)}, and "
@@ -236,6 +240,8 @@ class ExecutionWorker:
         except Exception as error:
             said, failed = f": {type(error).__name__}", True
         owed = account.unstored()
+        if _fired(owed):
+            step = held
         if owed:
             reason = f"the process ends and the journal was not given {'; '.join(owed)}{said}"
             account.alarm(f"{reason}. {step}", lambda: None)
@@ -246,6 +252,8 @@ class ExecutionWorker:
         lost = [*(f"the journal was not given {one}" for one in owed)]
         lost += [f"the alarm '{one}' was not sent" for one in unsent]
         reason = f"the process ends and {'; '.join(lost) or 'its last settle failed'}{said}"
+        if step.startswith(_HOLD):
+            reason = f"{reason}. {_HOLD}"
         if failed and not owed:
             # A settle that failed cannot vouch for its own count of what it owes,
             # so the owner checks the broker's site as where something was lost.
@@ -254,6 +262,18 @@ class ExecutionWorker:
                 reason = f"{reason}. The alarm that says so was not sent"
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)
+
+
+# What the owner does when a firing of the loss stop may end with the process.
+_HOLD = (
+    "The loss stop fired and no record of it may outlive this process, so pull the account's "
+    "kill switch before any restart."
+)
+
+
+def _fired(owed: tuple[str, ...]) -> bool:
+    """Whether what the account owes holds a firing of the loss stop."""
+    return any(one.startswith("the loss stop's firing") for one in owed)
 
 
 def _brokers(

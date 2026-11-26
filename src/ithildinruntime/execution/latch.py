@@ -302,7 +302,10 @@ class Latch:
                 # A covered firing's blob: a clear between its entry and its delete.
                 return False
             stored = StopStoredEntry(standing.seq, found)
-            return self._write(view, stored, tries, failing, "its stop_stored") in (
+            made = self._write(
+                view, stored, tries, failing, "its stop_stored", standing.entry.decision_at
+            )
+            return made in (
                 _Wrote.WROTE,
                 _Wrote.TAKEN,
             )
@@ -316,14 +319,22 @@ class Latch:
         )
 
     def _write(
-        self, view: View, record: Record, tries: Tries, failing: list[str], what: str
+        self,
+        view: View,
+        record: Record,
+        tries: Tries,
+        failing: list[str],
+        what: str,
+        stamp: datetime | None = None,
     ) -> _Wrote:
         try:
             at = self._clock.now()
         except RuntimeError:
             # The history clock has no time on a thread that waited for no decision, such as
-            # the one a worker ends on, so a firing is stamped with its own decision's time.
-            named = record.decision_at if isinstance(record, StopFiredEntry) else None
+            # the one a worker ends on, so an entry is stamped with its firing's decision's
+            # time, which can be earlier than an entry the journal holds already. A firing
+            # that names no decision waits for a process with a time.
+            named = record.decision_at if isinstance(record, StopFiredEntry) else stamp
             if named is None:
                 raise
             at = named

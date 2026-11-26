@@ -677,7 +677,7 @@ class OrderPath:
         because a plan is asked about before any of it is journaled. It reads
         no control but the loss stop, which the gate is handed, and `send`
         reads every one again. It journals no order. It settles the account
-        first, and a reading past the loss stop fires the stop, as
+        first, and a reading past the loss stop pages and fires the stop, as
         `Latch.fire` stores it.
         """
         self._one_account()
@@ -747,7 +747,7 @@ class OrderPath:
         It settles the account first, which completes a firing a past write
         left part stored. Each strategy's loss is read twice: at the decision's
         own time, from its stored inputs, and then at the clock's time. A
-        reading past its bound at either fires the stop, alarms and halts the
+        reading past its bound at either pages, fires the stop and halts the
         decision, and so does a loss stop that stands or cannot be read. A rerun
         after the close so fires on the decision's own loss, where the gate's
         check of the clock against the session's close halts the second read.

@@ -854,3 +854,29 @@ def test_a_halt_on_a_reading_past_its_stop_says_which_of_its_writes_failed() -> 
     )
     assert "not wholly stored: its entry was not stored" in reason
     assert f"{KEY} was not stored" in reason
+
+
+# What round 3 of the review asked for
+
+
+def test_a_release_holds_the_lock_so_a_firing_on_another_thread_keeps_its_blob() -> None:
+    world = World()
+    account = world.account()
+    latch, storage = account._shared.latch, account._shared.storage
+    world.store.refuse(("create", KEY))
+    real, threads = storage.release, []
+
+    def release(key: str) -> None:
+        # Another thread fires just as the release begins. It waits for the lock to be let go.
+        thread = threading.Thread(target=fire_in, args=(world, account))
+        thread.start()
+        thread.join(0.2)
+        threads.append(thread)
+        real(key)
+
+    storage.release = release  # type: ignore[method-assign]
+    latch._complete(world.report)
+    storage.release = real  # type: ignore[method-assign]
+    for thread in threads:
+        thread.join(5)
+    assert threads and [ref.key for ref in storage.unstored()] == [KEY]

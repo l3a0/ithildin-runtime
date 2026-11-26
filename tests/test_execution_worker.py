@@ -769,5 +769,19 @@ def test_10_the_last_settle_journals_a_firing_the_process_holds(case: Case) -> N
     )
     worker.run(Looped())  # type: ignore[arg-type]
     assert latch.held() == ()
-    assert worker.account.view(lambda: None).stop.standing.entry.firing == "a" * 32
+    standing = worker.account.view(lambda: None).stop.standing
+    assert standing.entry.firing == "a" * 32 and standing.stored is not None
     assert any("the loss stop's firing" in reason for reason in case.alarms.reasons)
+
+
+def test_10_a_firing_that_may_end_with_the_process_pages_to_hold_the_account(case: Case) -> None:
+    case.opened()
+    worker = case.worker()
+    latch = worker.account._shared.latch
+    latch._pending.append(StopFiredEntry("a" * 32, DEPLOYMENT, RUN, AT[0], None, "no write took"))
+    latch.complete = lambda report: None  # type: ignore[method-assign]
+    with pytest.raises(Halt) as raised:
+        worker.run(Looped())  # type: ignore[arg-type]
+    hold = "pull the account's kill switch before any restart"
+    assert hold in raised.value.reason
+    assert all(hold in reason for reason in case.alarms.reasons)
