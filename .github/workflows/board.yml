@@ -4,11 +4,15 @@ name: Board
 # l3a0/repo-template at commit fd8317e537a3d85423757c56c034ace623878a81,
 # the merge of l3a0/repo-template#68. Apart from this paragraph, the only
 # changes are the ref on the `uses:` line, pinned to that commit, and the
-# `with:` block naming this repository's tab icon and turning on
-# `settled-rollup`. That input reads a skipped check as settled. ci.yml's `aws`
-# job and infra.yml's `tofu apply (test)` run only on main, so every pull
-# request shows them as skipped, and without the input no pull request here
-# ever read as green to the board. In the comments below,
+# `with:` block naming this repository's tab icon and setting two inputs.
+# `settled-rollup` reads a skipped check as settled, reads a cancelled one as
+# neither way rather than as a failure, and leaves the board's own checks out
+# of a pull request's rollup. ci.yml's `aws` job and infra.yml's `tofu apply
+# (test)` run only on main, so every pull request shows them as skipped, and
+# without the input no pull request here ever read as green to the board.
+# `review-heading` counts a review only when the owner's comment opening with
+# `## Review complete` was posted after the head commit, so a push after the
+# last review round holds the pull request back. In the comments below,
 # "here" and "the template itself" mean l3a0/repo-template. To take a later
 # fix, move the ref. The board's skills come from the owner's l3a0 Claude Code
 # plugin rather than from copies in this repository, and the Generator
@@ -105,3 +109,4 @@ jobs:
     with:
       icon: .github/board/favicon.ico
       settled-rollup: "true"
+      review-heading: Review complete
