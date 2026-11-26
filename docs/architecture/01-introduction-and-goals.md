@@ -281,7 +281,7 @@ and a decision before the close reads two.
 | Price | Kind | Venues | Delay |
 | --- | --- | --- | --- |
 | The vintages it is tested on | Official close, as `data/price_kinds.csv` states of both files | Consolidated | None |
-| The recent vendor download of [Where bars come from](03-context-and-scope.md#where-bars-come-from) | What `data/price_kinds.csv` states of it. It states nothing until [#175](https://github.com/l3a0/ithildin-runtime/issues/175) | What the same row states | What the same row states |
+| The recent vendor download of [Where bars come from](03-context-and-scope.md#where-bars-come-from) | Official close, as `data/price_kinds.csv` states of Schwab's import from 2026-09-04 to 2026-10-30 | Consolidated | None |
 | The bars marketlake captures | Official close, as `data/price_kinds.csv` states of capture on the sessions its row covers | Consolidated | None |
 | The decision price before the close | Midpoint of a quote whose own kind `data/quote_kinds.csv` states. It states nothing until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) | What the same row states | The quote's own flag has to say real time. Its stamps are held to [a maximum age](03-context-and-scope.md#when-the-age-is-measured), which nobody writes until [#133](https://github.com/l3a0/ithildin-runtime/issues/133) |
 

@@ -30,7 +30,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.data import DataSettings, LakeSource, Mirror, spike_flags
 from ithildinruntime.data.mirror import MANIFEST
-from ithildinruntime.data.reference import PriceKinds
+from ithildinruntime.data.reference import SCHWAB_IMPORT, PriceKinds
 from ithildinruntime.data.spikes import MOVE
 from ithildinruntime.runtime import stress_move
 from tests.support import lake as lakes
@@ -401,6 +401,36 @@ def test_3_a_leg_that_starts_after_the_last_session_is_refused(lake: Path, tmp_p
 def test_3_a_seam_nobody_named_is_refused(lake: Path, tmp_path: Path) -> None:
     ran = Ran(tmp_path, lake, "--through", THROUGH.isoformat())
     refused(ran, "are of two series", tmp_path)
+
+
+def test_3_the_change_data_passes_is_refused_until_its_seam_is_named(tmp_path: Path) -> None:
+    """Data reads Schwab's import and the captured bars after it as one scale, #175's pair.
+
+    The command still asks for that seam, and leaves out every move across it.
+    """
+    seam = date(2026, 11, 2)
+    days = made.days(date(2026, 9, 4), date(2026, 11, 30))
+    walks = {"GLD": made.walk(days, 1, 300.0), "USO": made.walk(days, 2, 70.0)}
+    series = [
+        made.Made(t, SCHWAB_IMPORT, seam, {d: c for d, c in w.items() if d < seam})
+        for t, w in walks.items()
+    ]
+    captured = {t: {d: c for d, c in w.items() if d >= seam} for t, w in walks.items()}
+    root = made.build(tmp_path / "the-lake", series, captured)
+    kinds = made.kinds(SCHWAB_IMPORT)
+    through = ("--through", str(days[-1]))
+    refused(
+        Ran(tmp_path, root, *through, first=days[0], kinds=kinds),
+        f"GLD's bars for 2026-10-30 and {seam} are of two series, adjusted from "
+        f"{SCHWAB_IMPORT} as of {seam} and raw from no source as of no date, at a seam "
+        "nobody named",
+        tmp_path,
+    )
+    ran = Ran(tmp_path, root, *through, "--seam", str(seam), first=days[0], kinds=kinds)
+    assert ran.err == ""
+    left = record(ran.out, tmp_path).left_out
+    assert {m.instrument for m in left} == {GLD, USO}
+    assert all(m.moved_from < seam <= m.moved_to for m in left)
 
 
 def test_3_a_named_seam_at_which_no_leg_changes_is_refused(lake: Path, tmp_path: Path) -> None:
