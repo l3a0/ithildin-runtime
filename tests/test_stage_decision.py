@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     StageRun,
     StoredBlob,
     attempt_key,
+    broker_read_key,
     encode_output,
     output_key,
 )
@@ -169,3 +170,44 @@ def test_a_second_capture_of_another_name_keeps_the_first_listed() -> None:
     listed = [first.ref, second.ref]
     assert list(decision.done().outputs) == listed
     assert list(decision.halted(Halt("no")).outputs) == listed
+
+
+# A capture made afresh on every attempt, as the send stage's read of the broker
+
+
+def fresh_key(n: int) -> str:
+    return broker_read_key("d-7", RUN, AT, n)
+
+
+def test_each_attempt_stores_its_own_capture_at_the_next_free_number() -> None:
+    world = World()
+    one = world.decision(stage="execution/send").fresh(fresh_key, Instrument, ONE)
+    two = world.decision(stage="execution/send").fresh(fresh_key, Instrument, TWO)
+    assert (one.ref.key, two.ref.key) == (fresh_key(1), fresh_key(2))
+    assert two.entry == TWO
+    # Nothing alarms, since each read is meant to be new.
+    assert world.alarms.sent == []
+
+
+def test_a_fresh_capture_is_listed_and_named_in_every_later_header() -> None:
+    world = World()
+    decision = world.decision(stage="execution/send")
+    made = decision.fresh(fresh_key, Instrument, ONE)
+    assert decision.done().outputs == (made.ref,)
+    assert decision.halted(Halt("no")).outputs == (made.ref,)
+    assert dict(decision.done().header.inputs) == {made.ref.key: made.ref.sha256}
+
+
+def test_the_same_bytes_at_a_number_are_this_attempts_own() -> None:
+    world = World()
+    one = world.decision(stage="execution/send").fresh(fresh_key, Instrument, ONE)
+    again = world.decision(stage="execution/send").fresh(fresh_key, Instrument, ONE)
+    assert again.ref == one.ref
+
+
+def test_a_fresh_capture_that_is_not_stored_is_held_and_named() -> None:
+    world = World()
+    world.store.refuse(("create", fresh_key(1)))
+    with pytest.raises(Halt):
+        world.decision(stage="execution/send").fresh(fresh_key, Instrument, ONE)
+    assert [ref.key for ref in world.storage.unstored()] == [fresh_key(1)]

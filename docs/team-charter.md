@@ -155,7 +155,7 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Risk model | Limit or remove exposures nobody chose (L928, L2089) | The decision's snapshot, the book, the hard caps, the stress records, the session's valuation and the strategy's `[risk]` section | The decision's constraints | Risk engineer |
 | Transaction cost model | Say what any trade would cost. It does not minimize cost (L2401) | The decision's snapshot, the strategy's cost terms, and own real fills once they calibrate it | A cost schedule per strategy and decision | Trading systems engineer |
 | Portfolio construction | Turn forecasts, risk and cost into a target portfolio (L941) | The three above, the decision's snapshot, the book, the hard caps, the stress records, the session's valuation and the strategy's `[portfolio]` section | Target positions, and the record of how each was sized | Trading systems engineer |
-| Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current | Orders, then fills | Trading systems engineer |
+| Execution | Trade the difference between target and current (L941) at the least cost (L3286) | Target minus current, and the strategy's `[execution]` section, which names the type of its orders | Orders, then fills | Trading systems engineer |
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
 | Monitoring | Watch exposure, P&L, execution and systems (L4973) | Everything above | Alerts, a halt | Operator |
 

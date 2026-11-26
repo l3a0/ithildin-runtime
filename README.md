@@ -50,6 +50,8 @@ prose checks it cannot do run in the test suite.
 
 The cases marked `aws` run against the test environment in AWS, so the default
 run leaves them out and only `ci.yml`'s `aws` job runs them, on a push to `main`.
+The default run leaves test 1 out too, which takes minutes. `uv run pytest -m replication`
+runs it, as `ci.yml`'s `replication` job does on every pull request.
 The OpenTofu checks need OpenTofu 1.13 and no AWS credential.
 
 ```bash

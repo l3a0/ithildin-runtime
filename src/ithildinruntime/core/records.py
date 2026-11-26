@@ -90,13 +90,17 @@ __all__ = [
     "RecordsRead",
     "RestartRecord",
     "Segment",
+    "Remainder",
     "SendOutcome",
+    "SentOrder",
     "Signal",
     "Sizing",
     "Snapshot",
     "SpikeFlag",
     "Statistic",
     "StopState",
+    "StrategyEnd",
+    "StrategySent",
     "StoredBlob",
     "TargetPortfolio",
     "TimeAnswer",
@@ -1248,11 +1252,60 @@ class GateInputs(_Record):
     close_entry: JournalEntry | None
 
 
+class StrategyEnd(StrEnum):
+    """How a strategy's part of one decision's plan ended in the send stage."""
+
+    SENT = "sent"
+    NO_ORDER_NEEDED = "no order needed"
+    PARTLY_SENT = "partly sent"
+    OFF = "off"
+
+
+@dataclass(frozen=True)
+class SentOrder(_Record):
+    """One planned order and the state the journal shows it in once the stage ended."""
+
+    client_order_id: str
+    state: OrderState
+
+
+@dataclass(frozen=True)
+class StrategySent(_Record):
+    """How one strategy's orders ended, and why where they ended short of being sent."""
+
+    strategy: str
+    end: StrategyEnd
+    reason: str
+
+
+@dataclass(frozen=True)
+class Remainder(_Record):
+    """What a target leaves undone because it is no multiple of the account's share step.
+
+    `qty` is the trade no order makes: the target less what is held and open,
+    less the planned order. So a long fraction left held reads as a sale not
+    made, below zero.
+    """
+
+    strategy: str
+    instrument: InstrumentId
+    qty: Quantity
+
+
 @dataclass(frozen=True)
 class SendOutcome(_Record):
+    """What execution's send stage did with one decision's plan.
+
+    `orders` holds each planned order's id and end state, in the plan's
+    order. `strategies` holds one line per strategy of the deployment, sorted
+    by name. `remainders` names each position a target leaves a part of that
+    no order of this account's share step can trade.
+    """
+
     decision_at: datetime
-    target_hash: str
-    orders: tuple[Ack, ...]
+    orders: tuple[SentOrder, ...]
+    strategies: tuple[StrategySent, ...]
+    remainders: tuple[Remainder, ...]
 
 
 @dataclass(frozen=True)
