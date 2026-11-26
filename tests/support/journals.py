@@ -17,6 +17,9 @@ from decimal import Decimal
 from ithildinruntime.core import (
     BlobMissing,
     BlobRef,
+    BrokerOrder,
+    BrokerRecord,
+    BrokerState,
     Fill,
     InstrumentId,
     KeyExists,
@@ -24,6 +27,7 @@ from ithildinruntime.core import (
     LossReading,
     OrderIntent,
     OrderType,
+    RecordKind,
     StopState,
     TargetPortfolio,
     TimeInForce,
@@ -43,10 +47,14 @@ from ithildinruntime.journal import (
     IntentEntry,
     Journal,
     OpeningEntry,
+    OutsideRecordEntry,
     ReadEntry,
     Record,
     RejectedEntry,
     SendingEntry,
+    UnmatchedFillEntry,
+    UnmatchedOrderEntry,
+    UnmatchedRecordEntry,
     VerdictEntry,
     View,
     body_of,
@@ -216,6 +224,58 @@ def filled(made: Fill, read: int = 2) -> FillEntry:
 
 def disputed(made: Fill, read: int = 2) -> DisputedFillEntry:
     return DisputedFillEntry(made, read)
+
+
+def broker_record(
+    record_id: str = "r::1",
+    amount: object = "-1.25",
+    kind: RecordKind = RecordKind.FEE,
+    instrument: InstrumentId | None = None,
+    **changes: object,
+) -> BrokerRecord:
+    """A broker's record, every value made up."""
+    fields: dict[str, object] = {
+        "record_id": record_id,
+        "kind": kind,
+        "amount": Decimal(str(amount)),
+        "instrument": instrument,
+        "at": AT,
+        "received_at": AT,
+        "excess_places": (),
+    }
+    return BrokerRecord(**fields | changes)  # type: ignore[arg-type]
+
+
+def foreign(broker_order_id: str = "x1", qty: object = 7, **changes: object) -> BrokerOrder:
+    """An order the broker lists that the platform never sent, every value made up."""
+    fields: dict[str, object] = {
+        "broker_order_id": broker_order_id,
+        "client_order_id": None,
+        "instrument": GLD,
+        "qty": Decimal(str(qty)),
+        "filled": Decimal(0),
+        "type": OrderType.MARKET_ON_CLOSE,
+        "time_in_force": TimeInForce.CLS,
+        "state": BrokerState.WORKING,
+        "submitted_at": AT,
+    }
+    return BrokerOrder(**fields | changes)  # type: ignore[arg-type]
+
+
+def outside(made: BrokerRecord, read: int = 2) -> OutsideRecordEntry:
+    return OutsideRecordEntry(made, read)
+
+
+def unmatched_record(made: BrokerRecord, read: int = 2) -> UnmatchedRecordEntry:
+    return UnmatchedRecordEntry(made, read, f"the record {made.record_id} is off the list")
+
+
+def unmatched_fill(made: Fill, read: int = 2) -> UnmatchedFillEntry:
+    return UnmatchedFillEntry(made, read, f"the fill {made.fill_id} is no order's")
+
+
+def unmatched_order(made: BrokerOrder, read: int = 2) -> UnmatchedOrderEntry:
+    return UnmatchedOrderEntry(made, read, f"the order {made.broker_order_id} is no ack's")
 
 
 def started(*orders: OrderIntent, cash: object = 100_000, writer: str | None = WRITER) -> Journal:

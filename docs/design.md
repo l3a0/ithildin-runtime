@@ -1097,7 +1097,8 @@ rerun from doubling anything. The first three follow, and the last two each have
    that differs in any of the five is journaled as a `disputed_fill` beside the
    first, after which the book halts until a person ends the dispute, which
    [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. A fill that carries a correction identifier is refused
-   until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
+   as a fill, and kept as an `unmatched_fill` that holds the account, until
+   [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
 2. At the start of its send stage, before it plans, execution syncs with the broker in six steps.
 
    1. It fetches the broker's positions, open orders, cash and fills again, a fresh read on every attempt rather than a capture that the first one wins.

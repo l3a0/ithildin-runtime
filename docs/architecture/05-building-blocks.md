@@ -1377,7 +1377,16 @@ Every lookup and every cancel uses the broker's order id the journal mapped from
 2. A repeat that differs in one of those five is journaled as a `disputed_fill` beside the first. The book then halts, naming both contents, until a person ends the dispute, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds. Every other entry can still be journaled, so a dispute never holds up an answer, an abandonment or a cancel.
 3. A repeat of a dispute already held is skipped, because a recover stage that halts on one reads it again at each decision. One with no shares or no price is refused as a `fill`, so a caller looks at the view's disputes first.
 
-A fill that carries a correction identifier is refused as a `fill` until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
+A fill that carries a correction identifier is refused as a `fill`, and recover keeps it as an `unmatched_fill`, until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) writes the rule for one.
+
+##### How a broker's record and what the platform did not send are kept
+
+A broker moves cash on its own, and an order or a fill can reach the account that the platform never sent. Recover sorts each one into an entry with `execution/outside.py`, and the fold reads four kinds for them.
+
+1. `outside_record` holds a fee, debit interest or a dividend inside its range, which moves the book's cash by its amount. `View.records` holds each by the broker's record id, and an identical repeat is skipped.
+2. `unmatched_record`, `unmatched_fill` and `unmatched_order` each hold what no rule lets reach a book, kept as it came, with the platform's own words for why. `View.unmatched` holds each, and the book halts while any stands, naming each one.
+
+A repeat of a held id with other content is kept beside the first as unmatched. The fold refuses a fill or a record kept as unmatched that is later applied, an applied one later kept as unmatched, and an order kept as unmatched that a later `ack` maps, and the reverse.
 
 ##### What each call returns, and what is journaled first
 
@@ -1407,7 +1416,7 @@ Six more things end `in_doubt`, and each alarms at once, naming the account by i
 5. An answer of more than 65,536 bytes, whose first part is kept.
 6. An answer that is not exactly an `Ack`, whose id, where it has one, is not exactly a `str`, whose bytes are not exactly `bytes`, or whose time is not exactly a `datetime` in UTC. A subclass is an adapter's own code, which would run wherever its value is used next.
 
-Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `CashRead` and `RecordsRead`, whose records [#151](https://github.com/l3a0/ithildin-runtime/issues/151) types. Each holds the pages as received, with the time each came, and says whether every page came. A read holds at least one page, since an empty answer is one the broker gave, and one past 4 MiB cannot say it is whole. The price of that cap is that a day whose list passes it halts until the cap is raised.
+Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `CashRead` and `RecordsRead`, which holds each `BrokerRecord` the broker booked on its own. A record carries the broker's own id, its kind as the adapter maps the broker's type to `RecordKind`, the cash it moved, a credit above zero, the instrument it concerns where there is one, and when the broker dated it. Each holds the pages as received, with the time each came, and says whether every page came. A read holds at least one page, since an empty answer is one the broker gave, and one past 4 MiB cannot say it is whole. The price of that cap is that a day whose list passes it halts until the cap is raised.
 
 A read that fails raises `BrokerUnavailable`, which takes the error or its type, and carries the call's name and that type's name and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, and an answer that is not exactly the read's own type, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
 
@@ -1730,10 +1739,10 @@ The journal's entries, applied in order from the first, give the account's `Book
 | --- | --- |
 | `positions_by_strategy` | Each strategy's shares of each instrument, where they are not zero. A fill is filed under the strategy of its order |
 | `open_orders_by_strategy` | Each order the gate approved that has not ended, at its unfilled remainder. An order only intended is not in the book, so the order being checked is never counted twice |
-| `cash` | The opening cash less each fill's signed shares times its price, exact, with no rounding. It carries no fee, because no fee kind exists yet |
+| `cash` | The opening cash less each fill's signed shares times its price, plus each `outside_record`'s amount, exact, with no rounding |
 | `replayed_through` | The number of the last entry |
 | `in_doubt` | Each instrument with an order that may or may not be with the broker. A `sending` entry with nothing after it is one |
-| `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, so it is empty until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) |
+| `corrections` | One `Correction` per entry that moved cash or a position by anything but the platform's own fill or a listed broker record, in order. No kind built so far is one, since an `outside_record` is a listed record, so it is empty until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds a correction of a fill |
 
 The gate reads two facts from `corrections`: the newest correction's number against the valuation's, and the newest one that moved a position against the close of the valuation's session. The list tells a deposit from a broker's trade behind it, so [#117](https://github.com/l3a0/ithildin-runtime/issues/117) can excuse the trade without excusing the deposit. The book carries no realised profit, because nothing reads one.
 

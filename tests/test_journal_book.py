@@ -182,7 +182,14 @@ def test_3_the_list_names_every_state_and_every_kind_of_an_order() -> None:
     assert {route_.split()[0] for route_ in ROUTES} - {"none"} == {s.value for s in OrderState}
     assert {a for a, _ in ALLOWED} == set(ACTS)
     names = {"approved": "verdict", "refused": "verdict", "part": "fill", "whole": "fill"}
-    assert {names.get(act, act) for act in ACTS} == set(KINDS) - {"opening", "read", "decision"}
+    # A broker's record and what the platform did not send move no order of the platform's.
+    unowned = {"outside_record", "unmatched_record", "unmatched_fill", "unmatched_order"}
+    assert {names.get(act, act) for act in ACTS} == set(KINDS) - {
+        "opening",
+        "read",
+        "decision",
+        *unowned,
+    }
 
 
 @pytest.mark.parametrize("route_", ROUTES)

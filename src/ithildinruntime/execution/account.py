@@ -5,8 +5,8 @@ view of a long journal is slow and because the account keeps each answer the
 journal has not taken. `path` gives the `OrderPath` for one decision's broker.
 
 A stage reads the journal through `view` and adds what the broker said of an
-order through `record`, which takes the five kinds a stage may write and no
-entry of the path's own.
+order, a record or what the platform did not send through `record`, which takes
+the nine kinds a stage may write and no entry of the path's own.
 
 Nothing here raises while it is built. A worker whose start raises is restarted
 by the host and read by no person, so an account that cannot be used halts each
@@ -33,8 +33,12 @@ from ithildinruntime.journal import (
     ExpiredEntry,
     FillEntry,
     Journal,
+    OutsideRecordEntry,
     ReadEntry,
     RejectedEntry,
+    UnmatchedFillEntry,
+    UnmatchedOrderEntry,
+    UnmatchedRecordEntry,
     View,
     kind_of,
 )
@@ -45,8 +49,19 @@ from .patience import Patience, code_of
 
 __all__ = ["Account", "StageRecord"]
 
-# What a stage may record: a read of the broker, and what it says became of an order.
-StageRecord = ReadEntry | FillEntry | DisputedFillEntry | ExpiredEntry | RejectedEntry
+# What a stage may record: a read of the broker, what it says became of an order, a record the
+# broker booked, and what the platform did not send.
+StageRecord = (
+    ReadEntry
+    | FillEntry
+    | DisputedFillEntry
+    | ExpiredEntry
+    | RejectedEntry
+    | OutsideRecordEntry
+    | UnmatchedRecordEntry
+    | UnmatchedFillEntry
+    | UnmatchedOrderEntry
+)
 
 
 class Account:

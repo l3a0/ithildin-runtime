@@ -70,6 +70,7 @@ from ithildinruntime.core import (
     OrderType,
     Outcome,
     PositionsRead,
+    RecordsRead,
     RiskGate,
     Snapshot,
     StopState,
@@ -657,6 +658,9 @@ class OrderPath:
 
     def account(self) -> CashRead:
         return self._called("account", CashRead, lambda b: b.account())
+
+    def activities(self, since: datetime) -> RecordsRead:
+        return self._called("activities", RecordsRead, lambda b: b.activities(since))
 
     def fills(self, since: datetime) -> FillsRead:
         return self._called("fills", FillsRead, lambda b: b.fills(since))

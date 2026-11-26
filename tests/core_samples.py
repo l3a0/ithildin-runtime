@@ -45,6 +45,7 @@ RECORDS = [getattr(core, name) for name in DATA_TYPES if name != "Halt"] + [
     core.FillsRead,
     core.CashRead,
     core.RecordsRead,
+    core.BrokerRecord,
     core.Segment,
     core.TimeAnswer,
     core.ClockReading,

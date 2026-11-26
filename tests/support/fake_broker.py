@@ -137,7 +137,7 @@ class FakeBroker:
         return self._answer("orders", OrdersRead((), self._pages, True))
 
     def activities(self, since: datetime) -> object:
-        return self._answer("activities", RecordsRead(self._pages, True))
+        return self._answer("activities", RecordsRead((), self._pages, True))
 
     def lookup(self, broker_order_id: str) -> object:
         return self._answer("lookup", Ack(Outcome.NOT_FOUND, None, None, b"", self.at))

@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     OrderType,
     PositionsRead,
     ReceivedPage,
+    RecordsRead,
     TimeInForce,
     order_id,
     reconcile,
@@ -104,6 +105,7 @@ def read(
         open_orders=OrdersRead(orders, PAGES, True),
         cash=CashRead(D(cash), PAGES, True),
         since=DECISION - timedelta(days=1),
+        records=RecordsRead((), PAGES, True),
         fills=FillsRead((), PAGES, True),
     )
 
