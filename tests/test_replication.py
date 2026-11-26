@@ -31,10 +31,9 @@ from ithildinruntime.core import (
     Snapshot,
     decode_output,
     encode,
-    journal_entry_key,
     sim_account_key,
 )
-from ithildinruntime.journal import Journal
+from ithildinruntime.journal import Journal, record_of
 from tests.support.chan_return import PERIODS, chan_figures
 from tests.support.replication import FIRST_DECISION, GLD, ROWS_BEFORE, USO
 from tests.support.trading import ACCOUNT, AFTER, CASH, STEP, Traded, trade
@@ -178,22 +177,37 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
 
 
 def test_the_runs_record_is_pinned(traded) -> None:
-    view = Journal(traded.store, ACCOUNT).view()
+    """The orders, the fills, the journal's head and the last book, pinned at 4344f02's tree.
+
+    The head is pinned by its record, since each entry's bytes name the
+    process's writer, which is drawn afresh at each start.
+    """
+    journal = Journal(traded.store, ACCOUNT)
+    view = journal.view()
     orders = sum(len(d.outcome.orders) for d in traded.decided)
     head = view.through.seq
-    entry = traded.store.get(journal_entry_key(ACCOUNT, head))
-    book = traded.books[AFTER]
+    (entry,) = journal.read(after=head - 1)
     found = (
         orders,
         len(view.fills),
         head,
-        hashlib.sha256(entry).hexdigest(),
-        hashlib.sha256(encode(book)).hexdigest(),
+        _digest(encode(record_of(entry))),
+        _digest(encode(traded.books[AFTER])),
     )
     assert found == PINNED, found
 
 
-PINNED: tuple = (0, 0, 0, "", "")
+PINNED = (
+    2444,
+    2444,
+    16605,
+    "HEAD_RECORD",
+    "4d6a39985dbc8a69d32902fe9f34d24f478b932656245be822c5f7685db033a1",
+)
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def _unit(shares: Mapping[InstrumentId, Decimal]) -> int:
