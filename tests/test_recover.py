@@ -1251,6 +1251,8 @@ LOOKUPS = {
     "another client order id": (says(client_order_id=SECRET), OTHER),
     "another instrument": (says(instrument=USO), OTHER),
     "other shares": (says(qty=D(4)), OTHER),
+    "another type": (says(type=OrderType.MARKET), OTHER),
+    "another time in force": (says(time_in_force=TimeInForce.DAY), OTHER),
     "another id on the answer": (
         lambda b, n: replace(says(state=BrokerState.EXPIRED)(b, n), broker_order_id="sim-o-1"),
         OTHER,
