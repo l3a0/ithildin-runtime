@@ -26,6 +26,8 @@ from typing import NamedTuple
 
 from ithildinruntime.core import (
     Book,
+    BrokerOrder,
+    BrokerRecord,
     CodecError,
     Fill,
     Halt,
@@ -36,6 +38,7 @@ from ithildinruntime.core import (
     OrderIntent,
     OrderRecord,
     OrderState,
+    broker_id_shown,
     exact_product,
     exact_total,
     from_received,
@@ -52,22 +55,39 @@ from .entries import (
     InDoubtEntry,
     IntentEntry,
     OpeningEntry,
+    OutsideRecordEntry,
     ReadEntry,
     RejectedEntry,
     SendingEntry,
+    UnmatchedFillEntry,
+    UnmatchedOrderEntry,
+    UnmatchedRecordEntry,
     VerdictEntry,
     kind_of,
     named,
     record_of,
 )
-from .orders import DOUBTFUL, ENDED, OPEN, Move, moved
+from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, moved
 
-__all__ = ["Dispute", "Repeat", "View", "after", "empty"]
+__all__ = ["Dispute", "Repeat", "Unmatched", "View", "after", "empty"]
 
 _ZERO = Decimal(0)
 # What a fill read twice must repeat. Every other field is one a second
 # endpoint may leave out or write another way.
 _CONTENT = ("fill_id", "broker_order_id", "instrument", "qty", "price", "at")
+# What a broker's record read twice must repeat.
+_RECORD = ("record_id", "kind", "amount", "instrument", "at")
+# What an order the platform did not send, listed twice, must repeat. Its fills and state may
+# move between two reads.
+_ORDER = (
+    "broker_order_id",
+    "client_order_id",
+    "instrument",
+    "qty",
+    "type",
+    "time_in_force",
+    "submitted_at",
+)
 
 
 class Repeat(StrEnum):
@@ -83,6 +103,20 @@ class Dispute(NamedTuple):
 
     seq: int
     fill: Fill
+
+
+class Unmatched(NamedTuple):
+    """What the journal keeps and gives to no book, under its entry's number.
+
+    `kind` is `record`, `fill` or `order`, `name` the broker's id for it, and
+    `reason` why no rule let it reach a book.
+    """
+
+    seq: int
+    kind: str
+    name: str
+    held: BrokerRecord | Fill | BrokerOrder
+    reason: str
 
 
 class _Kept[K, V]:
@@ -151,6 +185,7 @@ class _Shared:
         self.decided: _Kept[datetime, int] = _Kept()
         self.reads: _Kept[int, ReadEntry] = _Kept()
         self.fills: _Kept[str, Fill] = _Kept()
+        self.records: _Kept[str, BrokerRecord] = _Kept()
         self.brokers: _Kept[str, str] = _Kept()
 
 
@@ -163,7 +198,10 @@ class View:
     - `decisions` holds each `decision` entry by its number, and `decided` the
       number by the decision time. `reads` holds each `read` entry by its number.
     - `fills` holds each fill as first applied, by its id, and `disputes` each
-      repeat whose content differs.
+      repeat whose content differs. `records` holds each broker's record that
+      moved the cash, by its id.
+    - `unmatched` holds each record, fill and order the journal keeps and gives
+      to no book, which holds the account.
     - `opened_at` is the `opening` entry's `built_at`, and `sent_at` the newest
       `sending` entry's, or `None` where there is none.
     """
@@ -174,6 +212,7 @@ class View:
     sent_at: datetime | None
     live: Mapping[str, OrderRecord]
     disputes: tuple[Dispute, ...]
+    unmatched: tuple[Unmatched, ...]
     # The `Journal` that gave this view, so no other one builds an entry on it.
     _owner: object = field(repr=False)
     _cash: Decimal = field(repr=False)
@@ -202,6 +241,47 @@ class View:
     def fills(self) -> Mapping[str, Fill]:
         return _Upto(self._shared.fills, self.through.seq)
 
+    @property
+    def records(self) -> Mapping[str, BrokerRecord]:
+        return _Upto(self._shared.records, self.through.seq)
+
+    def record_repeats(self, record: BrokerRecord) -> Repeat:
+        """Whether a broker's record is new, held as applied or as unmatched, or differs from each.
+
+        Its content decides, as `_RECORD` lists it, and not when it was received.
+        """
+        first = self.records.get(record.record_id)
+        held = [*([first] if first is not None else []), *self._kept("record", record.record_id)]
+        if not held:
+            return Repeat.NEW
+        if any(_alike(record, one, _RECORD) for one in held):
+            return Repeat.HELD
+        return Repeat.DIFFERS
+
+    def unmatched_repeats(self, kind: str, name: str, held: Fill | BrokerOrder) -> Repeat:
+        """Whether a fill or an order is kept as unmatched already, with this content or another."""
+        kept = self._kept(kind, name)
+        if not kept:
+            return Repeat.NEW
+        fields = _CONTENT if kind == "fill" else _ORDER
+        return Repeat.HELD if any(_alike(held, one, fields) for one in kept) else Repeat.DIFFERS
+
+    def unowned(self, fill: Fill) -> str | None:
+        """Why a new fill cannot be any order's the platform sent, or `None` where it is one's.
+
+        A fill past its kind's own bounds, such as one for zero shares, at a
+        price not above zero or carrying a correction's id, is not refused here
+        for that reason and may get `None`, because `entries.past_bounds`
+        refuses it, so a caller asks both.
+
+        The words name the fill and the order and none of the broker's text, so
+        a halt and an unmatched entry can both hold them.
+        """
+        return _unowned(self, fill)
+
+    def _kept(self, kind: str, name: str) -> list[BrokerRecord | Fill | BrokerOrder]:
+        return [one.held for one in self.unmatched if (one.kind, one.name) == (kind, name)]
+
     def repeats(self, fill: Fill) -> Repeat:
         """Whether a fill is new, or one held, as applied or as a dispute, or differs from each.
 
@@ -222,15 +302,17 @@ class View:
 
     @property
     def book(self) -> Book:
-        """The book, or a halt on a journal with no entry and on a fill in dispute.
+        """The book, or a halt on an empty journal, a fill in dispute or anything unmatched.
 
         An empty journal reads the same as a wrong account or a lost store, so
-        it never reads as a flat book.
+        it never reads as a flat book. An unmatched entry holds the account
+        until a person releases it, and no entry releases one yet.
         """
         if self.through.seq == 0:
             raise Halt(f"journal {self.account}: it holds no entry, so there is no book")
-        if self.disputes:
-            raise Halt(f"journal {self.account}: {'; '.join(map(self._disputed, self.disputes))}")
+        if self.disputes or self.unmatched:
+            said = [*map(self._disputed, self.disputes), *map(_held, self.unmatched)]
+            raise Halt(f"journal {self.account}: {'; '.join(said)}")
         filed: dict[str, tuple[OrderIntent, ...]] = {}
         for order in self.live.values():
             if order.state in OPEN:
@@ -265,6 +347,7 @@ def empty(account: str, owner: object, entry_hash: str) -> View:
         sent_at=None,
         live=MappingProxyType({}),
         disputes=(),
+        unmatched=(),
         _owner=owner,
         _cash=_ZERO,
         _positions=MappingProxyType({}),
@@ -396,6 +479,17 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
             _fill(step, record)
         case DisputedFillEntry():
             _disputed_fill(step, record)
+        case OutsideRecordEntry():
+            _outside(step, record)
+        case UnmatchedRecordEntry():
+            _unmatched(
+                step, record.read, "record", record.record.record_id, record.record, record.reason
+            )
+        case UnmatchedFillEntry():
+            _unmatched(step, record.read, "fill", record.fill.fill_id, record.fill, record.reason)
+        case UnmatchedOrderEntry():
+            order = record.order
+            _unmatched(step, record.read, "order", order.broker_order_id, order, record.reason)
         case ExpiredEntry():
             order, state = _next(step, record.client_order_id, Move.EXPIRED)
             if record.filled != order.filled:
@@ -470,6 +564,13 @@ def _intent(step: Step, record: IntentEntry) -> None:
 def _ack(step: Step, record: AckEntry) -> None:
     order, state = _next(step, record.client_order_id, Move.ACK)
     broker = record.broker_order_id
+    if kept := [
+        one.seq for one in step.view.unmatched if (one.kind, one.name) == ("order", broker)
+    ]:
+        raise Halt(
+            f"entry {step.seq} gives {record.client_order_id} the broker's id {broker}, an order "
+            f"entry {kept[0]} keeps as one the platform did not send"
+        )
     brokers = _Upto(step.view._shared.brokers, step.view.through.seq)
     if (other := brokers.get(broker)) is not None:
         raise Halt(
@@ -493,32 +594,16 @@ def _fill(step: Step, record: FillEntry) -> None:
             f"entry {seq}'s fill {fill.fill_id} holds {_said(fill)}, and the one applied holds "
             f"{_said(view.fills[fill.fill_id])}"
         )
+    if view._kept("fill", fill.fill_id):
+        raise Halt(f"entry {seq}'s fill {fill.fill_id} is one the journal keeps as unmatched")
+    if (why := _unowned(view, fill)) is not None:
+        raise Halt(f"entry {seq}'s {why}")
     order = view.acknowledged(fill.broker_order_id)
-    if order is None:
-        raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} is of the broker's order {fill.broker_order_id}, "
-            "which no order was acknowledged under"
-        )
+    assert order is not None
     intent, name = order.intent, order.intent.client_order_id
     filled = exact_total(f"the shares filled of {name}", (order.filled, fill.qty))
     move = Move.LAST_FILL if filled == intent.qty else Move.PART_FILL
     state = moved(seq, name, move, order.state)
-    if fill.client_order_id not in (None, name):
-        raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} names another client order id than {name}, which "
-            "its broker's order is"
-        )
-    if fill.instrument != intent.instrument:
-        raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} is in {named(fill.instrument)}, and {name} is in "
-            f"{intent.instrument}"
-        )
-    if (fill.qty > 0) != (intent.qty > 0):
-        raise Halt(f"entry {seq}'s fill {fill.fill_id} of {fill.qty} is not on {name}'s side")
-    if filled.copy_abs() > intent.qty.copy_abs():
-        raise Halt(
-            f"entry {seq}'s fill {fill.fill_id} takes {name} to {filled} filled of {intent.qty}"
-        )
     paid = exact_product(f"the cost of the fill {fill.fill_id}", fill.qty, fill.price)
     cash = exact_total("the cash", (view._cash, paid.copy_negate()))
     held = dict(view._positions.get(intent.strategy, {}))
@@ -559,6 +644,104 @@ def _disputed_fill(step: Step, record: DisputedFillEntry) -> None:
             f"entry {seq} disputes the fill {fill.fill_id} with the content entry {held[0]} holds"
         )
     step.change(disputes=(*view.disputes, Dispute(seq, fill)))
+
+
+def _unowned(view: View, fill: Fill) -> str | None:
+    """Why a fill cannot be applied to any order the journal sent, from `the fill`, or `None`.
+
+    A fill past its kind's own bounds, such as one for zero shares, is refused
+    by `entries.past_bounds`, which `record_of` runs before the fold.
+    """
+    what = f"fill {broker_id_shown(fill.fill_id)}"
+    order = view.acknowledged(fill.broker_order_id)
+    if order is None:
+        return (
+            f"{what} is of the broker's order {broker_id_shown(fill.broker_order_id)}, which no "
+            "order was acknowledged under"
+        )
+    intent, name = order.intent, order.intent.client_order_id
+    if (Move.PART_FILL, order.state) not in MOVES:
+        return f"{what} is of the order {name}, which is {order.state.value}"
+    if fill.client_order_id not in (None, name):
+        return f"{what} names another client order id than {name}, which its broker's order is"
+    if fill.instrument != intent.instrument:
+        return f"{what} is in {named(fill.instrument)}, and {name} is in {intent.instrument}"
+    if (fill.qty > 0) != (intent.qty > 0):
+        return f"{what} of {fill.qty} is not on {name}'s side"
+    filled = exact_total(f"the shares filled of {name}", (order.filled, fill.qty))
+    if filled.copy_abs() > intent.qty.copy_abs():
+        return f"{what} takes {name} to {filled} filled of {intent.qty}"
+    return None
+
+
+def _outside(step: Step, record: OutsideRecordEntry) -> None:
+    seq, view, kept = step.seq, step.view, record.record
+    name = kept.record_id
+    _require_read(step, record.read)
+    if held := [one.seq for one in view.unmatched if (one.kind, one.name) == ("record", name)]:
+        raise Halt(
+            f"entry {seq} applies the record {name}, which entry {held[0]} keeps as unmatched"
+        )
+    first = view.records.get(name)
+    if first is not None:
+        if _alike(kept, first, _RECORD):
+            # A repeat changes nothing.
+            return
+        raise Halt(
+            f"entry {seq}'s record {name} holds {_record_said(kept)}, and the one applied holds "
+            f"{_record_said(first)}"
+        )
+    cash = exact_total("the cash", (view._cash, kept.amount))
+    try:
+        from_received(cash)
+    except CodecError as error:
+        raise Halt(f"entry {seq} leaves the cash where no record holds it: {error}") from None
+    step.change(_cash=cash)
+    step.add(view._shared.records, name, kept)
+
+
+def _unmatched(
+    step: Step,
+    read: int,
+    kind: str,
+    name: str,
+    held: BrokerRecord | Fill | BrokerOrder,
+    reason: str,
+) -> None:
+    """Keep what no book takes, after the checks that it was not one a book already took."""
+    seq, view = step.seq, step.view
+    _require_read(step, read)
+    fields = {"record": _RECORD, "fill": _CONTENT, "order": _ORDER}[kind]
+    applied = {"record": view.records, "fill": view.fills}.get(kind, {}).get(name)
+    if kind == "fill" and applied is not None:
+        raise Halt(f"entry {seq} keeps the fill {name} as unmatched, which an entry applied")
+    if applied is not None and _alike(held, applied, fields):
+        raise Halt(f"entry {seq} keeps the {kind} {name} as unmatched with the content applied")
+    if kind == "order" and view.acknowledged(name) is not None:
+        raise Halt(f"entry {seq} keeps the order {name} as unmatched, which an ack mapped")
+    if same := [
+        one.seq
+        for one in view.unmatched
+        if (one.kind, one.name) == (kind, name) and _alike(held, one.held, fields)
+    ]:
+        raise Halt(f"entry {seq} keeps the {kind} {name} with the content entry {same[0]} holds")
+    step.change(unmatched=(*view.unmatched, Unmatched(seq, kind, name, held, reason)))
+
+
+def _held(one: Unmatched) -> str:
+    return (
+        f"entry {one.seq} keeps an unmatched {one.kind}, which holds the account until a person "
+        f"releases it, and nothing releases one yet: {one.reason}"
+    )
+
+
+def _alike(one: object, other: object, fields: tuple[str, ...]) -> bool:
+    return all(getattr(one, name) == getattr(other, name) for name in fields)
+
+
+def _record_said(record: BrokerRecord) -> str:
+    on = "" if record.instrument is None else f" on {named(record.instrument)}"
+    return f"{record.amount} as a {record.kind.value}{on}, dated {record.at.isoformat()}"
 
 
 def _require_read(step: Step, read: int) -> None:

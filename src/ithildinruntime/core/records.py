@@ -40,6 +40,7 @@ __all__ = [
     "BlobRef",
     "Book",
     "BrokerOrder",
+    "BrokerRecord",
     "BrokerState",
     "BucketObject",
     "CashRead",
@@ -85,6 +86,7 @@ __all__ = [
     "Quantity",
     "Quote",
     "READ_LIMIT",
+    "RecordKind",
     "Rate",
     "ReceivedPage",
     "RecordsRead",
@@ -776,6 +778,43 @@ class Fill(_Record):
     basis: FillBasis | None
 
 
+class RecordKind(StrEnum):
+    """What a record the broker booked on its own is, in the platform's words.
+
+    An adapter maps the broker's own type to one of these, and a type it does
+    not map to `other`. Only a fee, debit interest and a dividend can explain
+    a cash difference, as `execution/records.toml` lists them with a range.
+    """
+
+    FEE = "fee"
+    INTEREST = "interest"
+    DIVIDEND = "dividend"
+    DEPOSIT = "deposit"
+    WITHDRAWAL = "withdrawal"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class BrokerRecord(_Record):
+    """One record the broker booked on its own, as its activities read lists it.
+
+    - `record_id` is the broker's own id for the record.
+    - `amount` is the cash it moved, a credit above zero and a debit below.
+    - `instrument` is the one it concerns, such as a dividend's, or `None`.
+    - `at` is when the broker dated it, in UTC.
+    - `excess_places` names each field whose received value carries more places
+      than declared, which is kept rather than rounded.
+    """
+
+    record_id: str
+    kind: RecordKind
+    amount: Money
+    instrument: InstrumentId | None
+    at: datetime
+    received_at: datetime
+    excess_places: tuple[str, ...]
+
+
 class Outcome(StrEnum):
     """What a broker's answer comes to, in one closed set.
 
@@ -935,33 +974,39 @@ class CashRead(_BrokerRead):
 
 @dataclass(frozen=True)
 class RecordsRead(_BrokerRead):
-    """The broker's records, whose own type #151 adds."""
+    """The records the broker booked on its own since a time, which `Broker.activities` gives."""
 
+    records: tuple[BrokerRecord, ...]
     received: tuple[ReceivedPage, ...]
     whole: bool
 
 
 @dataclass(frozen=True)
 class AccountRead(_Record):
-    """The broker's four reads of one account, in the order they were made.
+    """The broker's five reads of one account, in the order they were made.
 
-    The fills are read last, so a fill that lands between two reads shows as a
-    difference and never as a match. `since` is the time they were asked from.
+    The records follow the cash and the fills come last, so a record or a fill
+    that lands between two reads shows as a difference and never as a match.
+    `since` is the time the records and the fills were asked from.
     """
 
     positions: PositionsRead
     open_orders: OrdersRead
     cash: CashRead
     since: datetime
+    records: RecordsRead
     fills: FillsRead
 
     @property
-    def reads(self) -> Mapping[str, PositionsRead | OrdersRead | CashRead | FillsRead]:
+    def reads(
+        self,
+    ) -> Mapping[str, PositionsRead | OrdersRead | CashRead | RecordsRead | FillsRead]:
         """Each read by the name of its broker call, in order."""
         return {
             "positions": self.positions,
             "open_orders": self.open_orders,
             "account": self.cash,
+            "activities": self.records,
             "fills": self.fills,
         }
 

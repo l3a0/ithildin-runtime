@@ -244,7 +244,7 @@ The command writes the override's body under the overrides prefix and a journal 
 
 A change to a strategy's position leaves that strategy off and sorted, as [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) says, and the command prints so.
 
-This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that an override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+An override brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
 
 ##### Resume trading
 
@@ -254,13 +254,15 @@ These run from the narrowest reach to the widest in the usual case: one halt, on
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
 
+A clear of recover's halt does not end the hold of an unmatched record, fill or order the journal keeps. The next recover halts on the same entry, because nothing releases one until [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds the release, as [Drill for an order or fill the platform did not send](halts-and-drills.md#drill-for-an-order-or-fill-the-platform-did-not-send) says.
+
 A halt raised because S3 would not store a capture refuses the clear until the condition in [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) holds.
 
 On an account that sets `release_needs_blob`, it first writes the release blob, whose body names the halt's id, which only the owner's role can do, and the journal entry names its hash.
 
 This doc proposes it as the confirmation after a stop that [A strategy is judged over a sample](design.md#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it) asks for, and as the release of a mismatched request's halt, for [#33](https://github.com/l3a0/ithildin-runtime/issues/33).
 
-This doc also proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that a clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
+A clear brings a held cash record into the book, as the case list in design.md's `### Strategies, schedules and decisions` says.
 
 ###### `ithildin strategy on --account <a> --strategy <s>`
 

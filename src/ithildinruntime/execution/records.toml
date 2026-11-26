@@ -1,0 +1,22 @@
+# The closed list of records a broker books on its own that move the book's cash with no
+# halt, and the range of each one's amount in US dollars, a credit above zero and a debit
+# below. A record of any other kind, or outside its range, is kept as unmatched and holds
+# the account until a person releases it. A range is raised by a pull request, and the
+# owner rules on each value. docs/architecture/06-runtime.md's `#### What recover does,
+# step by step` says how a record is read.
+format = 1
+
+# A charge the broker books, such as a regulatory fee on a sale. Never a credit.
+[fee]
+least = "-50.00"
+most = "-0.01"
+
+# Interest the broker charges on a debit balance. Credit interest is off the list.
+[interest]
+least = "-50.00"
+most = "-0.01"
+
+# A dividend paid on a long position, or charged on a short one.
+[dividend]
+least = "-500.00"
+most = "500.00"

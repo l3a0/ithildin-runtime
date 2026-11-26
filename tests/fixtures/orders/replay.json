@@ -1,6 +1,6 @@
 {
   "through": 48,
-  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 of 'USO' at 70.123456 on the order o-9, filled 2026-10-01T19:40:34+00:00, and entry 49 holds 8 of 'USO' at 70.124 on the order o-9, filled 2026-10-01T19:40:34+00:00",
+  "dispute": "journal fixture-1: the fill f9 is in dispute: entry 35 holds 8 of 'USO' at 70.123456 on the order o-9, filled 2026-10-01T19:40:34+00:00, and entry 49 holds 8 of 'USO' at 70.124 on the order o-9, filled 2026-10-01T19:40:34+00:00; entry 51 keeps an unmatched record, which holds the account until a person releases it, and nothing releases one yet: the record 20261001::d3c4, 5000 as a deposit, is no fee, debit interest or dividend; entry 52 keeps an unmatched fill, which holds the account until a person releases it, and nothing releases one yet: the fill f::x is of the broker's order x-1, which no order was acknowledged under; entry 53 keeps an unmatched order, which holds the account until a person releases it, and nothing releases one yet: the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack mapped",
   "cash": "97440.887352",
   "positions": {
     "chan_bollinger": {"GLD": "10", "USO": "6.5"}
@@ -94,5 +94,11 @@
     }
   },
   "fills": ["sim-f-1", "sim-f-2", "f::2", "f9"],
-  "newest_sent_at": "2026-10-01T19:40:42+00:00"
+  "newest_sent_at": "2026-10-01T19:40:42+00:00",
+  "afterwards": {
+    "through": 53,
+    "cash": "97440.859552",
+    "records": ["20261001::f1e2"],
+    "unmatched": [[51, "record", "20261001::d3c4"], [52, "fill", "f::x"], [53, "order", "x-1"]]
+  }
 }

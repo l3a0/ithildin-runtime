@@ -18,6 +18,7 @@ import pytest
 from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     BlobRef,
+    BrokerState,
     FillBasis,
     Halt,
     InstrumentId,
@@ -26,6 +27,7 @@ from ithildinruntime.core import (
     LossReading,
     OrderType,
     PastLimit,
+    RecordKind,
     StopState,
     TargetPortfolio,
     TimeInForce,
@@ -46,10 +48,14 @@ from ithildinruntime.journal import (
     IntentEntry,
     Journal,
     OpeningEntry,
+    OutsideRecordEntry,
     ReadEntry,
     Record,
     RejectedEntry,
     SendingEntry,
+    UnmatchedFillEntry,
+    UnmatchedOrderEntry,
+    UnmatchedRecordEntry,
     VerdictEntry,
     body_of,
     is_writer,
@@ -69,18 +75,24 @@ from tests.support.journals import (
     abandoned,
     ack,
     add,
+    broker_record,
     decision,
     disputed,
     expired,
     fill,
     filled,
+    foreign,
     in_doubt,
     opening,
+    outside,
     planned,
     read,
     rejected,
     route,
     started,
+    unmatched_fill,
+    unmatched_order,
+    unmatched_record,
     verdict,
 )
 
@@ -114,12 +126,18 @@ SAMPLES: tuple[Record, ...] = (
     filled(fill("f")),
     disputed(FULL),
     expired(NAME, "1.5"),
+    outside(broker_record(instrument=GLD, excess_places=("amount",))),
+    outside(broker_record("r::2", "3.5", RecordKind.DIVIDEND)),
+    unmatched_record(broker_record("r::3", "100", RecordKind.DEPOSIT)),
+    unmatched_fill(FULL),
+    unmatched_order(foreign()),
+    unmatched_order(foreign("x2", -3, client_order_id=NAME, type=None, time_in_force=None)),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 13
+    assert len(KINDS) == 17
 
 
 # Acceptance 1: each kind there and back.
@@ -151,6 +169,12 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         disputed(dataclasses.replace(part, qty=Decimal(2))),
     ]
     given += [expired(names[0], 1), *route("InDoubt", two), *route("Rejected", three)]
+    given += [
+        outside(broker_record()),
+        unmatched_record(broker_record("r::2", 9, RecordKind.WITHDRAWAL)),
+        unmatched_fill(fill("f9", "x1")),
+        unmatched_order(foreign()),
+    ]
     given += [read(AT + timedelta(days=1)), decision(at=AT + timedelta(days=1))]
     view = journal.view()
     kept = []
@@ -422,8 +446,34 @@ BIG = b"x" * RAW_LIMIT
         (disputed(fill("f", qty="0")), None),
         (filled(fill("f", correction_id="c")), "the fill f carries a correction's id"),
         (filled(fill("f", correction_id="")), "the fill f carries a correction's id"),
-        # What a correction means is #151's, so a disputed one is kept as it came.
+        # No rule reads a correction yet, so a disputed one is kept as it came.
         (disputed(fill("f", correction_id="c")), None),
+        (outside(broker_record("r" * 128)), None),
+        (outside(broker_record("r" * 129)), "the record's id is not a broker's id"),
+        (outside(broker_record("")), "the record's id is not a broker's id"),
+        (outside(broker_record(amount="0.0001")), None),
+        (outside(broker_record(amount="-0.0001")), None),
+        (outside(broker_record(amount="0")), "the record r::1 moves no cash"),
+        (outside(broker_record(amount="-0.00")), "the record r::1 moves no cash"),
+        *(
+            (
+                outside(broker_record(kind=kind)),
+                f"the record r::1 is a {kind}, which no rule lets move",
+            )
+            for kind in (RecordKind.DEPOSIT, RecordKind.WITHDRAWAL, RecordKind.OTHER)
+        ),
+        (
+            outside(broker_record(instrument=InstrumentId("a b"))),
+            "names an instrument whose name is",
+        ),
+        # What is kept as unmatched moves nothing, so it keeps what came but for its id.
+        (unmatched_record(broker_record(amount="0", kind=RecordKind.OTHER)), None),
+        (unmatched_record(broker_record("r/1")), "the record's id is not a broker's id"),
+        (unmatched_fill(fill("f", qty="0", price="0", correction_id="c")), None),
+        (unmatched_fill(fill("f/1")), "the fill's id is not a broker's id"),
+        (unmatched_fill(fill("f", "")), "the broker's order id is not a broker's id"),
+        (unmatched_order(foreign(qty=0)), None),
+        (unmatched_order(foreign("x" * 129)), "the broker's order id is not a broker's id"),
         *(
             (dataclasses.replace(record, **{field: bad}), f"{shown}.* name no blob")
             for record, field in (
@@ -663,6 +713,27 @@ def _committed() -> list[tuple[Record, datetime]]:
         says(47, 13, no_position, stop=StopState.UNREADABLE, close_entry=1),
         ReadEntry("execution/send", at, blob("broker-read-2"), t(47)),
         DisputedFillEntry(again, 48),
+        OutsideRecordEntry(
+            broker_record("20261001::f1e2", "-0.0278", at=t(49), received_at=t(50)), 48
+        ),
+        UnmatchedRecordEntry(
+            broker_record(
+                "20261001::d3c4", "5000", RecordKind.DEPOSIT, at=t(50), received_at=t(51)
+            ),
+            48,
+            "the record 20261001::d3c4, 5000 as a deposit, is no fee, debit interest or dividend",
+        ),
+        UnmatchedFillEntry(
+            filled_at(52, "f::x", "x-1", 3, "20.5", spy),
+            48,
+            "the fill f::x is of the broker's order x-1, which no order was acknowledged under",
+        ),
+        UnmatchedOrderEntry(
+            foreign("x-1", 3, instrument=spy, submitted_at=t(51)),
+            48,
+            "the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack "
+            "mapped",
+        ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 
@@ -671,12 +742,14 @@ def _committed() -> list[tuple[Record, datetime]]:
 # never changes once a journal outside a test is opened: one renamed would make
 # every old entry that holds it undecodable. A new member is added here.
 FROZEN = {
+    BrokerState: "working pending_cancel filled cancelled expired rejected unknown",
     FillBasis: "signal_close official_close quote",
     Limit: (
         "max_order_qty max_position max_gross max_open_orders max_net loss_stop moc_cutoff stop "
         "close_entry in_doubt position"
     ),
     OrderType: "market market_on_close",
+    RecordKind: "fee interest dividend deposit withdrawal other",
     StopState: "absent fired unreadable",
     TimeInForce: "day cls",
 }
@@ -724,10 +797,17 @@ def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path)
 def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_path: Path) -> None:
     """`replay.json` was worked out by hand from the entries, and no test writes it."""
     expected = json.loads((ORDERS / "replay.json").read_text())
+    afterwards = expected.pop("afterwards")
     shutil.copytree(ORDERS / "journal", tmp_path / "journal")
     journal = Journal(FolderStore(tmp_path), FIXED)
-    end = expected["through"] + 1
-    assert journal.view().through.seq == end
+    whole = journal.view()
+    # After the dispute come a fee that moves the cash and three entries that move nothing.
+    assert {
+        "through": whole.through.seq,
+        "cash": format(whole._cash, "f"),
+        "records": list(whole.records),
+        "unmatched": [[one.seq, one.kind, one.name] for one in whole.unmatched],
+    } == afterwards
     with pytest.raises(Halt) as halted:
         journal.replay()
     assert halted.value.reason == expected["dispute"]

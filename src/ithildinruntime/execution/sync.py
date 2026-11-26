@@ -4,13 +4,14 @@ Recover reads the broker before any model runs, and the send stage reads it
 again right before it plans. Each does the same four things, from here, so the
 two never drift apart.
 
-1. `read_broker` asks for the positions, the open orders, the cash and the fills
-   since a time, in that order, so a fill that lands between two reads is a
-   difference and never a match.
+1. `read_broker` asks for the positions, the open orders, the cash, the records
+   the broker booked on its own and the fills since a time, in that order, so a
+   record or a fill that lands between two reads is a difference and never a match.
 2. `journal_read` records the `read` entry that names the stored capture, before
    any value in it is used, and halts on a read that did not come whole.
-3. It records a `fill` entry for each new fill, and a `disputed_fill` for one
-   that differs from the fill the journal holds under its id.
+3. It records an entry for each new record, fill and open order the broker
+   lists, as `execution/outside.py` sorts them, and halts on a fill in dispute
+   or anything kept as unmatched, ahead of any lookup.
 4. It looks up each order the journal holds at the broker that the broker no
    longer lists, and records the entry of its end, or halts.
 
@@ -31,12 +32,10 @@ from ithildinruntime.core import (
     BrokerState,
     BrokerUnavailable,
     Clock,
-    Fill,
     Halt,
     OrderRecord,
     OrderState,
     Outcome,
-    broker_id_shown,
 )
 from ithildinruntime.journal import (
     DOUBTFUL,
@@ -44,18 +43,16 @@ from ithildinruntime.journal import (
     NOT_SENT,
     OPEN,
     RAW_LIMIT,
-    DisputedFillEntry,
     ExpiredEntry,
-    FillEntry,
     NumberTaken,
     ReadEntry,
     RejectedEntry,
-    Repeat,
     View,
 )
 
 from .account import Account, StageRecord
 from .order_path import OrderPath
+from .outside import fill_entry, load_ranges, order_entry, record_entry
 
 __all__ = ["AT_THE_BROKER", "UNSETTLED", "journal_read", "read_broker", "recorded"]
 
@@ -70,13 +67,14 @@ UNSETTLED = frozenset(OrderState) - ENDED - AT_THE_BROKER
 
 
 def read_broker(path: OrderPath, since: datetime) -> AccountRead:
-    """The four reads of the broker, the fills last, each failure a halt naming the call."""
+    """The five reads of the broker, the fills last, each failure a halt naming the call."""
     # In this order, so a fill that lands between two reads is a difference and never a match.
     return AccountRead(
         positions=_asked(path.positions),
         open_orders=_asked(path.open_orders),
         cash=_asked(path.account),
         since=since,
+        records=_asked(lambda: path.activities(since)),
         fills=_asked(lambda: path.fills(since)),
     )
 
@@ -97,15 +95,20 @@ def journal_read(
 
     `ref` is the stored capture that holds `read`. A read that did not come
     whole halts once its `read` entry is stored, and so does a fill in
-    dispute, ahead of any lookup.
+    dispute or anything kept as unmatched, ahead of any lookup.
     """
     view = recorded(account, view, lambda v: _read_entry(v, stage, ref, read, at, clock), report)
     seq = next(n for n, entry in view.reads.items() if entry.ref == ref)
     if short := read.short:
         raise Halt(f"the broker's {', '.join(short)} did not come whole, as {ref.key}")
+    ranges = load_ranges()
+    for one in read.records.records:
+        view = recorded(account, view, lambda v, r=one: record_entry(v, r, seq, ranges), report)
     for fill in read.fills.fills:
-        view = recorded(account, view, lambda v, f=fill: _fill_entry(v, f, seq), report)
-    # A fill in dispute halts here, ahead of any lookup, naming it.
+        view = recorded(account, view, lambda v, f=fill: fill_entry(v, f, seq), report)
+    for listed_order in read.open_orders.orders:
+        view = recorded(account, view, lambda v, o=listed_order: order_entry(v, o, seq), report)
+    # A fill in dispute, and anything kept as unmatched, halts here, ahead of any lookup.
     _ = view.book
     listed = {order.broker_order_id for order in read.open_orders.orders}
     for name, order in view.live.items():
@@ -175,21 +178,6 @@ def _asked[R](call: Callable[[], R]) -> R:
     except BrokerUnavailable as error:
         reason = f"{error}"
     raise Halt(reason)
-
-
-def _fill_entry(view: View, fill: Fill, read: int) -> FillEntry | DisputedFillEntry | None:
-    repeat = view.repeats(fill)
-    if repeat is Repeat.HELD:
-        return None
-    if repeat is Repeat.DIFFERS:
-        return DisputedFillEntry(fill, read)
-    if view.acknowledged(fill.broker_order_id) is None:
-        raise Halt(
-            f"the fill {broker_id_shown(fill.fill_id)} is of the broker's order "
-            f"{broker_id_shown(fill.broker_order_id)}, which no order of the platform's was "
-            "acknowledged under"
-        )
-    return FillEntry(fill, read)
 
 
 def _end_entry(name: str, order: OrderRecord, ack: Ack) -> ExpiredEntry | RejectedEntry:
