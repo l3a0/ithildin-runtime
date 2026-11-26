@@ -321,10 +321,10 @@ def render(m: Measurement) -> str:
         "### Refusals no step lifts",
         "",
         f"At the widest steps, {AGES[-1]} seconds and {SPREADS[-1]} of the midpoint, at the "
-        f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. These "
-        "reasons refuse at every step, so the tables after this one show only the reasons "
-        "each step lifts. A reason a quote gives counts once for each instrument and session it "
-        "refuses, and each kind of fault of the read once for each session.",
+        f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. What "
+        "refuses at every step comes next, and the age and spread tables after it show only "
+        "the reasons each step lifts. A reason a quote gives counts once for each instrument "
+        "and session it refuses, and each kind of fault of the read once for each session.",
         "",
         *_floor(m),
         "",
@@ -470,8 +470,14 @@ def _quotes(m: Measurement) -> list[str]:
         f"check refuses | {past} of {total} |",
         f"| A bid or ask size of zero | {zero} of {total} |",
         f"| A bid or ask size that is missing | {none} of {total} |",
-        f"| Either, passing every check at the widest steps at the decision | {unsized_passed} "
-        f"of {unsized} |",
+        *(
+            [
+                f"| Either, passing every check at the widest steps at the decision | "
+                f"{unsized_passed} of {unsized} |"
+            ]
+            if unsized
+            else []
+        ),
         *(f"| `security_status` of {s} | {c} of {total} |" for s, c in sorted(status.items())),
         *(f"| `realtime` of {s} | {c} of {total} |" for s, c in sorted(realtime.items())),
     ]
