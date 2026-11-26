@@ -214,7 +214,7 @@ def test_2_the_pair_in_the_other_order_halts(first: Decided) -> None:
 
 
 def test_2_a_step_at_the_seam_within_the_spike_multiple_raises_no_flag(tmp_path: Path) -> None:
-    """A split or stock dividend of 5 percent reads as a move of the market, with no sign."""
+    """Here a split or stock dividend of 5 percent reads as a move of the market, with no flag."""
     lake = built(tmp_path / "lake", scale={"USO": Decimal("1.05")})
     found = decide(lake, tmp_path, DECIDED[0], walks=WALKS)
     assert found.data.halt is None and found.alpha.halt is None
@@ -225,8 +225,8 @@ def test_2_a_split_at_the_seam_is_read_as_a_move_and_flagged(tmp_path: Path) -> 
     """The price of the ruling: an import on another scale than capture passes as one series.
 
     Here USO's import is on twice the scale of its captured bars, as one fetched on the
-    day a split went ex, before Schwab restated, would be. The move rule's flag is the one
-    sign of it, and it halts nothing.
+    day a split went ex, before Schwab restated, would be. The move rule flags it here
+    because the step is past the written spike multiple, and it halts nothing.
     """
     lake = built(tmp_path / "lake", scale={"USO": Decimal(2)})
     found = decide(lake, tmp_path, DECIDED[0], walks=WALKS)

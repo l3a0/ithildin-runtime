@@ -2489,7 +2489,7 @@ are of two series, whether or not their scales agree. Each such pair gives one
 reason, which names the instrument, both sessions and both series. The snapshot
 is stored first. Two instruments may be of two series.
 
-One change passes, because its two series sit on one scale. Schwab's daily
+One change passes, because its two series are read as one scale. Schwab's daily
 candles come back adjusted for splits to the day they are fetched, on the two
 forward splits [l3a0/marketlake#951](https://github.com/l3a0/marketlake/issues/951)
 measured, so
@@ -2558,15 +2558,18 @@ The price is seven things.
    unmeasured, and so is a reverse split, so for a ticker imported later a split
    that went ex on the fetch's own day, before Schwab restated, would leave the
    import and capture on two scales. The decision would read the step as a
-   move. The move rule flags it only past the written spike multiple, so a
-   split or stock dividend of about 10 percent raises no flag at all. The
-   pair passes for any ticker, and what bounds it is the import's price-kind
-   row, which covers 2026-09-04 to 2026-10-30 alone. A later import's bars
-   halt on an unstated kind until a reviewed row covers them, so a new
-   `schwab:pricehistory` row extends the pass to every ticker it covers.
+   move. The move rule flags the step only where it is past the written spike
+   multiple of the standard deviation of the lookback's returns, so a smaller
+   step raises no flag. How large a step that is depends on the instrument,
+   and `tests/test_data_one_scale.py` pins one of 5 percent that raises none.
+   The pair passes for any ticker, and what bounds it is the import's
+   price-kind row, which covers 2026-09-04 to 2026-10-30 alone. A later
+   import's bars outside those sessions halt on an unstated kind until a
+   reviewed row covers them, so a new `schwab:pricehistory` row extends the
+   pass to every ticker it covers.
    [#189](https://github.com/l3a0/ithildin-runtime/issues/189) builds the record of
    splits that catches it. For GLD and USO a second vendor's prices agree
-   across 2026-11-02, as the import's row says.
+   across 2026-11-02 in an exploratory comparison, as the import's row says.
 
 #### What the spike multiple is measured against
 
@@ -4380,7 +4383,7 @@ This section lists every decision made on the project, oldest first, one heading
 ### 2026-11-26
 
 1. The owner ruled that the read across the change from Schwab's imported bars to captured ones is built now, rather than when paper's other blockers are near. The question was whether to build it now, with the recommendation "not yet", and the owner answered "yes". The metric was the sessions it saves between paper's first decision and 2027-01-28, at most 40. Turned down: waiting. The price is a small change and its review, paid before any session needs it, and a rule that changes nothing for GLD and USO from 2027-01-29. [#175](https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180707047) Governs: `#### A lookback that crosses a change of series` in design.md.
-2. The owner ruled that marketlake's import of Schwab's daily bars and its own capture sit on one price scale at 2026-11-02, answering "Yes, one scale". The import's bars, `adjusted` from `schwab:pricehistory` with `source_as_of` 2026-11-02, are on that session's scale, and the captured bars after them are as traded on it. So a lookback over that one pair reads, and the import's row in `data/price_kinds.csv` states its kind for 2026-09-04 to 2026-10-30. The metric was whether a second vendor's unadjusted bars agree across the seam. The four prices of 80 of 80 imported bars and 34 of 34 captured ones equal Massive's unadjusted daily aggregates to the cent, read on 2026-11-25 in an exploratory comparison, and neither Alpha Vantage nor Massive lists a split of GLD, or of USO after 2020-04-29. The alternative was to keep halting every decision whose lookback holds both, to 2027-01-28. The price is that how soon Schwab restates its candles after an ex-date is unmeasured, so for a later ticker a split that went ex on the fetch's own day could leave the two on two scales, with the move rule's flag alone to show it until [#189](https://github.com/l3a0/ithildin-runtime/issues/189) builds the record of splits. The import's volume was not compared. [#175](https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180719855) Governs: `#### A lookback that crosses a change of series` in design.md, `### Which price a decision reads` in architecture/01-introduction-and-goals.md, `### Where bars come from` in architecture/03-context-and-scope.md, `#### A bar carries where it came from` in architecture/05-building-blocks.md, the series row of halts-and-drills.md, `runtime/stress_move.py`'s refusal of a seam nobody named, and the price-kind contract in `src/ithildinruntime/data/price_kinds.csv`.
+2. The owner ruled that marketlake's import of Schwab's daily bars and its own capture sit on one price scale at 2026-11-02, answering "Yes, one scale". The import's bars, `adjusted` from `schwab:pricehistory` with `source_as_of` 2026-11-02, are on that session's scale, and the captured bars after them are as traded on it. So a lookback over that one pair reads, and the import's row in `data/price_kinds.csv` states its kind for 2026-09-04 to 2026-10-30. The metric was whether a second vendor's unadjusted bars agree across the seam. The four prices of 80 of 80 imported bars and 34 of 34 captured ones equal Massive's unadjusted daily aggregates to the cent, read on 2026-11-25 in an exploratory comparison, and neither Alpha Vantage nor Massive lists a split of GLD, or of USO after 2020-04-29. The alternative was to keep halting every decision whose lookback holds both, to 2027-01-28. The price is that how soon Schwab restates its candles after an ex-date is unmeasured, so for a later ticker a split that went ex on the fetch's own day could leave the two on two scales, with the move rule's flag the one sign of it, and only past the written spike multiple, until [#189](https://github.com/l3a0/ithildin-runtime/issues/189) builds the record of splits. The import's volume was not compared. [#175](https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180719855) Governs: `#### A lookback that crosses a change of series` in design.md, `### Which price a decision reads` in architecture/01-introduction-and-goals.md, `### Where bars come from` in architecture/03-context-and-scope.md, `#### A bar carries where it came from` in architecture/05-building-blocks.md, the series row of halts-and-drills.md, `runtime/stress_move.py`'s refusal of a seam nobody named, and the price-kind contract in `src/ithildinruntime/data/price_kinds.csv`.
 
 ## Considered and rejected
 

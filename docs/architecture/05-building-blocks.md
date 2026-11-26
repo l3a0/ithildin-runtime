@@ -1280,7 +1280,7 @@ Each strategy's alpha stage stores the forecasts in `forecast.json` and the sign
 | `interval` | How long the bar is |
 | `knowable_at` | The earliest the platform could have held the bar, as the rules below say |
 | `fetched`, `fetched_at`, `fetched_end`, `fetched_end_at` | marketlake's `fetch_ts` and `fetch_end_ts` as received, each beside its UTC instant, and `None` where marketlake holds none |
-| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series), but for the one change from Schwab's import to captured bars that sits on one scale |
+| `source`, `source_as_of` | An imported row's source and the date that source recorded its values, and `None` on a captured row. With `basis` they are the bar's series, as `core.series_of` reads it, and a lookback that holds two series of one instrument [halts the decision](../design.md#a-lookback-that-crosses-a-change-of-series), but for the one change from Schwab's import to captured bars, which an exploratory comparison shows on one scale for GLD and USO alone |
 | `volume` | The volume, or `None` where marketlake holds none, as on both Chan vintages |
 | `excess_places` | The names of the prices received with more places than `Price` declares, each kept unrounded |
 

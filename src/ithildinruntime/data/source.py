@@ -58,7 +58,7 @@ stored, for one of three reasons that `_bar_halts` finds in the bars alone.
    series can be on two scales, and every reader of the bars would take the
    step between them for a move of the market. One change passes, from
    Schwab's import to captured bars on the session the import is adjusted to,
-   because the two sit on one scale there. docs/design.md's `#### A lookback
+   because the two are read as one scale there. docs/design.md's `#### A lookback
    that crosses a change of series` says why, and what each costs.
 
 A decision inside its session, at or after the open and before the close, reads
@@ -810,12 +810,13 @@ def _changed(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
 
 
 def _one_scale(one: Bar, two: Bar) -> bool:
-    """Whether two consecutive bars of two series are the one change that sits on one scale.
+    """Whether two consecutive bars of two series are the one change read as one scale.
 
     The earlier bar is imported from `SCHWAB_IMPORT`, `adjusted` as of the later
     bar's session, and the later bar is captured. Schwab's candles come back on
-    the scale of the day they are fetched, so the import is on the scale of
-    that session, and a captured bar is as traded on it. docs/design.md's
+    the scale of the day they are fetched, on the two forward splits
+    l3a0/marketlake#951 measured, so the import is on the scale of that
+    session, and a captured bar is as traded on it. docs/design.md's
     `#### A lookback that crosses a change of series` says what it costs.
     """
     return (

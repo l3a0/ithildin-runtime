@@ -73,7 +73,7 @@ The model checks no bar's basis and no earlier bar's price kind, because data
 judges both. Data's stage halts where one leg's bars are of two series, such as
 `adjusted` and `raw` ones, and where a bar leaves one of its four price-kind
 fields unstated. It passes one change, from Schwab's import to the captured bars
-from the session the import is adjusted to, because the two sit on one scale. A
+from the session the import is adjusted to, which it reads as one scale. A
 window of one series can be of prices as traded, as captured bars are, and no
 halt on the prices stops a split inside it, across that one change, or between
 its newest bar and the quote. docs/design.md's rule that a split reads as neither a gain nor
