@@ -21,9 +21,16 @@ weight be its shares in one basket times its mark, as a size.
    one plus the stress move, which is the one the stress records leave. A leg
    the market moved that far is then still inside a limit that has not moved, so
    an exit is not refused on that limit.
-4. **Each leg is rounded toward zero** to the account's share step, so no leg
-   passes `gross` or a limit. A leg can round to zero beside one that does not,
-   and only a target of zero in every leg halts.
+4. **Each leg is rounded to the nearest step** of the account's share step,
+   and a leg exactly half a step from two counts goes to the one nearer zero. So
+   each leg is off what was asked by at most half a step, and the target's gross
+   can pass `gross` by that much in each leg.
+5. **The rounded target is checked against each limit of step 2**, each leg's
+   shares, the legs' dollars and each side's dollars, with the dollar limits read
+   less room as there. Where it passes one, every leg is rounded toward zero
+   instead, which no limit can refuse, because the unrounded target fits them
+   all. A leg can round to zero beside one that does not, and only a target of
+   zero in every leg halts.
 
 Each bound is kept as one exact fraction, two bounds are compared across their
 divisors, and each share count is one division, so a target that sits exactly
@@ -177,16 +184,41 @@ def size(
         if bound.below(taken):
             taken = bound
 
-    def count(kind: str, baskets: _Baskets, n: int) -> dict[InstrumentId, Decimal]:
+    def count(
+        kind: str, baskets: _Baskets, n: int, nearest: bool = True
+    ) -> dict[InstrumentId, Decimal]:
         made = {}
         for i, q in shares.items():
             what = f"{name}'s {kind} in {i}"
             exact = exact_product(what, q, baskets.dividend)
-            qty = rounded(what, quotient(what, exact, baskets.divisor, n, ROUND_DOWN), n)
+            qty = _counted(what, exact, baskets.divisor, n, nearest)
             made[i] = qty if long[i] or not qty else qty.copy_negate()
         return made
 
+    def fits(target: dict[InstrumentId, Decimal]) -> bool:
+        """Whether a rounded target is inside every limit `bounds` reads, room and all."""
+        if any(target[i].copy_abs() > limits.max_position[i] for i in target):
+            return False
+        held = {
+            i: exact_product(f"{name}'s rounded target's dollars in {i}", q.copy_abs(), marks[i])
+            for i, q in target.items()
+        }
+        sides = [
+            exact_total(
+                "the rounded target's one side", (held[i] for i in held if long[i] is which)
+            )
+            for which in (True, False)
+        ]
+        whole_held = exact_total("the rounded target's gross", held.values())
+        return exact_product(
+            "rounded gross with room", room, whole_held
+        ) <= limits.max_gross and all(
+            exact_product("a rounded side with room", room, one) <= limits.max_net for one in sides
+        )
+
     target = count("target", taken, step)
+    if not fits(target):
+        target = count("target", taken, step, nearest=False)
     wanted = count("size before any limit", asked, _WANTED)
     if not any(target.values()):
         raise Halt(
@@ -232,6 +264,23 @@ def _checked_legs(
     if not any(checked.values()):
         raise Halt(f"every leg of {name}'s basket is zero")
     return checked
+
+
+def _counted(what: str, dividend: Decimal, divisor: Decimal, n: int, nearest: bool) -> Decimal:
+    """`dividend` over `divisor` at `n` places, nearest or toward zero, worked out exactly.
+
+    The quotient toward zero is the one division, and its remainder decides the
+    nearest count, so no second rounding can move a count that sits just past
+    half a step. Half a step exactly goes toward zero.
+    """
+    down = rounded(what, quotient(what, dividend, divisor, n, ROUND_DOWN), n)
+    if not nearest:
+        return down
+    left = exact_total(what, (dividend, exact_product(what, down, divisor).copy_negate()))
+    step = Decimal(1).scaleb(-n)
+    if exact_product(what, Decimal(2), left) > exact_product(what, step, divisor):
+        return rounded(what, exact_total(what, (down, step)), n)
+    return down
 
 
 def _zero(n: int) -> Decimal:
