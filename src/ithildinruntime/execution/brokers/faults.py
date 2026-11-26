@@ -63,7 +63,10 @@ class Late:
 
 @dataclass(frozen=True)
 class FillPart:
-    """The close fills `qty` shares of the order, a size, and the rest expires."""
+    """The order fills `qty` shares, a size, and the rest expires.
+
+    A market-on-close order fills them at its close, and a market order as it is taken.
+    """
 
     qty: Decimal
 

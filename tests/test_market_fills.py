@@ -2,10 +2,11 @@
 
 A test's number is the item of #155 it shows: 1 the fill and its rejections, 2
 the strategy's `[execution]` key, which `tests/test_orders.py` holds, and 3 what
-the fill traces to. Most orders go in through `OrderPath`, gate and journal
-included. A quote with a fault never reaches the broker that way, because the
-gate's mark judges it first at the gate's own clock, so those cases call the
-simulator's `submit` by hand, as `OrderPath` would.
+the fill traces to. Every order goes in through `OrderPath`, gate and journal
+included. A quote with a fault never reaches the broker that way before the
+close, because the gate's mark judges it first at the gate's own clock, so those
+cases store the faulted quote, or move the clock, through a relay that runs
+after the gate and before the broker's call.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from ithildinruntime.core import (
     TimeInForce,
     decode_output,
     output_key,
+    result_key,
     sha256_of,
 )
 from ithildinruntime.execution.brokers.faults import Faults, FillPart, Late, OrderFault
@@ -38,6 +40,7 @@ from ithildinruntime.execution.brokers.simulated import REASON_LIMIT, refusal
 from ithildinruntime.journal import AckEntry, FillEntry, Journal, RejectedEntry, record_of
 from tests.support.order_world import order
 from tests.support.quotes import quote
+from tests.support.relay_broker import RelayBroker
 from tests.support.sim_world import (
     ACCOUNT,
     CASH,
@@ -85,8 +88,28 @@ def call(made: SimWorld, number: int) -> dict:
     return json.loads(made.blobs()[f"sim/sim-1/{number:012d}.json"])
 
 
-def reason(ack) -> str:
-    return json.loads(ack.raw)["reason"]
+def rejected(made: SimWorld) -> str:
+    """The reason of the one order the broker rejected."""
+    (entry,) = [e for e in entries(made) if isinstance(e, RejectedEntry)]
+    return json.loads(entry.raw)["reason"]
+
+
+def past_the_gate(
+    made: SimWorld,
+    intent: OrderIntent,
+    quotes: dict | None = None,
+    later: datetime | None = None,
+) -> OrderState:
+    """Send one order, and store other quotes or move the clock once the gate has passed it."""
+    snapshot = made.snapshot(AT)
+
+    def first() -> None:
+        if quotes is not None:
+            made.stored(replace(snapshot, quotes=quotes))
+        if later is not None:
+            made.clock.at = later
+
+    return made.send(intent, RelayBroker(made.broker(), first))
 
 
 def settled(made: SimWorld) -> None:
@@ -149,15 +172,22 @@ def test_1_two_legs_each_fill_at_their_own_quote() -> None:
 
 def test_1_a_quote_the_snapshot_lacks_is_a_rejection_naming_it() -> None:
     made = world()
-    snapshot = made.snapshot(AT)
-    only = {GLD: snapshot.quotes[GLD]}
-    (intent,) = made.decide(AT, (market(1, 4, USO),), replace(snapshot, quotes=only))
-    ack = made.broker().submit(intent)
-    assert (ack.outcome, reason(ack)) == (
-        Outcome.REJECTED,
-        f"the decision's snapshot holds no quote of {USO}",
-    )
+    (intent,) = made.decide(AT, (market(1, 4, USO),))
+    only = {GLD: made.snapshot(AT).quotes[GLD]}
+    assert past_the_gate(made, intent, quotes=only) is OrderState.REJECTED
+    assert rejected(made) == f"the decision's snapshot holds no quote of {USO}"
     assert made.blobs().keys() == {"sim/sim-1/000000000001.json"}
+
+
+def test_1_at_the_close_the_gate_marks_at_the_bar_and_the_broker_rejects_the_order() -> None:
+    """A decision at the close reads no quote, so the gate marks at the day's bar."""
+    made = world()
+    close = close_of(FULL)
+    (intent,) = made.decide(close, (market(1, 4, at=close),))
+    assert made.snapshot(close).quotes == {}
+    assert made.send(intent) is OrderState.REJECTED
+    assert rejected(made) == f"the decision's snapshot holds no quote of {GLD}"
+    assert made.broker().fills(LONG_AGO).fills == ()
 
 
 def test_1_the_gate_halts_first_on_a_leg_with_no_quote_before_the_close() -> None:
@@ -195,12 +225,13 @@ def faulted(bid: object = BID, ask: object = ASK, **changes: object) -> object:
 )
 def test_1_a_quote_with_a_fault_is_a_rejection_and_never_an_exception(given, said: str) -> None:
     made = world()
-    snapshot = made.snapshot(AT)
-    (intent,) = made.decide(AT, (market(1, 4),), replace(snapshot, quotes={GLD: given}))
-    ack = made.broker().submit(intent)
-    assert (ack.outcome, ack.broker_order_id, ack.order) == (Outcome.REJECTED, None, None)
-    assert reason(ack).startswith(f"the quote of {GLD} cannot be read: ")
-    assert said in reason(ack)
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert past_the_gate(made, intent, quotes={GLD: given}) is OrderState.REJECTED
+    (entry,) = [e for e in entries(made) if isinstance(e, RejectedEntry)]
+    copy = json.loads(entry.raw)
+    assert copy.keys() == {"reason"}
+    assert copy["reason"].startswith(f"the quote of {GLD} cannot be read: ")
+    assert said in copy["reason"]
     assert made.blobs().keys() == {"sim/sim-1/000000000001.json"}
     # Its id was never taken, so the account holds no order under it.
     assert made.broker().orders(LONG_AGO).orders == ()
@@ -211,19 +242,18 @@ def test_1_the_quote_is_judged_at_the_decision_time_and_not_at_the_clock() -> No
     made = world()
     (intent,) = made.decide(AT, (market(1, 4),))
     # By the clock the quote is 59 + 600 seconds old, and the decision's time still judges it.
-    made.clock.at = AT + timedelta(minutes=10)
-    ack = made.broker().submit(intent)
-    assert (ack.outcome, ack.order.state) == (Outcome.ACCEPTED, BrokerState.FILLED)  # type: ignore[union-attr]
+    later = AT + timedelta(minutes=10)
+    assert past_the_gate(made, intent, later=later) is OrderState.ACKNOWLEDGED
     (fill,) = made.broker().fills(LONG_AGO).fills
     assert (fill.price, fill.at) == (ASK, AT + timedelta(minutes=10))
 
 
 def test_1_a_long_reason_is_cut_to_its_bound() -> None:
     made = world()
-    snapshot = made.snapshot(AT)
+    (intent,) = made.decide(AT, (market(1, 4),))
     long = faulted(status="x" * (3 * REASON_LIMIT))
-    (intent,) = made.decide(AT, (market(1, 4),), replace(snapshot, quotes={GLD: long}))
-    said = reason(made.broker().submit(intent))
+    assert past_the_gate(made, intent, quotes={GLD: long}) is OrderState.REJECTED
+    said = rejected(made)
     assert len(said) == REASON_LIMIT
     assert said.endswith(" (cut)")
     assert said.startswith(f"the quote of {GLD} cannot be read: its status is 'xxx")
@@ -294,8 +324,7 @@ def test_1_bad_type_turns_a_market_order_into_a_pair_the_account_refuses() -> No
     made = world(Faults({name(): OrderFault.BAD_TYPE}))
     (intent,) = made.decide(AT, (market(1, 4),))
     assert made.send(intent) is OrderState.REJECTED
-    (entry,) = [e for e in entries(made) if isinstance(e, RejectedEntry)]
-    assert json.loads(entry.raw)["reason"] == "no market_on_close order is taken for day"
+    assert rejected(made) == "no market order is taken for cls"
 
 
 def test_1_late_fills_as_it_arrives_under_its_own_decisions_prices() -> None:
@@ -327,14 +356,66 @@ def test_1_late_arriving_under_another_decisions_prices_is_missed() -> None:
 
 def test_1_late_whose_quote_has_a_fault_is_missed() -> None:
     made = world(Faults({name(): Late(1)}))
-    snapshot = made.snapshot(AT)
-    stale = faulted(status="Halted")
-    (intent,) = made.decide(AT, (market(1, 4),), replace(snapshot, quotes={GLD: stale}))
+    (intent,) = made.decide(AT, (market(1, 4),))
+    halted = faulted(status="Halted")
+    assert past_the_gate(made, intent, quotes={GLD: halted}) is OrderState.IN_DOUBT
+    assert made.log.account_now.delayed != ()
     broker = made.broker()
-    with pytest.raises(Exception, match="answer"):
-        broker.submit(intent)
+    assert broker.fills(LONG_AGO).fills == ()
     assert broker.orders(LONG_AGO).orders == ()
     assert made.log.account_now.delayed == ()
+
+
+@pytest.mark.parametrize("read", ["open_orders", "orders", "lookup"])
+def test_1_a_read_of_the_orders_reads_no_price_and_leaves_a_late_market_order_on_its_way(
+    read: str,
+) -> None:
+    """A cancel is looked up first, so a price that stops a lookup would stop the cancel."""
+    made = world(Faults({name(): Late(1)}))
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert made.send(intent) is OrderState.IN_DOUBT
+    made.store.drop(result_key(DEPLOYMENT, made.run, AT, DATA_STAGE))
+    made.store.calls.clear()
+    broker = made.broker()
+    reads = {
+        "open_orders": lambda: broker.open_orders().orders,
+        "orders": lambda: broker.orders(LONG_AGO).orders,
+        "lookup": lambda: broker.lookup("sim-o-1").outcome,
+    }
+    assert reads[read]() in ((), Outcome.NOT_FOUND)
+    assert all(key.startswith("sim/") for _, key in made.store.calls)
+    assert [o.client_order_id for o in made.log.account_now.delayed] == [name()]
+    # The next call that reads a price needs the quote, and halts while it cannot be read.
+    with pytest.raises(Halt, match="cannot read the quote of its order: .* not stored"):
+        broker.positions()
+
+
+def test_1_a_snapshot_that_cannot_be_read_puts_the_order_in_doubt_and_holds_none() -> None:
+    made = world()
+    (intent,) = made.decide(AT, (market(1, 4),))
+
+    def lost() -> None:
+        made.store.drop(result_key(DEPLOYMENT, made.run, AT, DATA_STAGE))
+
+    why = "in doubt: the simulated account sim-1 cannot read the quote of its order: .* not stored"
+    with pytest.raises(Halt, match=why):
+        made.send(intent, RelayBroker(made.broker(), lost))
+    assert made.log.number == 1
+
+
+def test_1_a_market_order_still_working_at_its_close_never_fills_there() -> None:
+    """Under `fill_none` it rests, and a process with no fault then reads the close."""
+    made = world(Faults({name(): OrderFault.FILL_NONE}))
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert made.send(intent) is OrderState.ACKNOWLEDGED
+    made.faults = Faults()
+    made.restart()
+    settled(made)
+    broker = made.broker()
+    assert broker.fills(LONG_AGO).fills == ()
+    (ended,) = broker.orders(LONG_AGO).orders
+    assert (ended.state, ended.filled) == (BrokerState.EXPIRED, 0)
+    assert broker.positions().positions == {}
 
 
 # 3. What the fill traces to

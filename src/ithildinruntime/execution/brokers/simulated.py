@@ -13,10 +13,12 @@ fill rule by order type and no branch on a mode or a test.
   its decision. `core.quote_faults` judges that quote at the decision time, so
   a backtest's fills do not move with its clock. A snapshot with no quote of
   the instrument and a quote with a fault are each a rejection naming why, and
-  never an exception. Through `OrderPath` the gate's mark halts on both first.
+  never an exception. Before the close the gate's mark halts on both first.
   Under `reject_later` or `fill_none` it rests instead, and it never fills at a
   close. One on its way fills as it arrives, and only under its own decision's
-  prices, so one that arrives under another decision's is missed.
+  prices, so one that arrives under another decision's, or whose quote has a
+  fault, is missed. A read of the orders leaves it on its way, as the last item
+  says.
 - **Any other order is rejected.**
 - **It moves only forward.** A call whose clock reads before the log's newest
   call, or before the decision its prices are of, halts.
@@ -29,8 +31,9 @@ fill rule by order type and no branch on a mode or a test.
 Every call reads the log forward. Every call but a cancel then does what is due:
 what a fault has someone do to the account, an order that arrives late, a
 rejection that comes later, and the closes. A read of the orders leaves each close
-that needs a price to the next call that reads one. A call then does its own part, stores
-one blob where anything changed, and answers. Where its create fails, nothing this
+that needs a price, and each market order on its way, to the next call that reads
+one. A call then does its own part, stores one blob where anything changed, and
+answers. Where its create fails, nothing this
 process remembers has changed, and the next call finds whether the blob landed.
 One whose number another call took starts over on what it then reads.
 """
@@ -119,7 +122,7 @@ _TAKEN = frozenset(
 
 
 def refusal(order: OrderIntent | SimOrder, at: datetime, close: datetime) -> str | None:
-    """Why the account takes no such order at `at`, or `None` for one that rests until `close`."""
+    """Why the account takes no such order at `at`, or `None` for one it takes."""
     if (order.type, order.time_in_force) not in _TAKEN:
         return f"no {order.type} order is taken for {order.time_in_force}"
     if not order.qty.is_finite() or exceeds_places(order.qty, _SHARE_PLACES):
@@ -388,7 +391,7 @@ class SimulatedBroker:
             if count <= log.calls and count not in log.fired:
                 edit = self._edit(count, after(log.account_now, events), events, now)
                 events = replace(events, edits=(*events.edits, edit))
-        events = self._arrivals(events, now)
+        events = self._arrivals(events, now, of_orders)
         return now, self._closes(events, now, of_orders)
 
     def _edit(self, count: int, state: SimState, events: SimEvents, now: datetime) -> SimEdit:
@@ -417,8 +420,12 @@ class SimulatedBroker:
                 order = replace(self._order_of(intent, now, False), client_order_id=None)
                 return SimEdit(count, None, None, None, replace(order, id=self._next_id(events)))
 
-    def _arrivals(self, events: SimEvents, now: datetime) -> SimEvents:
-        """Each order on its way whose call has come, placed or missed."""
+    def _arrivals(self, events: SimEvents, now: datetime, of_orders: bool) -> SimEvents:
+        """Each order on its way whose call has come, placed or missed.
+
+        A market order needs its quote to arrive, so a read of the orders, which
+        reads no price, leaves it on its way to the next call that reads one.
+        """
         log = self._log
         for order in log.account_now.delayed:
             name = order.client_order_id or ""
@@ -430,13 +437,17 @@ class SimulatedBroker:
             if refusal(order, now, _close_of(order)) is not None:
                 events = replace(events, missed=(*events.missed, name))
                 continue
-            placed = replace(order, id=self._next_id(events), submitted_at=now)
             if order.type is OrderType.MARKET:
                 _, decided, _ = read_order_id(name)
-                own = decided == self._prices.decision_at
-                if not own or self._unfilled(placed) is not None:
+                if decided != self._prices.decision_at:
                     events = replace(events, missed=(*events.missed, name))
                     continue
+                if of_orders:
+                    continue
+                if self._unfilled(order) is not None:
+                    events = replace(events, missed=(*events.missed, name))
+                    continue
+            placed = replace(order, id=self._next_id(events), submitted_at=now)
             events = replace(events, placed=(*events.placed, placed))
             if order.type is OrderType.MARKET:
                 events = self._filled(placed, events, now, fault)
@@ -613,9 +624,8 @@ def _close_of(order: SimOrder) -> datetime:
 def _changed(intent: OrderIntent, fault: object) -> OrderIntent:
     """The order as a fault changes it on its way in, which the account's own rule then answers."""
     if fault is OrderFault.BAD_TYPE:
-        # The other type under the same time in force, which is a pair the account refuses.
-        moc = intent.type is OrderType.MARKET_ON_CLOSE
-        return replace(intent, type=OrderType.MARKET if moc else OrderType.MARKET_ON_CLOSE)
+        # A market order at the closing auction, which is a pair the account refuses.
+        return replace(intent, type=OrderType.MARKET, time_in_force=TimeInForce.CLS)
     if fault is OrderFault.BAD_QTY:
         return replace(intent, qty=_ZERO)
     return intent

@@ -271,8 +271,10 @@ never shares the paper account's lease.
 5. **A market order for the day fills whole at once**, in the call that takes
    it, a buy at the ask and a sale at the bid of the quote in the snapshot of
    the decision that sent it. `core.quote_faults` judges that quote at the
-   decision's time, so a backtest's fills do not move with its clock, and the
-   gate has already judged it at its own. Its `at` and `received_at` are the
+   decision's time, so a backtest's fills do not move with its clock. Before the
+   close the gate has already judged it at its own time. At the close itself a
+   decision reads no quote and the gate marks at the day's bar, so the broker's
+   rejection is what stops the order. Its `at` and `received_at` are the
    clock's, its `basis` is `quote`, and the log names the decision's stored
    snapshot, which holds the quote's stamps and the row as received. A snapshot
    with no quote of the instrument, and a quote with a fault, are each a
@@ -280,8 +282,9 @@ never shares the paper account's lease.
    stays inside the journal's raw limit. Under the faults `reject_later` and `fill_none` it
    rests instead, and one still working at its close expires unfilled. One on
    its way fills as it arrives, and only under its own decision's prices, so
-   one that arrives under another decision's is not taken. Any other order is
-   rejected.
+   one that arrives under another decision's, or whose quote has a fault, is not
+   taken. A read of the orders leaves it on its way, as item 9 says. Any other
+   order is rejected.
 6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
 7. **It moves only forward.** A call whose clock reads before the log's newest
@@ -291,7 +294,8 @@ never shares the paper account's lease.
    9. An order past its close needs one, and so does an order it takes. A result
    or a snapshot that is missing, stale or of another decision gives none.
 9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
-   a price, and both leave a close that needs one to the next call that reads one.
+   a price, and both leave a close that needs one, and a market order on its way,
+   to the next call that reads one.
    A cancel is judged by the clock it reads, or by the log's newest call where the
    clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
    which say what there is to cancel, give the log as it stands where the clock
@@ -308,7 +312,7 @@ A result that quotes one of these fills as evidence names what it leaves out, as
 [A backtest names what it could not have traded](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
 asks.
 
-1. **The scale.** A fill is at the bar's close on the bar's own scale, which
+1. **The scale.** A fill at a close is at the bar's close on the bar's own scale, which
    `basis` does not state. The USO prices imported from Yahoo, 2012-04-10 to
    2020-04-28, are eight times those that traded
    ([A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series)).
@@ -322,6 +326,20 @@ asks.
 5. **Terms it does not book.** Commission, borrow, interest, distributions, credit
    on a short's proceeds and buying power read as unknown, never as zero. A split
    is [#151](https://github.com/l3a0/ithildin-runtime/issues/151)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
+6. **The time a market order lands.** A market order fills at the decision's
+   quote whatever the time of the call, so its cost from the decision's midpoint
+   is half the spread by construction and never shows the market moving in
+   between. `OrderPath` abandons a send past the moment its quote stops being
+   readable, so a later fill reaches only an order a test's `Late` fault holds.
+7. **An order on its way across decisions.** A market order on its way that
+   arrives under another decision's prices is not taken, where a real broker
+   fills an order whenever it lands. So a test of an order in doubt on this
+   simulator never meets one that fills in a later decision after a lookup found
+   nothing, which is the case where sending it again would double it.
+8. **The quote's kind.** The bid and the ask are what the quote-kind contract in
+   `data/quote_kinds.csv` says of them. On shadow and paper they read as the best
+   bid and ask, which the source does not promise of every answer, as `## Decisions`
+   of [2026-11-26](../design.md#2026-11-26) records.
 
 The figure below is a C4 dynamic diagram.
 
