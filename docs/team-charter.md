@@ -751,10 +751,15 @@ the pull request. Findings, the team's among them, and what was refuted, are
 posted on the pull request in one comment opening with `## Review`. A finding
 that turns on money, contracts or law goes to the owner under a
 `### For the owner` heading in that comment, for a board sitting through
-`/l3a0:ask-board` if the owner asks for one. Every commit pushed after a round
-gets a round of its own. Once a round has read the head and found no must-fix,
-the review closes with a comment whose whole first line is `## Review complete`,
-posted after the last push, which is the one line the build board counts.
+`/l3a0:ask-board` if the owner asks for one.
+
+The lenses, their verifiers and that comment make one review round. Every
+commit pushed after a round, its own fixes and a merge of `main` included, gets
+a round of its own. Once a round has read the head and found no must-fix, the
+review closes with a comment whose whole first line is exactly
+`## Review complete`, posted after the last push. The build board counts a
+review only from that line, posted from the owner's account after the head
+commit.
 
 *Code Complete* supplies the evidence behind four parts of this step.
 
@@ -928,10 +933,16 @@ a ranking made in advance.
 
 ## Definition of done
 
-An issue is done when its pull request merged and closed it, its acceptance
-tests pass under mutation, its review closed with a comment whose whole first
-line is `## Review complete`, posted after the last push, and its card has left
-the build board. The MVP is done when the
+An issue is done when four things hold.
+
+1. Its pull request merged and closed it.
+2. Its acceptance tests pass under mutation.
+3. Each review round posted its findings in a comment opening with `## Review`,
+   and the review closed with a comment whose whole first line is
+   `## Review complete`, posted after the last push.
+4. Its card has left the build board.
+
+The MVP is done when the
 team can answer Narang's due-diligence questions about it in writing, with each
 answer pointing at code or a test (L5568).
 
