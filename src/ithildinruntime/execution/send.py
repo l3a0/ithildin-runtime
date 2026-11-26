@@ -10,7 +10,10 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    the answers this process owes the journal, a view of the journal, an alarm for
    each order in doubt, and the day's loss, so the halt names where each planned
    order stands and the loss. That view comes before any input is read, so an
-   unreadable snapshot hides no order.
+   unreadable snapshot hides no order. Where the loss cannot be read and the
+   journal holds no plan of the decision, the stop fires with no reading,
+   since the call that claimed it may have read the loss past its stop and
+   died before its firing was stored.
 2. Each input's result in the row's order, each halt passed on, and then the
    snapshot, the constraints, the targets, and recover's book, valuation and
    caps, all read before any file of this stage's is stored.
@@ -21,7 +24,8 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    recover's book that moved it and that this sync did not write each halt.
 4. Each strategy's off switch and halts. One that is off gets no order. One that
    cannot be read halts.
-5. `OrderPath.loss`, which halts past the stop with no order needed.
+5. `OrderPath.loss`, which fires the stop and halts past it with no order
+   needed.
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
    was made from, before anything is asked or sent. A plan of this decision the
    journal already holds that is not this one halts, with an alarm naming both.
@@ -288,7 +292,8 @@ class SendStage:
         for doubt in doubts:
             added = account.alarm(f"{doubt}, and {key} holds another call's claim", report) or added
         try:
-            account.path(brokers(at), report).loss(self._deployment, self._run.run, at)
+            path = account.path(brokers(at), report)
+            path.loss(self._deployment, self._run.run, at, unread=at not in view.decided)
             loss = ""
         except Halt as halt:
             loss = f". {halt.reason}"
@@ -645,9 +650,11 @@ def _synced(view: View, recovered: int, seq: int, ref: BlobRef, read: AccountRea
     """Halt where the journal after the sync differs from the broker, or another writer moved it.
 
     Between recover's book and this sync's `read` entry the journal may hold
-    reads alone, since anything else moved the book after recover stored it.
+    reads and the loss stop's entries alone, since anything else moved the book
+    after recover stored it. Another thread's firing may land there.
     """
-    if moved := [n for n in range(recovered + 1, seq) if n not in view.reads]:
+    latch = view.stop.entries
+    if moved := [n for n in range(recovered + 1, seq) if n not in view.reads and n not in latch]:
         raise Halt(
             f"entries {', '.join(map(str, moved))} came after the book recover stored, and before "
             "this stage's read, so another writer moved the book"

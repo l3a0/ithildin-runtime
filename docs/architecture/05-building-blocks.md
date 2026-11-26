@@ -2047,7 +2047,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 | A renewal | The one its holder's own last write returned |
 | A release | The one its holder's own last write returned |
 
-No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch, a loss stop or an off switch reach S3. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.
+No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch or an off switch reach S3, and [#203](https://github.com/l3a0/ithildin-runtime/issues/203) how its delete of a fired loss stop does. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.
 
 ## Package layout and the import rule
 

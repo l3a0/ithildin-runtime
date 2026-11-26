@@ -199,11 +199,14 @@ def test_3_the_list_names_every_state_and_every_kind_of_an_order() -> None:
     names = {"approved": "verdict", "refused": "verdict", "part": "fill", "whole": "fill"}
     # A broker's record and what the platform did not send move no order of the platform's.
     unowned = {"outside_record", "unmatched_record", "unmatched_fill", "unmatched_order"}
+    # The loss stop's kinds move no order either, and tests/test_latch.py folds them.
+    stop = {"stop_fired", "stop_stored", "stop_cleared"}
     assert {names.get(act, act) for act in ACTS} == set(KINDS) - {
         "opening",
         "read",
         "decision",
         *unowned,
+        *stop,
     }
 
 

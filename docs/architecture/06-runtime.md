@@ -595,7 +595,7 @@ The first recover of a session values the book at the official closes of the ses
 | Mode | What it builds | What lifts the halt |
 | --- | --- | --- |
 | A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares, which halts both stages, or its row of send is not, which halts send alone |
-| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#148](https://github.com/l3a0/ithildin-runtime/issues/148) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151), [#155](https://github.com/l3a0/ithildin-runtime/issues/155) and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) closes last |
+| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#148](https://github.com/l3a0/ithildin-runtime/issues/148) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
 | Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
 | Live | The same | Only the owner switches an account to live |
 | An unknown mode, and a backtest over any other store | The same | The configuration |
@@ -1010,12 +1010,12 @@ The stop has a stated limit: no decision tests the price move from close−20 to
 
 #### What happens when the stop fires
 
-A fired stop latches, which means it stays fired whatever the price does next. It takes four steps. `OrderPath` takes the second and the gate the third, and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) builds the first. Until it does, a loss past its stop halts its own decision and the next one trades again once the price recovers, so no mode but a backtest may run.
+A fired stop latches, which means it stays fired whatever the price does next. It takes four steps. Execution takes the first, `OrderPath` the second, the gate the third and a person the fourth.
 
-1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. The record is a journal entry and a blob at `accounts/<account>/stop.json`, created with a create-only write as the kill switch is, and a firing that reached either one stands. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names. [#10](https://github.com/l3a0/ithildin-runtime/issues/10) holds how.
-2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate.
+1. The first time the send stage's test, or any verdict, reads the day's loss past the stop, execution records the firing and halts the decision. No order follows a firing until a person clears it, across a failed write and a restart, apart from the one exception [Which orders a stop refuses](#which-orders-a-stop-refuses) names.
+2. `OrderPath` reads the stop's state before every new order, as it reads the switch, and hands it to the gate. The submit reads it again just before the broker's call.
 3. The gate refuses every new order while a firing stands, across sessions and apart from that exception, so a price that recovers never resumes trading on its own.
-4. `ithildin stop clear --account <a>` deletes the blob and journals the clear. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say.
+4. `ithildin stop clear --account <a>` journals the clear and then deletes the blob. On a live account only the owner may, and on shadow and paper the operator may too, as the charter's owner and risk engineer sections say. [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds the command, and until then no route clears a firing.
 
 The figure below is a C4 dynamic diagram.
 
@@ -1024,12 +1024,64 @@ flowchart TD
     fire["Step 1: execution finds the day's loss past the stop,<br/>records the firing and halts the decision"]
     read["Step 2: OrderPath reads the stop's state before every<br/>new order and hands it to the gate"]
     refuse["Step 3: the gate refuses every new order,<br/>apart from the close after a broker's trade"]
-    clear["Step 4: a person runs ithildin stop clear,<br/>which deletes stop.json and journals the clear"]
+    clear["Step 4: a person runs ithildin stop clear,<br/>which journals the clear and then deletes stop.json"]
     fire --> read
     read --> refuse
     refuse -->|"the price recovers, or a new session opens:<br/>the firing stands, so the gate keeps refusing"| read
     refuse -->|"only a person ends it"| clear
 ```
+
+##### Where a firing is kept
+
+A firing is kept in three places, and any one of them alone reads as fired. `execution/latch.py` writes and reads all three.
+
+**Table:** The three records of a firing
+
+| Record | What it is | When it is written | When it goes |
+| --- | --- | --- | --- |
+| Memory | The firing, held by the account's `Latch` | Before any write | Once the journal holds the firing |
+| The journal | A `stop_fired` entry, its `stop_stored` and a `stop_cleared`, and any `verdict` that read the day's loss past its stop | First | Never. A `stop_cleared` covers the firing |
+| The blob | `accounts/<account>/stop.json`, created with a create-only write as the kill switch is | Second, through `core.Storage`, which holds a blob S3 does not take and keeps the process alive until S3 stores it | When a person's clear deletes it |
+
+A blob that cannot be read reads as unreadable, whatever the other two say, because an unreadable stop holds the close too. Deleting the blob by hand clears nothing, because the journal keeps the firing.
+
+##### How a firing is written
+
+1. Hold the firing in memory, with a fresh random id that its entry and its blob both carry. S3's tag is a hash of the bytes, so the id keeps two firings on one reading from sharing a tag. It is counted under the lock the submit marks its call under, and the submit compares the count its checks began with, so no firing of this process falls between the last check and the broker's call. A second process on the account waits on [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease.
+2. Journal `stop_fired`, unless a firing stands already. That firing covers this reading, and nothing more is journaled for it.
+3. Create the blob. Any blob already at the key stands for it.
+4. Journal `stop_stored` with the blob's tag. A tag that a covered firing's `stop_stored` names belongs to a clear between its entry and its delete, so the new firing stays unstored until that blob is gone.
+
+Each step runs whether the one before it failed or not. The alarm on the reading goes out first, so an outage that holds the writes does not hold the page. Each settle of the order path, before every send, hold, ask and loss, completes what is missing. It journals a firing held in memory, gives a past `verdict` that stands alone its `stop_fired`, gives a firing its blob and its `stop_stored`, and journals a firing for a blob no entry names. It lets go of a blob `core.Storage` holds once nothing needs it, so a held copy is not stored after a clear. A stage's own settle leaves the latch alone, so a blob S3 will not take holds up no read of the broker. The worker's last settle tries the firing once more, and names it among what it owes if the journal has not taken it. Its pages then tell the owner to pull the account's kill switch at once, because the host restarts execution on its own.
+
+The price has three parts.
+
+1. A settle with nothing owed costs one listing of the journal and one `head` of the blob, each tried once, before every order.
+2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone. A clean end does not, because the receive loop keeps the process alive until S3 stores the blob, and the restarted worker reads that blob as fired. A host that kills the process first, such as at the unit's stop timeout that [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets, loses it as a crash does. The claim rests on the worker's loop and its account holding one storage contract, which the entry point [#200](https://github.com/l3a0/ithildin-runtime/issues/200) builds. A blob first held at the worker's last settle, after the loop has ended, keeps no process alive either, and the page that names the firing is all that survives it.
+3. A crash while the journal refuses a firing and a clear is mid-delete loses that firing too.
+
+##### When a clear counts
+
+The journal's fold works out the state from those entries.
+
+1. A `verdict` that read the loss past its stop belongs to the firing standing when it was journaled, or else to the first `stop_fired` after it. Until one comes it stands alone, as fired.
+2. At most one firing stands, so a second `stop_fired` while one stands is refused.
+3. A `stop_cleared` names the standing firing, and is refused unless that firing's `stop_stored` comes before it. A future number and a covered firing are refused too. So a clear counts only where a blob was stored for someone with the right to delete it.
+
+The command takes four steps, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds.
+
+1. Where no firing stands and the blob is a covered firing's, an earlier clear died before its delete, so it deletes that blob on its tag and journals nothing.
+2. It completes the firing as a settle does, and stops unless the firing then has its `stop_stored`.
+3. It journals `stop_cleared`.
+4. It deletes the blob with `If-Match` on the tag the firing's `stop_stored` names.
+
+A worker's journal credential can still write a `stop_stored` and a `stop_cleared`. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)'s open question on which kinds each credential may write covers that, and a test fails any module under `src` that builds a `stop_cleared`.
+
+##### A rerun reads the decision's own loss
+
+The send stage reads each strategy's loss twice: at the decision's own time, from its stored inputs, and then at the clock's time. A rerun after the close so fires on the decision's own loss, where the gate's check of the clock against the session's close would halt first.
+
+Where the send stage halts on another call's claim, the loss cannot be read and the journal holds no plan of the decision, the stop fires with no reading. The call that claimed the decision may have read the loss past its stop and died before its firing was stored, and only a plan proves the loss was read inside its bound. The price is a stop a person clears after a rerun whose first call halted before its loss and could not store that halt, and after a second process on the account until [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease.
 
 #### Which orders a stop refuses
 

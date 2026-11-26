@@ -54,6 +54,9 @@ from ithildinruntime.journal import (
     Record,
     RejectedEntry,
     SendingEntry,
+    StopClearedEntry,
+    StopFiredEntry,
+    StopStoredEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -99,6 +102,7 @@ from tests.support.journals import (
 )
 
 ONE = planned(1, 4)
+PAST = LossReading(Decimal("100.0001"), Decimal("100.0000"), True, date(2026, 9, 30))
 NAME = ONE.client_order_id
 FULL = fill(
     "f::1",
@@ -135,12 +139,18 @@ SAMPLES: tuple[Record, ...] = (
     unmatched_order(foreign()),
     unmatched_order(foreign("x2", -3, client_order_id=NAME, type=None, time_in_force=None)),
     lost(NAME),
+    StopFiredEntry("a" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
+    StopFiredEntry(
+        "b" * 32, None, None, None, None, "stop.json holds no firing this release reads"
+    ),
+    StopStoredEntry(2, '"9b2cf535f27731c974343645a3985328"'),
+    StopClearedEntry(2),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 18
+    assert len(KINDS) == 21
 
 
 # Acceptance 1: each kind there and back.
@@ -185,6 +195,12 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         unmatched_order(foreign()),
     ]
     given += [read(AT + timedelta(days=1)), decision(at=AT + timedelta(days=1))]
+    fired = len(given) + 1
+    given += [
+        StopFiredEntry("c" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
+        StopStoredEntry(fired, "tag-1"),
+        StopClearedEntry(fired),
+    ]
     view = journal.view()
     kept = []
     for record in given:
@@ -748,6 +764,17 @@ def _committed() -> list[tuple[Record, datetime]]:
             "the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack "
             "mapped",
         ),
+        # Entry 45's verdict read the day's loss past its stop, and belongs to this firing.
+        StopFiredEntry(
+            "0f" * 16,
+            "fixture",
+            "2026-10-01",
+            at,
+            stopped.loss,
+            "the day's loss read past its stop",
+        ),
+        StopStoredEntry(54, '"5d41402abc4b2a76b9719d911017c592"'),
+        StopClearedEntry(54),
         # A plan of the next day, whose closing-auction order a crash leaves sending, and which
         # the recover after it gives up when a whole list omits it.
         dataclasses.replace(
@@ -759,12 +786,12 @@ def _committed() -> list[tuple[Record, datetime]]:
             read=48,
             synced=53,
         ),
-        IntentEntry(54, late),
-        dataclasses.replace(says(56, 1), client_order_id=late.client_order_id),
+        IntentEntry(57, late),
+        dataclasses.replace(says(59, 1), client_order_id=late.client_order_id),
         SendingEntry(late.client_order_id),
-        InDoubtEntry(late.client_order_id, sending_ended, None, False, t(58)),
+        InDoubtEntry(late.client_order_id, sending_ended, None, False, t(61)),
         ReadEntry("execution/recover", day_after, blob("lookup-1"), day_after),
-        LostEntry(late.client_order_id, 59, "the broker's whole order list omits it"),
+        LostEntry(late.client_order_id, 62, "the broker's whole order list omits it"),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 
@@ -832,9 +859,9 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     shutil.copytree(ORDERS / "journal", tmp_path / "journal")
     journal = Journal(FolderStore(tmp_path), FIXED)
     whole = journal.view()
-    # After the dispute come a fee that moves the cash, three entries that move nothing, and a
-    # plan of the next day whose one closing-auction order a crash leaves sending and the recover
-    # after it gives up as lost.
+    # After the dispute come a fee that moves the cash, three entries that move nothing, a stop's
+    # firing stored and cleared, and a plan of the next day whose one closing-auction order a
+    # crash leaves sending and the recover after it gives up as lost.
     late = afterwards["lost"]["order"]
     assert {
         "through": whole.through.seq,
@@ -845,6 +872,11 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
             "order": late,
             "state": whole.orders[late].state.value,
             "entries": " ".join(f"{e.seq}:{e.kind}" for e in whole.orders[late].entries),
+        },
+        "stop": {
+            "standing": whole.stop.standing,
+            "alone": [seq for seq, _ in whole.stop.alone],
+            "covered": sorted(whole.stop.covered),
         },
     } == afterwards
     with pytest.raises(Halt) as halted:
@@ -877,6 +909,7 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
         },
         "fills": list(view.fills),
         "newest_sent_at": view.sent_at.isoformat(),
+        "stop_alone": [seq for seq, _ in view.stop.alone],
     } == expected
 
 

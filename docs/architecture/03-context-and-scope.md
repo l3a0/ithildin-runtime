@@ -534,10 +534,11 @@ stamp, and the time the request went out are recorded and halt nothing, because
 nothing reads them to decide. A side with no size therefore passes where its price,
 stamp and status do. [#133's exploratory count](https://github.com/l3a0/ithildin-runtime/issues/133#issuecomment-7193657427)
 found no side with a size of zero or none among the 92 quotes it read. Unstated coverage is shown on the report.
-The quote's type, which says whether its bid and ask are the national best bid and offer,
-is neither recorded nor judged. On shadow and paper the bid and ask still read as the best
-bid and ask. A live decision may not: the conditions on [the Live step](../team-charter.md#5-release)
-ask for a row that states the type and the owner's ruling on which types live reads, which [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
+The quote's type is neither recorded nor judged.
+[Schwab's Market Data specification](https://developer.schwab.com/products/trader-api--individual/details/specifications/Market%20Data%20Production) gives the type in its `quoteType` field as NBBO, the national best bid and offer across every US exchange, or NFL, which it calls a non-fee-liable quote.
+On shadow and paper the bid and ask still read as the best bid and ask. On live,
+neither a decision nor the gate may read them unless a row of `data/quote_kinds.csv` states the quote's type from a field marketlake publishes and the owner's ruling allows that type, as the conditions on [the Live step](../team-charter.md#5-release) say
+and [#224](https://github.com/l3a0/ithildin-runtime/issues/224) tracks.
 
 #### Which read a decision uses
 
