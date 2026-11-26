@@ -74,7 +74,7 @@ marketlake holds four kinds of bar.
 
 | Kind of bar | Comes from | Read by |
 | --- | --- | --- |
-| Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow, paper and live trading |
+| Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow and paper trading, and live trading once [a split record covers them](../team-charter.md#5-release) |
 | Committed vintages | quantitative-trading, imported once | The backtest, and the stress move's measurement |
 | Yahoo's GLD and USO | Yahoo's two downloaded files, 2012-04-10 to 2026-09-03, imported once | The stress move's measurement |
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
@@ -520,7 +520,8 @@ sweep, still checked against that session's 16:15 quote, rather than serve a
 provisional bar. So the close−20 decision reads the previous session's official bar
 through `load_bars`, and [#16](https://github.com/l3a0/ithildin-runtime/issues/16)'s shadow run reads the previous session's
 official close the same way. That bar
-is Schwab's daily candle as fetched at the session's own 18:30 sweep. A
+is Schwab's daily candle, fetched at the session's own 18:30 sweep or later. A bar that has not
+landed by the next close−20 decision halts it as stale. A
 correction Schwab publishes later is not picked up, and nothing measured has
 shown one, which [l3a0/marketlake#962](https://github.com/l3a0/marketlake/issues/962) records as its price. The lookback stays on daily
 closes, and the close−20 quote's midpoint stands where the backtest uses the session's

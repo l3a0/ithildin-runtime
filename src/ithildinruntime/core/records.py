@@ -143,7 +143,8 @@ class BarStatus(StrEnum):
     A bar is stale when it is any session behind the newest one ended by the
     decision, a written lag of 0 sessions. A decision at close−20 reads the bar
     of the session before and one at the close reads that session's own, so any
-    lag is a session that should be there and is not.
+    lag is a session that should be there and is not. A captured bar arrives
+    after its close, so on captured bars a decision at the close halts as stale.
     """
 
     FRESH = "fresh"
