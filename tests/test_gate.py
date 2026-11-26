@@ -19,6 +19,7 @@ import pytest
 from ithildinruntime import core
 from ithildinruntime.core import (
     CLOCK_BOUND,
+    STRESS_MOVES,
     Bar,
     BarStatus,
     Book,
@@ -31,6 +32,7 @@ from ithildinruntime.core import (
     Snapshot,
     StopState,
     TimeInForce,
+    load_records,
     mark,
     quote_faults,
     value_book,
@@ -1429,6 +1431,46 @@ def test_a_third_leg_no_measurement_read_halts() -> None:
     world = world.capped(max_position=three, max_order_qty=three)
     with pytest.raises(Halt, match="do not both name SPY"):
         world.held_to(max_position=three, max_order_qty=three).check()
+
+
+# The record #137 committed, by its vintage.
+TRACKED = "c6f37344aca5871ea96601e8cca20937df017a3a893d22fe251013a3796b2153"
+NAMES_IT = {"stress_move": d("0.34703196"), "stress_vintage": TRACKED}
+
+
+def test_the_tracked_record_passes_caps_that_name_it_and_halts_on_caps_that_do_not() -> None:
+    """The gate the release runs, handed the records the release carries."""
+    bollinger = "chan_bollinger"
+    world = World(
+        intent=order(1, strategy=bollinger),
+        book=book({bollinger: {}}),
+        records=load_records(STRESS_MOVES),
+    ).held_to(strategy=bollinger)
+    named = world.capped(stress_through=date(2026, 9, 3), **NAMES_IT)
+    verdict = named.check()
+    assert verdict.approved and verdict.stress_move == d("0.34703196")
+    # The caps' m, which the hold requires to be at least the record's, binds the net cap: at V
+    # of 1,000 and a share of 0.5 it is 500 / m. A record above the caps' m binds instead, which
+    # `test_a_raised_record_binds_the_net_cap_and_the_worst_loss` shows.
+    valued = named.given(valuation=valuation(1000))
+    assert valued.at(intent=order(1440, strategy=bollinger)).check().approved
+    assert refusal(valued.at(intent=order(1441, strategy=bollinger))) == (
+        Limit.MAX_NET,
+        1441,
+        d("1440.789400000"),
+    )
+    for wrong, why in (
+        ({"stress_move": d("0.34703195")}, "stress_move is 0.34703195, below"),
+        ({"stress_vintage": "c" * 64}, "stress_vintage is c+, of no record of chan_bollinger"),
+        ({"stress_through": date(2026, 9, 2)}, "stress_through is 2026-09-02"),
+    ):
+        with pytest.raises(Halt, match=why):
+            named.capped(**wrong).check()
+    # Another strategy's caps cannot borrow it.
+    with pytest.raises(Halt, match="of no record of chan$"):
+        World(records=load_records(STRESS_MOVES)).capped(
+            stress_through=date(2026, 9, 3), **NAMES_IT
+        ).check()
 
 
 def test_the_caps_own_halts_come_before_the_records() -> None:

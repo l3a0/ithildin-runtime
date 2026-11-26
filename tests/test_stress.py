@@ -23,10 +23,13 @@ import pytest
 from ithildinruntime.core import (
     STRESS_MOVES,
     Bar,
+    FlaggedBar,
     Halt,
     HardCaps,
     InstrumentId,
     LeftOut,
+    LegSeries,
+    Series,
     StressRecord,
     hold_to_record,
     largest_move,
@@ -626,8 +629,97 @@ def test_4_a_second_record_is_named_by_its_place(tmp_path: Path) -> None:
         read(tmp_path, SAMPLE + other)
 
 
+_QT = "quantitative-trading:data/inputdata_etf/"
+_YAHOO, _MOVE = (
+    "yahoo:{}_daily_yahoo_2026-11-22.csv",
+    "close-to-close move past the written multiple",
+)
 # The records the file held when each was added, by hand. Removing or changing one fails.
-PINNED: list[StressRecord] = []
+PINNED: list[StressRecord] = [
+    # #137's first record, printed by the run of 2026-11-26 at `main`'s e4fd6a8, which
+    # https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7181369603 holds.
+    StressRecord(
+        strategy="chan_bollinger",
+        instruments=(GLD, USO),
+        vintage="c6f37344aca5871ea96601e8cca20937df017a3a893d22fe251013a3796b2153",
+        through=date(2026, 9, 3),
+        stress_move=d("0.34703196"),
+        leg=USO,
+        moved_from=date(2020, 4, 1),
+        moved_to=date(2020, 4, 3),
+        one_session=d("0.25315002"),
+        one_session_leg=USO,
+        one_session_on=date(2020, 3, 9),
+        series=(
+            LegSeries(
+                GLD,
+                date(2006, 4, 26),
+                date(2012, 4, 9),
+                Series("adjusted", _QT + "gld.csv", date(2012, 4, 10)),
+            ),
+            LegSeries(
+                GLD,
+                date(2012, 4, 10),
+                date(2026, 9, 3),
+                Series("adjusted", _YAHOO.format("gld"), date(2026, 11, 22)),
+            ),
+            LegSeries(
+                USO,
+                date(2006, 4, 26),
+                date(2012, 4, 9),
+                Series("adjusted", _QT + "uso.csv", date(2012, 4, 10)),
+            ),
+            LegSeries(
+                USO,
+                date(2012, 4, 10),
+                date(2026, 9, 3),
+                Series("adjusted", _YAHOO.format("uso"), date(2026, 11, 22)),
+            ),
+        ),
+        left_out=tuple(
+            LeftOut(leg, n, date(2012, 4, a), date(2012, 4, b))
+            for leg in (GLD, USO)
+            for n, a, b in ((1, 9, 10), (2, 5, 10), (2, 9, 11))
+        ),
+        flagged=(
+            FlaggedBar(
+                USO,
+                date(2020, 3, 9),
+                "close",
+                _MOVE,
+                "a move a second vendor agrees with: the close fell 25.32% from 2020-03-06, and "
+                "Alpha Vantage's daily closes give the same return to six places, read on "
+                "2026-11-26. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
+            ),
+            FlaggedBar(
+                USO,
+                date(2020, 4, 21),
+                "close",
+                _MOVE,
+                "a move a second vendor agrees with: the close fell 25.07% from 2020-04-20, and "
+                "Alpha Vantage's daily closes give the same return to six places, read on "
+                "2026-11-25. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
+            ),
+            FlaggedBar(
+                GLD,
+                date(2026, 1, 30),
+                "close",
+                _MOVE,
+                "a move a second vendor agrees with: the close fell 10.27% from 2026-01-29, and "
+                "Massive's daily aggregates give the same return to six places, read on "
+                "2026-11-26. Exploratory: it compares returns and not the level of either close, "
+                "so a factor common to both closes changes no move, and an error both vendors "
+                "share would pass unseen",
+            ),
+        ),
+        manifest="d6b1bc2dab67329a4963fab86b4ce94b14c79c4b763a18b37c50b251b4e2d77b",
+        measured_on=date(2026, 11, 26),
+    ),
+]
 
 
 def test_4_the_tracked_file_reads_and_holds_every_record_pinned_here() -> None:
