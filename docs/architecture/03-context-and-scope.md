@@ -494,8 +494,8 @@ at `now`, the whole plan is left to the gate, whose halt on it is the quote's ow
 fault, so no such fault hides behind another quote's margin. Where every one passes
 at `now` and one would not last the margin, the decision halts, nothing is asked or sent, and
 every order of the plan is journaled `Abandoned` where the journal takes each entry.
-An order the store refuses leaves its decision unsettled, which halts every later
-recover until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+An `abandoned` the store refuses is named in the halt, which then says nothing of the
+next decision.
 
 On shadow and paper that halt holds no account, and neither does a quote that reaches
 its maximum after the gate and before the broker call, because each quote was a price

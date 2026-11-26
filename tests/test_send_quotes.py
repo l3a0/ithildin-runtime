@@ -107,6 +107,12 @@ def test_a_pair_halts_before_its_first_order_where_a_quote_would_not_last_ten_se
     assert "verdict" not in made.kinds(made.before)
     (alarm,) = [a for a in made.alarms.sent if "would not last" in a]
     assert "the margin of 10 seconds" in alarm
+    for said in (
+        "On shadow and paper this halts the decision alone, and the next decision trades on its "
+        "own quotes",
+        "On live the account is held until the owner clears it",
+    ):
+        assert said in reason and said in alarm
     reasons = abandoned(made)
     assert len(reasons) == 2
     assert all(r.startswith("a quote would not last its plan: ") for r in reasons)
@@ -262,7 +268,6 @@ def test_an_abandon_the_store_refuses_is_named_in_the_halt_and_the_alarm() -> No
     assert f"the abandoned of {second} was not stored" in result.halt.reason
     (alarm,) = [a for a in made.alarms.sent if a.startswith("account") and "would not last" in a]
     assert f"the abandoned of {second} was not stored" in alarm
-    # The decision is left unsettled, so the halt promises no trading at the next one.
+    # An order has no stored end, so the halt promises nothing of the next decision.
     assert "next decision trades" not in result.halt.reason
-    assert "every later recover halts" in result.halt.reason
     assert made.submits() == []

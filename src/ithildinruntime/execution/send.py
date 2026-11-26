@@ -409,8 +409,8 @@ class SendStage:
         """Journal each order of the plan not yet ended `abandoned` for `why`, alarm and halt.
 
         `then` says what follows, and is added only where every order ended.
-        An order whose `abandoned` the journal did not take leaves the decision
-        unsettled, so the halt says that in its place.
+        Where the journal refused an `abandoned`, the halt names it and says
+        nothing of the next decision, which depends on what the journal holds.
         """
         view = self._account.view(report)
         ended = True
@@ -422,12 +422,7 @@ class SendStage:
                 except Halt as halt:
                     said.append(halt.reason)
                     ended = False
-        if not ended:
-            said.append(
-                "An order of the plan has no stored end, so the decision is unsettled and every "
-                "later recover halts until a person settles it, which #147 builds"
-            )
-        elif then:
+        if ended and then:
             said.append(then)
         reason = ". ".join(said)
         added = self._account.alarm(f"nothing is sent: {reason}", report)
