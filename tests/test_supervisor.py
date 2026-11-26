@@ -43,6 +43,7 @@ from ithildinruntime.core import (
     result_key,
     run_halt_key,
     run_stop_key,
+    starts_prefix,
     strategy_halt_key,
     strategy_halts_prefix,
     supervisor_start_key,
@@ -780,7 +781,8 @@ def test_a_hold_check_that_stores_no_halt_says_nothing_is_held(world: World) -> 
     _refusing(world, lambda call, key: call == "create" and "/halts/" in key)
     assert world.supervisor().run(TODAY).code == EXIT_HELD
     (alarm,) = [a for a in world.alarms() if "unclean stop" in a]
-    assert "no halt could be stored, so no strategy is held" in alarm
+    assert "stored no halt of its own, so it holds no strategy" in alarm
+    assert "A halt written earlier may still stand" in alarm
     assert "Pull the kill switch" in alarm and "stays held" not in alarm
 
 
@@ -1267,15 +1269,20 @@ def test_a_result_missing_at_the_second_decision_stores_no_stop(world: World) ->
     assert f"at {second:%Y-%m-%dT%H:%M}Z" in alarm and f"{first:%H:%M}Z" not in alarm
 
 
-def test_halts_that_cannot_be_listed_are_named_and_the_run_goes_on(world: World) -> None:
+def test_halts_that_cannot_be_listed_are_named_and_the_stop_waits_for_them(world: World) -> None:
     world.opened()
     world.ran()
     world.results()
     folder = strategy_halts_prefix(ACCOUNT, CHAN)
     _refusing(world, lambda call, key: call == "list" and key == folder)
-    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
+    # The run goes on, and its stop waits, since a halt there may stand in for the run's own.
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_FAILED and _stop_of(world) is None
     (alarm,) = [a for a in world.alarms() if "still held" in a]
     assert f"{CHAN} (whose halts could not be read:" in alarm
+    assert any("or a halt of a strategy standing in for it" in a for a in world.alarms())
+    _refusing(world, lambda call, key: False)
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED
 
 
 def test_a_second_lost_machines_halts_take_the_next_count(world: World) -> None:
@@ -1357,6 +1364,9 @@ def test_a_second_stop_with_no_start_record_holds_again(world: World) -> None:
     # Y finds the plan with no start record and holds, and its own record cannot be written.
     _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
     assert world.supervisor(boot="boot-y").run(TODAY).code == EXIT_HELD
+    (failed,) = [a for a in world.alarms() if "the start record of" in a]
+    # A first start has no earlier record of its boot to stand in, so it does not watch on.
+    assert "could not be written" in failed and "watches on" not in failed
     _clear(world)
     # Z still finds no start record, and holds again under a name of its own.
     world.supervisor(boot="boot-z").run(TODAY)
@@ -1372,13 +1382,13 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
     _refusing(world, lambda call, key: call == "create" and key == halt)
     outcome = world.supervisor().run(TODAY)
-    # Ended with the code the host restarts, so the halt is tried again.
+    # Ended with the code the host restarts, so the halt is tried again, unless that ends 5 or 6.
     assert outcome.code == EXIT_FAILED and "could not be stored" in outcome.line
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
     assert any(
         "which tries the halt again once the store answers" in a
-        and "A restart that ends with 5 does not" in a
+        and "A restart that ends with 5 or 6 does not" in a
         for a in world.alarms()
     )
     assert _stop_of(world) is None
@@ -1483,7 +1493,9 @@ def test_a_supervised_restart_whose_record_fails_watches_on(world: World) -> Non
     outcome = world.supervisor(boot="boot-b").run(TODAY)
     assert outcome.code == EXIT_STOPPED and _stop_of(world) is not None
     assert not any("no worker of it starts" in a for a in world.alarms())
-    assert any("the start record of" in a and "could not be written" in a for a in world.alarms())
+    (failed,) = [a for a in world.alarms() if "the start record of" in a]
+    assert "could not be written" in failed
+    assert "This boot's first record stands, so it watches on" in failed
 
 
 def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on(
@@ -1500,6 +1512,7 @@ def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on
     (alarm,) = [a for a in world.alarms() if "no start record" in a]
     assert "the workers it released earlier run on" in alarm and "no worker" not in alarm
     assert "Start the supervisor's unit again once the store answers" in alarm
+    assert "that names this machine could be read or written" in alarm
 
 
 def test_a_plan_that_cannot_be_read_with_unreadable_records_holds(world: World) -> None:
@@ -1534,3 +1547,66 @@ def test_a_first_start_that_finds_a_plan_the_codec_cannot_read_holds(world: Worl
     world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), b"{not a plan")
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_HELD and world.held()
+
+
+def test_a_restart_after_the_runs_halt_could_not_be_stored_stores_the_halt_not_a_stop(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    starts = world.root / starts_prefix(DEPLOYMENT, TODAY.isoformat())
+
+    def refused(call: str, key: str) -> bool:
+        # Once its start is recorded, the journal cannot be read and the run's halt not stored.
+        armed = starts.exists() and any(starts.rglob("*.json"))
+        return (call == "list" and key.startswith("journal/") and armed) or (
+            call == "create" and key == halt
+        )
+
+    _refusing(world, refused)
+    world.timer.at = OPEN
+    assert world.supervisor().run(TODAY).code == EXIT_FAILED
+    assert world.held()
+    # The store answers again and the journal reads, so nothing is late on the restart.
+    _refusing(world, lambda call, key: False)
+    world.timer.at = CLOSE + timedelta(minutes=10)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HALTED and _stop_of(world) is None
+    stored = decode(world.blob(halt), RunHalt)
+    assert "the journal or an order's deadline cannot be read" in stored.reason
+    assert not stored.reason.startswith("the run's halt could not be stored")
+
+
+def test_a_runs_halt_and_strategy_halts_that_cannot_be_stored_name_what_is_not_held(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(world, lambda call, key: call == "create" and (key == halt or "/halts/" in key))
+    assert world.supervisor().run(TODAY).code == EXIT_FAILED
+    (alarm,) = [a for a in world.alarms() if "could not be stored" in a and "In its place" in a]
+    assert "no halt holds any strategy" in alarm and "Pull the account's kill switch" in alarm
+    assert f"no halt of {CHAN}" in alarm and "so it is not held" in alarm
+    assert not world.held()
+
+
+def test_a_stand_in_for_an_earlier_runs_halt_leaves_todays_stop_alone(world: World) -> None:
+    from ithildinruntime.runtime.supervisor import OWED, RUN_HALT_CAUSE
+
+    world.opened()
+    world.ran()
+    world.results()
+    earlier = StrategyHalt(
+        RUN_RECORD_FORMAT, ACCOUNT, CHAN, RUN_HALT_CAUSE, f"{OWED}late", "2026-10-01", CLOSE
+    )
+    key = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, RUN_HALT_CAUSE, OPEN, 1)
+    world.put(key, encode(earlier))
+    # Today's run owes no halt, so it stores its stop, and the earlier halt stays named.
+    assert world.supervisor().run(TODAY).code == EXIT_STOPPED and _stop_of(world) is not None
+    assert world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat())) is None
+    assert any("still held" in a for a in world.alarms())

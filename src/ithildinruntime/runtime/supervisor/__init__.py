@@ -68,6 +68,7 @@ from ithildinruntime.core import (
     SessionTable,
     Storage,
     StoreError,
+    StrategyHalt,
     SupervisorStart,
     Timer,
     build_plan,
@@ -87,6 +88,7 @@ from ithildinruntime.journal import DOUBTFUL, Journal
 from ithildinruntime.runtime.loop import Table
 
 from .deadline import STALL_AFTER_CLOSE, STOP_AFTER_CLOSE, past_deadline
+from .hold import COMPONENT as HOLD_COMPONENT
 from .hold import HoldFailed, Starts, hold_after_unclean_stops, who, write_halts
 
 __all__ = [
@@ -112,6 +114,8 @@ EXIT_PLAN = 6
 EXIT_ASKED = 7
 # The cause a strategy's halt names where it stands in for a run's halt that could not be stored.
 RUN_HALT_CAUSE = "run_halt"
+# How a strategy's halt that stands in for the run's own begins its reason.
+OWED = "the run's halt could not be stored: "
 _COMPONENT = "supervisor"
 
 
@@ -232,7 +236,7 @@ class Supervisor:
         # hold failed, never makes its restart read as supervised. A machine with no record
         # of today could be lost unseen, so a start that cannot record itself, and whose boot
         # has no record yet, releases no worker.
-        recorded = count is not None and self._record_start(run, count)
+        recorded = count is not None and self._record_start(run, count, starts.this_boot)
         if not recorded and not starts.this_boot:
             after = (
                 "the workers it released earlier run on with no supervisor"
@@ -318,7 +322,7 @@ class Supervisor:
         named = read_release_file(self._release_file)
         return named is not None and named[1:] == (run, self._boot)
 
-    def _record_start(self, run: str, count: int) -> bool:
+    def _record_start(self, run: str, count: int, this_boot: bool) -> bool:
         """Record this start on its boot, which a later start reads, and say whether it landed."""
         record = SupervisorStart(
             format=RUN_RECORD_FORMAT,
@@ -336,7 +340,8 @@ class Supervisor:
         except Exception as error:
             self._alerts.alarm(
                 f"{self._deployment}: the start record of {run} could not be written: "
-                f"{_said(error)}. This boot's first record stands, so it watches on"
+                f"{_said(error)}"
+                + (". This boot's first record stands, so it watches on" if this_boot else "")
             )
             return False
         return True
@@ -397,6 +402,14 @@ class Supervisor:
         close = self._sessions.session(self._sessions.opened_by(decisions[-1]).day).close
         first_open = dict.fromkeys(stages, 0)
         journal = Journal(self._store, self._account)
+        if self._trading:
+            try:
+                owed = self._owed_run_halt(plan.run)
+            except Exception:
+                # The stop reads them again, and fails closed there.
+                owed = None
+            if owed is not None:
+                return self._halt_run(plan, stages, decisions, [owed])
         while True:
             now = self._timer.now()
             if self._trading:
@@ -405,7 +418,7 @@ class Supervisor:
                     return self._halt_run(plan, stages, decisions, late)
             missing = self._missing(plan.run, stages, decisions, first_open)
             if not missing and (not self._trading or now >= close + STOP_AFTER_CLOSE):
-                return self._stop(plan)
+                return self._stop(plan, stages, decisions)
             if self._trading and missing and now >= close + STALL_AFTER_CLOSE:
                 said = "; ".join(f"{stage} at {at:%Y-%m-%dT%H:%M}Z" for stage, at in missing)
                 self._alerts.alarm(
@@ -482,26 +495,30 @@ class Supervisor:
         except Exception as error:
             # Without the run's halt, a halt of each strategy, at keys of their own, still
             # stops every new order, since execution's controls read those too. The
-            # supervisor then ends with the code the host restarts, so the run's halt is
-            # tried again, and with no stop, so the run ends unclean.
+            # supervisor then ends with the code the host restarts, and with no stop. A later
+            # start that finds one of them stores the run's halt from it, not a stop.
+            strategies = sorted(s.name for s in self._table.strategies)
             held = write_halts(
                 self._storage,
                 self._account,
-                sorted(s.name for s in self._table.strategies),
+                strategies,
                 plan.run,
-                f"the run's halt could not be stored: {reason}",
+                f"{OWED}{reason}",
                 self._timer.now(),
                 self._timer.now(),
                 cause=RUN_HALT_CAUSE,
                 quiet=True,
             )
-            said = ", ".join(held) or "no strategy"
+            unheld = [s for s in strategies if s not in held]
+            said = f"a halt holds {', '.join(held)}" if held else "no halt holds any strategy"
+            if unheld:
+                said += f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
             self._alerts.alarm(
                 f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
-                f"{_said(error)}. In its place a halt of each strategy holds {said}. "
+                f"{_said(error)}. In its place {said}. "
                 "Pull the account's kill switch now. The host restarts the supervisor, which "
-                "tries the halt again once the store answers. A restart that ends with 5 does "
-                "not, so start the supervisor's unit by hand once the store answers"
+                "tries the halt again once the store answers. A restart that ends with 5 or 6 "
+                "does not, so start the supervisor's unit by hand once the store answers"
             )
             return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")
@@ -528,21 +545,46 @@ class Supervisor:
         )
         return DecisionResult(header=header, outputs=(), halt=self._storage.halt_record(halt))
 
-    def _stop(self, plan: Plan) -> Outcome:
+    def _owed_run_halt(self, run: str) -> str | None:
+        """The reason of a strategy's halt that stands in for `run`'s halt, which is still owed.
+
+        `_halt_run` writes one where the run's own halt could not be stored, so a
+        later start stores the run's halt from it rather than a stop.
+        """
+        mark = f"{HOLD_COMPONENT}-{RUN_HALT_CAUSE}-"
+        for strategy in sorted(s.name for s in self._table.strategies):
+            prefix = strategy_halts_prefix(self._account, strategy)
+            for key in sorted(self._store.list(prefix, None)):
+                if not key.removeprefix(prefix).startswith(mark):
+                    continue
+                blob = self._storage.find_blob(key)
+                if blob is None:
+                    continue
+                halt = decode(blob, StrategyHalt)
+                if halt.run == run:
+                    return halt.reason.removeprefix(OWED)
+        return None
+
+    def _stop(self, plan: Plan, stages: list[str], decisions: list[datetime]) -> Outcome:
         if self._trading:
             try:
                 halted = self._storage.find_blob(run_halt_key(self._deployment, plan.run))
-            except Halt as halt:
-                # No run was halted, so the host restarts the supervisor to read it again.
+                owed = None if halted is not None else self._owed_run_halt(plan.run)
+            except Exception as error:
+                halt = error if isinstance(error, Halt) else Halt(_said(error))
+                # No stop is stored, and the host restarts the supervisor to read them again.
                 self._alerts.alarm(
-                    f"{self._deployment}: the run's halt of {plan.run} could not be read, so no "
-                    f"stop is stored yet: {halt.reason}. The host restarts the supervisor"
+                    f"{self._deployment}: the run's halt of {plan.run}, or a halt of a strategy "
+                    f"standing in for it, could not be read, so no stop is stored yet: "
+                    f"{halt.reason}. The host restarts the supervisor"
                 )
                 return Outcome(
                     EXIT_FAILED, f"the run's halt could not be read, so no stop: {halt.reason}"
                 )
             if halted is not None:
                 return Outcome(EXIT_HALTED, f"{plan.run} is halted, so it stores no stop")
+            if owed is not None:
+                return self._halt_run(plan, stages, decisions, [owed])
         record = RunStop(
             format=RUN_RECORD_FORMAT,
             deployment=self._deployment,

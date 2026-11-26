@@ -202,8 +202,9 @@ def hold_after_unclean_stops(
             )
         else:
             alarm(
-                f"{deployment}: the check for an unclean stop could not finish and no halt could "
-                f"be stored, so no strategy is held and {after}: {reason}. Pull the kill switch "
+                f"{deployment}: the check for an unclean stop could not finish and stored no halt "
+                f"of its own, so it holds no strategy and {after}: {reason}. A halt written "
+                "earlier may still stand. Pull the kill switch "
                 "of the account, then start the supervisor's unit again once the cause is fixed"
             )
         raise HoldFailed(reason) from error
