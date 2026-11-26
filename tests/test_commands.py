@@ -339,6 +339,7 @@ def test_a_plan_of_another_mode_halts_the_worker(tmp_path: Path) -> None:
     assert entry.run_alpha(worker) == entry.EXIT_PLAN
     (alarm,) = worker.alerts.reasons  # type: ignore[attr-defined]
     assert "a plan for paper, and this worker runs shadow, so it runs nothing" in alarm
+    assert "Correct the plan or the settings' environment, then start the unit again" in alarm
 
 
 def test_a_stop_asked_while_the_loop_runs_ends_it_with_code_0(tmp_path: Path) -> None:
@@ -655,8 +656,19 @@ def test_a_release_file_that_is_not_utf_8_releases_nothing(tmp_path: Path) -> No
         ("sha256:other\n2026-11-30\nboot-a\n", False),
         ("sha256:r\n", False),
         ("sha256:r\n2026-11-30\nboot-a\nmore\n", False),
+        ("sha256:r\n2026-11-30\nboot-a\nx", False),
+        ("\n\nboot-a\n", False),
     ],
-    ids=["this run and boot", "another boot", "another run", "another release", "one line", "four"],
+    ids=[
+        "this run and boot",
+        "another boot",
+        "another run",
+        "another release",
+        "one line",
+        "four",
+        "no last newline",
+        "empty lines",
+    ],
 )
 def test_a_worker_with_a_boot_waits_for_its_run_and_boot(
     tmp_path: Path, lines: str, released: bool
@@ -714,3 +726,27 @@ def test_a_machine_file_that_is_not_utf_8_is_named(tmp_path: Path, boot: Path, w
         pin.write_bytes(b"\xff\xfe")
     with pytest.raises(SettingError, match="cannot be read"):
         read_settings(values, boot).release()
+
+
+def test_a_credential_file_that_cannot_be_read_exits_2_with_an_alarm(
+    tmp_path: Path, boot: Path, capsys
+) -> None:
+    settings = read_settings(_write(tmp_path, GOOD | {"credentials": str(tmp_path / "none")}), boot)
+    with pytest.raises(SystemExit) as ended:
+        entry._clients(settings, "alpha")
+    assert ended.value.code == entry.EXIT_SETTING
+    err = capsys.readouterr().err.splitlines()
+    assert err[0].startswith("ithildin: the credential file") and err[1].startswith("ALARM alpha:")
+
+
+def test_a_pin_the_supervisor_cannot_use_exits_2_with_an_alarm(monkeypatch, capsys) -> None:
+    def refused(settings, stop):
+        raise SettingError("the release pin file /x cannot be read")
+
+    monkeypatch.setattr(entry, "_settings", lambda component="ithildin": "settings")
+    monkeypatch.setattr(entry, "_stop_on_sigterm", lambda: "stop")
+    monkeypatch.setattr(entry, "supervise", refused)
+    with pytest.raises(SystemExit) as ended:
+        entry.supervisor_main()
+    assert ended.value.code == entry.EXIT_SETTING
+    assert "ALARM supervisor: the release pin file /x cannot be read" in capsys.readouterr().err

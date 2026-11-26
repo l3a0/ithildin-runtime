@@ -710,6 +710,7 @@ def test_a_plan_that_cannot_be_stored_alarms(world: World) -> None:
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
     assert "could not store the plan of 2026-10-02" in alarm and "sha256:other" in alarm
+    assert "Otherwise start the supervisor's unit again once the store answers" in alarm
 
 
 def test_a_hold_a_failed_check_left_is_named_at_a_later_clean_start(world: World) -> None:
@@ -740,6 +741,7 @@ def test_a_hold_check_that_fails_mid_session_says_the_workers_run_on(world: Worl
     (alarm,) = world.alarms()
     assert "the workers run today's plan and no supervisor watches it" in alarm
     assert "no worker starts" not in alarm and "stays held" in alarm
+    assert "No halt of" not in alarm, "every strategy was held, so none is named as free"
 
 
 def test_a_release_file_of_yesterdays_run_on_this_boot_released_nothing_today(
@@ -1309,7 +1311,8 @@ def test_a_link_planted_after_the_unlink_is_never_written_through(
     monkeypatch.setattr(Path, "unlink", unlink)
     outcome = world.supervisor().run(TODAY)
     assert outcome.code == EXIT_PLAN and target.read_text() == "untouched\n"
-    assert any("release file could not be written" in a for a in world.alarms())
+    (alarm,) = [a for a in world.alarms() if "release file could not be written" in a]
+    assert "Start the supervisor's unit again once its directory is writable" in alarm
 
 
 def test_a_release_file_that_is_not_utf_8_reads_as_not_released(world: World) -> None:
@@ -1463,3 +1466,37 @@ def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on
     world.supervisor().run(TODAY)
     (alarm,) = [a for a in world.alarms() if "no start record" in a]
     assert "the workers it released earlier run on" in alarm and "no worker" not in alarm
+
+
+def test_a_plan_that_cannot_be_read_with_unreadable_records_holds(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    plan = plan_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(
+        world,
+        lambda call, key: (call == "list" and "/starts/" in key) or (call == "get" and key == plan),
+    )
+    outcome = world.supervisor().run(TODAY)
+    # A plan that cannot be read may stand, so the hold tries today's run and holds.
+    assert outcome.code == EXIT_HELD and world.held()
+
+
+def test_a_restart_that_finds_a_plan_the_codec_cannot_read_ends_with_six(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), b"{not a plan")
+    _start_on(world, "boot-a")
+    outcome = world.supervisor(boot="boot-a").run(TODAY)
+    assert outcome.code == EXIT_PLAN and "holds no plan the codec reads" in outcome.line
+    assert not (world.root / "local" / "release").exists()
+
+
+def test_a_first_start_that_finds_a_plan_the_codec_cannot_read_holds(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    world.put(plan_key(DEPLOYMENT, TODAY.isoformat()), b"{not a plan")
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HELD and world.held()
