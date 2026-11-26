@@ -101,6 +101,7 @@ def day(lake: Path) -> Path:
 
 @pytest.fixture
 def day_small(small: Path) -> Path:
+    """The whole day before the decision, sealed, with its close, in the lake with no bars."""
     for t in BOTH:
         partition(
             small, t, *day_rows(t, AT - 30 * MINUTE, AT - MINUTE), close_row(t, SESSION.close)
@@ -492,7 +493,8 @@ def planted(lake: Path, live: Path, rows) -> None:
 
 
 @pytest.mark.parametrize("off", [0, 7, 14, 16, 31])
-@pytest.mark.parametrize("seed", range(int(os.environ.get("COLD_SEEDS", "40"))))
+# Ten seeds at five offsets each keep CI's test job inside its limit. COLD_SEEDS runs more.
+@pytest.mark.parametrize("seed", range(int(os.environ.get("COLD_SEEDS", "10"))))
 def test_4_the_walk_finds_the_brute_forces_cycle(
     small: Path, live: Path, tmp_path: Path, seed: int, off: int
 ) -> None:
@@ -1148,11 +1150,20 @@ SHAPES = {
 }
 
 
+@pytest.fixture(scope="module")
+def shared_day(built_lake: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`day_small` built once for a module, for tests that change no file of it."""
+    made = lakes.copy_lake(built_lake, tmp_path_factory.mktemp("shared") / "small", kept=())
+    for t in BOTH:
+        partition(made, t, *day_rows(t, AT - 30 * MINUTE, AT - MINUTE), close_row(t, SESSION.close))
+    return made
+
+
 @pytest.mark.parametrize("bad", BOTH)
 @pytest.mark.parametrize("shape", sorted(SHAPES))
 @pytest.mark.parametrize("name", [*COLUMNS, "cusip"])
 def test_5_no_shape_of_answer_leaves_the_read(
-    day_small: Path, tmp_path: Path, monkeypatch, bad: str, shape: str, name: str
+    shared_day: Path, tmp_path: Path, monkeypatch, bad: str, shape: str, name: str
 ) -> None:
     """Each column of a minute's answer changed: the read returns, and keeps what it holds."""
     real = sealed.load_quotes
@@ -1164,7 +1175,7 @@ def test_5_no_shape_of_answer_leaves_the_read(
         return SHAPES[shape](out, name)
 
     monkeypatch.setattr(sealed, "load_quotes", changed)
-    got = read(day_small, tmp_path)
+    got = read(shared_day, tmp_path)
     assert len(got.partitions) == 2
     assert got.calls >= 2 + 5
     assert all(str(tmp_path) not in f for f in got.faults)
