@@ -764,9 +764,8 @@ def journaled(world: RecoverWorld, *steps: tuple[str, int]) -> None:
                 world._record(planted_verdict(name, len(world.rows())))
             case "refused":
                 planted = planted_verdict(name, len(world.rows()))
-                refused = replace(
-                    planted.verdict, approved=False, limit=Limit.MAX_ORDER_QTY, value=D(2), bound=D(1)
-                )
+                too_large = {"limit": Limit.MAX_ORDER_QTY, "value": D(2), "bound": D(1)}
+                refused = replace(planted.verdict, approved=False, **too_large)
                 world._record(replace(planted, verdict=refused))
             case "sending":
                 world._record(SendingEntry(name))

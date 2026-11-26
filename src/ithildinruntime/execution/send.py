@@ -25,10 +25,17 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
    was made from, before anything is asked or sent. A plan of this decision the
    journal already holds that is not this one halts, with an alarm naming both.
-7. `OrderPath.ask` about the whole plan. Where any order is refused or halts,
-   nothing is sent, and every order of the plan ends `Refused` or `Abandoned`,
-   by this stage or, where the journal stops answering, by the next recover. A
-   plan none of whose orders has an entry stays so, with nothing sent.
+7. Each quote the plan's gate checks will mark, judged by `core.require_quote`
+   at `MARGIN` for each order of the plan past the clock's `now`. Those are the
+   quotes the snapshot holds of each instrument the book holds or has a working
+   order in, and of each the plan orders. One that would not last the plan's
+   sends halts with nothing asked or sent, and every order of the plan ends
+   `Abandoned` where the journal takes it. Where any of those quotes fails at
+   `now` itself, the whole plan is left to the gate. Then `OrderPath.ask`
+   about the whole plan. Where any order is refused or halts, nothing is
+   sent, and every order of the plan ends `Refused` or `Abandoned`, by this
+   stage or, where the journal stops answering, by the next recover. A plan
+   none of whose orders has an entry stays so, with nothing sent.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
@@ -44,7 +51,7 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from ithildinruntime.core import (
@@ -70,12 +77,14 @@ from ithildinruntime.core import (
     DecisionResult,
     Halt,
     HardCaps,
+    InstrumentId,
     OrderIntent,
     OrderState,
     Progress,
     Remainder,
     SendOutcome,
     SentOrder,
+    Snapshot,
     StageDecision,
     StageKind,
     StageRun,
@@ -88,8 +97,10 @@ from ithildinruntime.core import (
     broker_read_key,
     claim_key,
     error_name,
+    held,
     output_key,
     reconcile,
+    require_quote,
     result_key,
 )
 from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
@@ -101,12 +112,16 @@ from .orders import order_type, plan_orders
 from .recover import fills_since
 from .sync import journal_read, read_broker, recorded
 
-__all__ = ["OUTCOME_OUTPUT", "SendStage"]
+__all__ = ["MARGIN", "OUTCOME_OUTPUT", "SendStage"]
 
 # The format of the stage's outcome file, its broker read and its result header. Format 2's
 # broker read holds the records read, which format 1's does not.
 _FORMAT = 2
 OUTCOME_OUTPUT = "outcome"
+# How long past `now` each quote the gate will mark must last, for each order of a plan. Each
+# leg's gate check comes after every earlier leg's send, and this is the order path's own bound
+# on one pass of a submit's checks. Nothing has measured a send yet, as #133's ruling says.
+MARGIN = timedelta(seconds=5)
 
 
 class _Item(Protocol):
@@ -180,7 +195,7 @@ class SendStage:
         # Step 2
         for upstream in (DATA_STAGE, RECOVER_STAGE, RISK_STAGE, PORTFOLIO_STAGE):
             decision.result(upstream, self._inputs.get(upstream))
-        decision.snapshot(DATA_STAGE)
+        snapshot = decision.snapshot(DATA_STAGE)
         decision.entries(RISK_STAGE, CONSTRAINTS_OUTPUT, Constraints)
         targets = decision.entries(PORTFOLIO_STAGE, TARGET_OUTPUT, TargetPortfolio)
         recovered = decision.entry(RECOVER_STAGE, BOOK_OUTPUT, Book).replayed_through
@@ -246,6 +261,7 @@ class SendStage:
 
         # Step 7
         if names:
+            self._lasting(path, snapshot, view, plan.orders, report)
             self._asked(path, names, report)
 
         # Step 8
@@ -308,6 +324,59 @@ class SendStage:
 
     # Step 7
 
+    def _lasting(
+        self,
+        path: OrderPath,
+        snapshot: Snapshot,
+        view: View,
+        orders: tuple[OrderIntent, ...],
+        report: Callable[[], None],
+    ) -> None:
+        """Halt, sending nothing, where a quote the plan's gate checks will mark would not last.
+
+        The gate marks each instrument the book holds or has a working order
+        in, and the order's own, and an order approved before counts as
+        working. So a leg checked after its partner went reads every one of
+        these, and each quote the snapshot holds of them is judged at the
+        margin past `now`. An instrument with no quote is marked at its close,
+        which does not age. Where any of these quotes fails at `now` itself,
+        the whole plan is left to the gate, whose halt on it is the quote's own
+        fault rather than the plan's time, so no fault at `now` is hidden
+        behind another quote's margin.
+        """
+        now = self._clock.now()
+        margin = MARGIN * len(orders)
+        later = now + margin
+        marked: set[InstrumentId] = {*held(view.book), *(order.instrument for order in orders)}
+        faults = []
+        for instrument in sorted(marked):
+            if instrument not in snapshot.quotes:
+                continue
+            try:
+                require_quote(snapshot, instrument, now)
+            except Halt:
+                return
+            try:
+                require_quote(snapshot, instrument, later)
+            except Halt as halt:
+                faults.append(halt.reason)
+        if not faults:
+            return
+        seconds = margin // timedelta(seconds=1)
+        count = f"{len(orders)} order{'' if len(orders) == 1 else 's'}"
+        reason = (
+            f"each quote passes now, at {now.isoformat()}, and these fail at {later.isoformat()}, "
+            f"the margin of {seconds} seconds for the plan's {count}: {'; '.join(faults)}. So an "
+            "order's gate check could meet a quote past its maximum"
+        )
+        why = f"a quote would not last its plan: {reason}"
+        then = (
+            "On shadow and paper this halts the decision alone, and the next decision trades on "
+            "its own quotes. On live the account is held until the owner clears it"
+        )
+        names = [order.client_order_id for order in orders]
+        self._none_sent(path, names, why, [why], report, then=then)
+
     def _asked(self, path: OrderPath, names: list[str], report: Callable[[], None]) -> None:
         """Ask the gate about the whole plan, and end every order of it where any is refused.
 
@@ -338,7 +407,31 @@ class SendStage:
             down = True
         except Halt as halt:
             said.append(halt.reason)
+        self._none_sent(path, names, why, said, report, down=down)
+
+    def _none_sent(
+        self,
+        path: OrderPath,
+        names: list[str],
+        why: str,
+        said: list[str],
+        report: Callable[[], None],
+        then: str = "",
+        down: bool = False,
+    ) -> None:
+        """Journal each order of the plan not yet ended `abandoned` for `why`, alarm and halt.
+
+        `then` says what follows, and is added only where every order ended.
+        Where the journal refused an `abandoned`, the halt names it and says
+        nothing of the next decision, which depends on what the journal holds.
+        `down` says a store has stopped answering. Its alarm went, and each later
+        read or abandon would page the same outage, so none is tried, and one
+        that is met stops the rest. A journal that cannot be read takes no
+        abandon either. The next recover journals each order left so, where any
+        order of the plan has an entry.
+        """
         view = None if down else self._read(said, report)
+        ended = view is not None
         for name in [] if view is None else names:
             order = view.orders.get(name)
             if order is None or order.state in NOT_SENT:
@@ -346,9 +439,13 @@ class SendStage:
                     path.abandon(name, why)
                 except Outage as outage:
                     said.append(outage.reason)
+                    ended = False
                     break
                 except Halt as halt:
                     said.append(halt.reason)
+                    ended = False
+        if ended and then:
+            said.append(then)
         reason = ". ".join(said)
         added = self._account.alarm(f"nothing is sent: {reason}", report)
         raise Halt(f"nothing is sent: {reason}{added}")

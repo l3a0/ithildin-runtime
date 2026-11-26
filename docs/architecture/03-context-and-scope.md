@@ -400,7 +400,7 @@ loses none of another's rows.
 Data's stage ends its own decision on each of these. [A fill is measured from the
 decision](../design.md#a-fill-is-measured-from-the-decision-and-a-position-depends-on-a-market-it-does-not-control)
 says which halts hold an account until a person clears them, and
-[#155](https://github.com/l3a0/ithildin-runtime/issues/155) is asked to build
+[#150](https://github.com/l3a0/ithildin-runtime/issues/150) is asked to build
 that hold.
 
 A reason says what the bucket held, and not why it held no more. marketlake's own
@@ -483,10 +483,36 @@ maximum has to hold the order path's seconds too.
 says what a person can do then.
 
 A plan's orders are checked one at a time, so one leg can pass while its partner, a
-second later, halts on its age. So where the snapshot holds a quote of an instrument
-the plan orders, every such quote passes `core.require_quote`, with a written margin
-past the send stage's `now`, before the plan's first order goes out.
-[#155](https://github.com/l3a0/ithildin-runtime/issues/155) holds how.
+second later, halts on its age. So before the plan is asked about or sent, the send
+stage judges every quote the plan's gate checks will mark with `core.require_quote`,
+at a margin past its clock's `now`. Those are the snapshot's quotes of each
+instrument the account holds or has a working order in, and of each the plan
+orders, because an order approved before counts as working for the next. The margin
+is `execution.send.MARGIN`, 5 seconds, for each order of the plan, the order path's
+own bound on one pass of a submit's checks. Where any of those quotes already fails
+at `now`, the whole plan is left to the gate, whose halt on it is the quote's own
+fault, so no such fault hides behind another quote's margin. Where every one passes
+at `now` and one would not last the margin, the decision halts, nothing is asked or sent, and
+every order of the plan is journaled `Abandoned` where the journal takes each entry.
+An `abandoned` the store refuses is named in the halt, which then says nothing of the
+next decision. The next recover reads what the journal holds, and settles a plan left
+unfinished, journaling each order of it with no entry `Abandoned` and sending none, as
+[How recover settles an unfinished plan](06-runtime.md#how-recover-settles-an-unfinished-plan)
+says.
+
+On shadow and paper that halt holds no account, and neither does a quote that reaches
+its maximum after the gate and before the broker call, because each quote was a price
+when the gate judged it. Once recover has settled any plan left unfinished, the next
+decision trades on its own quotes. On live, as with
+every cause, the account is held until the owner clears it.
+
+The check narrows the case of one leg sent without its partner, and does not close
+it. A send slower than the margin still meets its partner's quote past its maximum at
+the partner's own gate check, with the first leg at the broker, and that halt alarms
+with each leg's state. [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s ruling leaves a quote at close−20 about 107 seconds,
+or about 47 after one missed capture. So a plan of more than about nine orders halts
+this way whenever a capture was missed, and one of more than about twenty every time.
+Nothing has measured a send yet, so the margin is revisited once one is.
 
 ##### Why a wide quote is a fault
 
