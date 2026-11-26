@@ -449,9 +449,9 @@ What is read is the midpoint, so it is as old as the older of the bid's stamp
 and the ask's. One stamp for both sides, such as Schwab's `quoteTime`, would let
 one side that froze pass under the other's. `last` has a stamp of its own and
 nothing here reads it. The price is a refusal when one side of a liquid fund
-stands still for longer than the maximum, which
-[#133](https://github.com/l3a0/ithildin-runtime/issues/133) counted before the
-owner wrote the value.
+stands still for longer than the maximum. On
+[#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s exploratory count,
+the written maximum of 180 seconds refused no readable session for age.
 
 ##### What the clock bound covers
 
@@ -502,8 +502,8 @@ zero, holds it too.
 Venue coverage, volume counting, each side's size, the last sale, its kind and its
 stamp, and the time the request went out are recorded and halt nothing, because
 nothing reads them to decide. A side with no size therefore passes where its price,
-stamp and status do, and [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s
-measurement counts how often that happens. Unstated coverage is shown on the report.
+stamp and status do. [#133](https://github.com/l3a0/ithildin-runtime/issues/133)'s
+exploratory count found no side with a size of zero or none among the 92 quotes it read. Unstated coverage is shown on the report.
 
 #### Which read a decision uses
 

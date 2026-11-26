@@ -150,12 +150,12 @@ _QUOTE_READ_FROM = (
     "and askPrice the current best bid and ask price and totalVolume the shares traded "
     "through the day including pre-market and post-market hours. It gives lastPrice no "
     "description. It calls securityStatus the status of the security with Normal as its "
-    "example and lists no other value. All 92 quotes read in an exploratory count on "
-    "2026-11-26 read Normal and so does marketlake's committed test recording of Schwab's "
-    "answer. They are 24 of GLD and USO from 2026-11-02 to 2026-11-25 and 68 of SPY and QQQ "
-    "from 2026-09-15 to 2026-10-30. The page gives each side a MIC code of its venue and each"
-    " answer a quoteType of NBBO or NFL and marketlake records neither so the venues are "
-    "unstated"
+    "example and gives no list of its values where other fields of the page give one. All 92 "
+    "quotes read in an exploratory count on 2026-11-26 read Normal. They are 24 of GLD and "
+    "USO from 2026-11-02 to 2026-11-25 and 68 of SPY and QQQ from 2026-09-15 to 2026-10-30. "
+    "marketlake's committed test recording of Schwab's answer reads Normal too. The page "
+    "gives each side a MIC code of its venue and each answer a quoteType of NBBO or NFL. "
+    "marketlake's published quote columns carry neither so the venues are unstated"
 )
 QUOTE_ROWS = [
     "2026-11-26,marketlake:quotes,2026-09-15,2027-02-25,current best bid and ask,unstated,unstated,"
@@ -258,6 +258,24 @@ def test_the_schwab_import_row_reads_the_kind_it_should_on_each_side_of_its_edge
         kinds.kind(SCHWAB_IMPORT, day)
         for day in (date(2026, 9, 3), date(2026, 9, 4), date(2026, 10, 30), date(2026, 11, 2))
     ] == [NOTHING, stated, stated, NOTHING]
+
+
+def test_the_quote_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
+    """The row the owner's ruling of 2026-11-26 on #133 states, until #220 renews it."""
+    kinds = load_quote_kinds()
+    # Typed again, so a typo shared by the row and its pin is still caught.
+    stated = QuoteKind(
+        "current best bid and ask",
+        "unstated",
+        "unstated",
+        "shares traded through the day including pre-market and post-market hours",
+        "Normal",
+    )
+    silent = QuoteKind(*["unstated"] * 5)
+    assert [
+        kinds.kind(day)
+        for day in (date(2026, 9, 14), date(2026, 9, 15), date(2027, 2, 25), date(2027, 2, 26))
+    ] == [silent, stated, stated, silent]
 
 
 def unnamed(kinds: PriceKinds, master: SecurityMaster) -> set[tuple[str, date]]:
