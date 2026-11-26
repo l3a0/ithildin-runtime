@@ -3,10 +3,11 @@
 docs/design.md's rule 1 of `### A result is measured against the risk it took,
 and size answers to what the owner can bear` gives the rule. Each journal here
 is written entry by entry through `Journal.record`, so the fold checked every
-entry, and each verdict carries a worst loss worked out by hand in the gate's
-own way: for each leg, the share count furthest from zero that the leg could
-reach with the order and every working order counted, times its mark, times the
-stress move of 0.2. No figure is pinned from output.
+entry. Each verdict carries a worst loss worked out by hand in the gate's own
+way: for each leg, the share count furthest from zero that the leg could reach
+with the order and every working order counted, times its mark, times the stress
+move of 0.2. Two tests say where they choose a figure the gate would not give,
+to tell one order from another. No figure is pinned from output.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from ithildinruntime.journal import (
     Record,
     SendingEntry,
     VerdictEntry,
+    initial_risk,
 )
 from ithildinruntime.journal.initial_risk import WORKING, Counted, Position, positions
 from ithildinruntime.journal.orders import ENDED, NOT_SENT
@@ -233,20 +235,24 @@ def test_each_order_with_a_sending_counts_and_none_without() -> None:
     (gld,) = written.decide(Leg(GLD, 10, "400"))
     written.send(gld)
     written.fill(gld, 10, "200")
-    (early, late, lost) = written.decide(Leg(GLD, 5, "700"), Leg(GLD, 5, "800"), Leg(GLD, 5, "900"))
+    # 15*200*0.2, 20*200*0.2 and 25*200*0.2, each counting the adds planned before it.
+    (early, late, lost) = written.decide(
+        Leg(GLD, 5, "600"), Leg(GLD, 5, "800"), Leg(GLD, 5, "1000")
+    )
     written.put(SendingEntry(early.client_order_id))
     written.put(rejected(early.client_order_id))
     written.send(late)
     written.put(rejected(late.client_order_id))
     written.put(SendingEntry(lost.client_order_id))
     written.put(abandoned(lost.client_order_id))
+    # Figures chosen above every other, so either one counted would show.
     (refused, held) = written.decide(Leg(GLD, 5, "5000", approved=False), Leg(GLD, 5, "6000"))
     written.put(abandoned(held.client_order_id))
     (position,) = positions(written.journal)
     names = [one.client_order_id for one in position.counted]
     assert names == [o.client_order_id for o in (gld, early, late, lost)]
     assert refused.client_order_id not in names
-    assert position.initial_risk == D("900")
+    assert position.initial_risk == D("1000")
 
 
 def test_a_figure_at_zero_leaves_the_initial_risk_missing() -> None:
@@ -324,6 +330,11 @@ def test_an_order_approved_and_not_sent_keeps_no_position_open() -> None:
     assert later.client_order_id not in [one.client_order_id for one in position.counted]
 
 
+def test_a_figure_one_cent_above_zero_counts() -> None:
+    held = (Counted("a", 4, D("0.01")), Counted("b", 9, D("0.001")))
+    assert Position(ACCOUNT, CHAN, 4, None, held).initial_risk == D("0.01")
+
+
 @pytest.mark.parametrize("figure", ["Infinity", "-Infinity", "NaN", "-1"])
 def test_a_figure_that_is_not_finite_and_positive_reads_as_missing(figure: str) -> None:
     """No verdict a journal can hold carries the first three, and the reading holds them all."""
@@ -379,3 +390,15 @@ def test_every_state_is_read_on_purpose() -> None:
     """A state a release adds fails here until the reading of initial risk is told what it is."""
     assert NOT_SENT | WORKING | ENDED == set(OrderState)
     assert not NOT_SENT & WORKING and not WORKING & ENDED and not NOT_SENT & ENDED
+
+
+def test_a_live_order_in_a_state_the_read_does_not_list_halts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No state reaches this today, so the list is cut short to show the halt."""
+    monkeypatch.setattr(initial_risk, "WORKING", initial_risk.WORKING - {OrderState.ACKNOWLEDGED})
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    with pytest.raises(Halt, match="is Acknowledged, which the reading of initial risk does not"):
+        positions(written.journal)
