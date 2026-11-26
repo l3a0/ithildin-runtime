@@ -372,7 +372,9 @@ def test_a_worker_waits_for_the_release_file_as_well_as_the_plan(tmp_path: Path)
     import threading
 
     release = tmp_path / "local" / "release"
-    worker = dataclasses.replace(_idle_worker(tmp_path, Mode.SHADOW), release_file=release)
+    worker = dataclasses.replace(
+        _idle_worker(tmp_path, Mode.SHADOW), release_file=release, boot="boot-a"
+    )
     _store_plan(worker, Mode.SHADOW)
     found: list[object] = []
     thread = threading.Thread(target=lambda: found.append(entry.wait_for_plan(worker)), daemon=True)
@@ -381,10 +383,10 @@ def test_a_worker_waits_for_the_release_file_as_well_as_the_plan(tmp_path: Path)
     # The plan is stored and the supervisor has not yet finished its hold.
     assert thread.is_alive() and found == []
     release.parent.mkdir(parents=True)
-    release.write_text("sha256:other\n2026-11-30\n")
+    release.write_text("sha256:other\n2026-11-30\nboot-a\n")
     thread.join(0.5)
     assert thread.is_alive(), "a file naming another release is not this plan's"
-    release.write_text("sha256:r\n2026-11-30\n")
+    release.write_text("sha256:r\n2026-11-30\nboot-a\n")
     thread.join(5)
     assert not thread.is_alive() and found and found[0].release == "sha256:r"
 
@@ -611,14 +613,21 @@ def test_the_supervisors_command_runs_todays_run_and_ends_with_its_code(
     from ithildinruntime.runtime.supervisor import Outcome, Supervisor
 
     asked: list[date] = []
-    monkeypatch.setattr(
-        Supervisor, "run", lambda self, today: asked.append(today) or Outcome(4, "x")
-    )
+    timers: list[object] = []
+
+    def run(self, today):
+        asked.append(today)
+        timers.append(self._timer)
+        return Outcome(4, "x")
+
+    monkeypatch.setattr(Supervisor, "run", run)
     settings = _settings_of(tmp_path, boot)
     # 01:30 UTC on 2026-12-01 is 20:30 on 2026-11-30 in New York.
     timer = FixedTimer(datetime(2026, 12, 1, 1, 30, tzinfo=UTC))
     outcome = entry.supervise(settings, threading.Event(), StandInClients(), timer)
     assert asked == [date(2026, 11, 30)] and outcome.code == 4
+    # The supervisor runs on the timer that named its day.
+    assert timers == [timer]
 
 
 def test_a_release_file_that_is_not_utf_8_releases_nothing(tmp_path: Path) -> None:
@@ -640,8 +649,9 @@ def test_a_release_file_that_is_not_utf_8_releases_nothing(tmp_path: Path) -> No
         ("sha256:r\n2026-11-29\nboot-a\n", False),
         ("sha256:other\n2026-11-30\nboot-a\n", False),
         ("sha256:r\n", False),
+        ("sha256:r\n2026-11-30\nboot-a\nmore\n", False),
     ],
-    ids=["this run and boot", "another boot", "another run", "another release", "one line"],
+    ids=["this run and boot", "another boot", "another run", "another release", "one line", "four"],
 )
 def test_a_worker_with_a_boot_waits_for_its_run_and_boot(
     tmp_path: Path, lines: str, released: bool
@@ -663,3 +673,24 @@ def test_a_worker_with_a_boot_waits_for_its_run_and_boot(
     assert (not thread.is_alive()) is released
     worker.stop.set()
     thread.join(5)
+
+
+def test_a_worker_handed_a_release_file_and_no_boot_is_released_by_nothing(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    release.write_text("sha256:r\n2026-11-30\nboot-a\n")
+    assert entry._released(release, "sha256:r", "2026-11-30", None) is False
+    assert entry._released(None, "sha256:r", "2026-11-30", None) is True
+
+
+@pytest.mark.parametrize("command", sorted(COMMANDS))
+def test_each_command_ends_with_the_code_its_core_returns(command: str, monkeypatch) -> None:
+    from ithildinruntime.runtime.supervisor import Outcome
+
+    monkeypatch.setattr(entry, "_settings", lambda: "settings")
+    monkeypatch.setattr(entry, "_stop_on_sigterm", lambda: "stop")
+    monkeypatch.setattr(entry, "serve", lambda settings, component, stop: 40 + len(component))
+    monkeypatch.setattr(entry, "supervise", lambda settings, stop: Outcome(4, "stalled"))
+    with pytest.raises(SystemExit) as ended:
+        getattr(entry, COMMANDS[command])()
+    worker = command.removeprefix("ithildin-")
+    assert ended.value.code == (4 if worker == "supervisor" else 40 + len(worker))

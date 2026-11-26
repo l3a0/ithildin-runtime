@@ -110,7 +110,7 @@ from .loop import Handler, ReceiveLoop, Table
 from .portfolio_worker import portfolio_handler
 from .risk_worker import risk_handler
 from .settings import SettingError, Settings, read_settings
-from .supervisor import Outcome, Supervisor
+from .supervisor import Outcome, Supervisor, read_release_file
 
 __all__ = [
     "EXIT_PLAN",
@@ -225,18 +225,12 @@ def _released(path: Path | None, release: str, run: str, boot: str | None) -> bo
     """Whether the local release file names `release` for `run` on this boot, or none is handed in.
 
     A file left from another run, or from before a reboot, releases nothing, so a
-    worker never starts ahead of this boot's hold.
+    worker never starts ahead of this boot's hold. A worker handed a file and no
+    boot is released by nothing, since every command names its boot.
     """
     if path is None:
         return True
-    try:
-        lines = path.read_text().split("\n")
-    except (OSError, UnicodeDecodeError):
-        # A file that cannot be read or decoded releases nothing.
-        return False
-    named = lines[:3] if boot is not None else lines[:2]
-    wanted = [release, run, boot] if boot is not None else [release, run]
-    return named == wanted
+    return boot is not None and read_release_file(path) == (release, run, boot)
 
 
 def _serve(

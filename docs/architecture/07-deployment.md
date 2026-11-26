@@ -297,6 +297,8 @@ The release writes every blob with one single-part upload, never a multipart one
 
 Each supervisor instance and each worker instance, two of each per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`.
 
+The local release file the supervisor writes holds three lines: the release, the run and the boot, as `runtime.supervisor.read_release_file` reads them. A unit reads the first with `head -n1`, never through `EnvironmentFile=`, and a worker starts only once all three name its plan's release, its run and its boot.
+
 #### What limits a unit's restarts
 
 Each unit carries four of systemd's restart settings.

@@ -97,6 +97,7 @@ __all__ = [
     "EXIT_STOPPED",
     "Outcome",
     "Supervisor",
+    "read_release_file",
 ]
 
 # What a start ends with, for the host's unit. 0 is a run stopped, or nothing to do.
@@ -107,6 +108,22 @@ EXIT_HELD = 5
 EXIT_PLAN = 6
 EXIT_ASKED = 7
 _COMPONENT = "supervisor"
+
+
+def read_release_file(path: Path) -> tuple[str, str, str] | None:
+    """The release, the run and the boot a local release file names, or `None`.
+
+    The supervisor writes the file as those three lines, and the host's path unit
+    reads the first with `head -n1`. A file that cannot be read or decoded, or
+    holds another form, names nothing.
+    """
+    try:
+        lines = path.read_text().split("\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if len(lines) != 4 or lines[3] or not all(lines[:3]):
+        return None
+    return lines[0], lines[1], lines[2]
 
 
 @dataclass(frozen=True)
@@ -273,12 +290,8 @@ class Supervisor:
         """Whether this machine's local release file already released its workers into `run`."""
         if self._release_file is None:
             return False
-        try:
-            lines = self._release_file.read_text().split("\n")
-        except (OSError, UnicodeDecodeError):
-            # A file that cannot be read or decoded released nothing.
-            return False
-        return lines[1:3] == [run, self._boot]
+        named = read_release_file(self._release_file)
+        return named is not None and named[1:] == (run, self._boot)
 
     def _record_start(self, run: str, count: int) -> bool:
         """Record this start on its boot, which a later start reads, and say whether it landed."""

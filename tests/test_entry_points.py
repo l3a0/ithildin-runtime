@@ -163,6 +163,9 @@ class Run:
             pause=lambda s: None,
             stress_moves=self.records,
             plan_every=0.05,
+            # The supervisor's own release file and boot, so the real writer and reader meet.
+            release_file=self.root / "local" / "release",
+            boot="boot-ci",
             **pool,
         )
 
