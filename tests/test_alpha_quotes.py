@@ -237,12 +237,6 @@ def legged(held: Snapshot, leg: InstrumentId, bars: Sequence[Bar]) -> Snapshot:
     return replace(held, bars={**held.bars, leg: {"1d": tuple(bars)}})
 
 
-def raw(leg: InstrumentId, n: int) -> Snapshot:
-    bars = list(GOOD.bars[leg]["1d"])
-    bars[n] = replace(bars[n], basis="raw")
-    return legged(GOOD, leg, bars)
-
-
 WITH_BARS = replace(GOOD, bars=SERIES.at(NOW, LOOKBACK).bars)
 AT_CLOSE = replace(
     WITH_BARS,
@@ -293,20 +287,6 @@ def cases_of(leg: InstrumentId) -> dict[str, tuple[Snapshot, str]]:
             ),
             "strategy chan reads both legs on the same sessions, and USO and GLD have bars of "
             f"different ones, such as {DAY}",
-        ),
-        f"a-bar-of-{leg}-as-traded-under-good-quotes": (
-            raw(leg, -1),
-            f"strategy chan reads adjusted prices, and {leg}'s bar of {BEFORE} has the basis raw",
-        ),
-        f"a-middle-bar-of-{leg}-as-traded-under-good-quotes": (
-            raw(leg, 30),
-            f"strategy chan reads adjusted prices, and {leg}'s bar of "
-            f"{SERIES.gld[NOW - LOOKBACK + 30].session} has the basis raw",
-        ),
-        f"the-oldest-bar-of-{leg}-as-traded-under-good-quotes": (
-            raw(leg, 0),
-            f"strategy chan reads adjusted prices, and {leg}'s bar of "
-            f"{SERIES.gld[NOW - LOOKBACK].session} has the basis raw",
         ),
     }
 

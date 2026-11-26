@@ -9,19 +9,25 @@ adding one means adding it here too.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from ithildinruntime.core import Halt, InstrumentId
+from ithildinruntime.core import Halt, InstrumentId, load_sessions
 from ithildinruntime.data.reference import (
+    CAPTURE_SOURCE,
     MASTER,
     PRICE_KINDS,
     QUOTE_KINDS,
     QUOTE_SOURCE,
     Kind,
+    KindRow,
+    MasterRow,
+    PriceKinds,
     QuoteKind,
+    SecurityMaster,
     load_master,
     load_price_kinds,
     load_quote_kinds,
@@ -83,17 +89,37 @@ _COUNTED = {
     "gld": "consolidated in shares to the nearest hundred",
     "uso": "consolidated in shares to the nearest hundred before its source's split adjustment",
 }
-KIND_ROWS = [
-    f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
-    f"official close,consolidated,none,consolidated in hundreds of shares,"
-    f"{_CHAN_READ_FROM.format(split=_SPLIT[name], volume=_VOLUME[name])}"
-    for name in ("gld", "uso")
-] + [
-    f"2026-11-25,yahoo:{name}_daily_yahoo_2026-11-22.csv,2012-04-10,2026-09-03,"
-    f"official close,consolidated,none,{_COUNTED[name]},"
-    f"{_YAHOO_READ_FROM.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
-    for name in ("gld", "uso")
-]
+_CAPTURE_READ_FROM = (
+    "owner's ruling of 2026-11-25 on #174 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/174#issuecomment-7171477518. The "
+    "evidence below is of GLD USO SPY and QQQ alone. Schwab publishes no statement of its "
+    "candle so the kind rests on agreement with a second vendor. In an exploratory "
+    "comparison with Massive's unadjusted daily aggregates read on 2026-11-25 the open high "
+    "low and close are equal to the cent on 34 of 34 captured bars of GLD and USO from "
+    "2026-11-02 to 2026-11-24 and on 46 of 46 of SPY and QQQ from 2026-09-11 to 2026-10-13. "
+    "No session from 2026-09-08 to 2026-09-10 was compared and no session of SPY or QQQ "
+    "after 2026-10-13 was and no early close is in it. Of the 34 volumes of GLD and USO 16 "
+    "differ by over 1 percent from 3.8 percent below to 9.5 percent above. The 20 fetched "
+    "the same evening are all below and 13 of the 14 fetched later are above"
+)
+KIND_ROWS = (
+    [
+        f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
+        f"official close,consolidated,none,consolidated in hundreds of shares,"
+        f"{_CHAN_READ_FROM.format(split=_SPLIT[name], volume=_VOLUME[name])}"
+        for name in ("gld", "uso")
+    ]
+    + [
+        f"2026-11-25,yahoo:{name}_daily_yahoo_2026-11-22.csv,2012-04-10,2026-09-03,"
+        f"official close,consolidated,none,{_COUNTED[name]},"
+        f"{_YAHOO_READ_FROM.format(sha=_SHA[name], split=_SPLIT[name], scale=_SCALE[name])}"
+        for name in ("gld", "uso")
+    ]
+    + [
+        "2026-11-25,marketlake:capture,2026-09-08,2027-03-31,official close,consolidated,none,"
+        f"consolidated in shares as of the fetch,{_CAPTURE_READ_FROM}"
+    ]
+)
 
 # #133 adds the first, and until then every live quote halts.
 QUOTE_ROWS: list[str] = []
@@ -167,6 +193,88 @@ def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -
     (digest,) = re.findall(r"pins the file at sha256 ([0-9a-f]{64}) ", yahoo)
     (chan,) = [r for r in rows if r.startswith("2026-11-22,quant") and f"/{name}.csv," in r]
     assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {digest}" in chan
+
+
+def test_the_captured_bars_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
+    kinds = load_price_kinds()
+    # Typed again, so a typo shared by the row and its pin is still caught.
+    stated = Kind(
+        "official close", "consolidated", "none", "consolidated in shares as of the fetch"
+    )
+    assert [
+        kinds.kind("marketlake:capture", day)
+        for day in (date(2026, 9, 7), date(2026, 9, 8), date(2027, 3, 31), date(2027, 4, 1))
+    ] == [NOTHING, stated, stated, NOTHING]
+
+
+def unnamed(kinds: PriceKinds, master: SecurityMaster) -> set[tuple[str, date]]:
+    """Each instrument on each session that a capture row states and does not name.
+
+    A row has no instrument column, so every ticker marketlake captures reads the
+    row's kind, whether or not its evidence looked at that ticker.
+    """
+    found = set()
+    for day in load_sessions().sessions:
+        covering = [
+            r
+            for r in kinds.rows
+            if r.source == CAPTURE_SOURCE and r.first_session <= day <= r.last_session
+        ]
+        if not covering:
+            continue
+        newest = max(covering, key=lambda r: r.added)
+        (names,) = re.findall(r"of ([A-Z]+(?: [A-Z]+)* and [A-Z]+) alone", newest.read_from)
+        named = set(re.findall(r"[A-Z]+", names))
+        held = {x for r in master.rows if r.covers(day) for x in (r.id, r.ticker)}
+        found |= {(i, day) for i in held - named}
+    return found
+
+
+def captured_row() -> KindRow:
+    """The row added on 2026-11-25, which a later renewal leaves as it is."""
+    (row,) = [
+        r
+        for r in load_price_kinds().rows
+        if r.source == CAPTURE_SOURCE and r.added == date(2026, 11, 25)
+    ]
+    return row
+
+
+def test_every_instrument_a_capture_row_states_the_kind_of_is_one_its_evidence_names() -> None:
+    master = load_master()
+    assert unnamed(load_price_kinds(), master) == set()
+    kinds = PriceKinds((captured_row(),))
+    # A fifth ticker would inherit the row.
+    fifth = MasterRow(date(2026, 12, 1), InstrumentId("IWM"), "IWM", date(2027, 3, 31), None)
+    early = replace(fifth, id=InstrumentId("IAU"), ticker="IAU", first_session=date(2026, 9, 8))
+    assert unnamed(kinds, replace(master, rows=(*master.rows, fifth))) == {
+        ("IWM", date(2027, 3, 31))
+    }
+    assert ("IAU", date(2026, 9, 8)) in unnamed(kinds, replace(master, rows=(*master.rows, early)))
+    # A ticker an id moves to inherits the row too.
+    moved = MasterRow(date(2026, 12, 1), InstrumentId("GLD"), "IAU", date(2026, 12, 1), None)
+    assert ("IAU", date(2026, 12, 1)) in unnamed(kinds, replace(master, rows=(*master.rows, moved)))
+
+
+def test_a_later_capture_row_names_the_instruments_it_states_on_its_own() -> None:
+    row, master = captured_row(), load_master()
+    span = date(2027, 1, 4), date(2027, 3, 26)
+    later = replace(
+        row,
+        added=date(2027, 3, 1),
+        first_session=span[0],
+        last_session=span[1],
+        read_from="made up. Its evidence is of GLD and SPY alone. No bar of USO was compared.",
+    )
+    found = unnamed(PriceKinds((row, later)), master)
+    assert {i for i, _ in found} == {"USO", "QQQ"}
+    assert {day for _, day in found} == {
+        d for d in load_sessions().sessions if span[0] <= d <= span[1]
+    }
+    # A new id that takes a named ticker is not named itself.
+    alias = MasterRow(date(2026, 12, 1), InstrumentId("ALIAS"), "GLD", date(2026, 12, 1), None)
+    aliased = replace(master, rows=(*master.rows, alias))
+    assert ("ALIAS", date(2026, 12, 1)) in unnamed(PriceKinds((row,)), aliased)
 
 
 MASTER_HEAD = "added,id,ticker,first_session,last_session"

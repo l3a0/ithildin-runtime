@@ -35,7 +35,7 @@ enough span, and shadow running measures the gap until then. A paper order also
 needs whole shares, while test 1's account holds billionths of a share. So the
 two runs differ in two ways.
 
-1. **Timing of the signal.** The paper decision computes its signal on the
+1. **Price and timing of the signal.** The paper decision computes its signal on the
    quote's midpoint at close−20, another kind of price and twenty minutes before
    the close the backtest's signal uses, and a price that moves in those minutes
    can flip the unit.
@@ -75,6 +75,7 @@ package.
 | Bollinger band alpha model, the signal records, `Signal` and `ForecastSet`, the checks `Basket` and `Forecast` make, the form of each strategy's alpha section | [#6](https://github.com/l3a0/ithildin-runtime/issues/6) |
 | `Constraints`' share caps by instrument, `HardCaps`, the caps blob's reader and the tightening of both, `Verdict`, `LossReading` and the contradictions they reject, the mark, the exposure and the valuation, which `core` holds once for every reader, the risk gate that implements `RiskGate`, the loss reading, the stale-data rule | [#7](https://github.com/l3a0/ithildin-runtime/issues/7) |
 | The decision price, the newest price of each leg the alpha model reads, through `core.mark` | [#114](https://github.com/l3a0/ithildin-runtime/issues/114) |
+| What captured bars state of their prices, in their price-kind row, and what a split in them does until the platform first has a record of splits | [#174](https://github.com/l3a0/ithildin-runtime/issues/174) |
 | The risk model `LimitRisk`, the `[risk]` section of a strategy's file, and the risk stage, which writes each decision's `Constraints`, with the steps `core` gives every model's stage | [#115](https://github.com/l3a0/ithildin-runtime/issues/115) |
 | The form of each strategy's data section, and data's settings built from it | [#110](https://github.com/l3a0/ithildin-runtime/issues/110) |
 | The stress move's calculation, `Verdict.stress_move`, the command that prints a record, the records' file and reader, and the hold of the caps to them by the gate, the risk model and portfolio construction | [#116](https://github.com/l3a0/ithildin-runtime/issues/116) |
