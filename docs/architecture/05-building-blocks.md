@@ -1933,8 +1933,9 @@ A position of either direction is sized to G gross dollars, the one key of the `
 1. **G asks for a number of baskets**, G over one basket's gross.
 2. **Three limits each bound that number.** Each of the two dollar limits is first divided by one plus the stress move, as [Why a dollar limit is read less room](#why-a-dollar-limit-is-read-less-room-for-one-stress-move) says. `max_position` bounds each leg's shares. `max_gross` bounds the legs' dollars. `max_net` bounds the larger of the long legs' dollars and the short legs' dollars, because the gate counts each leg with the other unfilled.
 3. **The smallest of the four is taken**, so every leg shrinks together and the hedge between them holds.
-4. **Each leg is rounded toward zero** to the account's share step. Each share count is one division of exact products, so a target that sits exactly on a limit or a step is kept.
-5. **A flat forecast is an explicit zero for every leg, and a held direction that comes to zero shares in every leg halts**, naming G and each limit that cut it. A zero there would sell the book because G is smaller than a share, a price is wrong or V reads low.
+4. **Each leg is rounded to the nearest step** of the account's share step, and a leg exactly half a step from two counts goes to the one nearer zero. Each share count is one division of exact products toward zero, whose remainder decides whether the count goes up a step, so a target that sits exactly on a limit or a step is kept.
+5. **The rounded target is checked against each limit of step 2**: each leg's `max_position`, the legs' dollars against `max_gross`, and each side's dollars against `max_net`, both dollar limits read less room. Where it passes one, every leg is rounded toward zero instead. That target fits every limit, because the target before rounding does.
+6. **A flat forecast is an explicit zero for every leg, and a held direction that comes to zero shares in every leg halts**, naming G and each limit that cut it. A zero there would sell the book because G is smaller than half a share, a price is wrong or V reads low.
 
 The figure below is a C4 code diagram, of a forecast that holds a direction.
 
@@ -1944,19 +1945,22 @@ flowchart TB
     pos["max_position over<br/>each leg's shares<br/>in one basket"] --> least
     gross["max_gross less room<br/>over one basket's gross"] --> least
     net["max_net less room<br/>over the larger of one<br/>basket's long dollars<br/>and its short dollars"] --> least
-    least --> round["Round each leg's shares<br/>toward zero to the<br/>account's share step"]
-    round --> any{"Does any leg have shares?"}
+    least --> round["Round each leg's shares<br/>to the nearest step<br/>of the account's share step"]
+    round --> fits{"Does the rounded target<br/>fit every limit,<br/>less room for the dollars?"}
+    fits -- "Yes" --> any{"Does any leg have shares?"}
+    fits -- "No" --> down["Round every leg<br/>toward zero instead"]
+    down --> any
     any -- "Yes" --> store["Store the target,<br/>what G asked for and<br/>each limit that cut it"]
     any -- "No" --> halt["Halt, naming G and<br/>each limit that cut it"]
 ```
 
-Take a basket of one share of USO against 0.4 of GLD short, with USO at $50, GLD at $100 and a G of $900. These figures are made up. One basket's gross is 50 + 40 = 90 dollars, so G asks for 10 baskets, which is 10 USO long and 4 GLD short. At a stress move of 0.25 a `max_net` of $500 is read as 500 ÷ 1.25 = 400 dollars. USO's side is the larger at 50 dollars a basket, so that limit allows 8 baskets, and the target is 8 USO and, with 3.2 rounded toward zero, 3 GLD short.
+Take a basket of one share of USO against 0.4 of GLD short, with USO at $50, GLD at $100 and a G of $900. These figures are made up. One basket's gross is 50 + 40 = 90 dollars, so G asks for 10 baskets, which is 10 USO long and 4 GLD short. At a stress move of 0.25 a `max_net` of $500 is read as 500 ÷ 1.25 = 400 dollars. USO's side is the larger at 50 dollars a basket, so that limit allows 8 baskets, and the target is 8 USO and, with 3.2 rounded to the nearest share, 3 GLD short. At a `max_net` of $550, read as 440 dollars, the limit allows 8.8 baskets, and the nearest shares are 9 USO and 4 GLD. 9 USO is 450 dollars, past 440, so every leg goes toward zero instead, to 8 USO and 3 GLD.
 
-One leg can round to zero beside one that does not, and that target stands. So step 5 halts only where every leg comes to less than one step, cut by a limit or not. A target cut to less than what is held asks for a smaller position, and the gate decides each of its orders, as [Which orders go out past a limit](#which-orders-go-out-past-a-limit) says. The price is a hedge that is off by less than one share of each leg at every decision, and that a limit lowered below a held position moves it only as far as the gate lets each order out.
+One leg can round to zero beside one that does not, and that target stands. So step 6 halts only where every leg comes to less than half a step, or less than one step where step 5 sent every leg toward zero, cut by a limit or not. A target cut to less than what is held asks for a smaller position, and the gate decides each of its orders, as [Which orders go out past a limit](#which-orders-go-out-past-a-limit) says. The price is a hedge that is off by up to half a share of each leg, and by up to one share where step 5 rounds toward zero, a gross that can pass G by up to half a share of each leg, and that a limit lowered below a held position moves it only as far as the gate lets each order out. At G = $9,936 and the closes of 2026-10-28, GLD at $373.51 and USO at $166.57, half a share of GLD is 1.9% of G.
 
 ##### Why a dollar limit is read less room for one stress move
 
-This doc proposes, for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), that a dollar limit is read as the limit over one plus the stress move, with the stress move [the hold leaves](#how-the-caps-are-held-to-the-stress-moves-record). Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
+A dollar limit is read as the limit over one plus the stress move, with the stress move [the hold leaves](#how-the-caps-are-held-to-the-stress-moves-record). Cut exactly to a net cap, a pair the market then moves can be let in and not out: closing one leg widens net, and the gate refuses an order past the cap that widens it. With room, a pair resized at a decision still fits a limit that has not moved after a stress move against either leg, so neither `max_net` nor `max_gross` stops both legs leaving.
 
 Room covers no more than that. An exit is still refused on a day the loss stop is past, which a stress move can bring, and where it is larger than `max_order_qty`. The net cap falls with V, so a full stress move against a lone leg can still leave the pair a little over it. A position the gate stops from resizing drifts for longer than two sessions. `max_position` counts shares and needs no room. The price is a target about a quarter under the limit, at the exploratory stress move of 34.7%, wherever a dollar limit binds.
 
@@ -1977,7 +1981,7 @@ A halt in any input is passed on, the first in the order the stage reads them. E
 3. A `[portfolio]` section that is absent or holds anything but a `gross` above zero at four places or fewer.
 4. A book that holds shares or an open order under a name the deployment does not run. Sized alone, two strategies' legs can net on the account, and then be let in and not out.
 5. A forecast of another strategy, or a basket whose instruments are not exactly the strategy's.
-6. An instrument the strategy holds shares of, or has an open order in, that the forecast does not name. This doc proposes that for [#129](https://github.com/l3a0/ithildin-runtime/issues/129), because a target of zero there would sell a position nobody forecast.
+6. An instrument the strategy holds shares of, or has an open order in, that the forecast does not name, because a target of zero there would sell a position nobody forecast.
 7. A leg that is not a finite number, or a basket whose legs are all zero.
 8. A V or a stress move the gate would refuse, limits or caps `core.tighten` refuses, caps [the stress records do not hold](#how-the-caps-are-held-to-the-stress-moves-record), a share step of another form than the ten, and a leg no limit names.
 9. A leg `core.mark` cannot price, its quote judged at the decision time.

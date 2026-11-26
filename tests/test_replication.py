@@ -81,19 +81,23 @@ def test_each_position_after_its_fill_is_the_decisions_target(traded, held) -> N
             assert abs(shares.get(leg, ZERO) - wanted[leg]) < STEP, (decided.day, leg)
 
 
-def test_no_limit_cuts_a_target_and_each_held_day_is_g(traded, closes) -> None:
+def test_no_limit_cuts_a_target_and_each_held_day_is_g_to_half_a_step(traded, closes) -> None:
     """Nothing binds, so a figure that divides by gross, as both ways here do, sees the whole run.
 
-    The stress records are made up and read through dates of their own, which
-    matters only if a limit cuts a target, and none does.
+    Each leg is rounded to the nearest step, so a held day's gross is G to within
+    half a step of each leg at its close, on either side. The stress records are
+    made up and read through dates of their own, which matters only if a limit
+    cuts a target, and none of the tracked file's does.
     """
+    held = 0
     for decided in traded.decided:
         assert decided.sizing.cut == (), decided.day
-        gross = sum(
-            (abs(q) * closes[i][decided.day] for i, q in decided.target.shares.items()), ZERO
-        )
+        marks = {i: closes[i][decided.day] for i in decided.target.shares}
+        gross = sum((abs(q) * marks[i] for i, q in decided.target.shares.items()), ZERO)
         if gross:
-            assert Decimal(G) - Decimal("0.01") < gross <= G, decided.day
+            held += 1
+            assert abs(gross - G) <= STEP / 2 * sum(marks.values()), decided.day
+    assert held == 1146
 
 
 def test_the_units_are_the_replications(held, replicated) -> None:
@@ -192,7 +196,7 @@ def test_each_fill_walks_to_the_snapshot_it_was_priced_from_and_its_decisions(tr
 
 
 def test_the_runs_record_is_pinned(traded) -> None:
-    """The orders, the fills, the journal's head and the last book, as CI's run of 737af7b gave.
+    """The orders, the fills, the journal's head and the last book, as the run of COMMIT gave.
 
     The head is pinned by its record, since each entry's bytes name the
     process's writer, which is drawn afresh at each start.
@@ -216,8 +220,8 @@ PINNED = (
     2444,
     2444,
     16605,
-    "0bf8211924af0082253e333451d370fb2a8bbc1fd8f7a8f06799230b902ca698",
-    "4d6a39985dbc8a69d32902fe9f34d24f478b932656245be822c5f7685db033a1",
+    "7385137f125c2204da5515cb51d0206a95fe066cc62348de8ca4f704ed03d8f0",
+    "f898ca28d0c2c1da9a58d2336d8751ee238f2a41008bbea0cb0daa132d357dd4",
 )
 
 

@@ -62,3 +62,45 @@ exit = 0
 # The type every order of this strategy takes. `execution/orders.py` holds the form.
 [execution]
 order = "market_on_close"
+
+# G, the gross dollars a position of either direction is sized to. It is
+# s × V ÷ (1.45 m): the share s of 5%, V the account's value, which stays out of
+# this file, and m the stress move of this strategy's record in
+# `core/stress_moves.toml`, 0.34703196. So test 1's largest net position, 1.45 G,
+# fits the net cap of s × V ÷ m. A record with a larger m shrinks that cap, so
+# `tests/test_portfolio.py` fails until G is checked again. `portfolio/sizing.py`
+# holds the form.
+[portfolio]
+gross = 9936
+
+# The limits this strategy was tested under, each at the size test 1 reaches at
+# this G with room to spare, so test 1 runs with none binding. An account's hard
+# caps tighten each one. `risk/model.py` holds the form, and
+# `tests/test_risk.py` holds each one to G.
+# - max_gross and max_net are 1.5 G. Read less room for one stress move, as
+#   sizing reads them, they cut no target, and the gate refuses none of test 1's
+#   orders, whose gross and net reach 1.45 G with an order counted open.
+# - max_open_orders is 4, a resting order and the one that replaces it in each
+#   of two legs. Test 1 sends at most two a day.
+# - loss_stop is a tenth of G, above test 1's worst day, a loss of 6.6% of G.
+# - moc_cutoff is 0, because test 1's account fills at the close. An account's
+#   caps set its own.
+[risk]
+max_gross = 14904
+max_net = 14904
+max_open_orders = 4
+loss_stop = 993.6
+moc_cutoff = 0
+
+# Twice each leg's max_position, since a flip's order holds both directions'
+# shares, and test 1's largest order is 1.48 times its largest position.
+[risk.max_order_qty]
+GLD = 240
+USO = 660
+
+# Each leg's largest position in test 1 at this G, 117.7 GLD and 327.9 USO
+# shares at the prices of 2006 to 2012, rounded up to ten shares. At today's
+# prices a position of G holds far fewer, and an account's caps bind first.
+[risk.max_position]
+GLD = 120
+USO = 330
