@@ -429,7 +429,7 @@ def _kinds_line(m: Measurement, took: int, n: int) -> str:
         f"The quote kind was a stand-in on {took} of {n} sessions. It states the normal status "
         f"{m.normal_status!r}, and a placeholder for the price kind, the last sale's kind, the "
         "venues and the volume, so no session it covers is refused for an unstated kind."
-        + " The tracked row of quote_kinds.csv covers the rest."
+        + ("" if took == n else " The tracked row of quote_kinds.csv covers the rest.")
     )
 
 
