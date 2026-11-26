@@ -46,6 +46,7 @@ from ithildinruntime.journal import (
     IntentEntry,
     Journal,
     OpeningEntry,
+    PauseEntry,
     ReadEntry,
     Record,
     RejectedEntry,
@@ -114,12 +115,14 @@ SAMPLES: tuple[Record, ...] = (
     filled(fill("f")),
     disputed(FULL),
     expired(NAME, "1.5"),
+    PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing"),
+    PauseEntry("paper", "2026-11-02", None, (), "the run's stop could not be read"),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 13
+    assert len(KINDS) == 14
 
 
 # Acceptance 1: each kind there and back.
@@ -152,6 +155,7 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
     ]
     given += [expired(names[0], 1), *route("InDoubt", two), *route("Rejected", three)]
     given += [read(AT + timedelta(days=1)), decision(at=AT + timedelta(days=1))]
+    given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "the run's stop is missing")]
     view = journal.view()
     kept = []
     for record in given:
@@ -663,6 +667,14 @@ def _committed() -> list[tuple[Record, datetime]]:
         says(47, 13, no_position, stop=StopState.UNREADABLE, close_entry=1),
         ReadEntry("execution/send", at, blob("broker-read-2"), t(47)),
         DisputedFillEntry(again, 48),
+        # A pause comes after the dispute, so no entry before it is written again.
+        PauseEntry(
+            "fixture",
+            "2026-09-30",
+            datetime(2026, 9, 30, 19, 40, tzinfo=UTC),
+            (CHAN, OTHER),
+            "the run's stop is missing",
+        ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 
@@ -726,7 +738,8 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     expected = json.loads((ORDERS / "replay.json").read_text())
     shutil.copytree(ORDERS / "journal", tmp_path / "journal")
     journal = Journal(FolderStore(tmp_path), FIXED)
-    end = expected["through"] + 1
+    # The dispute the replay halts on, and the pause after it.
+    end = expected["through"] + 2
     assert journal.view().through.seq == end
     with pytest.raises(Halt) as halted:
         journal.replay()

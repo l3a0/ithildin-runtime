@@ -25,6 +25,11 @@ ROWS = [
     (core.comparison_key("paper", RUN), "runs/paper/2026-11-02/comparison.json"),
     (core.run_halt_key("paper", RUN), "runs/paper/2026-11-02/halt.json"),
     (core.run_stop_key("paper", RUN), "runs/paper/2026-11-02/stop.json"),
+    (core.starts_prefix("paper", RUN), "runs/paper/2026-11-02/starts/"),
+    (
+        core.supervisor_start_key("paper", RUN, "b00t-1", 7),
+        "runs/paper/2026-11-02/starts/b00t-1/000007.json",
+    ),
     (
         core.result_key("paper", RUN, AT, "data"),
         "runs/paper/2026-11-02/20261102T204000Z/data/result.json",
@@ -152,6 +157,8 @@ def test_the_time_parts_are_utc_and_sort_in_order() -> None:
         lambda: core.broker_read_key("paper", RUN, AT, 0),
         lambda: core.sim_account_key("sim1", 10**12),
         lambda: core.restart_key("paper", RUN, "data", "boot7", 1_000_000),
+        lambda: core.supervisor_start_key("paper", RUN, "boot/7", 1),
+        lambda: core.supervisor_start_key("paper", RUN, "boot7", 1_000_000),
         lambda: core.account_halt_key("paper1", "execution", "cancel", FIRED, 0),
     ],
 )

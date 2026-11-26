@@ -182,7 +182,9 @@ def test_3_the_list_names_every_state_and_every_kind_of_an_order() -> None:
     assert {route_.split()[0] for route_ in ROUTES} - {"none"} == {s.value for s in OrderState}
     assert {a for a, _ in ALLOWED} == set(ACTS)
     names = {"approved": "verdict", "refused": "verdict", "part": "fill", "whole": "fill"}
-    assert {names.get(act, act) for act in ACTS} == set(KINDS) - {"opening", "read", "decision"}
+    # A pause moves no order, as an opening, a read and a decision move none.
+    moves_none = {"opening", "read", "decision", "pause"}
+    assert {names.get(act, act) for act in ACTS} == set(KINDS) - moves_none
 
 
 @pytest.mark.parametrize("route_", ROUTES)

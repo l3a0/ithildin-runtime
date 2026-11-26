@@ -52,6 +52,7 @@ from .entries import (
     InDoubtEntry,
     IntentEntry,
     OpeningEntry,
+    PauseEntry,
     ReadEntry,
     RejectedEntry,
     SendingEntry,
@@ -152,6 +153,7 @@ class _Shared:
         self.reads: _Kept[int, ReadEntry] = _Kept()
         self.fills: _Kept[str, Fill] = _Kept()
         self.brokers: _Kept[str, str] = _Kept()
+        self.pauses: _Kept[tuple[str, str], int] = _Kept()
 
 
 @dataclass(frozen=True, eq=False)
@@ -197,6 +199,11 @@ class View:
     @property
     def reads(self) -> Mapping[int, ReadEntry]:
         return _Upto(self._shared.reads, self.through.seq)
+
+    @property
+    def paused(self) -> Mapping[tuple[str, str], int]:
+        """The number of the `pause` entry of each run, by its deployment and run."""
+        return _Upto(self._shared.pauses, self.through.seq)
 
     @property
     def fills(self) -> Mapping[str, Fill]:
@@ -404,6 +411,12 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
                     f"filled, and its fills come to {order.filled}"
                 )
             step.order(kind, order, state)
+        case PauseEntry():
+            # A pause moves no order and leaves the book as it was. A second
+            # pause of one run, which two supervisors could write, keeps the
+            # first and halts nothing, so it never makes the journal unreadable.
+            if (record.deployment, record.run) not in view.paused:
+                step.add(view._shared.pauses, (record.deployment, record.run), seq)
         case _:
             raise Halt(f"entry {seq} is of the kind {kind}, which the book does not read")
     return step

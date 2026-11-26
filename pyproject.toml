@@ -45,6 +45,17 @@ dev = [
     "ruff>=0.8",
 ]
 
+[project.scripts]
+# One command per process, each a `main` in runtime/entry.py, which also says
+# what each exit code means for the host's units.
+ithildin-supervisor = "ithildinruntime.runtime.entry:supervisor_main"
+ithildin-data = "ithildinruntime.runtime.entry:data_main"
+ithildin-alpha = "ithildinruntime.runtime.entry:alpha_main"
+ithildin-cost = "ithildinruntime.runtime.entry:cost_main"
+ithildin-risk = "ithildinruntime.runtime.entry:risk_main"
+ithildin-portfolio = "ithildinruntime.runtime.entry:portfolio_main"
+ithildin-execution = "ithildinruntime.runtime.entry:execution_main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

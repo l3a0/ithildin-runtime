@@ -31,13 +31,13 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from ithildinruntime.core import ClockReading, Halt, Progress, Stopped, Timer
 
 from .time_servers import TimeServers
 
-__all__ = ["HistoryClock", "WallClock"]
+__all__ = ["HistoryClock", "SystemTimer", "WallClock"]
 
 
 class HistoryClock:
@@ -107,6 +107,19 @@ class WallClock:
             report()
             if report.wait_for_stop(min(left, self._interval)):
                 raise Stopped(f"asked to stop while waiting until {at.isoformat()}")
+
+
+class SystemTimer:
+    """The machine's own time: UTC wall time, and Python's monotonic reading for every limit."""
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+    def monotonic(self) -> float:
+        return time.monotonic()
+
+    def after(self, seconds: float) -> object:
+        raise NotImplementedError("no caller asks the timer for an event yet")
 
 
 def _utc(at: datetime) -> None:

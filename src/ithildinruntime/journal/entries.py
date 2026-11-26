@@ -22,7 +22,7 @@ import json
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import MappingProxyType
 
 from ithildinruntime.core import (
@@ -56,6 +56,7 @@ __all__ = [
     "InDoubtEntry",
     "IntentEntry",
     "OpeningEntry",
+    "PauseEntry",
     "ReadEntry",
     "Record",
     "RejectedEntry",
@@ -238,6 +239,28 @@ class ExpiredEntry:
     received_at: datetime
 
 
+@dataclass(frozen=True)
+class PauseEntry:
+    """A run that stopped with no clean-shutdown record, journaled as a pause of the account.
+
+    The supervisor writes it once, after the halt blob of each strategy it
+    holds, so a crash between the two leaves halts that a rerun finds. It moves
+    no order and changes nothing in the book.
+
+    - `run` is the run that stopped uncleanly, in `deployment`.
+    - `since` is the run's last decision this journal records, or `None` where
+      it records none, which is where the pause runs from.
+    - `strategies` names each strategy held, in sorted order.
+    - `reason` says why the stop counts as unclean.
+    """
+
+    deployment: str
+    run: str
+    since: datetime | None
+    strategies: tuple[str, ...]
+    reason: str
+
+
 Record = (
     OpeningEntry
     | ReadEntry
@@ -252,6 +275,7 @@ Record = (
     | FillEntry
     | DisputedFillEntry
     | ExpiredEntry
+    | PauseEntry
 )
 
 KINDS: Mapping[str, type] = MappingProxyType(
@@ -269,6 +293,7 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "fill": FillEntry,
         "disputed_fill": DisputedFillEntry,
         "expired": ExpiredEntry,
+        "pause": PauseEntry,
     }
 )
 _NAMES: Mapping[type, str] = MappingProxyType({kind: name for name, kind in KINDS.items()})
@@ -339,6 +364,11 @@ def _past_bounds(record: Record) -> Iterator[str]:
             yield from _blobs(*record.inputs.values())
         case IntentEntry():
             yield from _shares(record.order)
+        case PauseEntry():
+            if list(record.strategies) != sorted(set(record.strategies)):
+                yield "the strategies held are not sorted, or one is named twice"
+            if record.since is not None and record.since.utcoffset() != timedelta(0):
+                yield "the pause's start is not a time in UTC"
         case VerdictEntry():
             yield from _blobs(record.snapshot, record.constraints, record.valuation)
             if not record.caps or not is_sha256(record.caps_sha256):
