@@ -30,9 +30,10 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    quotes the snapshot holds of each instrument the book holds or has a working
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
-   `Abandoned`. Then `OrderPath.ask` about the whole plan. Where any order is
-   refused or halts, nothing is sent, and every order of the plan ends
-   `Refused` or `Abandoned`.
+   `Abandoned` where the journal takes it. Where any of those quotes fails at
+   `now` itself, the whole plan is left to the gate. Then `OrderPath.ask`
+   about the whole plan. Where any order is refused or halts, nothing is
+   sent, and every order of the plan ends `Refused` or `Abandoned`.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
@@ -336,9 +337,10 @@ class SendStage:
         working. So a leg checked after its partner went reads every one of
         these, and each quote the snapshot holds of them is judged at the
         margin past `now`. An instrument with no quote is marked at its close,
-        which does not age. A quote that fails at `now` itself is left to the
-        gate, whose halt on it is the quote's own fault rather than the plan's
-        time.
+        which does not age. Where any of these quotes fails at `now` itself,
+        the whole plan is left to the gate, whose halt on it is the quote's own
+        fault rather than the plan's time, so no fault at `now` is hidden
+        behind another quote's margin.
         """
         now = self._clock.now()
         margin = MARGIN * len(orders)
@@ -351,7 +353,7 @@ class SendStage:
             try:
                 require_quote(snapshot, instrument, now)
             except Halt:
-                continue
+                return
             try:
                 require_quote(snapshot, instrument, later)
             except Halt as halt:
@@ -361,13 +363,17 @@ class SendStage:
         seconds = margin // timedelta(seconds=1)
         count = f"{len(orders)} order{'' if len(orders) == 1 else 's'}"
         reason = (
-            f"each quote passes now, at {now.isoformat()}, and at {later.isoformat()}, the margin "
-            f"of {seconds} seconds for the plan's {count}, {'; '.join(faults)}. So an order's "
-            "gate check could meet a quote past its maximum. On shadow and paper this halts the "
-            "decision alone, and the next decision trades on its own quotes"
+            f"each quote passes now, at {now.isoformat()}, and these fail at {later.isoformat()}, "
+            f"the margin of {seconds} seconds for the plan's {count}: {'; '.join(faults)}. So an "
+            "order's gate check could meet a quote past its maximum"
         )
         why = f"a quote would not last its plan: {reason}"
-        self._none_sent(path, [order.client_order_id for order in orders], why, [why], report)
+        then = (
+            "On shadow and paper this halts the decision alone, and the next decision trades on "
+            "its own quotes. On live the account is held until the owner clears it"
+        )
+        names = [order.client_order_id for order in orders]
+        self._none_sent(path, names, why, [why], report, then=then)
 
     def _asked(self, path: OrderPath, names: list[str], report: Callable[[], None]) -> None:
         """Ask the gate about the whole plan, and end every order of it where any is refused.
@@ -398,9 +404,16 @@ class SendStage:
         why: str,
         said: list[str],
         report: Callable[[], None],
+        then: str = "",
     ) -> None:
-        """Journal each order of the plan not yet ended `abandoned` for `why`, alarm and halt."""
+        """Journal each order of the plan not yet ended `abandoned` for `why`, alarm and halt.
+
+        `then` says what follows, and is added only where every order ended.
+        An order whose `abandoned` the journal did not take leaves the decision
+        unsettled, so the halt says that in its place.
+        """
         view = self._account.view(report)
+        ended = True
         for name in names:
             order = view.orders.get(name)
             if order is None or order.state in NOT_SENT:
@@ -408,6 +421,14 @@ class SendStage:
                     path.abandon(name, why)
                 except Halt as halt:
                     said.append(halt.reason)
+                    ended = False
+        if not ended:
+            said.append(
+                "An order of the plan has no stored end, so the decision is unsettled and every "
+                "later recover halts until a person settles it, which #147 builds"
+            )
+        elif then:
+            said.append(then)
         reason = ". ".join(said)
         added = self._account.alarm(f"nothing is sent: {reason}", report)
         raise Halt(f"nothing is sent: {reason}{added}")

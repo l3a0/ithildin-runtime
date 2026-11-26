@@ -489,9 +489,10 @@ at a margin past its clock's `now`. Those are the snapshot's quotes of each
 instrument the account holds or has a working order in, and of each the plan
 orders, because an order approved before counts as working for the next. The margin
 is `execution.send.MARGIN`, 5 seconds, for each order of the plan, the order path's
-own bound on one pass of a submit's checks. A quote that already fails at `now` is
-left to the gate, whose halt on it is the quote's own fault. A quote that passes at
-`now` and would not last the margin halts the decision, nothing is asked or sent, and
+own bound on one pass of a submit's checks. Where any of those quotes already fails
+at `now`, the whole plan is left to the gate, whose halt on it is the quote's own
+fault, so no such fault hides behind another quote's margin. Where every one passes
+at `now` and one would not last the margin, the decision halts, nothing is asked or sent, and
 every order of the plan is journaled `Abandoned` where the journal takes each entry.
 An order the store refuses leaves its decision unsettled, which halts every later
 recover until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.

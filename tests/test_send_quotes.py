@@ -130,7 +130,7 @@ def test_a_held_leg_the_plan_does_not_order_halts_it_too() -> None:
     assert result.halt is not None
     reason = result.halt.reason
     assert "USO's quote cannot be read" in reason and "GLD's quote" not in reason
-    assert "the margin of 5 seconds for the plan's 1 order, USO's quote" in reason
+    assert "the margin of 5 seconds for the plan's 1 order: USO's quote" in reason
     assert [made.states()[name] for name in planned] == ["Abandoned"]
     assert not set(planned) & set(made.keeper.asked)
     assert planned[0] not in made.submits()
@@ -187,26 +187,54 @@ def test_a_quote_already_past_its_age_at_now_is_left_to_the_gate() -> None:
     assert reason.startswith("nothing is sent: GLD's quote cannot be read")
     assert made.submits() == []
     assert not [a for a in made.alarms.sent if "would not last" in a]
+    planned = [
+        o.client_order_id for o in made.view().decisions[made.view().decided[made.at]].orders
+    ]
+    assert [made.states()[name] for name in planned] == ["Abandoned", "Abandoned"]
 
 
-def test_a_held_quote_of_another_status_is_left_to_the_gate() -> None:
-    """A status fault fails at `now` too, so the gate's own reason halts the decision."""
-    made = world(PAIR)
+def test_an_ordered_quote_of_another_status_is_left_to_the_gate() -> None:
+    """USO is ordered and not held, and its status fails at `now`, so the gate halts the plan."""
+    made = world({CHAN: {GLD: 3, USO: 0}})
+    before = list(made.submits())
     changed(made, USO, status="Halted")
-    result = decide(made, early(DAYS[1]), {CHAN: {GLD: 5, USO: -5}}, timedelta(0))
+    at = early(DAYS[1])
+    result = decide(made, at, {CHAN: {GLD: 3, USO: -5}}, timedelta(0))
     assert result.halt is not None
     reason = result.halt.reason
-    assert "its status is 'Halted'" in reason and "would not last" not in reason
-    assert len(made.submits()) == 2
+    assert reason.startswith("nothing is sent: USO's quote cannot be read: its status is 'Halted'")
+    assert "would not last" not in reason
+    assert made.submits() == before
+
+
+@pytest.mark.parametrize("fault", ["status", "age"])
+def test_a_quote_that_fails_at_now_leaves_the_whole_plan_to_the_gate(fault: str) -> None:
+    """GLD is held and would run out inside the margin, and USO, ordered and not held, fails now.
+
+    The gate's halt on USO is the quote's own fault, so it is not hidden behind GLD's time.
+    """
+    made = world({CHAN: {GLD: 3, USO: 0}})
+    before = list(made.submits())
+    if fault == "status":
+        changed(made, USO, status="Halted")
+    else:
+        older(made, USO, timedelta(seconds=22))
+    at = early(DAYS[1])
+    result = decide(made, at, {CHAN: {GLD: 5, USO: -5}}, timedelta(seconds=21))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert reason.startswith("nothing is sent: ")
+    assert "would not last" not in reason and "USO's quote cannot be read" in reason
+    assert made.submits() == before
 
 
 def test_an_instrument_neither_held_nor_ordered_is_not_checked() -> None:
-    """USO's quote has run out, and the plan neither holds nor orders USO, so GLD's order goes."""
+    """USO passes now and runs out inside the margin, and the plan neither holds nor orders it."""
     made = world({CHAN: {GLD: 3, USO: 0}})
-    older(made, USO, timedelta(seconds=31))
+    older(made, USO, timedelta(seconds=27))
     at = early(DAYS[1])
     result = decide(made, at, {CHAN: {GLD: 5, USO: 0}}, timedelta(0))
-    assert readable_until(made.snapshot(at).quotes[USO]) < at
+    assert at <= readable_until(made.snapshot(at).quotes[USO]) < at + MARGIN
     assert result.halt is None, result.halt.reason
     planned = made.view().decisions[made.view().decided[at]].orders
     assert [(o.instrument, made.states()[o.client_order_id]) for o in planned] == [
@@ -234,4 +262,7 @@ def test_an_abandon_the_store_refuses_is_named_in_the_halt_and_the_alarm() -> No
     assert f"the abandoned of {second} was not stored" in result.halt.reason
     (alarm,) = [a for a in made.alarms.sent if a.startswith("account") and "would not last" in a]
     assert f"the abandoned of {second} was not stored" in alarm
+    # The decision is left unsettled, so the halt promises no trading at the next one.
+    assert "next decision trades" not in result.halt.reason
+    assert "every later recover halts" in result.halt.reason
     assert made.submits() == []
