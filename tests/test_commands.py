@@ -699,3 +699,18 @@ def test_each_command_ends_with_the_code_its_core_returns(command: str, monkeypa
         getattr(entry, COMMANDS[command])()
     worker = command.removeprefix("ithildin-")
     assert ended.value.code == (4 if worker == "supervisor" else 40 + len(worker))
+
+
+@pytest.mark.parametrize("which", ["settings", "pin", "boot"])
+def test_a_machine_file_that_is_not_utf_8_is_named(tmp_path: Path, boot: Path, which: str) -> None:
+    pin = tmp_path / "pin"
+    pin.write_text("sha256:r\n")
+    values = _write(tmp_path, GOOD | {"pin": str(pin)})
+    if which == "settings":
+        Path(values["ITHILDIN_SETTINGS"]).write_bytes(b"\xff\xfe")
+    elif which == "boot":
+        boot.write_bytes(b"\xff\xfe")
+    else:
+        pin.write_bytes(b"\xff\xfe")
+    with pytest.raises(SettingError, match="cannot be read"):
+        read_settings(values, boot).release()

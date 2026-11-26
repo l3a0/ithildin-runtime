@@ -226,11 +226,23 @@ class Supervisor:
             if not found:
                 # The hold's own alarm already names what it held on this start.
                 self._name_standing_halts(today)
-        if count is not None and not self._record_start(run, count):
-            # A machine whose start is not recorded could be lost unseen, so it releases no
-            # worker. Recorded only once the hold has finished, so a start that died
-            # mid-hold, or whose hold failed, never makes its restart read as supervised.
-            return Outcome(EXIT_HELD, f"the start record of {run} could not be written")
+        # Recorded only once the hold has finished, so a start that died mid-hold, or whose
+        # hold failed, never makes its restart read as supervised. A machine with no record
+        # of today could be lost unseen, so a start that cannot record itself, and whose boot
+        # has no record yet, releases no worker.
+        recorded = count is not None and self._record_start(run, count)
+        if not recorded and not starts.this_boot:
+            after = (
+                "the workers it released earlier run on with no supervisor"
+                if starts.released
+                else "no worker of it starts"
+            )
+            self._alerts.alarm(
+                f"{self._deployment}: no start record of {run} names this machine, so it "
+                f"writes no plan and no release file, and {after}. Start the supervisor's unit "
+                "again once the store answers"
+            )
+            return Outcome(EXIT_HELD, f"no start record of {run} names this machine")
         try:
             plan = self._store_plan(first, last)
         except Halt as halt:
@@ -246,10 +258,15 @@ class Supervisor:
             self._write_release_file(plan.release, plan.run)
         except OSError as error:
             # No worker starts without the file, so this fails closed, and says so.
+            after = (
+                "the workers it released earlier run on with no supervisor"
+                if self._released_here(plan.run)
+                else "no worker on this machine starts"
+            )
             self._alerts.alarm(
-                f"{self._deployment}: the local release file could not be written, so no worker "
-                f"on this machine starts: {type(error).__name__}: {error}. Start the "
-                "supervisor's unit again once its directory is writable by the supervisor alone"
+                f"{self._deployment}: the local release file could not be written, so {after}: "
+                f"{type(error).__name__}: {error}. Start the supervisor's unit again once its "
+                "directory is writable by the supervisor alone"
             )
             return Outcome(EXIT_PLAN, f"the local release file could not be written: {error}")
         return self._watch(plan)
@@ -315,9 +332,8 @@ class Supervisor:
             )
         except Exception as error:
             self._alerts.alarm(
-                f"{self._deployment}: the start record of {run} could not be written, so this "
-                f"machine writes no plan and no release file and no worker of it starts: "
-                f"{_said(error)}. Start the supervisor's unit again once the store answers"
+                f"{self._deployment}: the start record of {run} could not be written: "
+                f"{_said(error)}"
             )
             return False
         return True
@@ -466,9 +482,10 @@ class Supervisor:
             self._alerts.alarm(
                 f"{self._deployment}: the run's halt of {plan.run} could not be stored, so "
                 f"execution's orders are not stopped: {_said(error)}. Pull the account's kill "
-                "switch now"
+                "switch now. The host restarts the supervisor, which tries the halt again"
             )
-            return Outcome(EXIT_HALTED, f"the run's halt of {plan.run} could not be stored")
+            # Ended with the code the host restarts, so the halt is tried again.
+            return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")
         for at in decisions:
             for stage in stages:

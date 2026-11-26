@@ -196,9 +196,10 @@ def wait_for_plan(worker: Worker) -> Plan | None:
     """The run's plan once it is stored, or `None` once SIGTERM asked the process to stop.
 
     Where the worker is handed the local release file, it also waits until that
-    file names the plan's release. The supervisor writes it only after its hold
-    check, so a worker started early, or after a lost machine whose plan is
-    already stored, sends nothing before every strategy that needs one is held.
+    file names the plan's release, its run and this boot. The supervisor writes
+    it only after its hold check, so a worker started early, or after a lost
+    machine whose plan is already stored, sends nothing before every strategy
+    that needs one is held.
     """
     key = plan_key(worker.deployment, worker.run)
     while not worker.stop.is_set():
@@ -415,12 +416,12 @@ def _settings(component: str = "ithildin") -> Settings:
         _refuse(component, error)
 
 
-def _clients(settings: Settings) -> AwsClients:
+def _clients(settings: Settings, component: str = "ithildin") -> AwsClients:
     """The clients over the settings' credential file, which must be readable at the start."""
     try:
         return AwsClients(settings.environment.region, settings.credentials)
     except CredentialFileError as error:
-        _refuse("ithildin", error)
+        _refuse(component, error)
 
 
 def _stop_on_sigterm() -> threading.Event:
@@ -468,7 +469,7 @@ def parts_for(
     stand-in clients checks the wiring a VM runs.
     """
     place = settings.environment
-    clients = clients or _clients(settings)
+    clients = clients or _clients(settings, component)
     timer = timer or SystemTimer()
     alerts = LogAlerts(component)
     store = S3Store(clients.s3(), place.bucket)
@@ -520,7 +521,7 @@ def supervisor_for(
 ) -> Supervisor:
     """The supervisor of the environment `settings` names, reading its release from the pin."""
     place = settings.environment
-    clients = clients or _clients(settings)
+    clients = clients or _clients(settings, "supervisor")
     timer = timer or SystemTimer()
     alerts = LogAlerts("supervisor")
     store = S3Store(clients.s3(), place.bucket)

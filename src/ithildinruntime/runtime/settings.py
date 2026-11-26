@@ -76,7 +76,7 @@ class Settings:
         """The session's release, as the VM resolved its pin. Read when it is needed."""
         try:
             text = self.pin.read_text().strip()
-        except OSError as error:
+        except (OSError, UnicodeDecodeError) as error:
             raise SettingError(f"the release pin file {self.pin} cannot be read: {error}") from None
         if not text or any(c.isspace() for c in text):
             raise SettingError(f"the release pin file {self.pin} holds no one release")
@@ -91,7 +91,7 @@ def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BO
         raise SettingError(f"{SETTINGS_VARIABLE} names no settings file")
     try:
         values = tomllib.loads(Path(named).read_text())
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         raise SettingError(f"the settings file {named} cannot be read: {error}") from None
     except tomllib.TOMLDecodeError as error:
         raise SettingError(f"the settings file {named} is not TOML: {error}") from None
@@ -110,7 +110,7 @@ def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BO
         raise SettingError(str(error.args[0])) from None
     try:
         boot = boot_id.read_text().strip()
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         raise SettingError(f"the boot id at {boot_id} cannot be read: {error}") from None
     if not is_name(boot):
         raise SettingError(f"the boot id at {boot_id} cannot name a key: {boot!r}")

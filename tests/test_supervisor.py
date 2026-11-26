@@ -1111,7 +1111,7 @@ def test_a_start_record_that_cannot_be_written_releases_no_worker(world: World) 
     world.results()
     _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_HELD and "start record" in outcome.line
+    assert outcome.code == EXIT_HELD and "no start record" in outcome.line
     assert world.blob(plan_key(DEPLOYMENT, TODAY.isoformat())) is None
     assert not (world.root / "local" / "release").exists()
     assert any("no worker of it starts" in a for a in world.alarms())
@@ -1345,10 +1345,14 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
     _refusing(world, lambda call, key: call == "create" and key == halt)
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_HALTED and "could not be stored" in outcome.line
+    # Ended with the code the host restarts, so the halt is tried again.
+    assert outcome.code == EXIT_FAILED and "could not be stored" in outcome.line
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
     assert _stop_of(world) is None
+    _refusing(world, lambda call, key: False)
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    assert world.blob(halt) is not None
 
 
 def test_two_decisions_whose_results_are_all_stored_stop_the_run(world: World) -> None:
@@ -1380,8 +1384,10 @@ def test_unreadable_start_records_before_any_plan_hold_nothing_of_today(world: W
     world.results()
     _refusing(world, lambda call, key: call == "list" and "/starts/" in key)
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_STOPPED, outcome.line
+    # With no plan stored there is no run of today to hold, and the start releases no worker.
+    assert outcome.code == EXIT_HELD, outcome.line
     assert world.held() == [] and world.pauses() == []
+    assert not (world.root / "local" / "release").exists()
 
 
 def test_the_exit_codes_are_the_numbers_the_hosts_units_read() -> None:
@@ -1418,3 +1424,42 @@ def test_a_hold_that_stores_some_halts_names_the_strategy_it_left_free(world: Wo
     (alarm,) = [a for a in world.alarms() if "unclean stop" in a]
     assert f"{OTHER} stays held" in alarm
     assert f"No halt of {CHAN} could be stored, so it is not held: pull the kill switch" in alarm
+
+
+def test_a_start_whose_records_cannot_be_read_releases_no_worker(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    _refusing(world, lambda call, key: call == "list" and "/starts/" in key)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_HELD
+    assert not (world.root / "local" / "release").exists()
+
+
+def test_a_supervised_restart_whose_record_fails_watches_on(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    assert world.supervisor(boot="boot-b").run(TODAY).code == EXIT_STOPPED
+    # The restart on the same boot cannot record itself, and its boot's first record stands.
+    world.put(run_stop_key(DEPLOYMENT, TODAY.isoformat()) + ".gone", b"")
+    (world.root / run_stop_key(DEPLOYMENT, TODAY.isoformat())).unlink()
+    _refusing(world, lambda call, key: call == "create" and "/starts/" in key)
+    outcome = world.supervisor(boot="boot-b").run(TODAY)
+    assert outcome.code == EXIT_STOPPED and _stop_of(world) is not None
+    assert not any("no worker of it starts" in a for a in world.alarms())
+
+
+def test_an_unrecorded_start_after_this_machine_released_says_its_workers_run_on(
+    world: World,
+) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    (world.root / "local").mkdir(parents=True)
+    (world.root / "local" / "release").write_text(f"{RELEASE}\n{TODAY}\nboot-a\n")
+    _refusing(world, lambda call, key: call == "list" and "/starts/" in key)
+    world.timer.at = OPEN
+    world.supervisor().run(TODAY)
+    (alarm,) = [a for a in world.alarms() if "no start record" in a]
+    assert "the workers it released earlier run on" in alarm and "no worker" not in alarm
