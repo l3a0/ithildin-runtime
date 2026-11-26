@@ -18,7 +18,7 @@ from decimal import Decimal
 
 import pytest
 
-from ithildinruntime.core import Halt, InstrumentId, OrderIntent, encode, sha256_of
+from ithildinruntime.core import Halt, InstrumentId, OrderIntent, OrderState, encode, sha256_of
 from ithildinruntime.journal import (
     IntentEntry,
     Journal,
@@ -26,7 +26,8 @@ from ithildinruntime.journal import (
     SendingEntry,
     VerdictEntry,
 )
-from ithildinruntime.journal.initial_risk import Counted, Position, positions
+from ithildinruntime.journal.initial_risk import WORKING, Counted, Position, positions
+from ithildinruntime.journal.orders import ENDED, NOT_SENT
 from tests.support.journals import (
     ACCOUNT,
     AT,
@@ -39,6 +40,7 @@ from tests.support.journals import (
     abandoned,
     ack,
     decision,
+    disputed,
     expired,
     fill,
     filled,
@@ -47,6 +49,7 @@ from tests.support.journals import (
     planned,
     read,
     rejected,
+    unmatched_fill,
     verdict,
 )
 
@@ -326,3 +329,53 @@ def test_a_figure_that_is_not_finite_and_positive_reads_as_missing(figure: str) 
     """No verdict a journal can hold carries the first three, and the reading holds them all."""
     held = (Counted("a", 4, D(400)), Counted("b", 9, D(figure)))
     assert Position(ACCOUNT, CHAN, 4, None, held).initial_risk is None
+
+
+def test_another_strategys_working_order_keeps_no_position_of_this_one_open() -> None:
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    written.fill(gld, 10, "200")
+    (uso,) = written.decide(Leg(USO, -30, "420"), strategy=OTHER)
+    written.send(uso)
+    (sell,) = written.decide(Leg(GLD, -10, "400", False))
+    written.send(sell)
+    closed = written.fill(sell, -10, "200")
+    mine, other = positions(written.journal)
+    assert (mine.strategy, mine.closed) == (CHAN, closed)
+    assert (other.strategy, other.closed) == (OTHER, None)
+
+
+def test_an_empty_journal_halts_the_read() -> None:
+    """It reads the same as a wrong account or a lost store, so it never reads as no position."""
+    with pytest.raises(Halt, match="it holds no entry, so there is no book"):
+        positions(Journal(Memory(), ACCOUNT, WRITER))
+
+
+def test_a_fill_in_dispute_halts_the_read() -> None:
+    """The record holds two contents for one fill, so it does not say where the position stands."""
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    made = fill(f"{broker(gld)}-10", broker(gld), 10, "200", GLD)
+    written.put(filled(made, written.reading))
+    written.put(disputed(replace(made, qty=D(4)), written.reading))
+    with pytest.raises(Halt, match="is in dispute"):
+        positions(written.journal)
+
+
+def test_a_fill_kept_as_unmatched_halts_the_read() -> None:
+    """The broker reports a fill no order holds, so the strategy may not be where the book says."""
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    written.fill(gld, 10, "200")
+    written.put(unmatched_fill(fill("x-1", "x-1", -10, "200"), written.reading))
+    with pytest.raises(Halt, match="keeps an unmatched fill"):
+        positions(written.journal)
+
+
+def test_every_state_is_read_on_purpose() -> None:
+    """A state a release adds fails here until the reading of initial risk is told what it is."""
+    assert NOT_SENT | WORKING | ENDED == set(OrderState)
+    assert not NOT_SENT & WORKING and not WORKING & ENDED and not NOT_SENT & ENDED

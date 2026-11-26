@@ -5,9 +5,11 @@ answers to what the owner can bear` gives the rule, in its rule 1, and
 docs/architecture/05-building-blocks.md's `##### A position's initial risk
 comes from the journal alone` says how this module reads it. In short:
 
-- The entries are folded with the journal's own fold, so a position's legs
-  are the derived position the gate reads, and an entry the fold refuses halts
-  this read with the fold's reason.
+- The entries are folded with the journal's own fold, and a position's legs
+  are read from the book each view gives, as the gate reads them. So an entry
+  the fold refuses halts this read with the fold's reason, and so does what
+  halts the book: a journal with no entry, a fill in dispute and anything kept
+  as unmatched.
 - A strategy is flat when it holds no share and has no order working or in
   doubt. A position opens at the `sending` entry of an order of a flat
   strategy, and closes at the first entry after which the strategy is flat.
@@ -19,23 +21,22 @@ comes from the journal alone` says how this module reads it. In short:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import NamedTuple
 
-from ithildinruntime.core import Halt, OrderState
+from ithildinruntime.core import Halt
 
 from .book import View, after
 from .chain import Journal
 from .entries import SendingEntry, VerdictEntry, record_of
-from .orders import NOT_SENT
+from .orders import NOT_SENT, OPEN
 
-__all__ = ["Counted", "Position", "positions"]
+__all__ = ["WORKING", "Counted", "Position", "positions"]
 
-_S = OrderState
 # An order in one of these is with the broker, or may be, so it keeps its strategy off flat.
-_WORKING = frozenset({_S.SENDING, _S.IN_DOUBT, _S.ACKNOWLEDGED, _S.PARTLY_FILLED})
+# An order in `NOT_SENT` has no `sending`, so nothing of it can have left.
+WORKING = OPEN - NOT_SENT
 
 
 class Counted(NamedTuple):
@@ -73,10 +74,13 @@ class Position:
 
 
 def positions(journal: Journal) -> tuple[Position, ...]:
-    """Every position the journal holds, in the order they opened, or a halt the fold raises.
+    """Every position the journal holds, in the order they opened, or a halt.
 
     It reads the journal's entries, checked as `Journal.read` checks them, and
-    nothing else.
+    nothing else. It halts where the fold halts and where the book of the
+    newest view halts, which an empty journal, a fill in dispute and anything
+    kept as unmatched do, since a position read past them could close where
+    the record does not say it did.
     """
     # The reading through no entry, which every reading of this journal folds from.
     view = journal.view(through=0)
@@ -109,19 +113,22 @@ def positions(journal: Journal) -> tuple[Position, ...]:
                         position.account, strategy, position.opened, entry.seq, position.counted
                     )
                 )
+    # Neither a dispute nor an unmatched entry is ever released, so the newest view's book halts
+    # on each one the read passed, and on a journal that holds no entry.
+    view.book  # noqa: B018
     found.extend(held.values())
     return tuple(sorted(found, key=lambda position: position.opened))
 
 
 def _flat(view: View, strategy: str, seq: int) -> bool:
     """Whether a strategy holds no share and has no order working or in doubt, after entry `seq`."""
-    shares: Mapping[object, Decimal] = view._positions.get(strategy, {})
+    shares = view.book.positions_by_strategy.get(strategy, {})
     if any(qty != 0 for qty in shares.values()):
         return False
     for order in view.live.values():
         if order.intent.strategy != strategy or order.state in NOT_SENT:
             continue
-        if order.state not in _WORKING:
+        if order.state not in WORKING:
             raise Halt(
                 f"journal {view.account}: after entry {seq} the order "
                 f"{order.intent.client_order_id} is {order.state.value}, which the reading of "
