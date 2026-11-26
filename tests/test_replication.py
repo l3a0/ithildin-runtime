@@ -190,7 +190,7 @@ def test_the_runs_record_is_pinned(traded) -> None:
         hashlib.sha256(entry).hexdigest(),
         hashlib.sha256(encode(book)).hexdigest(),
     )
-    assert found == PINNED
+    assert found == PINNED, found
 
 
 PINNED: tuple = (0, 0, 0, "", "")

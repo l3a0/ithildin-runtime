@@ -17,6 +17,7 @@ from ithildinruntime.core import (
     RECOVER_STAGE,
     Halt,
     OrderState,
+    Stopped,
     StrategyEnd,
     claim_key,
     off_switch_key,
@@ -107,6 +108,20 @@ def test_the_decision_entry_names_every_file_the_plan_was_made_from() -> None:
         "targets",
         "valuation",
     ]
+
+
+def test_a_stop_while_the_stage_waits_ends_it_before_it_writes_anything() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    before = dict(made.store.blobs)
+
+    def stopped(at, report) -> None:
+        raise Stopped
+
+    made.clock.wait_until = stopped
+    with pytest.raises(Stopped):
+        made.send_attempt()
+    assert made.store.blobs == before
 
 
 # Halts before anything is planned

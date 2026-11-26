@@ -24,7 +24,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from ithildinruntime.core import BlobStore, Halt
-from ithildinruntime.journal import Journal, NumberTaken, OpeningEntry, record_of
+from ithildinruntime.journal import Journal, NumberTaken, OpeningEntry
 
 __all__ = ["open_account"]
 
@@ -42,21 +42,24 @@ def open_account(
     `writer` is drawn for this call, as a `Journal` that records needs.
     """
     journal = Journal(store, account, writer)
-    opening = OpeningEntry(account, cash)
     if journal.head() is not None:
-        first = record_of(next(journal.read()))
-        if first != opening:
-            raise Halt(
-                f"the journal of {account} opens with another entry than {cash} of cash, so it is "
-                "not opened again"
-            )
+        _same(journal, account, cash)
         open_simulator(store, account, cash)
         return
     open_simulator(store, account, cash)
     try:
-        journal.record(journal.view(), opening, at)
+        journal.record(journal.view(), OpeningEntry(account, cash), at)
     except NumberTaken:
         # Another call opened it between the view and the append.
-        first = record_of(next(journal.read()))
-        if first != opening:
-            raise Halt(f"the journal of {account} was opened with another cash meanwhile") from None
+        _same(journal, account, cash)
+
+
+def _same(journal: Journal, account: str, cash: Decimal) -> None:
+    """Halt unless the journal's entry 1 opens the account flat with `cash`."""
+    first = journal.view(through=1)
+    book = first.book
+    if first.opened_at is None or book.cash != cash or book.positions_by_strategy:
+        raise Halt(
+            f"the journal of {account} opens with another entry than {cash} of cash, so it is not "
+            "opened again"
+        )
