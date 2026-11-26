@@ -99,6 +99,7 @@ __all__ = [
     "cost_main",
     "data_main",
     "execution_main",
+    "measures",
     "portfolio_main",
     "risk_main",
     "run_alpha",
@@ -118,6 +119,11 @@ PLAN_EVERY = 5.0
 RETRY = Retry(timedelta(seconds=20), 0.5, 4.0)
 OWNER_STEP = "check the account's orders and positions on the broker's own site"
 _NEW_YORK = ZoneInfo("America/New_York")
+
+
+def measures(mode: Mode) -> bool:
+    """Whether a run judges its clock: every mode but a backtest, whose clock is history's."""
+    return Mode(mode) is not Mode.BACKTEST
 
 
 def trading_day(now: datetime) -> date:
@@ -402,7 +408,7 @@ def data_main() -> None:
         run_data(
             worker,
             clock=clock,
-            measured=worker.mode is not Mode.BACKTEST,
+            measured=measures(worker.mode),
             lake=lake,
             mirror=settings.mirror,
             servers=servers,
