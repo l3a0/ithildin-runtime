@@ -167,7 +167,7 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order, a buy at the decision's ask and a sale at its bid, rejected until [#155](https://github.com/l3a0/ithildin-runtime/issues/155) | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order at once, a buy at the decision's ask and a sale at its bid | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
 | Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until a decision's stored snapshot holds the official close, which the data source holds from the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten: at the stale lag of 0 a strategy's file writes, data reads the instrument as stale and its result holds the halt. The order keeps working | The shadow environment's bucket, with the shadow journal | Sent |
 | Paper | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
 | Live | marketlake's S3 bucket, captured bars, once [a split record covers them](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
@@ -264,11 +264,24 @@ never shares the paper account's lease.
    gave the price. Its `basis` is `signal_close` where the decision that sent it
    had read a close of that session, and `official_close` otherwise. So a result
    that fills at a close its signal read is told by its own fills. The price
-   itself is the settling snapshot's, which a revision can have moved.
+   itself is the settling snapshot's, which a revision can have moved. A market
+   order's fill, under item 5, has the `basis` `quote`.
 4. **Cash and shares move exactly**, as the journal's book moves them, with no
    rounding. A sale can open a short.
-5. **Any other order is rejected.** The day's market order gets its fill with
-   [#155](https://github.com/l3a0/ithildin-runtime/issues/155).
+5. **A market order for the day fills whole at once**, in the call that takes
+   it, a buy at the ask and a sale at the bid of the quote in the snapshot of
+   the decision that sent it. `core.quote_faults` judges that quote at the
+   decision's time, so a backtest's fills do not move with its clock, and the
+   gate has already judged it at its own. Its `at` and `received_at` are the
+   clock's, its `basis` is `quote`, and the log names the decision's stored
+   snapshot, which holds the quote's stamps and the row as received. A snapshot
+   with no quote of the instrument, and a quote with a fault, are each a
+   rejection that names why, cut short where it would be long, so the answer
+   stays inside the journal's raw limit. Under the faults `reject_later` and `fill_none` it
+   rests instead, and one still working at its close expires unfilled. One on
+   its way fills as it arrives, and only under its own decision's prices, so
+   one that arrives under another decision's is not taken. Any other order is
+   rejected.
 6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
 7. **It moves only forward.** A call whose clock reads before the log's newest

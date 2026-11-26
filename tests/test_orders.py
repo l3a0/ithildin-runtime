@@ -218,8 +218,9 @@ def config(execution: str | None):
     return parse_strategy(CHAN, text.encode())
 
 
-def test_market_on_close_is_the_one_order_a_strategy_names() -> None:
+def test_a_strategy_names_market_on_close_or_the_days_market_order() -> None:
     assert order_type(config('order = "market_on_close"')) == MOC
+    assert order_type(config('order = "market"')) == (OrderType.MARKET, TimeInForce.DAY)
 
 
 @pytest.mark.parametrize(
@@ -227,13 +228,21 @@ def test_market_on_close_is_the_one_order_a_strategy_names() -> None:
     [
         (None, r"has no \[execution\] section"),
         ("", r"has no \[execution\] section"),
-        ('order = "market"', "only market_on_close is sent until #155"),
-        ('order = "limit"', "names the order 'limit'"),
+        ('order = "limit"', "only market_on_close and market are sent"),
+        ('order = "Market"', "names the order 'Market'"),
         ("order = 1", "names the order 1"),
         ('order = "market_on_close"\nstyle = "x"', r"holds style in \[execution\]"),
         ('kind = "market_on_close"', r"holds kind in \[execution\]"),
     ],
-    ids=["absent", "empty", "market", "unknown", "not-text", "another-key", "only-another-key"],
+    ids=[
+        "absent",
+        "empty",
+        "unknown",
+        "not-the-name",
+        "not-text",
+        "another-key",
+        "only-another-key",
+    ],
 )
 def test_an_execution_section_it_cannot_read_halts_naming_the_strategy(section, said) -> None:
     with pytest.raises(Halt, match=said) as raised:
