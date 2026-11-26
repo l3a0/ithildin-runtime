@@ -10,7 +10,8 @@ the rules. A firing is kept three ways, and each alone reads as fired.
    `core.Storage.hold_create` writes and holds through an outage, so the
    receive loop keeps the process alive until S3 stores it.
 
-`complete` writes whichever part is missing, at each settle of the account. It
+`complete` writes whichever part is missing, at each settle of the order path
+and at the worker's last settle. It
 deletes nothing, since no worker deletes, and writes no clear. Only the
 `ithildin stop clear` command (#203) clears a firing.
 """
@@ -267,10 +268,16 @@ class Latch:
                 self._create(entry, None, failing)
             return wrote is not _Wrote.FAILED
         standing = latch.standing
-        if not latch.alone and (standing is None or standing.stored is not None):
+        if standing is None or standing.stored is not None:
             # Nothing needs a blob, so a copy `core.Storage` holds is let go rather than stored
-            # after a clear has deleted the one that counts.
-            self._storage.release(self._key)
+            # after a clear has deleted the one that counts. It is let go under the lock and only
+            # while no firing is held, which a firing on another thread is before its create. A
+            # view older than another thread's entry lets that blob go too, and the next settle
+            # makes it again for the firing that stands. A create already under way can still
+            # land after a clear, and then reads as a blob no entry names.
+            with self._lock:
+                if not self._pending:
+                    self._storage.release(self._key)
         if standing is not None and standing.stored is not None:
             return False
         wanted = standing is not None
@@ -311,7 +318,15 @@ class Latch:
     def _write(
         self, view: View, record: Record, tries: Tries, failing: list[str], what: str
     ) -> _Wrote:
-        at = self._clock.now()
+        try:
+            at = self._clock.now()
+        except RuntimeError:
+            # The history clock has no time on a thread that waited for no decision, such as
+            # the one a worker ends on, so a firing is stamped with its own decision's time.
+            named = record.decision_at if isinstance(record, StopFiredEntry) else None
+            if named is None:
+                raise
+            at = named
         try:
             tries(lambda: self._journal.record(view, record, at))
         except NumberTaken:

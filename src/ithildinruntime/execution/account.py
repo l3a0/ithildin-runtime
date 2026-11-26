@@ -158,7 +158,7 @@ class Account:
         """Each alarm this process owes, which the channel would not take."""
         return () if isinstance(self._shared, Halt) else self._shared.unstored.unsent()
 
-    def settle(self, report: Callable[[], None]) -> None:
+    def settle(self, report: Callable[[], None], *, stop: bool = False) -> None:
         """Store each entry the journal has not taken, or halt naming each still owed.
 
         An alarm about one that could not be sent is tried again here too, and
@@ -168,16 +168,21 @@ class Account:
         order in doubt halts recover, so an answer held back until the next
         send would never be written. It leaves the loss stop's firing to the
         order path's own settle, so a blob S3 will not take holds up no read of
-        the broker.
+        the broker. `stop` completes the firing too, as the worker's last
+        settle does, whose failure joins the entries'.
         """
-        self._held().unstored.settle(quietly(report))
+        held = self._held()
+        if stop:
+            held.settle(quietly(report))
+        else:
+            held.unstored.settle(quietly(report))
 
     def unstored(self) -> tuple[str, ...]:
         """Each entry this process holds that the journal has not taken, a firing included."""
         if isinstance(self._shared, Halt):
             return ()
         held = tuple(
-            f"the loss stop's firing {entry.firing}, which no record holds yet"
+            f"the loss stop's firing {entry.firing}, which the journal has not taken"
             for entry in self._shared.latch.held()
         )
         return (*self._shared.unstored.names(), *held)

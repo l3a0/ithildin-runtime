@@ -397,7 +397,10 @@ class Storage:
             raise
 
     def release(self, key: str) -> None:
-        """Let go of each blob `hold_create` holds at `key`, which its caller no longer needs."""
+        """Let go of each blob `hold_create` holds at `key`, which its caller no longer needs.
+
+        One that `retry_held` is placing may still land, and is not tried again if it fails.
+        """
         with self._lock:
             self._held = [h for h in self._held if not (h.stands_in and h.key == key)]
 
@@ -475,7 +478,8 @@ class Storage:
                 continue
             else:
                 with self._lock:
-                    self._held.remove(held)
+                    if held in self._held:
+                        self._held.remove(held)
                 stored.append(done)
             finally:
                 with self._lock:

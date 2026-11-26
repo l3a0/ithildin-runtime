@@ -504,7 +504,7 @@ def _synced(view: View, recovered: int, seq: int, ref: BlobRef, read: AccountRea
 
     Between recover's book and this sync's `read` entry the journal may hold
     reads and the loss stop's entries alone, since anything else moved the book
-    after recover stored it. A settle completes the stop's firing there.
+    after recover stored it. Another thread's firing may land there.
     """
     latch = view.stop.entries
     if moved := [n for n in range(recovered + 1, seq) if n not in view.reads and n not in latch]:

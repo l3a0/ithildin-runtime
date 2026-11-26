@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import re
+import threading
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -565,7 +566,7 @@ def test_the_ask_fires_the_stop_on_a_reading_past_it() -> None:
     world = losing()
     (asked,) = world.path().ask([world.orders[0].client_order_id])
     assert asked.verdict is None and "past its stop" in asked.reason
-    assert stop_kinds(world) == ["stop_fired", "stop_stored"]
+    assert stop_kinds(world) == ["stop_fired", "stop_stored"] and len(world.alarms.sent) == 1
     assert (
         standing(world).standing.entry.reason
         == "an order's check read the day's loss past its stop"
@@ -674,6 +675,9 @@ def test_a_held_copy_is_let_go_once_the_journal_has_a_blob_for_the_firing() -> N
     stop = standing(world)
     world.store.put(KEY, b"another process's blob")
     world.record(StopStoredEntry(stop.standing.seq, world.store.tags[KEY]))
+    # The firing stands with its blob stored, so the held copy is let go before any clear.
+    account._shared.latch.complete(world.report)
+    assert storage.unstored() == ()
     world.record(StopClearedEntry(stop.standing.seq))
     world.store.delete_if_match(KEY, world.store.tags[KEY])
     account._shared.latch.complete(world.report)
@@ -719,3 +723,134 @@ def test_a_stop_stored_whose_number_another_writer_took_is_tried_again() -> None
     world.store.before = before
     assert fire_in(world) == "" and taken
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
+
+
+# What round 2 of the review asked for
+
+
+class _Hooked:
+    """A lock that runs `call` as it is taken for the `at`-th time, as another thread would."""
+
+    def __init__(self, at: int, call) -> None:  # type: ignore[no-untyped-def]
+        self._lock = threading.Lock()
+        self._at, self._call, self.taken = at, call, 0
+
+    def __enter__(self) -> None:
+        self.taken += 1
+        if self.taken == self._at:
+            self._call()
+        self._lock.acquire()
+
+    def __exit__(self, *_: object) -> None:
+        self._lock.release()
+
+
+def test_a_release_never_drops_the_blob_of_a_firing_another_thread_has_just_held() -> None:
+    world = World()
+    account = world.account()
+    latch, storage = account._shared.latch, account._shared.storage
+    world.store.refuse(("create", KEY))
+    with pytest.raises(Halt):
+        storage.hold_create(KEY, b"a firing's blob, held through an outage")
+    # The settle's third time under the lock is the release's, after its look at what it holds
+    # and its filter, and another thread's firing is held just before it.
+    latch._lock = _Hooked(3, lambda: latch._pending.append(fired("d" * 32)))  # type: ignore[assignment]
+    latch._complete(world.report)
+    assert [ref.key for ref in storage.unstored()] == [KEY]
+
+
+def test_a_release_while_retry_held_places_the_blob_lets_that_place_finish() -> None:
+    world = World()
+    storage = world.storage()
+    world.store.refuse(("create", KEY))
+    with pytest.raises(Halt):
+        storage.hold_create(KEY, b"one")
+    answered(world)
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", KEY):
+            storage.release(KEY)
+
+    world.store.before = before
+    assert [made.ref.key for made in storage.retry_held()] == [KEY] and storage.unstored() == ()
+
+
+def test_a_firing_counted_before_the_checks_and_journaled_during_their_view_stops_the_call() -> (
+    None
+):
+    """Its entry lands after the view's listing, and it leaves memory before the view ends."""
+    world = World()
+    account = world.account()
+    latch = account._shared.latch
+    sending = journal_entry_key(ACCOUNT, len(world.every_kind()) + 3)
+    entry = fired("e" * 32)
+    armed: list[bool] = []
+
+    def after(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", sending):
+            with account._shared.lock:
+                latch._pending.append(entry)
+                latch._count += 1
+            armed.append(True)
+        elif armed and op == "list" and key.startswith("journal/"):
+            armed.clear()
+            world.record(entry)
+            latch._pending.clear()
+
+    world.store.after = after
+    halted(world, "loss stop stands", lambda: world.send(account=account))
+    assert world.state() is OrderState.ABANDONED
+
+
+@pytest.mark.parametrize("unread", [False, True])
+def test_the_page_goes_out_before_the_firings_writes(unread: bool) -> None:
+    world = World() if unread else losing()
+    if unread:
+        world.store.drop(next(k for k in world.store.blobs if "valuation" in k))
+    paged: list[int] = []
+    first = journal_entry_key(ACCOUNT, len(world.every_kind()) + 1)
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", first):
+            paged.append(len(world.alarms.sent))
+
+    world.store.before = before
+    halted(
+        world,
+        "no reading" if unread else "past its stop",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, unread=unread),
+    )
+    assert paged == [1]
+
+
+def test_an_orders_check_past_its_stop_fires_with_its_own_reason() -> None:
+    world = losing()
+    halted(world, "past its stop")
+    entry = standing(world).standing.entry
+    assert entry.reason == "an order's check read the day's loss past its stop"
+
+
+def test_an_orphan_whose_number_another_writer_took_is_tried_again() -> None:
+    world = World()
+    world.store.put(KEY, b"{}")
+    fired_at = journal_entry_key(ACCOUNT, len(world.every_kind()) + 1)
+    taken: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", fired_at) and not taken:
+            taken.append(number)
+            world.record(ReadEntry("execution/send", AT, BlobRef("r", "b" * 64), AT))
+
+    world.store.before = before
+    world.account()._shared.latch.complete(world.report)
+    assert taken and stop_kinds(world) == ["stop_fired", "stop_stored"]
+
+
+def test_a_halt_on_a_reading_past_its_stop_says_which_of_its_writes_failed() -> None:
+    world = losing()
+    world.store.refuse(("create", entry_prefix()), ("create", KEY))
+    reason = halted(
+        world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION)
+    )
+    assert "not wholly stored: its entry was not stored" in reason
+    assert f"{KEY} was not stored" in reason

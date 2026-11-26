@@ -711,17 +711,9 @@ class OrderPath:
                 break
             if verdict.loss.past:
                 # `loss` halts the decision on this before a plan is made. The gate read it
-                # again here, and a loss past its stop sends nothing and fires the stop.
-                reading = verdict.loss
-                added = shared.latch.fire(reading, where[1:], _CHECKED, self._report)
-                answers.append(
-                    Asked(
-                        name,
-                        None,
-                        f"the day's loss of {reading.loss} is past its stop of {reading.bound}"
-                        f"{added}",
-                    )
-                )
+                # again here, and a loss past its stop sends nothing, pages and fires the stop.
+                halt = self._fired(verdict.loss, where[1:], _CHECKED)
+                answers.append(Asked(name, None, halt.reason))
                 break
             if not verdict.approved:
                 stop = shared.latch.said(view, state, error)
@@ -1068,8 +1060,12 @@ class OrderPath:
         while True:
             tries.waited, began = False, shared.clock.monotonic()
             with shared.lock:
-                fired = shared.latch.count()
+                # Read with the count, since a firing leaves memory only once the journal holds it,
+                # so one counted before this pass is in memory here or in the view below.
+                fired, holding = shared.latch.count(), shared.latch.holding()
             view = self._view(tries=tries)
+            if holding:
+                raise Halt(shared.latch.said(view, StopState.FIRED, ""))
             if shared.latch.held() or view.stop.fired:
                 raise Halt(shared.latch.said(view, StopState.FIRED, ""))
             order = self._just_sending(view, cleared, tries)

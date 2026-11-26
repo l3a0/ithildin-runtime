@@ -228,7 +228,8 @@ class ExecutionWorker:
             )
         failed = False
         try:
-            account.settle(lambda: None)
+            # The loss stop's firing too, which no stage's settle tries.
+            account.settle(lambda: None, stop=True)
             said = ""
         except Halt as halt:
             said = f": {halt.reason}"
