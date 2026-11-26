@@ -76,6 +76,7 @@ def nothing_twice(replay: Replay) -> None:
         if order.state in (_S.ABANDONED, _S.LOST):
             assert name not in taken, name
     assert taken <= set(asked)
+    assert len(taken) == len([o for o in view.orders.values() if o.broker_order_id is not None])
 
 
 @pytest.mark.parametrize(
@@ -196,26 +197,26 @@ def test_2_a_fill_made_while_execution_was_down_applies_once_and_a_redelivery_dr
     nothing_twice(replay)
 
 
-# The pins of the code that added them, at the second head of PR #214, under chan_bollinger's
-# G of 10,000 and orders of fractional shares. Both data days halt every stage and send nothing,
-# so they pin alike, and so do the three kills of recover.
+# The pins of the code that added them, at the head of PR #214 that answers round 2 of its
+# review, under chan_bollinger's G of 10,000 and orders of fractional shares. Both data days
+# halt every stage and send nothing, so they pin alike, and so do the three kills of recover.
 PINS = {
-    "USO": "5726e20bfd9d0be468b732066557a7ad9e71ab717eaca645cc5c0289faabe784",
-    "stale:GLD": "5726e20bfd9d0be468b732066557a7ad9e71ab717eaca645cc5c0289faabe784",
-    "withheld": "20010607cd56339b8a02761b1b0c23b01db75a27a78798d54c9e78c3329085fd",
+    "USO": "1723deb7fe2fc9d8985b15a29d1e0d7f6b6d9e1c0bd68e37cf8007054af9efc1",
+    "stale:GLD": "1723deb7fe2fc9d8985b15a29d1e0d7f6b6d9e1c0bd68e37cf8007054af9efc1",
+    "withheld": "adb2fd12f7cdb7733eeded79c8bbc3ef367e2ba279f00872b1c3c714e0f3fa95",
 }
 RESTARTS = {
-    1: "b909501251ed6af5c667d5aef6d4ae15bf483cde0f84c90db7bf047af34e11b3",
-    2: "b909501251ed6af5c667d5aef6d4ae15bf483cde0f84c90db7bf047af34e11b3",
-    3: "b909501251ed6af5c667d5aef6d4ae15bf483cde0f84c90db7bf047af34e11b3",
-    4: "070a7a9ce0620d173c6a9d8115dc33d1640d90f47f8aeb21c5f3d8f6ad3b9718",
-    5: "3ee24f2bd7b7463410ff0c79978ad88ca81460e3babac1876856edffe10b099f",
-    6: "76240e9d3fcc3bf14923320c518a6ff4695c6e754a4c16dffa45106a38c3e46b",
-    7: "9b98e584cb8062ca3ed44c3c9acaccf5b1f9171b3a8d2f8d55398f7959fc09e9",
-    8: "fdf3247a09d4f8423f4832eb56144e0e587c10f553a39af43fe8e6045e3dcdc7",
-    9: "32bdb045dce8d569acb4eed91afc0fb39a2b7b2453b33d8178d819da8de3f8b5",
-    10: "9b4c877212b7a66037666b519b258efeedf885b48add71d77c15a0a46a38f616",
-    11: "94b854229c96fc0a58d3515dc1ffe072b5373d754781ab7e79e03aa8fbe31479",
-    12: "1f3d446320a4afdecadb0936b718977c508ee91ebc772f7fdfc19c34f6554ec5",
-    13: "84316f8af260b05b80a6eec3bdc520453a9f4cda0379e0661714b6e0799a999d",
+    1: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
+    2: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
+    3: "7ac90a78097b11d922188d9203717f8d1e97003967088164ba527c15e5187f98",
+    4: "4ffddb16110bf8aee2f1395f82774ea3d44797b211ecb2c4cf03bd1500b28689",
+    5: "c87c833716c45fd938a237aac5e0c4dac6cb33a5ae96f2c043abc92a417a6ce1",
+    6: "29ebdfab9ad56d7798d2bea665f7e719096878a640159676ebc29c9a9a4245e9",
+    7: "4262c02818241fee9e19eaf613684aed88f191779850292732e02524a5e3852e",
+    8: "b93045d34d4e2a063be78199c2a652edbbb02c62ff02fe296ae4e3217af8b9b5",
+    9: "9d6631c771fdc5d49e3ad7424f9beb6f0a8ef28ca37c6736fb467118e7f68b50",
+    10: "b31e7053cde63c567ffa8d2859e47233bcfedec4d4bb62e63ff408dcfabd9916",
+    11: "9d1aeed3ee76e6ccf513469a946eb0f0696d8d2ec21789a8153a74ff74b690bd",
+    12: "62caa9c422a5516725268236a1ce8b9f9bd68115de5295213aa531d021933bfa",
+    13: "27e054b836bb043518e821b057564da0fee53812db2aa9cce075d02d2f8ecee6",
 }

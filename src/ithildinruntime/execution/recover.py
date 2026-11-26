@@ -246,13 +246,16 @@ class RecoverStage:
             try:
                 settled = path.settle(name, keep, stage, at)
             except Outage as outage:
-                # It alarmed already, and every later order would meet the same outage.
+                # Every later order would meet the same outage, so nothing more is tried. Its
+                # own alarm went, and this one names each order, which nothing else does.
                 names = ", ".join(o.client_order_id for e in plans for o in e.orders)
                 when = ", ".join(e.decision_at.isoformat() for e in plans)
-                raise Halt(
-                    f"account {self._account.alias}: {outage.reason}. Nothing more is settled of "
-                    f"the decisions at {when}, whose orders are {names}"
-                ) from None
+                left = (
+                    f"nothing more is settled of the decisions at {when}, whose orders are {names}"
+                )
+                added = self._alarm(f"the journal stopped answering, so {left}", report) or added
+                said = [*failed, outage.reason, left[0].upper() + left[1:]]
+                raise Halt(f"account {self._account.alias}: {'. '.join(said)}{added}") from None
             except Halt as halt:
                 failed.append(halt.reason)
                 added = self._alarm(halt.reason, report) or added

@@ -75,13 +75,15 @@ def moved(seq: int, name: str, move: Move, state: OrderState | None) -> OrderSta
 
 
 def lost_from(client_order_id: str) -> datetime:
-    """The earliest time a whole order list asked for can show an order in doubt `Lost`.
+    """The earliest time a whole order list asked for can show a closing-auction order `Lost`.
 
-    It is the close of the session the order was planned in, which ends both a
-    day order and a closing-auction one, plus twice the clock's bound, since the
-    broker's clock and the platform's can each be off by the bound. A list asked
-    for earlier may yet be followed by the order, since a request sent just
-    before a crash can still arrive.
+    It is the close of the session the order was planned in, which ends a
+    closing-auction order, plus twice the clock's bound, since the broker's
+    clock and the platform's can each be off by the bound. A list asked for
+    earlier may yet be followed by the order, since a request sent just before
+    a crash can still arrive. An order of any other kind is never given up,
+    because a broker may hold a day order that came after its close for the
+    next session's open.
     """
     _, decided, _ = read_order_id(client_order_id)
     return load_sessions().opened_by(decided).close + 2 * CLOCK_BOUND

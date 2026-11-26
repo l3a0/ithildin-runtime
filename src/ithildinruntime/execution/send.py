@@ -333,6 +333,10 @@ class SendStage:
             if order is None or order.state in NOT_SENT:
                 try:
                     path.abandon(name, why)
+                except Outage as outage:
+                    # Its alarm went, and each later abandon would page the same outage.
+                    said.append(outage.reason)
+                    break
                 except Halt as halt:
                     said.append(halt.reason)
         reason = ". ".join(said)
@@ -400,7 +404,9 @@ class SendStage:
         # The path raises an `Outage` only before the broker's call, so the order at `place`
         # was not sent where it is one.
         down = isinstance(halt, Outage)
-        view, down = (None, True) if down else self._read(said, report)
+        view = None if down else self._read(said, report)
+        # A journal that cannot be read takes no abandon either, and each would say why again.
+        down = down or view is None
         left: list[str] = []
         for at, order in enumerate(orders[place:], start=place):
             name = order.client_order_id
@@ -421,10 +427,7 @@ class SendStage:
                 left.append(name)
             except Halt as failed:
                 said.append(failed.reason)
-        if not down:
-            view, down = self._read(said, report)
-        else:
-            view = None
+        view = None if down else self._read(said, report)
         if left:
             said.append(
                 f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
@@ -432,9 +435,13 @@ class SendStage:
             )
         if view is None:
             names = [order.client_order_id for order in orders]
-            known = f"{', '.join(sent)} acknowledged, and " if sent else ""
-            rest = [name for name in names if name not in sent]
-            legs = f"{known}{', '.join(rest)} not known, since the journal could not be read"
+            rest = [name for name in names if name not in sent and name not in left]
+            parts = [
+                f"{', '.join(group)} {word}"
+                for group, word in ((sent, "acknowledged"), (left, "not sent"), (rest, "not known"))
+                if group
+            ]
+            legs = f"{', '.join(parts)}, since the journal could not be read"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))
@@ -445,19 +452,13 @@ class SendStage:
         added = self._account.alarm(what, report)
         raise Halt(f"{what}{added}")
 
-    def _read(self, said: list[str], report: Callable[[], None]) -> tuple[View | None, bool]:
-        """A view of the journal, or `None` with why it could not be read added to `said`.
-
-        The second value says whether the store did not answer, which ends every later write.
-        """
+    def _read(self, said: list[str], report: Callable[[], None]) -> View | None:
+        """A view of the journal, or `None` with the reason it could not be read added to `said`."""
         try:
-            return self._account.view(report), False
-        except Outage as outage:
-            said.append(outage.reason)
-            return None, True
+            return self._account.view(report)
         except Halt as halt:
             said.append(halt.reason)
-            return None, False
+            return None
 
 
 class _OtherPlan(Exception):

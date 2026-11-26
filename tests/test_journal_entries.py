@@ -161,7 +161,10 @@ def test_1_each_kind_there_and_back(record: Record) -> None:
 
 
 def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
-    one, two, three = planned(1, 4), planned(2, -3, USO, OTHER), planned(3, 1)
+    # The second is a closing-auction order, the one kind a whole list can give up as lost.
+    on_close = {"type": OrderType.MARKET_ON_CLOSE, "time_in_force": TimeInForce.CLS}
+    one, three = planned(1, 4), planned(3, 1)
+    two = dataclasses.replace(planned(2, -3, USO, OTHER), **on_close)
     journal = Journal(Memory(), ACCOUNT, WRITER)
     names = [order.client_order_id for order in (one, two, three)]
     part = fill("f1", "b1", 1)
@@ -580,6 +583,9 @@ def _committed() -> list[tuple[Record, datetime]]:
         return at + timedelta(seconds=seconds)
 
     next_day = at + timedelta(days=1)
+    day_after = at + timedelta(days=2)
+    late = dataclasses.replace(planned(1, 2, GLD, at=next_day), **on_close)
+    sending_ended = "its send stage ended with no answer journaled"
 
     def blob(name: str) -> BlobRef:
         return BlobRef(f"runs/fixture/2026-10-01/{name}.json", sha256_of(name.encode()))
@@ -742,10 +748,23 @@ def _committed() -> list[tuple[Record, datetime]]:
             "the broker lists its order x-1 open, 3 of SPY under no client order id, which no ack "
             "mapped",
         ),
-        # A recover the next day takes the order a crash left sending, and a whole list omits it.
-        InDoubtEntry(names[5], "its send stage ended with no answer journaled", None, False, t(54)),
-        ReadEntry("execution/recover", next_day, blob("lookup-1"), next_day),
-        LostEntry(names[5], 55, "the broker's whole order list omits it"),
+        # A plan of the next day, whose closing-auction order a crash leaves sending, and which
+        # the recover after it gives up when a whole list omits it.
+        dataclasses.replace(
+            plan,
+            decision_at=next_day,
+            targets=(TargetPortfolio(next_day, CHAN, {GLD: Decimal(21)}),),
+            orders=(late,),
+            off=(),
+            read=48,
+            synced=53,
+        ),
+        IntentEntry(54, late),
+        dataclasses.replace(says(56, 1), client_order_id=late.client_order_id),
+        SendingEntry(late.client_order_id),
+        InDoubtEntry(late.client_order_id, sending_ended, None, False, t(58)),
+        ReadEntry("execution/recover", day_after, blob("lookup-1"), day_after),
+        LostEntry(late.client_order_id, 59, "the broker's whole order list omits it"),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 

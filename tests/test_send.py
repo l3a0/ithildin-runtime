@@ -718,7 +718,7 @@ def test_a_failure_whose_journal_cannot_be_read_still_names_its_cause_and_every_
     reason = result.halt.reason
     assert "raised RuntimeError" in reason and "could not be read" in reason
     # The leg this call saw acknowledged is named, and the one it cannot read back is not known.
-    assert f"stand so: {first} acknowledged, and {second} not known, since the journal" in reason
+    assert f"stand so: {first} acknowledged, {second} not known, since the journal" in reason
     # The leg whose call failed may be at the broker, so nothing says it was not sent.
     assert "none of them was sent" not in reason
     assert made.submits() == [first]
@@ -749,7 +749,7 @@ def test_a_journal_that_turns_unreadable_after_the_abandons_names_the_legs_this_
     made.store.before = before
     result = made.send_attempt()
     reason = result.halt.reason
-    assert f"stand so: {first} acknowledged, and {second} not known" in reason
+    assert f"stand so: {first} acknowledged, {second} not known" in reason
     assert "the store's own text" not in reason
     # The second leg was abandoned before the journal went, so nothing says it was not.
     assert "not journaled abandoned" not in reason
@@ -845,7 +845,7 @@ def test_a_leg_the_broker_took_whose_ack_the_journal_lost_is_never_called_unsent
     reason = result.halt.reason
     assert made.submits() == [first, second]
     assert "none of them was sent" not in reason
-    assert f"stand so: {first} acknowledged, and {second} not known, since the journal" in reason
+    assert f"stand so: {first} acknowledged, {second} not known, since the journal" in reason
 
 
 def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
@@ -875,7 +875,27 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
     assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
-    assert f"stand so: {first} acknowledged, and {second} not known" in reason
+    assert f"stand so: {first} acknowledged, {second} not sent, since the journal" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2 and "The plan's orders stand so" in sent[1]
+
+
+def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_unsent(
+    monkeypatch,
+) -> None:
+    """The second leg was never tried, so it alone is named not sent, and never submitted."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+
+    def send(self, name):
+        made.store.refuse(("*", "journal/"))
+        raise RuntimeError("the path broke")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert made.submits() == []
+    assert f"{second} was not journaled abandoned, since the journal did not answer" in reason
+    assert f"stand so: {second} not sent, {first} not known, since the journal" in reason

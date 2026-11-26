@@ -37,6 +37,7 @@ from ithildinruntime.core import (
     DecisionResult,
     Fill,
     FillsRead,
+    FoundOrder,
     Halt,
     HaltRecord,
     HardCaps,
@@ -900,8 +901,66 @@ def test_2_a_store_that_stops_answering_mid_settle_pages_once_and_names_every_or
     assert f"Nothing more is settled of the decisions at {AT1}, whose orders are {ONE}, {TWO}" in (
         reason
     )
-    # The outage's own page, and none for each order after it.
+    # The outage's own page, and one naming every order, and none for each order after it.
     assert sum("could not be read" in a for a in world.alarms.sent) == 1
+    (names,) = [a for a in world.alarms.sent if "the journal stopped answering" in a]
+    assert ONE in names and TWO in names
+
+
+def _other_row(world: RecoverWorld):
+    """A list answer whose one row is the order sent under ONE, for other shares."""
+    since = close_of(DAYS[0])
+    (row,) = [o for o in world.broker().orders(since).orders if o.client_order_id == ONE]
+    return FoundOrder(Outcome.ACCEPTED, (replace(row, qty=row.qty + 1),), True, b"[]")
+
+
+def sent_pair_in_doubt() -> RecoverWorld:
+    """Day 1's pair, the first leg in doubt after a lost answer and the second never tried."""
+    world = RecoverWorld(flat_prices())
+    at = close_of(DAYS[1])
+    one, two = world.decide(at, world.orders(at, [(10, GLD), (-20, USO)]))
+    world.faults = Faults(orders={one.client_order_id: OrderFault.LOSE_ANSWER})
+    world.restart()
+    world.send(one)
+    journaled(world, ("intent", 2))
+    world.faults = Faults()
+    world.restart()
+    world.prepare(close_of(DAYS[2]))
+    return world
+
+
+def test_2_a_store_that_stops_answering_while_a_row_is_kept_as_unmatched_stops_settling() -> None:
+    world = sent_pair_in_doubt()
+    answer = _other_row(world)
+    held: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/") and "read" in world.kinds(world.before):
+            held.append(number)
+            raise StoreUnavailable(key, "the store's own text")
+
+    world.store.before = before
+    alarms = len(world.alarms.sent)
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=lambda *a: answer)))
+    assert result.halt is not None and "Nothing more is settled" in result.halt.reason
+    sent = world.alarms.sent[alarms:]
+    assert sum("was not stored" in a for a in sent) == 1, sent
+
+
+def test_2_a_row_kept_as_unmatched_pages_once_across_two_decisions() -> None:
+    world = sent_pair_in_doubt()
+    answer = _other_row(world)
+    stage = world.stage(brokers=doctored(world, find_order=lambda *a: answer))
+    first = world.attempt(stage)
+    assert first.halt is not None and "differs in qty" in first.halt.reason
+    paged = len(world.alarms.sent)
+    world.prepare(close_of(DAYS[3]))
+    later = world.stage(brokers=doctored(world, find_order=lambda *a: answer))
+    later._said = stage._said
+    again = world.attempt(later)
+    assert again.halt is not None and "differs in qty" in again.halt.reason
+    assert world.kinds().count("unmatched_order") == 1
+    assert len(world.alarms.sent) == paged
 
 
 def test_2_an_order_that_cannot_be_settled_does_not_stop_the_next_one() -> None:

@@ -58,6 +58,7 @@ from ithildinruntime.core import (
     sha256_of,
     to_utc,
 )
+from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.runtime.alpha_worker import alpha_handlers, alpha_rows
 from ithildinruntime.runtime.cost_worker import cost_handlers, cost_rows
 from ithildinruntime.runtime.data_worker import DATA_ROW
@@ -221,6 +222,59 @@ def storage_of(store: FolderStore) -> Storage:
     )
 
 
+@dataclass
+class SetUp:
+    """One run's store and account, opened, and every handler but execution's, in order."""
+
+    store: FolderStore
+    storage: Storage
+    records: Path
+    days: list[date]
+    first: int
+    handlers: dict[str, Callable]
+    order: list[str]
+
+
+def set_up(every_session: Snapshot, root: Path, store: FolderStore | None = None) -> SetUp:
+    """Open test 1's account in a folder store, and build every handler but execution's."""
+    store = FolderStore(root / "store") if store is None else store
+    storage = storage_of(store)
+    records = root / "stress_moves.toml"
+    records.write_text(RECORDS)
+    days = [bar.session for bar in every_session.bars[GLD]["1d"]]
+    first = days.index(FIRST_DECISION)
+    opened = SESSIONS.session(days[first - 1]).close
+    open_backtest(Mode.BACKTEST, store, ACCOUNT, CASH, opened)
+    made = dict(storage=storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=TABLE)
+    models: dict[str, Callable] = {**cost_handlers(**made), **alpha_handlers(**made)}
+    handlers = {
+        **models,
+        RISK_STAGE: risk_handler(**made, stress_moves=records),
+        PORTFOLIO_STAGE: portfolio_handler(**made, stress_moves=records),
+    }
+    return SetUp(store, storage, records, days, first, handlers, stage_order(models))
+
+
+def execution_worker(made: SetUp, alerts: Alarms, faults: Faults | None = None) -> ExecutionWorker:
+    """An execution process over the run's store, as test 1 builds it, with `faults` if any."""
+    return ExecutionWorker(
+        mode=Mode.BACKTEST,
+        store=made.store,
+        storage=made.storage,
+        account=ACCOUNT,
+        clock=HistoryClock(readings=None),
+        alerts=alerts,
+        retry=Retry(deadline=timedelta(seconds=1), pause=0.1, longest_pause=0.1),
+        pause=lambda s: None,
+        deployment=DEPLOYMENT,
+        run=RUN,
+        release=RELEASE,
+        table=TABLE,
+        stress_moves=made.records,
+        faults=faults,
+    )
+
+
 def trade(
     every_session: Snapshot, root: Path, *, stop: Callable[[int], bool] = lambda n: False
 ) -> Traded:
@@ -229,45 +283,12 @@ def trade(
     `stop` ends the run before the decision it names by its index, for a test
     that needs only the first few.
     """
-    store = FolderStore(root / "store")
-    storage = storage_of(store)
-    records = root / "stress_moves.toml"
-    records.write_text(RECORDS)
-    days = [bar.session for bar in every_session.bars[GLD]["1d"]]
-    first = days.index(FIRST_DECISION)
-    opened = SESSIONS.session(days[first - 1]).close
-    open_backtest(Mode.BACKTEST, store, ACCOUNT, CASH, opened)
+    made = set_up(every_session, root)
+    store, storage, days, first = made.store, made.storage, made.days, made.first
     written: list[HardCaps] = []
-    clock = HistoryClock(readings=None)
-    made = dict(storage=storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=TABLE)
-    handlers: dict[str, Callable] = {
-        **cost_handlers(**made),
-        **alpha_handlers(**made),
-    }
-    worker = ExecutionWorker(
-        mode=Mode.BACKTEST,
-        store=store,
-        storage=storage,
-        account=ACCOUNT,
-        clock=clock,
-        alerts=Alarms(),
-        retry=Retry(deadline=timedelta(seconds=1), pause=0.1, longest_pause=0.1),
-        pause=lambda s: None,
-        deployment=DEPLOYMENT,
-        run=RUN,
-        release=RELEASE,
-        table=TABLE,
-        stress_moves=records,
-    )
-    risk = risk_handler(**made, stress_moves=records)
-    portfolio = portfolio_handler(**made, stress_moves=records)
-    order = stage_order(handlers)
-    handlers |= {
-        RECOVER_STAGE: worker.recover,
-        RISK_STAGE: risk,
-        PORTFOLIO_STAGE: portfolio,
-        SEND_STAGE: worker.send,
-    }
+    worker = execution_worker(made, Alarms())
+    order = made.order
+    handlers = {**made.handlers, RECOVER_STAGE: worker.recover, SEND_STAGE: worker.send}
     decided: list[Decided] = []
     books: dict[date, Book] = {}
     for n in range(first, len(days)):
@@ -366,4 +387,15 @@ class _Report:
         raise AssertionError("the history clock waits for nothing")
 
 
-__all__ = ["CASH", "STRATEGY", "TABLE", "Decided", "Traded", "stage_order", "trade"]
+__all__ = [
+    "CASH",
+    "STRATEGY",
+    "TABLE",
+    "Decided",
+    "SetUp",
+    "Traded",
+    "execution_worker",
+    "set_up",
+    "stage_order",
+    "trade",
+]

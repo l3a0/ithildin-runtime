@@ -56,7 +56,7 @@ from ithildinruntime.journal import (
 )
 
 from .account import Account, StageRecord
-from .order_path import OrderPath
+from .order_path import OrderPath, copy_differs
 from .outside import fill_entry, load_ranges, order_entry, record_entry
 
 __all__ = [
@@ -221,14 +221,8 @@ def _end_entry(name: str, order: OrderRecord, ack: Ack) -> ExpiredEntry | Reject
     copy = ack.order
     if ack.outcome is not Outcome.ACCEPTED or copy is None:
         raise Halt(f"{what}, and its lookup found no such order")
-    found = (ack.broker_order_id, copy.broker_order_id, copy.client_order_id)
-    if (*found, copy.instrument, copy.qty) != (
-        order.broker_order_id,
-        order.broker_order_id,
-        name,
-        order.intent.instrument,
-        order.intent.qty,
-    ):
+    broker = order.broker_order_id
+    if ack.broker_order_id != broker or copy_differs(order.intent, copy, broker):
         raise Halt(f"{what}, and its lookup found another order")
     raw, cut = ack.raw[:RAW_LIMIT], len(ack.raw) > RAW_LIMIT
     if copy.state is BrokerState.EXPIRED:

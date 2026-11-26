@@ -1018,6 +1018,11 @@ classDiagram
         +bool cut
         +datetime received_at
     }
+    class LostEntry {
+        +str client_order_id
+        +int read
+        +str reason
+    }
     class FillEntry {
         +Fill fill
         +int read
@@ -1038,6 +1043,7 @@ classDiagram
     IntentEntry ..> DecisionEntry : decision names its number
     FillEntry ..> ReadEntry : read names its number
     DisputedFillEntry ..> ReadEntry : read names its number
+    LostEntry ..> ReadEntry : read names its number
 ```
 
 ### The interfaces

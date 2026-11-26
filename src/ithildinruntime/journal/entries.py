@@ -229,7 +229,8 @@ class LostEntry:
     """The platform stopped waiting for an order in doubt, so whether it was sent is unproved.
 
     `read` is the number of the `read` entry whose file holds the whole order
-    list that omitted it, asked for after the order's time in force ran out.
+    list that omitted it, asked for after the order's time in force ran out. Only
+    a closing-auction order is given up so.
     """
 
     client_order_id: str

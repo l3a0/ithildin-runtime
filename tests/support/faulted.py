@@ -22,22 +22,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
-    DATA_STAGE,
-    PORTFOLIO_STAGE,
     RECOVER_STAGE,
-    RISK_STAGE,
     SEND_STAGE,
     BarStatus,
     DecisionResult,
     HaltRecord,
-    Mode,
     OrderState,
-    Retry,
     SendOutcome,
     Snapshot,
     output_key,
@@ -46,27 +41,17 @@ from ithildinruntime.core import (
 from ithildinruntime.data.source import judge
 from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.journal import Journal
-from ithildinruntime.runtime.alpha_worker import alpha_handlers
-from ithildinruntime.runtime.cost_worker import cost_handlers
-from ithildinruntime.runtime.execution_worker import ExecutionWorker, open_backtest
-from ithildinruntime.runtime.portfolio_worker import portfolio_handler
-from ithildinruntime.runtime.risk_worker import risk_handler
-from tests.support.replication import FIRST_DECISION, GLD, LOOKBACK, USO, cut
+from tests.support.replication import GLD, LOOKBACK, USO, cut
 from tests.support.trading import (
     ACCOUNT,
-    CASH,
     DEPLOYMENT,
-    RECORDS,
-    RELEASE,
     RUN,
-    SESSIONS,
-    TABLE,
     _caps,
     _data,
     _run,
     caps_on,
-    stage_order,
-    storage_of,
+    execution_worker,
+    set_up,
 )
 from tests.support.watched_broker import watch_submits
 from tests.test_storage_contract import Alarms
@@ -102,8 +87,9 @@ class Day:
 
     at: datetime
     halts: Mapping[str, str]
-    # Each planned order's id, instrument, type, shares and the state the day left it in.
-    sent: tuple[tuple[str, str, str, str, OrderState | None], ...]
+    # Each planned order's id, instrument, type, time in force, shares and the state the day left
+    # it in.
+    sent: tuple[tuple[str, str, str, str, str, OrderState | None], ...]
     died: str | None = None
 
 
@@ -117,31 +103,13 @@ class Replay:
 
     def __post_init__(self) -> None:
         self.store = Dying(self.root / "store")
-        self.storage = storage_of(self.store)
-        self.records = self.root / "stress_moves.toml"
-        self.records.write_text(RECORDS)
-        self.days = [bar.session for bar in self.every_session.bars[GLD]["1d"]]
-        self.first = self.days.index(FIRST_DECISION)
-        open_backtest(
-            Mode.BACKTEST,
-            self.store,
-            ACCOUNT,
-            CASH,
-            SESSIONS.session(self.days[self.first - 1]).close,
-        )
+        made = set_up(self.every_session, self.root, self.store)
+        self.made, self.storage = made, made.storage
+        self.days, self.first, self.order = made.days, made.first, made.order
+        self.handlers: dict[str, Callable] = dict(made.handlers)
         self.alarms = Alarms()
         self.written: list = []
         self.starts = 0
-        made = dict(
-            storage=self.storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=TABLE
-        )
-        models: dict[str, Callable] = {**cost_handlers(**made), **alpha_handlers(**made)}
-        self.order = stage_order(models)
-        self.handlers: dict[str, Callable] = {
-            **models,
-            RISK_STAGE: risk_handler(**made, stress_moves=self.records),
-            PORTFOLIO_STAGE: portfolio_handler(**made, stress_moves=self.records),
-        }
         # Each order the simulated account was asked to take, with the stage that asked.
         self.submits: list[tuple[str, str]] = []
         self.running: str | None = None
@@ -149,25 +117,8 @@ class Replay:
 
     def start(self) -> None:
         """A new execution process over the same store, as the host restarts one."""
-        from ithildinruntime.adapters import HistoryClock
-
         self.starts += 1
-        self.worker = ExecutionWorker(
-            mode=Mode.BACKTEST,
-            store=self.store,
-            storage=self.storage,
-            account=ACCOUNT,
-            clock=HistoryClock(readings=None),
-            alerts=self.alarms,
-            retry=Retry(deadline=timedelta(seconds=1), pause=0.1, longest_pause=0.1),
-            pause=lambda s: None,
-            deployment=DEPLOYMENT,
-            run=RUN,
-            release=RELEASE,
-            table=TABLE,
-            stress_moves=self.records,
-            faults=self.faults,
-        )
+        self.worker = execution_worker(self.made, self.alarms, self.faults)
         self.handlers[RECOVER_STAGE] = self.worker.recover
         self.handlers[SEND_STAGE] = self.worker.send
 
@@ -196,8 +147,6 @@ class Replay:
         self.store.appends, self.store.kill_after = 0, kill_after
         died = None
         for name in self.order:
-            if name == DATA_STAGE:
-                continue
             try:
                 self._run(name, at)
             except Died:
@@ -248,6 +197,7 @@ class Replay:
                 o.client_order_id,
                 o.instrument,
                 o.type.value,
+                o.time_in_force.value,
                 f"{o.qty}",
                 view.orders[o.client_order_id].state if o.client_order_id in view.orders else None,
             )

@@ -35,12 +35,12 @@ where only the broker moves it on, in this order.
 3. An `InDoubt` order is found through `Broker.find_order`, read from its
    `sending` less `OVERLAP`, and that answer is stored and named by a `read`
    entry before it is judged. A list that failed or did not come whole settles
-   nothing. A whole list that omits the order, asked for once its time in force
-   ran out, journals it `lost`. One row that matches the order's client order id,
-   instrument, side, quantity and type is looked up by the broker's id, and that
-   answer is stored and named the same way. A match journals the `ack`. Any
-   other row, more than one, or a lookup that disagrees is journaled as an
-   `unmatched_order` and halts.
+   nothing. A whole list that omits a closing-auction order, asked for once its
+   session closed, journals it `lost`, and one that omits an order of any other
+   kind keeps it in doubt. One row that `copy_differs` finds no difference in is
+   looked up by the broker's id, and that answer is stored and named the same
+   way. A match journals the `ack`. Any other row, more than one, or a lookup
+   that disagrees is journaled as an `unmatched_order` and halts.
 
 **What a person reads holds none of a broker's text.** A reason, an alarm and a
 halt name the order, the step and an error's type or a store's code. Two things
@@ -128,6 +128,7 @@ from ithildinruntime.journal import (
     ReadEntry,
     Record,
     RejectedEntry,
+    Repeat,
     SendingEntry,
     UnmatchedOrderEntry,
     VerdictEntry,
@@ -149,6 +150,7 @@ __all__ = [
     "Settled",
     "Shared",
     "Unstored",
+    "copy_differs",
     "quietly",
 ]
 
@@ -860,7 +862,7 @@ class OrderPath:
             )
             raise self._unmatched(rows, seq, f"{what}, as {ref.key}")
         (row,) = rows
-        if differs := _row_differs(order.intent, row):
+        if differs := copy_differs(order.intent, row, None, known=False):
             what = f"the broker's row for {name} differs in {', '.join(differs)}, as {ref.key}"
             raise self._unmatched(rows, seq, what)
         broker = row.broker_order_id
@@ -881,7 +883,7 @@ class OrderPath:
                 f"{'' if copy is not None else ' with no copy of the order'}, as {ref.key}, so it "
                 "stays in doubt"
             )
-        if differs := _row_differs(order.intent, copy, broker):
+        if differs := copy_differs(order.intent, copy, broker):
             what = f"the lookup of {name} by the broker's {broker} differs in {', '.join(differs)}"
             raise self._unmatched((copy,), seq, f"{what}, as {ref.key}")
         if raw is None or came is None:
@@ -911,15 +913,20 @@ class OrderPath:
             return ref, max(view.reads)
         raise Halt(f"other writers took {_NUMBERS} numbers in a row")
 
-    def _journaled(self, name: str, made: Callable[[View], Record]) -> OrderState:
+    def _journaled(self, name: str, made: Callable[[View], Record | None]) -> OrderState:
         """Journal what `settle` found of an order, and return the state it then shows."""
         return self._appended(name, made).orders[name].state
 
-    def _appended(self, name: str, made: Callable[[View], Record]) -> View:
-        """Journal one entry `settle` makes, on a new view each time its number goes."""
+    def _appended(self, name: str, made: Callable[[View], Record | None]) -> View:
+        """Journal one entry `settle` makes, on a new view each time its number goes.
+
+        `made` gives `None` where the view already holds what it would say.
+        """
         for _ in range(_NUMBERS):
             view = self._view()
             record = made(view)
+            if record is None:
+                return view
             try:
                 _, view = self._record(view, record)
             except NumberTaken:
@@ -931,7 +938,12 @@ class OrderPath:
         raise Halt(f"other writers took {_NUMBERS} numbers in a row")
 
     def _unmatched(self, rows: tuple[BrokerOrder, ...], seq: int, reason: str) -> Halt:
-        """Keep each row as an order that traces to nothing, and give the halt that says why."""
+        """Keep each row as an order that traces to nothing, and give the halt that says why.
+
+        A row the journal keeps already with this content is not kept twice, so a
+        later decision's halt says the same. A store that does not answer is raised
+        as it came, since every later write would meet it too.
+        """
         said = [reason]
         for row in rows:
             if not is_broker_id(row.broker_order_id):
@@ -939,10 +951,15 @@ class OrderPath:
                     "a row's broker id is one the journal refuses, so it is kept in the read alone"
                 )
                 continue
+
+            def made(view: View, row: BrokerOrder = row) -> Record | None:
+                held = view.unmatched_repeats("order", row.broker_order_id, row)
+                return None if held is Repeat.HELD else UnmatchedOrderEntry(row, seq, _text(reason))
+
             try:
-                self._appended(
-                    row.broker_order_id, lambda v, r=row: UnmatchedOrderEntry(r, seq, _text(reason))
-                )
+                self._appended(row.broker_order_id, made)
+            except Outage:
+                raise
             except Halt as halt:
                 said.append(halt.reason)
         return Halt(". ".join(said))
@@ -1520,17 +1537,7 @@ def _doubted_by(answer: _Answer) -> str:
 def _differs(order: OrderIntent, ack: Ack) -> list[str]:
     """Each field the broker's copy of the order gives another value, where it sent a copy."""
     found = ack.order
-    if found is None:
-        return []
-    pairs = (
-        ("client_order_id", found.client_order_id, order.client_order_id),
-        ("instrument", found.instrument, order.instrument),
-        ("qty", found.qty, order.qty),
-        ("type", found.type, order.type),
-        ("time_in_force", found.time_in_force, order.time_in_force),
-        ("broker_order_id", found.broker_order_id, ack.broker_order_id),
-    )
-    return [name for name, one, other in pairs if one != other]
+    return [] if found is None else copy_differs(order, found, ack.broker_order_id)
 
 
 def _contradicts(ack: Ack) -> str | None:
@@ -1564,25 +1571,30 @@ def _stop_reason(state: StopState, error: str) -> str:
     return "loss stop stands" if state is StopState.FIRED else f"loss stop unreadable: {error}"
 
 
-def _row_differs(intent: OrderIntent, row: BrokerOrder, broker: str | None = None) -> list[str]:
-    """Each detail a broker's row of an order gives another value than its `sending` entry's.
+def copy_differs(
+    intent: OrderIntent, copy: BrokerOrder, broker: str | None, known: bool = True
+) -> list[str]:
+    """Each detail a broker's copy of an order gives another value than its `sending` entry's.
 
-    The client order id, the instrument, the quantity, whose sign is the side, the
-    type and the time in force, as the send path's own comparison reads them, and
-    the broker's id where one is known. A row of a broker that keeps a client
-    order id and gives none is no match.
+    It is the one comparison of a broker's copy against the order the platform
+    sent, which a submit's answer, a settling list's row and lookup, and recover's
+    lookup of an order the broker no longer lists each run. It reads the client
+    order id, the instrument, the quantity, whose sign is the side, the type, the
+    time in force and the broker's id, which is `broker` where `known`, and any
+    id the journal takes otherwise. A copy of a broker that keeps a client order
+    id and gives none is no match.
     """
     pairs = [
-        ("client_order_id", row.client_order_id, intent.client_order_id),
-        ("instrument", row.instrument, intent.instrument),
-        ("qty", row.qty, intent.qty),
-        ("type", row.type, intent.type),
-        ("time_in_force", row.time_in_force, intent.time_in_force),
+        ("client_order_id", copy.client_order_id, intent.client_order_id),
+        ("instrument", copy.instrument, intent.instrument),
+        ("qty", copy.qty, intent.qty),
+        ("type", copy.type, intent.type),
+        ("time_in_force", copy.time_in_force, intent.time_in_force),
     ]
-    if broker is not None:
-        pairs.append(("broker_order_id", row.broker_order_id, broker))
+    if known:
+        pairs.append(("broker_order_id", copy.broker_order_id, broker))
     else:
-        pairs.append(("broker_order_id", is_broker_id(row.broker_order_id), True))
+        pairs.append(("broker_order_id", is_broker_id(copy.broker_order_id), True))
     return [name for name, one, other in pairs if one != other]
 
 
