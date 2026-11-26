@@ -22,6 +22,7 @@ from ithildinruntime.data.reference import (
     PRICE_KINDS,
     QUOTE_KINDS,
     QUOTE_SOURCE,
+    SCHWAB_IMPORT,
     Kind,
     KindRow,
     MasterRow,
@@ -102,6 +103,21 @@ _CAPTURE_READ_FROM = (
     "differ by over 1 percent from 3.8 percent below to 9.5 percent above. The 20 fetched "
     "the same evening are all below and 13 of the 14 fetched later are above"
 )
+_SCHWAB_READ_FROM = (
+    "owner's ruling of 2026-11-26 on #175 at "
+    "https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180719855. The "
+    "evidence below is of GLD and USO alone. The bars are Schwab's daily candles that "
+    "marketlake imported on 2026-11-02 from the endpoint its capture calls "
+    "(l3a0/marketlake#951) and on the two forward splits that issue measured Schwab adjusts "
+    "them for splits to the day it serves them. A reverse split and how soon Schwab restates "
+    "after an ex-date were not measured. "
+    "Neither fund split from 2026-09-04 to 2026-11-02 so they are as traded and on the scale "
+    "of the captured bars from 2026-11-02 on. Schwab publishes no statement of its candle so "
+    "the kind rests on agreement with a second vendor. In an exploratory comparison with "
+    "Massive's unadjusted daily aggregates read on 2026-11-25 the open high low and close are "
+    "equal to the cent on 80 of 80 imported bars of GLD and USO. Their volume was not compared "
+    "and is stated as the capture row states it because it comes from the same endpoint"
+)
 KIND_ROWS = (
     [
         f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
@@ -118,6 +134,10 @@ KIND_ROWS = (
     + [
         "2026-11-25,marketlake:capture,2026-09-08,2027-03-31,official close,consolidated,none,"
         f"consolidated in shares as of the fetch,{_CAPTURE_READ_FROM}"
+    ]
+    + [
+        "2026-11-26,schwab:pricehistory,2026-09-04,2026-10-30,official close,consolidated,none,"
+        f"consolidated in shares as of the fetch,{_SCHWAB_READ_FROM}"
     ]
 )
 
@@ -204,6 +224,20 @@ def test_the_captured_bars_row_reads_the_kind_it_should_on_each_side_of_its_edge
     assert [
         kinds.kind("marketlake:capture", day)
         for day in (date(2026, 9, 7), date(2026, 9, 8), date(2027, 3, 31), date(2027, 4, 1))
+    ] == [NOTHING, stated, stated, NOTHING]
+
+
+def test_the_schwab_import_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
+    """The row the owner's ruling of 2026-11-26 on #175 states, for the import's 40 sessions."""
+    kinds = load_price_kinds()
+    # Typed again, so a typo shared by the row and its pin is still caught.
+    stated = Kind(
+        "official close", "consolidated", "none", "consolidated in shares as of the fetch"
+    )
+    assert SCHWAB_IMPORT == "schwab:pricehistory"
+    assert [
+        kinds.kind(SCHWAB_IMPORT, day)
+        for day in (date(2026, 9, 3), date(2026, 9, 4), date(2026, 10, 30), date(2026, 11, 2))
     ] == [NOTHING, stated, stated, NOTHING]
 
 
