@@ -377,7 +377,7 @@ sequenceDiagram
     X->>B: reads positions, open orders, cash and<br/>the broker's records, then the fills,<br/>from before any not yet journaled
     B-->>X: returns positions, open orders, cash,<br/>the broker's records and the fills
     X->>F: stores the account file as read
-    X->>J: journals the account file's hash, each new fill<br/>and each record as an outside entry, which #35;151 builds
+    X->>J: journals the account file's hash, then each new record,<br/>fill and open order: a listed record moves the cash,<br/>and anything else is kept as unmatched, which halts
     X->>B: looks up each order it no longer lists
     B-->>X: returns how each one ended
     X->>J: journals each one that expired or was rejected
@@ -515,7 +515,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 
 1. **Data reads the bars and the quotes.** It reads what the decision's lookback needs from marketlake, 60 sessions of each ETF, then, for a decision inside its session, one capture's quote of each, and records which ones it read before any model sees them.
 2. **Execution waits for that snapshot,** and for its own send result of the decision before, a halt included, so it reads the broker at the decision's own time and after the last decision's orders went out.
-3. **Execution recovers,** in the steps below. They end in a comparison of the book, replayed from the journal, with the broker's positions, open orders and cash. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that recover also reads the broker's records, such as fees and dividends, and journals each as an outside entry, ahead of the comparison. A cash difference a listed record explains in full then passes, and any other difference halts. [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds it.
+3. **Execution recovers,** in the steps below. They end in a comparison of the book, replayed from the journal, with the broker's positions, open orders and cash. Ahead of the comparison, recover reads the broker's own records, such as fees and dividends, and journals each one. A fee, debit interest or a dividend inside its written range moves the book's cash, so a cash difference it explains in full passes, and any other difference halts. A record that halts enters no book's cash, a repeat with other content is kept beside the first, and a record posted late is still fetched, as design.md's `## Decisions` records for [2026-11-05](../design.md#2026-11-05), [2026-11-24](../design.md#2026-11-24) and [2026-11-26](../design.md#2026-11-26).
 4. **Execution stores what the risk model and portfolio construction read:** the book, the hard caps as it read them and the session's valuation.
 5. **Monitoring repeats the same check** for its report, and nothing waits on it.
 
@@ -525,16 +525,21 @@ The stage is `execution/recover.py`, and its reads of the broker and what the jo
 
 1. It reads data's result and its snapshot, and passes a halt in either on.
 2. It stores each answer this process still owes the journal, and takes one reading of the journal. A plan a crash left unfinished halts here, under the rule below.
-3. It reads the broker's positions, open orders and cash, and then its fills. The fills come last, so a fill that lands between two reads shows as a difference and never as a match.
-4. It stores the four reads as one capture, `account.json`, before anything in them is compared.
-5. It journals a `read` entry that names the capture, and then halts where any of the four did not come whole.
-6. It journals a `fill` entry for each fill the journal does not hold, and a `disputed_fill` for one whose content differs from the fill held under its id, which the book then halts on. A fill of no order the platform acknowledged, or one that does not match its order, halts naming it and is not journaled, until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) journals it as unmatched.
+3. It reads the broker's positions, open orders and cash, then the records the broker booked on its own, through `Broker.activities`, and then its fills. The records and the fills are asked from the same time, which `fills_since` gives. The fills come last, so a record or a fill that lands between two reads shows as a difference and never as a match.
+4. It stores the five reads as one capture, `account.json`, before anything in them is compared.
+5. It journals a `read` entry that names the capture, and then halts where any of the five did not come whole.
+6. It journals what the broker listed, as `execution/outside.py` sorts it, and halts on anything that holds the account, ahead of any lookup.
+    1. Each record the journal does not hold. A fee, debit interest or a dividend inside the range `execution/records.toml` writes for its kind is an `outside_record`, which moves the book's cash. Any other record is an `unmatched_record`: a deposit, a withdrawal, a type off the list, an amount outside its range, one with more places than cash holds, and a repeat of a held id with other content. An identical repeat is skipped.
+    2. Each fill the journal does not hold. A fill of an order the platform sent is a `fill`, and a repeat whose content differs from the fill held under its id is a `disputed_fill`. Any other fill is an `unmatched_fill`: one of no order the platform acknowledged, one on an order that has ended, one past its order's quantity or on its other side, one for zero shares or at no price, and one carrying a correction's id, which no rule reads yet.
+    3. Each open order under a broker's id no `ack` mapped, which is an `unmatched_order`.
+
+    An unmatched entry moves nothing and is kept as it came. The book halts while one stands, so it holds the account until a person releases it, which [#150](https://github.com/l3a0/ithildin-runtime/issues/150)'s release test builds. Nothing is kept as unmatched while an order is `Sending` or `InDoubt`, because that order could own it, so the read halts instead. A record or a fill whose own id the journal refuses halts and is kept only in the capture.
 7. It looks up, by the broker's id, each order the broker no longer lists and whose fills do not explain it. An order that `expired` or was `rejected` is journaled so. Any other answer halts.
 8. It takes a second reading of the journal and compares it with the capture through `core.reconcile`. Any difference halts, with every one of them in the reason.
 9. It reads the owner's hard caps.
 10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
 
-A difference that is nothing but a fee, a dividend or a split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151), and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
+A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) reconciles one, and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
 
 Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 
@@ -641,7 +646,7 @@ Three more checks sit inside these steps, as [How a rerun never doubles anything
 The steps run in this order.
 
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, whose own halt joins the reason. All of that comes before any input is read, so an unreadable snapshot hides no order.
-2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) lets another instance take over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. This doc proposes, for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), that it also reads the broker's records and journals each as an outside entry, ahead of the comparison. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
+2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) lets another instance take over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
@@ -1067,7 +1072,7 @@ A mismatch in a position means one of two things: a fill the platform never jour
 | An order the broker holds and the journal marks lost or abandoned | Halts the day it appears | Explains the difference |
 | A broker record of a type on the closed list, with its amount in range | Journals it with no halt | Nothing |
 | A broker record that leaves a difference unexplained | Halts | Explains the difference |
-| By this doc's proposal for [#10](https://github.com/l3a0/ithildin-runtime/issues/10), a record that repeats a record id with different content | Halts | Explains the difference |
+| A record that repeats a record id with different content | Halts | Explains the difference |
 
 The closed list of record types, and the four cases that halt, are in [Strategies, schedules and decisions](../design.md#strategies-schedules-and-decisions).
 

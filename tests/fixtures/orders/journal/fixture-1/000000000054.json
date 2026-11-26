@@ -1,0 +1,1 @@
+{"body":{"deployment":"fixture","kind":"pause","reason":"the run's stop is missing","run":"2026-09-30","since":"2026-09-30T19:40:00.000000Z","strategies":["chan_bollinger","other-one.2"],"writer":"0123456789abcdef0123456789abcdef"},"built_at":"2026-10-01T19:40:54.000000Z","format":1,"prev_hash":"3bbea3ac00be3b372f75384b7f408ef4dcaf0a58f2c53f3ea070dfb68cc46965","seq":54}

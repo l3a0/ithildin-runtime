@@ -610,6 +610,10 @@ The risk and portfolio workers' entry points take the file's path and hand on th
 
 [How the stress move is measured](05-building-blocks.md#how-the-stress-move-is-measured) and [How the caps are held to the stress move's record](05-building-blocks.md#how-the-caps-are-held-to-the-stress-moves-record) say what writes a record and what reads it.
 
+#### The ranges of a broker's records
+
+`execution/records.toml` is a tracked file the release carries, at `format = 1`. It names exactly the kinds on the closed list, `fee`, `interest` and `dividend`, each with a `least` and a `most` in US dollars as quoted strings of at most two places, a debit below zero. A record of its kind moves the book's cash only inside that range, and never at zero. A file that cannot be read, of another format, naming other kinds, or holding a bound of another form or a least above its most halts every decision at recover and at the send stage, and [What recover does, step by step](06-runtime.md#what-recover-does-step-by-step) says how a record is sorted. The fold reads no range, so a range moved later changes no entry already journaled. The price is that each range is one fixed amount for every account and bounds one record at a time, so a dividend grows past its range as the position grows, and halts until a pull request raises it, and many records each inside their range move the cash with no bound on their sum.
+
 #### How a journal entry is hashed and checked
 
 **A journal entry hashes its whole blob.** Each entry is one blob holding `seq`, `format`, `built_at`, `prev_hash` and `body`. Its hash is the SHA-256 of those bytes exactly as stored, which the next entry carries as its `prev_hash`, and the first entry of an account carries sixty-four zeros. A hash of the body alone would leave an entry's number and its link outside what the next entry vouches for.
@@ -657,17 +661,21 @@ The `body` holds a `kind`, the `writer` that built the entry, and that kind's fi
 | `fill` | `fill`, `read` | Execution | One fill, and the number of the `read` entry whose file holds it |
 | `disputed_fill` | `fill`, `read` | Execution | A repeat of a fill whose content differs, kept beside the first |
 | `expired` | `client_order_id`, `filled`, `raw`, `cut`, `received_at` | Execution | The broker says the order ended with a part unfilled |
+| `outside_record` | `record`, `read` | Execution | A record the broker booked on its own, a fee, debit interest or a dividend inside its range, which moves the cash |
+| `unmatched_record` | `record`, `read`, `reason` | Execution | A record of the broker's that no rule lets reach the book, kept as it came. It holds the account |
+| `unmatched_fill` | `fill`, `read`, `reason` | Execution | A fill the journal cannot give to any order it sent, kept as it came. It holds the account |
+| `unmatched_order` | `order`, `read`, `reason` | Execution | An order the broker lists open under an id no `ack` mapped, kept as it came. It holds the account |
 | `pause` | `deployment`, `run`, `since`, `strategies`, `reason` | The supervisor | A run that stopped with no clean-shutdown record, from its last journaled decision or `null` where the journal names none, and each strategy held. It moves no order, and a second pause of one run keeps the first |
 
 A `verdict` keeps the caps as the canonical bytes of the parsed `HardCaps`, with the SHA-256 of the blob they came from, because the owner rewrites that blob. The fold never decodes them, so a cap added later leaves old entries readable, and the blob's other sections stay out of entries nobody can delete.
 
-The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull` and the outside and unmatched entries, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format. `pause` is read and written by one release, under the exception [A rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) gives a format from before the first release that runs a worker, because no earlier release runs one, so no journal a worker wrote can hold a kind an earlier release cannot read.
+The other kinds, such as `cancel`, `sort`, `sort_done`, `override`, `clear`, `switch_pull`, `outside_fill` and `outside_order`, each arrive with the part that writes it. A release reads a kind one release before any release writes it, so a pin back to the release before still reads what the journal holds, as [Each blob names what made it](../design.md#rule-5-each-blob-names-what-made-it) asks of a format. The four kinds `outside_record`, `unmatched_record`, `unmatched_fill` and `unmatched_order` are the one exception: the release that first reads them also writes them, because no environment builds a broker outside a backtest over a folder, so no journal outside a test holds one. A pin back past that release halts on any such entry, which [Rule 6: a rollback is a pin to an earlier digest](07-deployment.md#rule-6-a-rollback-is-a-pin-to-an-earlier-digest) lists. `pause` is the other exception, read and written first by the release that first runs a worker in an environment, so no journal a worker wrote before it can hold one, and that rule lists it too.
 
 ##### What holds a kind still
 
 1. **A kind's fields never change**, and neither do those of a `core` type inside it, an enumeration's members or a check its constructor makes, because any of them can make every old entry unreadable. The bounds below, the checks on an entry and the stamp's own rules run on every old entry too, so each may be loosened and never tightened. A changed shape is a new kind under a new name, and every kind ever written stays readable. Until the first journal outside a test is opened, a change rewrites that kind's committed entry instead. `tests/fixtures/orders` holds a committed journal of every kind.
 2. **A body of an unknown kind, or whose fields are not its kind's, halts** with the entry's number and the kind. Skipping one would build a book on part of the record.
-3. **Bounds hold what an entry keeps.** `raw` has at most 65,536 bytes. A longer answer keeps its first part with `cut` true, and the order path journals one to a submit as `in_doubt`. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A `fill`'s price is above zero and its shares are not zero, and neither are a planned order's. A `disputed_fill` moves nothing, so it keeps the price and the shares that came, such as a fill sent again for zero shares. A blob is named by a key and a SHA-256 of 64 lower case hex digits, and a `verdict`'s caps are not empty, because an entry that names nothing can never be run again or repaired.
+3. **Bounds hold what an entry keeps.** `raw` has at most 65,536 bytes. A longer answer keeps its first part with `cut` true, and the order path journals one to a submit as `in_doubt`. A broker's order id or fill id is one to 128 letters, digits, `:`, `_` and `-`. A `fill`'s price is above zero and its shares are not zero, and neither are a planned order's. A `disputed_fill` moves nothing, so it keeps the price and the shares that came, such as a fill sent again for zero shares, and so does an `unmatched_fill`. A record's id follows the rule for a broker's id. An `outside_record` moves some cash, is a fee, debit interest or a dividend, and names an instrument only by a name. A blob is named by a key and a SHA-256 of 64 lower case hex digits, and a `verdict`'s caps are not empty, because an entry that names nothing can never be run again or repaired.
 
 ##### What the writer is for
 
@@ -690,8 +698,8 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | `disputed_fill` | The broker's fill id with its order, instrument, shares, price and time |
 | `outside_fill` | The broker's fill id and correction identifier together, with an identical repeat skipped and a differing one journaled, which halts |
 | `outside_order` | The broker's order id |
-| `unmatched_fill` and `unmatched_order` | The broker's fill or order id |
-| An outside entry with no order or fill | The broker's own record id |
+| `unmatched_fill` and `unmatched_order` | The broker's fill or order id, with a repeat of the same content skipped and a differing one kept beside it |
+| `outside_record` and `unmatched_record` | The broker's own record id, with a repeat of the same content skipped and a differing one kept as unmatched |
 | `sort` and `sort_done` | The off switch's or halt's id |
 | `override` | The override blob's SHA-256 |
 | `clear` | The halt's id with the release hash, counting only a valid release as already done |

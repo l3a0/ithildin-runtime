@@ -12,10 +12,14 @@ step` says why each comes where it does.
 1. Data's result and its snapshot.
 2. The answers this process still owes the journal, and a view of the journal. An
    order nothing has settled halts here with an alarm.
-3. Four reads of the broker, the fills last.
+3. Five reads of the broker, the records after the cash and the fills last.
 4. The capture, `account.json`, stored before anything in it is compared.
 5. A `read` entry that names the capture, and then whether each read is whole.
-6. A `fill` entry for each new fill, and a `disputed_fill` for one that differs.
+6. An entry for each new record, fill and open order the broker lists, as
+   `execution/outside.py` sorts them: a record on the closed list moves the
+   cash, a fill of an order the platform sent moves its book, a repeat that
+   differs is a dispute, and anything else is kept as unmatched and holds the
+   account. A dispute or an unmatched entry halts here, ahead of any lookup.
 7. A lookup of each order the broker no longer lists, and the entry of its end.
 8. A second view, and `core.reconcile`.
 9. The hard caps.
@@ -82,10 +86,11 @@ from .sync import UNSETTLED, journal_read, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
-# The format of the stage's four files and of its result header.
-_FORMAT = 1
-# How long before the bound's own time the fills are asked from, so one the broker posts late
-# is still fetched.
+# The format of the stage's four files and of its result header. Format 2's capture holds the
+# records read, which format 1's does not.
+_FORMAT = 2
+# How long before the bound's own time the records and the fills are asked from, so one the
+# broker posts late is still fetched.
 _LATE = timedelta(days=1)
 # The issue that copies the first decision's valuation to a later one of its session.
 _SECOND = "#183"
@@ -291,7 +296,10 @@ class RecoverStage:
 
 
 def fills_since(view: View) -> datetime:
-    """The time the fills are asked from, before any fill the journal may not hold.
+    """The time the records and the fills are asked from, before any the journal may not hold.
+
+    A record the broker dates earlier than this is never fetched, so the cash it
+    moved shows as a difference and halts.
 
     It is one day before the earlier of two times, and never before the account
     was opened, whose opening cash holds every fill before it.
@@ -327,12 +335,14 @@ def differences(first: AccountRead, later: AccountRead) -> str:
 def _undated(read: AccountRead) -> dict[str, object]:
     """Each part of a capture without the times it came."""
     fills = tuple(replace(fill, received_at=_RECEIVED) for fill in read.fills.fills)
+    records = tuple(replace(one, received_at=_RECEIVED) for one in read.records.records)
     return {
         "positions": dict(read.positions.positions),
         "open orders": read.open_orders.orders,
         "cash": read.cash.cash,
+        "records": records,
         "fills": fills,
-        "the time the fills were asked from": read.since,
+        "the time the records and fills were asked from": read.since,
         "whether each came whole": [part.whole for part in read.reads.values()],
         "the pages' bytes": [[p.body for p in part.received] for part in read.reads.values()],
     }
@@ -341,26 +351,28 @@ def _undated(read: AccountRead) -> dict[str, object]:
 # The parts of two reads that may differ while the account stands still: when the pages
 # came, and their bytes. A later read that did not come whole could hide a fill, so it
 # counts as a move.
-_UNMOVED = frozenset({"the time the fills were asked from", "the pages' bytes"})
+_UNMOVED = frozenset({"the time the records and fills were asked from", "the pages' bytes"})
 
 
 def _moved(first: AccountRead, later: AccountRead) -> list[str]:
     """What differs between two reads in a way that may be a move.
 
-    A fill only the first holds counts as no move where the later read asked from a
-    later time than that fill's, as a bound moved by the first attempt's own fills
-    does. Open orders are compared by the broker's id, so a list in another order is
+    A fill or a record only the first holds counts as no move where the later read
+    asked from a later time than its own, as a bound moved by the first attempt's
+    own fills does. Open orders are compared by the broker's id, so a list in another order is
     the same list, and one that holds an order twice is another. A fill listed twice
     is no move, since each is applied once by its id.
     """
     one, two = _undated(first), _undated(later)
-    named = [p for p in one if p not in _UNMOVED and p != "fills" and one[p] != two[p]]
+    dated = ("records", "fills")
+    named = [p for p in one if p not in _UNMOVED and p not in dated and one[p] != two[p]]
     if "open orders" in named and _by_id(first) == _by_id(later):
         named.remove("open orders")
-    gone = [f for f in one["fills"] if f not in two["fills"]]  # type: ignore[attr-defined]
-    new = [f for f in two["fills"] if f not in one["fills"]]  # type: ignore[attr-defined]
-    if new or any(f.at >= later.since for f in gone):
-        named.append("fills")
+    for part in dated:
+        gone = [f for f in one[part] if f not in two[part]]  # type: ignore[attr-defined]
+        new = [f for f in two[part] if f not in one[part]]  # type: ignore[attr-defined]
+        if new or any(f.at >= later.since for f in gone):
+            named.append(part)
     return named
 
 

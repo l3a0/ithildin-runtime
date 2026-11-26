@@ -47,6 +47,7 @@ from ithildinruntime.core import (
     OutputFile,
     PositionsRead,
     ReceivedPage,
+    RecordsRead,
     StageKind,
     StoreUnavailable,
     Valuation,
@@ -70,7 +71,6 @@ from ithildinruntime.execution.brokers.faults import (
     EditPosition,
     Faults,
     FillPart,
-    ForeignOrder,
     OrderFault,
     ReadFault,
 )
@@ -365,7 +365,7 @@ def test_2_the_run_each_halt_stands_beside_stores_a_result() -> None:
     assert said.startswith(f"account {ACCOUNT}: the order {opened.client_order_id} ")
 
 
-READS = ("positions", "open_orders", "account", "fills")
+READS = ("positions", "open_orders", "account", "activities", "fills")
 
 
 @pytest.mark.parametrize("read", READS)
@@ -386,7 +386,7 @@ def test_2_every_read_that_stops_early_is_named() -> None:
     world = faulted(Faults(reads={(read, 1): ReadFault.SHORT for read in READS}))
     halts(
         world,
-        "the broker's positions, open_orders, account, fills did not come whole",
+        "the broker's positions, open_orders, account, activities, fills did not come whole",
         ["account.json"],
         ["read"],
         CAPTURED,
@@ -405,11 +405,6 @@ EDITS = {
     "an open order": (
         EditOrder("sim-o-2", D(4)),
         "the broker's sim-o-2, differs in shares (5 in the book and 4 at the broker)",
-    ),
-    "a foreign order": (
-        ForeignOrder(GLD, D(7)),
-        "the broker's order sim-o-4, 7 of GLD under no client order id, is open at the broker "
-        "alone",
     ),
 }
 
@@ -452,7 +447,7 @@ def test_2_the_reads_are_made_in_their_order_with_the_fills_last() -> None:
     world, calls = ready(), []
     result = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
     assert result.halt is None
-    assert calls == ["positions", "open_orders", "account", "fills"]
+    assert calls == ["positions", "open_orders", "account", "activities", "fills"]
 
 
 class Doctored:
@@ -934,29 +929,73 @@ def broker_fill(world: RecoverWorld, **changes: object) -> Fill:
 @pytest.mark.parametrize(
     ("changes", "said"),
     [
-        (
-            {"broker_order_id": "b-unknown"},
-            "the fill sim-f-2 is of the broker's order b-unknown, which no order of the "
-            "platform's was acknowledged under",
-        ),
         ({"broker_order_id": SECRET}, "whose id the journal refuses, which no order of the"),
         ({"fill_id": SECRET}, "the fill's id is not a broker's id"),
-        ({"client_order_id": SECRET}, "fill sim-f-2 names another client order id than"),
-        ({"instrument": GLD}, "fill sim-f-2 is in 'GLD', and "),
-        ({"instrument": InstrumentId(SECRET)}, "is in an instrument whose name is none, and"),
-        ({"qty": D(-2)}, "fill sim-f-2 of -2 is not on "),
-        ({"qty": D(3)}, "to 3 filled of 2"),
-        ({"qty": D(0)}, "the fill sim-f-2 is for zero shares"),
-        ({"price": D(0)}, "the fill sim-f-2 has a price of 0, not above zero"),
-        ({"correction_id": SECRET}, "the fill sim-f-2 carries a correction's id"),
     ],
 )
-def test_2_a_fill_that_matches_no_order_halts_and_is_not_journaled(changes, said) -> None:
+def test_2_a_fill_whose_id_the_journal_refuses_halts_and_is_not_journaled(changes, said) -> None:
     world = ready()
     odd = broker_fill(world, **changes)
     read = FillsRead((odd,), page(), True)
     result = world.attempt(world.stage(brokers=doctored(world, fills=lambda since: read)))
     halts(world, said, ["account.json"], ["read"], CAPTURED, result)
+
+
+UNOWNED = {
+    "no order": (
+        {"broker_order_id": "b-unknown"},
+        "the fill sim-f-2 is of the broker's order b-unknown, which no order was acknowledged "
+        "under",
+    ),
+    "no order, and no shares": (
+        {"broker_order_id": "b-unknown", "qty": D(0)},
+        "the fill sim-f-2 is of the broker's order b-unknown, which no order was acknowledged "
+        "under",
+    ),
+    "client order id": (
+        {"client_order_id": SECRET},
+        "fill sim-f-2 names another client order id than",
+    ),
+    "instrument": ({"instrument": GLD}, "fill sim-f-2 is in 'GLD', and "),
+    "unnamed instrument": (
+        {"instrument": InstrumentId(SECRET)},
+        "is in an instrument whose name is none, and",
+    ),
+    "side": ({"qty": D(-2)}, "fill sim-f-2 of -2 is not on "),
+    "past its quantity": ({"qty": D(3)}, "to 3 filled of 2"),
+    "zero shares": ({"qty": D(0)}, "the fill sim-f-2 is for zero shares"),
+    "no price": ({"price": D(0)}, "the fill sim-f-2 has a price of 0, not above zero"),
+    "a correction": (
+        {"correction_id": SECRET},
+        "the fill sim-f-2 carries a correction's id",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", UNOWNED)
+def test_2_a_fill_no_order_of_the_platforms_takes_is_kept_as_unmatched_and_holds(
+    case: str,
+) -> None:
+    changes, said = UNOWNED[case]
+    world = ready()
+    odd = broker_fill(world, **changes)
+    read = FillsRead((odd,), page(), True)
+    brokers = doctored(world, fills=lambda since: read)
+    result = world.attempt(world.stage(brokers=brokers))
+    reason = halts(world, said, ["account.json"], ["read", "unmatched_fill"], CAPTURED, result)
+    assert (
+        "keeps an unmatched fill, which holds the account until a person releases it, and "
+        "nothing releases one yet" in reason
+    )
+    assert SECRET not in reason
+    (row,) = [r for r in world.rows() if r["body"]["kind"] == "unmatched_fill"]
+    # Kept as it came.
+    assert decode(encode(row["body"]["fill"]), Fill) == odd
+    # The next decision reads it again, keeps nothing new, and halts the same way.
+    world.prepare(world.at + DAY)
+    again = world.attempt(world.stage(brokers=brokers))
+    assert again.halt is not None and said in again.halt.reason
+    assert world.kinds(world.before) == ["read"]
 
 
 @pytest.mark.parametrize(
@@ -1049,7 +1088,7 @@ def test_2_an_order_the_broker_no_longer_lists_is_looked_up_and_its_end_journale
     world, result, calls = unlisted(says(state=state))
     assert result.halt is None, result.halt.reason
     assert world.kinds()[-3:] == ["read", "fill", state.value]
-    assert calls == ["positions", "open_orders", "account", "fills", "lookup"]
+    assert calls == ["positions", "open_orders", "account", "activities", "fills", "lookup"]
     last = record_of(list(Journal(Memory(world.store.blobs), ACCOUNT).read())[-1])
     assert (last.raw, last.cut) == (b"what it said", False)
     assert world.entry(BOOK_OUTPUT).open_orders_by_strategy == {}
@@ -1368,6 +1407,7 @@ def test_3_a_second_read_that_lists_an_order_twice_is_a_move() -> None:
         open_orders=OrdersRead((foreign_order(),), page(), True),
         cash=CashRead(D(1), page(), True),
         since=close_of(DAYS[0]),
+        records=RecordsRead((), page(), True),
         fills=FillsRead((), page(), True),
     )
     twice = replace(read.open_orders, orders=(foreign_order(), foreign_order()))
@@ -1382,6 +1422,7 @@ def recover_moved(world: RecoverWorld, orders: OrdersRead) -> list[str]:
         open_orders=orders,
         cash=CashRead(D(1), page(), True),
         since=close_of(DAYS[0]),
+        records=RecordsRead((), page(), True),
         fills=FillsRead((), page(), True),
     )
     flipped = replace(read, open_orders=replace(orders, orders=tuple(reversed(orders.orders))))
@@ -1568,7 +1609,7 @@ def test_3_what_two_captures_differ_in_is_named() -> None:
     )
     assert differences(read, later) == "These differ: the pages' bytes"
     assert differences(read, replace(read, since=read.since + MICRO)) == (
-        "These differ: the time the fills were asked from"
+        "These differ: the time the records and fills were asked from"
     )
     short = replace(read, cash=replace(read.cash, whole=False))
     assert differences(read, short) == "These differ: whether each came whole"
@@ -1881,7 +1922,7 @@ def calls_of(world: RecoverWorld) -> int:
 
 
 # A process that has just started, which reads its journal and its simulator's log whole.
-CALLS = 40
+CALLS = 41
 
 
 def test_7_the_calls_of_one_recover_are_counted() -> None:
@@ -2148,6 +2189,7 @@ def test_3_a_second_read_that_did_not_come_whole_halts() -> None:
         open_orders=OrdersRead((), page(), True),
         cash=CashRead(D(1), page(), True),
         since=close_of(DAYS[0]),
+        records=RecordsRead((), page(), True),
         fills=read,
     )
     assert _moved(first, replace(first, fills=replace(read, whole=False))) == [
@@ -2166,6 +2208,7 @@ def test_3_a_fill_gone_at_the_later_bound_itself_counts_as_a_move() -> None:
         open_orders=OrdersRead((), page(), True),
         cash=CashRead(D(1), page(), True),
         since=close_of(DAYS[0]),
+        records=RecordsRead((), page(), True),
         fills=replace(read, fills=read.fills[:1]),
     )
     at = read.fills[0].at

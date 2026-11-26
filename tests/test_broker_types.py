@@ -32,7 +32,7 @@ READS: dict[str, Callable[[tuple[ReceivedPage, ...], bool], object]] = {
     "orders": lambda pages, whole: OrdersRead((), pages, whole),
     "fills": lambda pages, whole: FillsRead((), pages, whole),
     "cash": lambda pages, whole: CashRead(Decimal(1), pages, whole),
-    "records": lambda pages, whole: RecordsRead(pages, whole),
+    "records": lambda pages, whole: RecordsRead((), pages, whole),
 }
 
 

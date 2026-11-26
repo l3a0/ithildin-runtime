@@ -113,9 +113,9 @@ class RecoverWorld(SimWorld):
         """One attempt at the newest decision, whose result the loop has not stored."""
         return (stage or self.stage())(Item(self.at, RECOVER_STAGE), Waits())
 
-    def recover(self) -> DecisionResult:
+    def recover(self, stage: RecoverStage | None = None) -> DecisionResult:
         """The stage for the newest decision, and its result stored as the loop stores it."""
-        result = self.attempt()
+        result = self.attempt(stage)
         self.store.put(result_key(DEPLOYMENT, self.run, self.at, RECOVER_STAGE), encode(result))
         self.result = result
         return result

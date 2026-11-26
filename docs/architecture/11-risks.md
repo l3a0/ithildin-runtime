@@ -52,6 +52,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [Who writes and reads a blob](08-crosscutting-concepts.md#who-writes-and-reads-a-blob)
 - [How a computed value is rounded](08-crosscutting-concepts.md#how-a-computed-value-is-rounded)
 - [The stress move's record](08-crosscutting-concepts.md#the-stress-moves-record)
+- [The ranges of a broker's records](08-crosscutting-concepts.md#the-ranges-of-a-brokers-records)
 - [The simulated broker's account](08-crosscutting-concepts.md#the-simulated-brokers-account)
 
 ## Prices in Quality requirements

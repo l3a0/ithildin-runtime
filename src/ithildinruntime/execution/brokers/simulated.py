@@ -250,9 +250,9 @@ class SimulatedBroker:
         return _found(order, now)
 
     def activities(self, since: datetime) -> RecordsRead:
-        """No record, until #151 gives a record a type."""
+        """No record: the simulated account books none, as Alpaca's paper account books none."""
         now, _, short = self._read("activities", lambda log: None)
-        return RecordsRead(*_page(b"[]", now, short))
+        return RecordsRead((), *_page(b"[]", now, short))
 
     def clock(self) -> datetime:
         return self._clock.now()

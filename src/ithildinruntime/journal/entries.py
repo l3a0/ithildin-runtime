@@ -27,6 +27,8 @@ from types import MappingProxyType
 
 from ithildinruntime.core import (
     BlobRef,
+    BrokerOrder,
+    BrokerRecord,
     CodecError,
     Fill,
     Halt,
@@ -34,6 +36,7 @@ from ithildinruntime.core import (
     Money,
     OrderIntent,
     Quantity,
+    RecordKind,
     StopState,
     TargetPortfolio,
     Verdict,
@@ -45,6 +48,7 @@ from ithildinruntime.core import (
 )
 
 __all__ = [
+    "EXPLAINING",
     "KINDS",
     "RAW_LIMIT",
     "AbandonedEntry",
@@ -57,14 +61,19 @@ __all__ = [
     "IntentEntry",
     "OpeningEntry",
     "PauseEntry",
+    "OutsideRecordEntry",
     "ReadEntry",
     "Record",
     "RejectedEntry",
     "SendingEntry",
+    "UnmatchedFillEntry",
+    "UnmatchedOrderEntry",
+    "UnmatchedRecordEntry",
     "VerdictEntry",
     "body_of",
     "is_writer",
     "kind_of",
+    "past_bounds",
     "record_of",
 ]
 
@@ -74,6 +83,9 @@ RAW_LIMIT = 65_536
 _WRITER = re.compile(r"[0-9a-f]{32}")
 # How much of a value from outside a halt shows, since its reason is stored and sent.
 _SHOWN = 80
+# The kinds of a broker's own record that move the book's cash with no halt: the closed list.
+# A kind may join it in a later release and never leave it, since every old entry still reads.
+EXPLAINING = frozenset({RecordKind.FEE, RecordKind.INTEREST, RecordKind.DIVIDEND})
 
 
 @dataclass(frozen=True)
@@ -240,6 +252,54 @@ class ExpiredEntry:
 
 
 @dataclass(frozen=True)
+class OutsideRecordEntry:
+    """A record the broker booked on its own, of a kind the closed list holds, which moves the cash.
+
+    `read` is the number of the `read` entry whose file holds it.
+    """
+
+    record: BrokerRecord
+    read: int
+
+
+@dataclass(frozen=True)
+class UnmatchedRecordEntry:
+    """A record of the broker's that no rule lets reach the book, kept as it came.
+
+    It moves nothing and holds the account. `reason` is the platform's own words
+    for why, and holds none of the broker's.
+    """
+
+    record: BrokerRecord
+    read: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class UnmatchedFillEntry:
+    """A fill the journal cannot give to any order it sent, kept as it came.
+
+    It moves nothing and holds the account. `reason` is the platform's own words.
+    """
+
+    fill: Fill
+    read: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class UnmatchedOrderEntry:
+    """An order the broker lists open under an id no `ack` mapped, kept as it came.
+
+    It moves nothing and holds the account. `reason` is the platform's own words.
+    """
+
+    order: BrokerOrder
+    read: int
+    reason: str
+
+
+@dataclass(frozen=True)
 class PauseEntry:
     """A run that stopped with no clean-shutdown record, journaled as a pause of the account.
 
@@ -275,6 +335,10 @@ Record = (
     | FillEntry
     | DisputedFillEntry
     | ExpiredEntry
+    | OutsideRecordEntry
+    | UnmatchedRecordEntry
+    | UnmatchedFillEntry
+    | UnmatchedOrderEntry
     | PauseEntry
 )
 
@@ -293,6 +357,10 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "fill": FillEntry,
         "disputed_fill": DisputedFillEntry,
         "expired": ExpiredEntry,
+        "outside_record": OutsideRecordEntry,
+        "unmatched_record": UnmatchedRecordEntry,
+        "unmatched_fill": UnmatchedFillEntry,
+        "unmatched_order": UnmatchedOrderEntry,
         "pause": PauseEntry,
     }
 )
@@ -336,6 +404,15 @@ def record_of(entry: JournalEntry) -> Record:
     return record
 
 
+def past_bounds(record: Record) -> tuple[str, ...]:
+    """Each bound of its kind's fields that a record is past, which `record_of` halts on.
+
+    A writer asks it before it builds an entry, so what the journal refuses is
+    said in one place.
+    """
+    return tuple(_past_bounds(record))
+
+
 def _past_bounds(record: Record) -> Iterator[str]:
     """Each bound of a kind's fields that this record is past."""
     raw = getattr(record, "raw", None)
@@ -357,6 +434,21 @@ def _past_bounds(record: Record) -> Iterator[str]:
             # A dispute moves nothing, so it keeps what came, such as a fill
             # sent again for zero shares.
             yield from _fill_ids(fill)
+        case OutsideRecordEntry(kept):
+            yield from _broker_ids(("the record's id", kept.record_id))
+            if kept.kind not in EXPLAINING:
+                yield f"the record {kept.record_id} is a {kept.kind}, which no rule lets move cash"
+            if kept.amount == 0:
+                yield f"the record {kept.record_id} moves no cash"
+            if kept.instrument is not None and not shows_instrument(kept.instrument):
+                yield f"the record {kept.record_id} names an instrument whose name is none"
+        case UnmatchedRecordEntry(kept):
+            yield from _broker_ids(("the record's id", kept.record_id))
+        case UnmatchedFillEntry(fill):
+            # It moves nothing, so it keeps what came, as a dispute does.
+            yield from _fill_ids(fill)
+        case UnmatchedOrderEntry(order):
+            yield from _broker_ids(("the broker's order id", order.broker_order_id))
         case ReadEntry():
             yield from _blobs(record.ref)
         case DecisionEntry():
