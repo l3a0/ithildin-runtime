@@ -1870,6 +1870,40 @@ Each entry that names an order is checked against the entries before it, at `rec
 7. An order moves only as [The life of an order](06-runtime.md#the-life-of-an-order) draws. `journal/orders.py` holds the one table of those moves, and a pair it does not hold halts naming the entry, the order and its state.
 8. An `abandoned` of an order that is `Sending` comes from the writer of its `sending`. No other process can know that nothing left, and after it the order is out of the book.
 
+##### A position's initial risk comes from the journal alone
+
+The order and fill record cannot be recaptured, and every reader of a result measures it against the risk it took, so the journal alone must be enough to rebuild that risk. [A result is measured against the risk it took](../design.md#a-result-is-measured-against-the-risk-it-took-and-size-answers-to-what-the-owner-can-bear) defines a position's initial risk as the largest worst loss journaled on an order the gate passed and the platform sent, from the order that takes the position off flat to the first point where every leg is flat and no order is working or in doubt. `journal/initial_risk.py` holds the one calculation of it, and `positions(journal)` reads an account's journal in these steps.
+
+1. It folds the entries from the first with the journal's own fold, so a position's legs are the derived position the gate reads, and an entry the fold refuses halts the read with the fold's reason.
+2. It keeps each approving verdict's worst loss under its order's client order id.
+3. A strategy is flat when it holds no share and has no order `Sending`, `InDoubt`, `Acknowledged` or `PartlyFilled`. An `Intended` or `Approved` order has no `sending`, so it keeps no position open. A live order in any other state halts the read, so a state a later release adds is read on purpose.
+4. A `sending` entry of an order of a flat strategy opens a position, and every `sending` entry inside a position counts that order with its verdict's worst loss. An order counts whatever came after its sending, so one the broker rejected, one abandoned by the writer of its sending, one that expired unfilled and one still in doubt all count, and one refused or abandoned before its sending never does.
+5. After each entry, a position whose strategy is flat closes at that entry. One still open at the journal's end has no closing entry.
+
+Initial risk is the largest figure a position counted, and missing where any one is not finite and positive. `core.Verdict` refuses an approval with no finite worst loss and an adding approval at or below zero, so only an approval that reduces can carry such a figure, and an entry hand-written with any other halts the read at the fold. The figure below is a C4 code diagram of what the read gives.
+
+```mermaid
+classDiagram
+    direction LR
+
+    class Position {
+        +str account
+        +str strategy
+        +int opened
+        +int closed
+        +list counted
+        +initial_risk() Decimal
+    }
+    class Counted {
+        +str client_order_id
+        +int sent
+        +Decimal worst_loss
+    }
+    Position o-- Counted
+```
+
+`opened` is the number of the `sending` entry that opened the position, and `closed` that of the entry after which it was flat, or none while it is open. `counted` holds each order in the order it was sent, so a report can name the order behind a missing figure. `initial_risk()` gives none where the figure is missing.
+
 #### The cost model writes a schedule rather than answering calls
 
 Portfolio construction needs the cost of each trade it considers. Each module is a process of its own, so a call to the cost model per candidate trade would cross a process boundary every time. Instead each strategy's cost stage, `cost/<strategy>`, writes one `CostSchedule` per decision, and portfolio construction can work out each trade's cost from it by calling `estimate` in its own process. No rule weighs a cost in slice 1, so portfolio construction reads the schedule and calls no `estimate` yet.
