@@ -390,6 +390,10 @@ def test_an_error_names_its_type_and_no_folder(
 def test_a_session_with_no_fault_says_so(lake: Path, tmp_path: Path) -> None:
     code, out, err = run(lake, tmp_path, "--normal-status", "Normal", "--through", str(PLAIN))
     assert (code, err) == (0, "") and "The read gave no fault at any age." in out
+    assert "No reason refuses a session at every step." in out
+    assert "| Reason | Count |" not in out
+    assert "so no session it covers is refused for an unstated kind.\n" in out
+    assert "covers the rest" not in out
 
 
 NOW = DECISION
