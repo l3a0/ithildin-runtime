@@ -217,7 +217,10 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
     assert "| 0.0001 | 5 of 5, 3 for the spread: too wide, USO 3 |" in out
     assert "| 0.0005 | 3 of 5 |" in out
     assert "| Reason | Count |" in out
-    assert "and a fault of the read once for each session." in out
+    assert (
+        "A reason a quote gives counts once for each instrument and session it refuses, and "
+        "each kind of fault of the read once for each session."
+    ) in out
     assert "the sessions refused for age include any that another reason refuses as well" in out
     assert qr.PLAN in out
     # 1 − 0.05 ** (1 / 5) is 0.4507, the share five sessions with none refused still allow.

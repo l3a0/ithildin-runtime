@@ -105,7 +105,8 @@ _STAND_IN = "a placeholder of the measurement's"
 OLD = "too old"
 UNSHARED = "no capture every instrument shares"
 WIDE = "too wide"
-# Two reasons the counts below name.
+# Two reasons the counts below name. A read with no fault holds a quote of every
+# instrument, so `MISSING` only guards a read that breaks that.
 MISSING = "no quote"
 AFTER = "a stamp after its capture"
 
@@ -323,7 +324,7 @@ def render(m: Measurement) -> str:
         f"decision, {_count(m, AGES[-1], SPREADS[-1], 0)} sessions are refused. These "
         "reasons refuse at every step, so the tables after this one show only the reasons "
         "each step lifts. A reason a quote gives counts once for each instrument and session it "
-        "refuses, and a fault of the read once for each session.",
+        "refuses, and each kind of fault of the read once for each session.",
         "",
         "**Table:** What refuses a session at every step, exploratory",
         "",
@@ -345,7 +346,7 @@ def render(m: Measurement) -> str:
         "",
         f"**Table:** Sessions refused at each age, with the spread at its widest step of "
         f"{SPREADS[-1]}, then those refused for age, with the reasons of age by instrument and "
-        "session, exploratory",
+        "session, or by session for a fault of the read, exploratory",
         "",
         "| Age, seconds | " + " | ".join(f"Refused at {w}" for w in MOMENTS) + " |",
         "| --- |" + " --- |" * len(MOMENTS),
@@ -407,7 +408,7 @@ def _cell(
 
 
 def _bound(n: int) -> str:
-    """The share a run of n sessions with none refused still allows, at 95%, as a percent."""
+    """The share n sessions with none refused still allow at 95%, rounded up to a tenth."""
     return f"{math.ceil((1 - 0.05 ** (1 / n)) * 1000) / 10:.1f}%"
 
 
