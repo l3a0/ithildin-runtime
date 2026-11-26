@@ -1,10 +1,16 @@
 name: Board
 
 # Copied into l3a0/ithildin-runtime from .github/workflows/board.yml in
-# l3a0/repo-template at commit 9c6d7e23d6381339c09102608c0958caca1401ce,
-# the merge of l3a0/repo-template#30. Apart from this paragraph, the only
+# l3a0/repo-template at commit fd8317e537a3d85423757c56c034ace623878a81,
+# the merge of l3a0/repo-template#68. Apart from this paragraph, the only
 # changes are the ref on the `uses:` line, pinned to that commit, and the
-# `with:` block naming this repository's tab icon. In the comments below,
+# `with:` block naming this repository's tab icon and setting two inputs,
+# whose own descriptions in the reusable workflow say exactly what each reads.
+# `settled-rollup` is on because ci.yml's `aws` job and infra.yml's `tofu apply
+# (test)` run only on main, so every pull request shows them as skipped, and
+# without it no pull request here ever read as green to the board.
+# `review-heading` is on so that a push after the last review round holds a
+# pull request out of the owner's column. In the comments below,
 # "here" and "the template itself" mean l3a0/repo-template. To take a later
 # fix, move the ref. The board's skills come from the owner's l3a0 Claude Code
 # plugin rather than from copies in this repository, and the Generator
@@ -28,8 +34,9 @@ name: Board
 # A label, a body edit or a comment starts a run through `issues` and
 # `issue_comment`. A "blocked by" link and a sub-issue start none, because
 # GitHub Actions lists no trigger for either, so the session that sets one
-# dispatches this workflow on main through workflow_dispatch. The
-# update-build-board skill names the command and the moments that need it.
+# dispatches this workflow on main through workflow_dispatch. The l3a0
+# plugin's update-build-board skill names the command and the moments that
+# need it.
 #
 # Every trigger below except workflow_dispatch fires only once this file is on
 # main, and every one of them runs on the default branch, which is the only
@@ -42,8 +49,9 @@ name: Board
 # pull_request_review run on a merge ref instead, and check_suite never fires
 # for a suite GitHub Actions created, so neither is here.
 #
-# The reusable workflow checks out no pull request's code and no step reads
-# the event payload, which its own header explains.
+# The reusable workflow checks out no pull request's code, no step reads the
+# event payload, and every action it runs is named by a commit SHA, which its
+# own header explains.
 on:
   issues:
   issue_comment:
@@ -95,6 +103,8 @@ jobs:
       pages: write
       id-token: write
       actions: read
-    uses: l3a0/repo-template/.github/workflows/build-board.yml@9c6d7e23d6381339c09102608c0958caca1401ce
+    uses: l3a0/repo-template/.github/workflows/build-board.yml@fd8317e537a3d85423757c56c034ace623878a81
     with:
       icon: .github/board/favicon.ico
+      settled-rollup: "true"
+      review-heading: Review complete
