@@ -68,6 +68,7 @@ from tests.support.trading import (
     stage_order,
     storage_of,
 )
+from tests.support.watched_broker import watch_submits
 from tests.test_storage_contract import Alarms
 
 __all__ = ["Day", "Died", "Dying", "Replay", "counted"]
@@ -285,12 +286,4 @@ def counted(monkeypatch, replay: Replay) -> None:
     cannot show a submit made while a later decision settles. This counts what
     the platform asked.
     """
-    from ithildinruntime.execution.brokers.simulated import SimulatedBroker
-
-    real = SimulatedBroker.submit
-
-    def submit(self, intent):
-        replay.asked(intent.client_order_id)
-        return real(self, intent)
-
-    monkeypatch.setattr(SimulatedBroker, "submit", submit)
+    watch_submits(monkeypatch, before=lambda intent: replay.asked(intent.client_order_id))

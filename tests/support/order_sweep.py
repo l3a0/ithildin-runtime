@@ -72,6 +72,10 @@ ALLOWED: dict[tuple[str, str], frozenset[str] | None] = {
     ("tests/support/relay_broker.py", "call"): frozenset({"submit"}),
     ("tests/test_broker_cases.py", "call"): frozenset({"cancel", "find_order"}),
     ("tests/test_simulated_log.py", "call"): frozenset({"cancel", "find_order"}),
+    # A watcher of the simulated broker's submit, which calls it through once a call.
+    ("tests/support/watched_broker.py", "call"): frozenset({"submit"}),
+    # A list read that breaks the journal first, handed to recover in place of the broker's.
+    ("tests/test_recover.py", "call"): frozenset({"find_order"}),
     ("tests/support/journals.py", "call"): frozenset({"_build", "_append"}),
     ("tests/test_journal", "call"): frozenset({"_build", "_append"}),
     # The receive loop's three asyncio tasks, by the names it holds them under.

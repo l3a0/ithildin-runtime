@@ -28,12 +28,12 @@ from ithildinruntime.core import (
     output_key,
 )
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
-from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from ithildinruntime.execution.order_path import OrderPath
 from ithildinruntime.journal import DecisionEntry, ReadEntry
 from tests.support import gates
 from tests.support.send_world import CHAN, SendWorld, strategy
 from tests.support.sim_world import DEPLOYMENT, FULL, GLD, USO, after, close_of
+from tests.support.watched_broker import watch_submits
 
 DAYS = [FULL, after(FULL), after(FULL, 2)]
 CLOSES = {GLD: {day: 100 + n for n, day in enumerate(DAYS)}, USO: {day: 20 for day in DAYS}}
@@ -835,15 +835,12 @@ def test_a_leg_the_broker_took_whose_ack_the_journal_lost_is_never_called_unsent
     made = world()
     made.ready(close_of(FULL), PAIR)
     first, second = gates_names(made)
-    real = SimulatedBroker.submit
 
-    def submit(self, intent):
-        answer = real(self, intent)
+    def refuse(intent) -> None:
         if intent.client_order_id == second:
             made.store.refuse(("*", "journal/"))
-        return answer
 
-    monkeypatch.setattr(SimulatedBroker, "submit", submit)
+    watch_submits(monkeypatch, after=refuse)
     result = made.send_attempt()
     reason = result.halt.reason
     assert made.submits() == [first, second]
