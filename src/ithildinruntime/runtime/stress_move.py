@@ -12,7 +12,9 @@ and each `--seam` a session a new series starts on. How it reads, in order.
    stress move. So each leg is read alone over the two sessions that end at its
    start, where data's own check halts if the lake lists an earlier partition.
 2. **Each series' span.** Each span between two seams is one read, so no read
-   holds two series, and data halts on a seam nobody named.
+   holds two series. Data halts on a seam nobody named, and this refuses the
+   one change data passes, from Schwab's import to captured bars, until it is
+   named too.
 3. **The moves**, over the spans joined, so a seam one leg does not change at
    leaves nothing out on it.
 
@@ -140,6 +142,7 @@ def measure(
         begun = [leg for leg, start in starts.items() if start <= last]
         reading = read(begun, last, len(load_sessions().between(first, last)))
         for leg in begun:
+            _one_series(leg, reading.snapshot.bars[leg][DAILY])
             bars[leg].extend(reading.snapshot.bars[leg][DAILY])
             flagged += (
                 FlaggedBar(leg, flag.session, flag.field, flag.rule, "")
@@ -234,6 +237,21 @@ def _read(
     if reading.halts:
         raise Halt("; ".join(reading.halts))
     return reading
+
+
+def _one_series(leg: InstrumentId, held: Sequence[Bar]) -> None:
+    """Refuse a read of one span that holds two series, as at a seam nobody named.
+
+    Data halts on such a read, but for the one change its rule passes because
+    the two sit on one scale. The span is still to be named, so this refuses
+    that one too.
+    """
+    for one, two in itertools.pairwise(held):
+        if series_of(one) != series_of(two):
+            raise Halt(
+                f"{leg}'s bars for {one.session.isoformat()} and {two.session.isoformat()} are "
+                f"of two series, {series_of(one)} and {series_of(two)}, at a seam nobody named"
+            )
 
 
 def _changes(bars: Sequence[Bar], seam: date) -> bool:

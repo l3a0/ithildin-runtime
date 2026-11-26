@@ -45,9 +45,10 @@ erDiagram
         datetime decision_at
         bool provisional
         string segments "key, S3 version and SHA-256 of each"
+        string partitions "each sealed quotes partition's vintage_id"
         string bars "each with its vintage_id"
         string quotes "every Quote field"
-        string rows "every other row read, as text"
+        string rows "every other row the cut kept, as text"
         string faults "each reason the read failed"
         string quotes_read_at "the worker's clock, or null"
         string clock "the reading the decision was judged by"
@@ -239,7 +240,7 @@ Run records serve two purposes. They are how the workers pass work to each other
 
 Run records hold `SNAPSHOT`, `ACCOUNT_FILE`, `SIGNAL`, `DECISION_RESULT` and `OUTPUT_FILE`, as blobs in S3 under the run's prefix, each written once at a key fixed by the run, the stage, the decision and, for an output file, its name.
 
-- A snapshot lists the marketlake bars one decision read, by partition, each with its checksum in the bar's `vintage_id`. A read before sealing is marked provisional, and the snapshot then names each segment opened with its checksum and holds every `Quote` field, every other row read and each reason the read failed.
+- A snapshot lists the marketlake bars one decision read, by partition, each with its checksum in the bar's `vintage_id`. A read before sealing is marked provisional, and the snapshot then names each segment opened with its checksum. A read of the sealed day names each quotes partition by its `vintage_id` instead. Either holds every `Quote` field, every other row the cut kept and each reason the read failed.
 - A signal record holds a value the alpha model fitted, such as the hedge ratio or the z-score, with the first and last session whose prices it read. A strategy's signals for one decision are the entries of one file, `signals.json`, beside `forecast.json`. The file's header names the snapshot by its key and SHA-256, and the snapshot's bars name their vintage, so each value says which window of which vintage it was fitted on. A signal of a decision before the close also reads one price of each leg that is no bar's, the midpoint of the leg's quote, whose bid and ask the snapshot holds as received, beside every segment it opened.
 - Each blob's header names the blobs it came from, and a halt says why a decision stopped.
 

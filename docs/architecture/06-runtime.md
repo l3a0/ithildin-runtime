@@ -877,7 +877,7 @@ sequenceDiagram
         X->>F: releases the account's lease
     and
         D->>ML: lists the day's segments and reads the newest
-        ML-->>D: answers with no row captured by the decision
+        ML-->>D: answers with no row captured<br/>15 seconds before the decision
         D->>F: stores the snapshot, then a halt as data's result,<br/>naming each prefix and what it listed
     end
     F-->>X: sends an event: data's result is a halt
@@ -893,8 +893,8 @@ The restart runs the same first phase as any trading day.
 1. On starting, execution settles the order the dead worker left half-sent, by
    asking the broker about it rather than sending it again, and halts that old
    decision, as [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
-2. Data finds no row captured by the decision time in the segments marketlake
-   has uploaded, stores its snapshot and halts, so execution's recover stage,
+2. Data finds no row captured by the cut, 15 seconds before the decision time,
+   in the segments marketlake has uploaded, stores its snapshot and halts, so execution's recover stage,
    which waits for data's result, halts too.
 
 The order in which the processes come up no longer matters. Execution may

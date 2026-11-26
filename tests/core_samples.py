@@ -151,6 +151,8 @@ def sample(hint: Any, *, empty: bool = False, depth: int = 0) -> Any:
         if hint is core.Snapshot:
             # A snapshot that read no quotes is not provisional, and says when it read none.
             fields["provisional"] = not empty
+            # One that read segments names no sealed partition.
+            fields["partitions"] = ()
         return hint(**fields)
     if isinstance(hint, type) and issubclass(hint, Enum):
         return list(hint)[-1]

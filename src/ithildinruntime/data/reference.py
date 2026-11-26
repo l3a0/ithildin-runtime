@@ -47,6 +47,7 @@ __all__ = [
     "PRICE_KINDS",
     "QUOTE_KINDS",
     "QUOTE_SOURCE",
+    "SCHWAB_IMPORT",
     "UNSTATED",
     "Kind",
     "KindRow",
@@ -69,6 +70,9 @@ QUOTE_KINDS = Path(__file__).with_name("quote_kinds.csv")
 CAPTURE_SOURCE = "marketlake:capture"
 # The source marketlake's captured quotes read as in the quote-kind contract.
 QUOTE_SOURCE = "marketlake:quotes"
+# The source marketlake names on a row it imported from Schwab's daily candles
+# (l3a0/marketlake#951), `adjusted` as of the Eastern date of the fetch.
+SCHWAB_IMPORT = "schwab:pricehistory"
 
 
 @dataclass(frozen=True)

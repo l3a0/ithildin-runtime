@@ -1,6 +1,6 @@
-"""The data module: daily bars from marketlake's sealed partitions, and quotes from unsealed ones.
+"""The data module: daily bars from marketlake's sealed partitions, and a decision's quotes.
 
-#5 and #100 build it. docs/architecture/05-building-blocks.md places it, and its
+#5, #100 and #132 build it. docs/architecture/05-building-blocks.md places it, and its
 reasoning lives in docs/design.md. It reads marketlake through `core.Bucket`,
 which the data worker's entry point in `runtime` builds, so this package
 imports no adapter and every mode runs the same code.
@@ -12,7 +12,9 @@ imports no adapter and every mode runs the same code.
 - `source` is the point-in-time read, `LakeSource`, which implements
   `core.DataSource`.
 - `segments` reads one decision's quotes from the capture segments of a day
-  marketlake has not sealed.
+  marketlake has not sealed, and `sealed` reads them from a day it has.
+- `cycles` holds the walk both reads share, the 15-second cut, the pick of a
+  capture and its conversion to a `Quote`.
 - `reference` reads the security master and the two kind contracts, the three
   tracked files beside it.
 - `spikes` flags a price judged wrong, beside the price.
@@ -23,9 +25,9 @@ It imports only the marketlake submodules the import rule names:
 and `lake.config`.
 """
 
+from .cycles import QuoteLimits
 from .mirror import Mirror
 from .reference import SecurityMaster, load_master, load_price_kinds, load_quote_kinds
-from .segments import QuoteLimits
 from .settings import data_settings
 from .source import DAILY, DataSettings, LakeSource, Reading
 from .spikes import largest_multiple, spike_flags

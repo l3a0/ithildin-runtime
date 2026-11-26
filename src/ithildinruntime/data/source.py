@@ -56,17 +56,22 @@ stored, for one of three reasons that `_bar_halts` finds in the bars alone.
 2. Its price kind is unstated.
 3. It is of another series than the bar before it in its own instrument. Two
    series can be on two scales, and every reader of the bars would take the
-   step between them for a move of the market. docs/design.md's `#### A
-   lookback that crosses a change of series` says why, and what it costs.
+   step between them for a move of the market. One change passes, from
+   Schwab's import to captured bars on the session the import is adjusted to,
+   because the two are read as one scale there. docs/design.md's `#### A lookback
+   that crosses a change of series` says why, and what each costs.
 
 A decision inside its session, at or after the open and before the close, reads
-a quote of every instrument too, once its bars are read, from the capture
-segments `segments` opens. Such a snapshot is provisional, whatever the segments
-held. A decision at or after the close reads none. An instrument with no written
-maximum age and spread halts before either bucket is called, because a quote
-read under none is stale. A fault in the read of the quotes never takes the
-snapshot's place. `_quote_halts` gives each one, and each reason a quote cannot
-be read, once the snapshot is stored.
+a quote of every instrument too, once its bars are read and their ledgers
+recorded. Where the manifest lists the quotes partition of any instrument for
+the session's day, `sealed` reads the sealed day. Otherwise `segments` reads the
+capture segments, and that snapshot is provisional, whatever the segments held.
+Both cut 15 seconds before the decision, through `cycles`. A decision at or
+after the close reads none. An instrument with no written maximum age and spread
+halts before either bucket is called, because a quote read under none is stale.
+A fault in the read of the quotes never takes the snapshot's place.
+`_quote_halts` gives each one, and each reason a quote cannot be read, once the
+snapshot is stored.
 
 After the last answer the read waits on, the source takes the clock's reading,
 which the snapshot holds. `core.clock_faults` judges it, and its faults come
@@ -101,6 +106,7 @@ from ithildinruntime.core import (
     CodecError,
     Halt,
     InstrumentId,
+    Series,
     Session,
     Snapshot,
     SpikeFlag,
@@ -117,10 +123,12 @@ from ithildinruntime.core import (
 from ithildinruntime.core.names import is_unstated
 from ithildinruntime.core.sessions import SessionTable
 
-from .mirror import MANIFEST, Checked, LakeRoot, Mirror
+from .cycles import CAPTURE_LAG, QuoteLimits, QuoteRead
+from .mirror import MANIFEST, Checked, LakeRoot, Mirror, vintage_id
 from .reference import (
     CAPTURE_SOURCE,
     QUOTE_SOURCE,
+    SCHWAB_IMPORT,
     PriceKinds,
     QuoteKinds,
     SecurityMaster,
@@ -128,7 +136,8 @@ from .reference import (
     load_price_kinds,
     load_quote_kinds,
 )
-from .segments import QuoteLimits, QuoteRead, read_quotes
+from .sealed import is_listed, read_sealed
+from .segments import read_quotes
 from .spikes import (
     CONTRADICT,
     MOVE,
@@ -214,6 +223,10 @@ class Reading:
     download_seconds: float
     segments_listed: int
     segments_opened: int
+    # Which read of quotes it was, `None` where the decision read none.
+    sealed: bool | None
+    # The calls of `load_quotes` a sealed read made.
+    quote_calls: int
     quote_seconds: float | None
     cycle_age: timedelta | None
 
@@ -275,7 +288,8 @@ class LakeSource:
         `core.DataSource` returns a snapshot alone, so a caller of this method
         never sees `Reading.halts`. A clock past a bound, a missing, stale or
         unstated input, a bar whose prices contradict each other, two bars of one
-        instrument that are of two series, or a quote that cannot be read,
+        instrument that are of two series, but for the one change `_one_scale`
+        passes, or a quote that cannot be read,
         therefore raises here rather than come back as a snapshot that reads as
         usable.
         Data's stage calls `read`, which stores the snapshot before it halts.
@@ -343,9 +357,10 @@ class LakeSource:
                 bars=bars,
                 quotes=quoted.quotes if quoted else {},
                 status=status,
-                provisional=quoted is not None,
+                provisional=quoted is not None and not quoted.sealed,
                 flags=flags,
                 segments=quoted.segments if quoted else (),
+                partitions=quoted.partitions if quoted else (),
                 ledgers=dict(sorted(ledgers.items())),
                 rows=quoted.rows if quoted else {},
                 faults=quoted.faults if quoted else (),
@@ -360,6 +375,8 @@ class LakeSource:
                 seconds,
                 segments_listed=quoted.listed if quoted else 0,
                 segments_opened=len(snapshot.segments),
+                sealed=quoted.sealed if quoted else None,
+                quote_calls=quoted.calls if quoted else 0,
                 quote_seconds=quote_seconds,
                 cycle_age=quoted.cycle_age if quoted else None,
             )
@@ -374,28 +391,44 @@ class LakeSource:
         report: Callable[[], None],
     ) -> tuple[QuoteRead, float]:
         start = self._timer.monotonic()
-        quoted = read_quotes(
-            self._live,
-            root.path,
-            session,
-            decision_at,
-            {i: self._settings.quotes[i] for i in self._settings.instruments},
-            master=self._master,
-            kinds=self._quote_kinds,
-            clock=self._clock,
-            report=report,
-        )
+        limits = {i: self._settings.quotes[i] for i in self._settings.instruments}
+        given: dict[str, Any] = {
+            "master": self._master,
+            "kinds": self._quote_kinds,
+            "clock": self._clock,
+            "report": report,
+        }
+        if is_listed(root, session.day, self._settings.instruments, self._master):
+            quoted = read_sealed(self._mirror, root, session, decision_at, limits, **given)
+        else:
+            quoted = read_quotes(self._live, root.path, session, decision_at, limits, **given)
         seconds = self._timer.monotonic() - start
         age = quoted.cycle_age
-        log.info(
-            "data opened %d of %d segments listed for the decision at %s, in %.3f seconds, and the "
-            "newest capture its instruments share was %s",
-            len(quoted.segments),
-            quoted.listed,
-            decision_at.isoformat(),
-            seconds,
-            "not found" if age is None else f"{age.total_seconds():.3f} seconds old",
-        )
+        aged = "not found" if age is None else f"{age.total_seconds():.3f} seconds old"
+        cut = (decision_at - CAPTURE_LAG).isoformat()
+        if quoted.sealed:
+            log.info(
+                "data read the sealed day for the decision at %s, from %s, with the cut at %s, "
+                "in %d calls of load_quotes and %.3f seconds, and the newest capture its "
+                "instruments share was %s. A decision before the seal may have read another row",
+                decision_at.isoformat(),
+                ", ".join(quoted.partitions) or "no partition linked",
+                cut,
+                quoted.calls,
+                seconds,
+                aged,
+            )
+        else:
+            log.info(
+                "data read segments for the decision at %s, opening %d of %d listed, with the cut "
+                "at %s, in %.3f seconds, and the newest capture its instruments share was %s",
+                decision_at.isoformat(),
+                len(quoted.segments),
+                quoted.listed,
+                cut,
+                seconds,
+                aged,
+            )
         return quoted, seconds
 
     # The calendar
@@ -572,7 +605,7 @@ class LakeSource:
             volume=volume,
             basis=str(row.get("basis")),
             origin=origin,
-            vintage_id=f"{key}#sha256={checked.sha256}#version={checked.version}",
+            vintage_id=vintage_id(checked),
             end=end,
             interval=DAILY,
             first_seen=read_at,
@@ -640,7 +673,8 @@ def judge(
     3. an instrument that is not fresh, or is fresh with no bar;
     4. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
        whose prices contradict each other, one of unstated kind, and one of
-       another series than the bar before it in its own instrument;
+       another series than the bar before it in its own instrument, but for
+       the one change `_one_scale` passes;
     5. each stored flag that is not the move rule's and that this release's
        rules do not find in the bars and the quotes. Within one release they
        raise every flag stored beside them, so such a flag means the record is
@@ -791,13 +825,34 @@ def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
 
 
 def _changed(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
-    """A halt for each two consecutive bars of two series, which can be on two scales."""
+    """A halt for each two consecutive bars of two series, which can be on two scales.
+
+    One pair is let through, which `_one_scale` names.
+    """
     return [
         f"{instrument}'s bars for {one.session.isoformat()} and {two.session.isoformat()} are of "
         f"two series, {series_of(one)} and {series_of(two)}"
         for one, two in itertools.pairwise(bars)
-        if series_of(one) != series_of(two)
+        if series_of(one) != series_of(two) and not _one_scale(one, two)
     ]
+
+
+def _one_scale(one: Bar, two: Bar) -> bool:
+    """Whether two consecutive bars of two series are the one change read as one scale.
+
+    The earlier bar is imported from `SCHWAB_IMPORT`, `adjusted` as of the later
+    bar's session, and the later bar is captured. Schwab's candles come back on
+    the scale of the day they are fetched, on the two forward splits
+    l3a0/marketlake#951 measured, so the import is on the scale of that
+    session, and a captured bar is as traded on it. docs/design.md's
+    `#### A lookback that crosses a change of series` says what it costs.
+    """
+    return (
+        one.origin == _IMPORTED
+        and series_of(one) == Series("adjusted", SCHWAB_IMPORT, two.session)
+        and two.origin == _CAPTURED
+        and series_of(two) == Series("raw", None, None)
+    )
 
 
 def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime | None]:

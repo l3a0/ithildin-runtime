@@ -97,6 +97,8 @@ class Decided(NamedTuple):
     snapshot: Snapshot
     alpha: DecisionResult
     forecast: Forecast | None
+    # Data's result when its stage is handed the same decision again, if it was.
+    redelivered: DecisionResult | None = None
 
 
 def decide(
@@ -106,12 +108,19 @@ def decide(
     *,
     kinds: PriceKinds = KINDS,
     mids: Mapping[str, Decimal] | None = None,
+    walks: Mapping[str, Mapping[date, Decimal]] = WALKS,
+    redeliver: bool = False,
 ) -> Decided:
-    """Run data's stage and then alpha's for the decision at close−20 of `day`."""
+    """Run data's stage and then alpha's for the decision at close−20 of `day`.
+
+    Each quote's midpoint is the leg's close in `walks` on `day`, unless `mids`
+    names another. With `redeliver`, data's stage is then handed the decision
+    again, which judges the stored snapshot.
+    """
     session = made.TABLE.session(day)
     at = session.close - EARLY
     live = tmp_path / "live"
-    for ticker, walk in WALKS.items():
+    for ticker, walk in walks.items():
         mid = (mids or {}).get(ticker, walk[day])
         bid, ask = float(mid - Decimal("0.01")), float(mid + Decimal("0.01"))
         row = lakes.quote_row(ticker, at - MINUTE, bid=bid, ask=ask, last=bid)
@@ -148,7 +157,8 @@ def decide(
             (forecast,) = decode_output(
                 (tmp_path / "store" / ref.key).read_bytes(), Forecast
             ).entries
-    return Decided(data, snapshot, alpha, forecast)
+    again = stage(Item(at, "data"), Reports()) if redeliver else None
+    return Decided(data, snapshot, alpha, forecast, again)
 
 
 @pytest.fixture(scope="module")

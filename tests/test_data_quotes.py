@@ -80,6 +80,22 @@ HASHES = Table(stages=(DATA_ROW,), strategies=(CHAN,)).hashes_for("data")
 
 
 @pytest.fixture
+def lake(lake: Path) -> Path:
+    """The test's lake, which lists the sealed quotes of the session before the fixture day.
+
+    No read of the fixture day takes another day's partition, so every test here
+    holds beside it.
+    """
+    from tests.support.sealed import close_row, partition, row
+
+    before = TABLE.session(LAST)
+    for ticker in ("GLD", "USO"):
+        minute = before.close - 20 * MINUTE
+        partition(lake, ticker, row(ticker, minute), close_row(ticker, before.close), day=LAST)
+    return lake
+
+
+@pytest.fixture
 def live(lake: Path) -> Path:
     """The folder beside the lake, with two cycles of both instruments in it."""
     root = lake.with_name(lake.name + "-live")
@@ -157,7 +173,7 @@ def test_7_close_minus_20_reads_its_quotes_and_its_snapshot_names_each_segment(
     assert result.halt is None and alarms.reasons == []
     snap = stored(tmp_path)
     data = (tmp_path / "store" / key()).read_bytes()
-    assert decode_output(data, Snapshot).header.format == 3
+    assert decode_output(data, Snapshot).header.format == 4
     assert snap.provisional is True
     held = [
         FolderBucket(live).read(key_of(ticker, back))
@@ -548,9 +564,12 @@ def test_33_a_reading_and_the_log_carry_the_load_and_the_lag(
     assert reading.quote_seconds == 1.5
     assert reading.cycle_age == timedelta(seconds=59)
     (line,) = [r.getMessage() for r in caplog.records if "segments" in r.getMessage()]
+    assert (reading.sealed, reading.quote_calls) == (False, 0)
+    cut = (AT - timedelta(seconds=15)).isoformat()
     assert line == (
-        f"data opened 10 of 16 segments listed for the decision at {AT.isoformat()}, in 1.500 "
-        "seconds, and the newest capture its instruments share was 59.000 seconds old"
+        f"data read segments for the decision at {AT.isoformat()}, opening 10 of 16 listed, "
+        f"with the cut at {cut}, in 1.500 seconds, and the newest capture its instruments share "
+        "was 59.000 seconds old"
     )
 
 
@@ -672,9 +691,9 @@ def test_31_the_judge_names_an_absent_quote_only_where_the_decision_reads_one(
         "USO has no quote in the snapshot",
     )
     # A capture that says it is not provisional is judged by its decision all the same.
-    assert judge(
-        replace(bare, provisional=False, quotes_read_at=None), (GLD, USO), measured=False
-    ) == ("USO has no quote in the snapshot",)
+    assert judge(replace(bare, provisional=False, segments=()), (GLD, USO), measured=False) == (
+        "USO has no quote in the snapshot",
+    )
     at_close = source(lake, tmp_path).read(TABLE.session(LAST).close).snapshot
     assert judge(at_close, (GLD, USO), measured=False) == ()
 

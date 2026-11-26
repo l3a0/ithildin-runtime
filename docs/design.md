@@ -318,7 +318,10 @@ module table, and three adapters at its edges.
    marketlake's S3 bucket in shadow, paper and live. One `DataSource` inside `data`
    reads the lake through the same mirror, the segments straight from the live bucket,
    and both through the same marketlake readers, so only the buckets it is handed
-   change.
+   change. The manifest a decision downloads picks between marketlake's two readers
+   of a day's quotes, the sealed day's and the segments', with no branch on the mode.
+   One walk, one 15-second cut and one conversion to a `Quote` serve both, and a test
+   that reads one day both ways, before and after its seal, holds them together.
 2. **The clock**, which steps through history in a backtest and follows the
    wall clock otherwise.
 3. **The broker**, which is a simulator in a backtest and in shadow running, a
@@ -688,7 +691,7 @@ SHA-256, the release's digest and the hash of each strategy's configuration the 
 checks each input's SHA-256 against the header that named it and halts on
 a mismatch. Nothing irreversible rests on an upstream blob alone: execution
 journals the whole target portfolio it acts on, in a journal entry, before
-its first send. Apart from the map above, and data's snapshot file at format 3, which no release in an environment has written at format 1 or 2, each release writes only formats
+its first send. Apart from the map above, and data's snapshot file at every format before the first release that runs a worker in an environment, which no environment holds, each release writes only formats
 the release before it can read, so pinning back to the release before still reads what storage
 holds. A rollback can skip a release shadow never ran, so `ithildin pin set` and the VM's pin check both refuse a digest that cannot read the newest format already stored for some kind in that environment, which every header names. A worker killed by a signal or a crash writes nothing about itself
 as it dies. The host that runs it, systemd on the VM today, records the
@@ -2490,23 +2493,43 @@ are of two series, whether or not their scales agree. Each such pair gives one
 reason, which names the instrument, both sessions and both series. The snapshot
 is stored first. Two instruments may be of two series.
 
+One change passes, because its two series are read as one scale. Schwab's daily
+candles come back adjusted for splits to the day they are fetched, on the two
+forward splits [l3a0/marketlake#951](https://github.com/l3a0/marketlake/issues/951)
+measured, so
+marketlake's import of them is `adjusted` from `schwab:pricehistory`, and its
+`source_as_of` is the Eastern date of the fetch. Where that date is the session
+of the captured bar after the import, the import is on that session's scale and
+the captured bar is as traded on it. So the pair passes when both of these hold.
+
+1. The earlier bar is imported, `adjusted` from `schwab:pricehistory`, as of the
+   later bar's session.
+2. The later bar is captured, `raw` with no source and no date.
+
+Every other change halts, including an import from another source or as of
+another date, a later bar that is imported or `adjusted`, and an earlier bar
+that is `raw`. Another source is left out because marketlake's reader says
+`source_as_of` is the date a source recorded its values, which says nothing of
+a scale. For GLD and USO the fetch was on 2026-11-02, the first session capture
+covers, and the import's row in `data/price_kinds.csv` states its kind for
+2026-09-04 to 2026-10-30.
+
 The halt sits in data because the alpha model is not the only reader of the bars.
 Portfolio construction sizes on them, and V, the account's value, and the day's
 loss are worked out from them, so each would take the step between two scales for
 a move of the market.
 
-The price is six things.
+The price is seven things.
 
 1. Every decision whose lookback crosses a change halts, which is 59 sessions of
-   decisions at a lookback of 60, and a change whose scales agree is no exception.
-   With that import, GLD and USO change at 2012-04-10, at 2026-09-04, where an
-   import from Schwab takes over, and at 2026-11-02, where capture begins. For the
-   last two, a decision on them at close−20 halts on this from 2026-09-08 to
-   2027-01-28. On 2027-01-29 a lookback first holds captured bars alone, which this
-   halt passes. The price-kind row for captured bars states their kind to its last
-   session, and the alpha model reads them. [#175](https://github.com/l3a0/ithildin-runtime/issues/175)
-   says how a mixed one is, and may lift this halt for a change it can show keeps
-   the scale.
+   decisions at a lookback of 60, and a change whose scales agree is no exception
+   unless it is the pair above. With that import, GLD and USO change at
+   2012-04-10, at 2026-09-04, where an import from Schwab takes over, and at
+   2026-11-02, where capture begins. A decision on them at close−20 halts on the
+   change at 2026-09-04 from 2026-09-08 to 2026-11-30. The change at 2026-11-02 is
+   the pair above, so from 2026-12-01 a lookback holds Schwab's import and
+   captured bars alone, which this halt passes. The price-kind rows of both state
+   their kind, and the alpha model reads them.
 2. A position held when a later change arrives is held through those decisions.
    No strategy exit goes out, and the day's loss is not tested, because the send
    stage tests it only on a decision that reaches it. Worst loss covers only the
@@ -2525,7 +2548,7 @@ The price is six things.
    no halt on the prices stops one. The rule that [a split reads as neither a gain nor a
    loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
    says what that costs on shadow and paper, and
-   [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds the split record
+   [#189](https://github.com/l3a0/ithildin-runtime/issues/189) holds the split record
    that ends it. Nor does this halt compare bars of two
    snapshots, such as a mark with a V worked out from an earlier one, which
    [#183](https://github.com/l3a0/ithildin-runtime/issues/183) holds.
@@ -2534,6 +2557,23 @@ The price is six things.
    the spike multiple is the only check across the two. It alerts, halts nothing, and
    misses a step within the written multiple, which the signal, the size and the
    day's loss read all the same.
+7. The pair above passes on a source, a date and an origin, and nothing measures
+   its scale. How soon Schwab restates its candles after an ex-date is
+   unmeasured, and so is a reverse split, so for a ticker imported later a split
+   that went ex on the fetch's own day, before Schwab restated, would leave the
+   import and capture on two scales. The decision would read the step as a
+   move. The move rule flags the step only where it is past the written spike
+   multiple of the standard deviation of the lookback's returns, so a smaller
+   step raises no flag. How large a step that is depends on the instrument,
+   and `tests/test_data_one_scale.py` pins one of 5 percent that raises none.
+   The pair passes for any ticker, and what bounds it is the import's
+   price-kind row, which covers 2026-09-04 to 2026-10-30 alone. A later
+   import's bars outside those sessions halt on an unstated kind until a
+   reviewed row covers them, so a new `schwab:pricehistory` row extends the
+   pass to every ticker it covers.
+   [#189](https://github.com/l3a0/ithildin-runtime/issues/189) builds the record of
+   splits that catches it. For GLD and USO a second vendor's prices agree
+   across 2026-11-02 in an exploratory comparison, as the import's row says.
 
 #### What the spike multiple is measured against
 
@@ -4344,6 +4384,12 @@ This section lists every decision made on the project, oldest first, one heading
 16. The owner ruled that a time server's last answer may be 300 seconds old, answering "Yes to both" to whether to rule both time-check proposals of [#134](https://github.com/l3a0/ithildin-runtime/issues/134) as recommended. The metric put to the owner was how far a clock can drift unseen, which is 0.15 seconds over 300 at the 500 parts per million Linux allows, and how long a paused virtual machine can read clean while no server answers. Turned down: a longer age, under which the clock may drift further unseen and drift alone uses the whole one-second bound at 2,000 seconds, and a shorter one, under which a shorter outage halts. The price is that a 300-second outage of either server halts each decision it covers, exits included. [#134](https://github.com/l3a0/ithildin-runtime/issues/134#issuecomment-7174148495) Governs: `#### What halts on a reading`, `#### What nothing here can see` and `#### What measuring the clock costs` in architecture/03-context-and-scope.md, `## Data flow` in architecture/06-runtime.md, and `### Time comes from one clock, and order from sequence numbers` in design.md.
 17. The owner ruled that both time servers have to be fresh and within the bound, in the same answer as entry 16. The recommendation the owner accepted was both, until shadow's record of failures, on [#166](https://github.com/l3a0/ithildin-runtime/issues/166), says what it costs. The metric put to the owner was whether one forged or broken answer can hide a wrong clock. With both required, one can hide only what neither of the machine's clocks shows, such as a pause of the virtual machine, until the other server's next answer, or for 300 seconds without one. Both forged hide any fault. Turned down: either server being enough, or a vote, under which one such answer can hide any wrong clock while the other server is down. The price is a halt on one server's outage while the other still answers. [#134](https://github.com/l3a0/ithildin-runtime/issues/134#issuecomment-7174148495) Governs: `#### What halts on a reading`, `#### What nothing here can see` and `#### What measuring the clock costs` in architecture/03-context-and-scope.md, `## Data flow` in architecture/06-runtime.md, and `### Time comes from one clock, and order from sequence numbers` in design.md.
 18. The owner ruled that the first record of `chan_bollinger`'s stress move may end at 2026-09-03, the last session of Yahoo's two files, answering "Yes, end there". The metric was whether any two-session move from 2026-09-04 to 2026-11-24, or across the changes of series at 2026-09-04 and 2026-11-02, passes m. None does: the largest is 8.46%, against an m of 34.70%, exploratory, and assuming the Schwab import's and capture's closes are comparable closes on the same scale. Turned down: waiting until the kinds of those bars are stated, which leaves no m and so no paper order. The price is a new record before 2027-09-03, since a record's age is at most 365 days. [#137](https://github.com/l3a0/ithildin-runtime/issues/137#issuecomment-7170106344) Governs: the record in `src/ithildinruntime/core/stress_moves.toml` and the row for `core/stress_moves.toml` in design.md's `## Configuration` table.
+19. The owner ruled that a live decision also leaves out a capture from its last 15 seconds, so a backtest and live read the same one, and that the ruling stands at its real price. The owner's words were "Yes, both", to the question "Should a live decision also leave out captures from its last 15 seconds?", and then "Yes, it stands", to the question "Does your yes to the live 15-second cut stand, at about 60 seconds older?". The second question was asked because the first gave the price as 15 seconds where it is one capture. This narrows entry 19 of [2026-11-24](#2026-11-24): a decision reads the newest quote captured 15 seconds before its own time, which at 15:40:00 is still 15:39's on each of the 22 recorded sessions. The metric put to the owner was the share of decisions that read another capture: 0 of 22 at close−20, 25 of 8,536 on whole minutes, and a quarter off the minute, exploratory. Turned down: the cut on the backtest alone, under which a strategy that decides off the minute is tested on older quotes than it trades on. The price is a quote about 60 seconds older on those decisions for sizing, the caps and the loss stop, and a capture in those seconds that shows a halted, crossed or wide quote stopping nothing and holding no account. The question returns with the first strategy that decides off close−20. [#132](https://github.com/l3a0/ithildin-runtime/issues/132#issuecomment-7174163980), [#132](https://github.com/l3a0/ithildin-runtime/issues/132#issuecomment-7175228655) Governs: `##### Why every read cuts 15 seconds before its decision` and `##### Why no decision waits for a listing to fill` in architecture/03-context-and-scope.md, `### Measure the capture lag` in what-a-person-runs.md, and `CAPTURE_LAG` in `src/ithildinruntime/data/cycles.py`.
+
+### 2026-11-26
+
+1. The owner ruled that the read across the change from Schwab's imported bars to captured ones is built now, rather than when paper's other blockers are near. The question was whether to build it now, with the recommendation "not yet", and the owner answered "yes". The metric was the sessions it saves between paper's first decision and 2027-01-28, at most 40. Turned down: waiting. The price is a small change and its review, paid before any session needs it, and a rule that changes nothing for GLD and USO from 2027-01-29. [#175](https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180707047) Governs: `#### A lookback that crosses a change of series` in design.md.
+2. The owner ruled that marketlake's import of Schwab's daily bars and its own capture sit on one price scale at 2026-11-02, answering "Yes, one scale". The import's bars, `adjusted` from `schwab:pricehistory` with `source_as_of` 2026-11-02, are on that session's scale, and the captured bars after them are as traded on it. So a lookback over that one pair reads, and the import's row in `data/price_kinds.csv` states its kind for 2026-09-04 to 2026-10-30. The metric was whether a second vendor's unadjusted bars agree across the seam. The four prices of 80 of 80 imported bars and 34 of 34 captured ones equal Massive's unadjusted daily aggregates to the cent, read on 2026-11-25 in an exploratory comparison, and neither Alpha Vantage nor Massive lists a split of GLD, or of USO after 2020-04-29. The alternative was to keep halting every decision whose lookback holds both, to 2027-01-28. The price is that how soon Schwab restates its candles after an ex-date is unmeasured, so for a later ticker a split that went ex on the fetch's own day could leave the two on two scales, with the move rule's flag the one sign of it, and only past the written spike multiple, until [#189](https://github.com/l3a0/ithildin-runtime/issues/189) builds the record of splits. The import's volume was not compared. [#175](https://github.com/l3a0/ithildin-runtime/issues/175#issuecomment-7180719855) Governs: `#### A lookback that crosses a change of series` in design.md, `### Which price a decision reads` in architecture/01-introduction-and-goals.md, `### Where bars come from` in architecture/03-context-and-scope.md, `#### A bar carries where it came from` in architecture/05-building-blocks.md, the series row of halts-and-drills.md, `runtime/stress_move.py`'s refusal of a seam nobody named, and the price-kind contract in `src/ithildinruntime/data/price_kinds.csv`.
 
 ## Considered and rejected
 
@@ -4371,6 +4417,14 @@ once rather than re-argued.
 | Reading the unit a strategy holds from the journal's book | The book holds whole shares after caps, refusals and partial fills, so it says what is held rather than what the rule wants |
 | Chan's linear rule on GLD and USO, or the Kalman-filter hedge on EWA and EWC, as test 1's strategy | The first is always in the market with continuous units, so no day is checked as a whole number, and the second adds a model to verify first. The owner accepted the Bollinger band, as `## Decisions` records for 2026-11-24 |
 | Recomputing a run's signals whenever two runs are compared | With the record, a comparison is a lookup rather than a recomputation. The owner accepted that each run records them, as `## Decisions` records for 2026-11-24 |
+| The 15-second cut on a backtest alone | Live would read the newest quote captured by its own time, and a strategy that decides off the minute would be tested on older quotes than it trades on. The owner ruled that live takes the cut too, as `## Decisions` records for 2026-11-25 |
+| A capture after the cut that still refuses a decision | Live sees one only where its upload is done and a replay always does, so the two would refuse different decisions, and the replay by a row live could not hold. It is reopened when a strategy decides off close−20 |
+| A capture lag each strategy writes | It is a fact about how long a capture takes to reach the bucket, and a strategy that wrote its own would choose its look-ahead |
+| Reading a sealed day's quotes partition once, rather than through `load_quotes` a minute at a time | marketlake's contract says to compare through `load_quotes`, since a field promoted partway through the day sits in `extra` on earlier rows. A call takes 6 to 13 milliseconds, so the 12 calls of the usual decision cost little |
+| Walking a sealed day a minute at a time | It misses a late capture that the read of segments sees in its newest five. Both reads take five parts at a time, as [Which read a decision uses](architecture/03-context-and-scope.md#which-read-a-decision-uses) says |
+| One leg of a decision from segments beside one from the sealed day | It would price one leg from a sealed day and the other from one that is not, and a week later would find no segment. An instrument whose partition is not listed beside one whose is, is a fault |
+| `Snapshot.segments` holding sealed partitions | The word means a capture file, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) reads the field as one. A partition is named in `Snapshot.partitions` |
+| A `Snapshot` that refuses a quote with no source | `LakeSource` alone builds one outside tests, the read of one day both ways holds its sources, and the rule would move a dozen test helpers of builds that are open |
 | A separate vectorised backtester | It would be a second implementation of every strategy, which the [one runtime](#one-runtime) rule exists to prevent |
 | One process that calls every module in memory | A failure in any module ends the process that also holds the order path, and the values passed between modules exist only in memory, so auditing a decision means rerunning code. The owner ruled on 2026-10-29 for [one process per component, passing files](#processes-and-files) |
 | A queue as the carrier of events, or a database server, between workers | A queue that carries the events themselves deletes each one once it is read, so nothing is left to audit, and a server is one more process that can fail. A queue that only wakes a worker, with the blobs as the record, is what the owner ruled for. The price is that a worker reads its inputs from files rather than being handed them |
@@ -4543,7 +4597,7 @@ once rather than re-argued.
 | Waiting for a decision's own minute of capture to reach the bucket | It costs about a minute and a half before the market-on-close cutoff at every decision, and has the decision read data from after its own time. The owner ruled for the newest capture by the decision's time, as `## Decisions` records for 2026-11-24 |
 | Matching a segment against its object's user metadata | marketlake publishes nothing about that metadata. The SHA-256 S3 stored with the object is the digest its manifest records, and marketlake's reader checks the bytes against it |
 | A long marked at the bid and a short at the ask, or either at the last sale | The first reads the loss stop half a spread a share stricter and gives the mark a side, which sizing and the gate would have to agree on. A last sale can sit at either side and be minutes old. The midpoint is the decision price a fill's cost is measured from |
-| Refusing a row captured after the data worker's own clock, to catch a clock that runs slow | A backtest's clock reads the decision time over a folder that holds the whole day, so it would refuse what the cut at the decision already leaves out. The platform measures the clock instead, as [The time servers](architecture/03-context-and-scope.md#the-time-servers) says |
+| Refusing a row captured after the data worker's own clock, to catch a clock that runs slow | A backtest's clock reads the decision time over a folder that holds the whole day, so it would refuse what the cut 15 seconds before the decision already leaves out. The platform measures the clock instead, as [The time servers](architecture/03-context-and-scope.md#the-time-servers) says |
 | chrony's report of the clock, written to a file on the host and read by each container | A report cannot say when its offset was true, so the next write hides a step. The simulation on [#134](https://github.com/l3a0/ithildin-runtime/issues/134)'s plan, which no test holds, left steps of 1.5 to 9 seconds unfaulted in 92% of 400 poll phases, with a median of 17 seconds and at most 56. Closing that takes a program on the host that keeps state, five host files, a user and a mount, which nothing applies and no test reaches, and a read before each submit is a file on the order path |
 | S3's `Date` header, or an event's time, as the time to measure the clock by | Both are whole seconds against a bound of one, from one server. botocore corrects a skewed signature by itself, so a call that works proves nothing |
 | The broker's clock as the one time reference | Shadow has no broker. [#153](https://github.com/l3a0/ithildin-runtime/issues/153) keeps it as the check that is not Amazon's |

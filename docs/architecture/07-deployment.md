@@ -287,7 +287,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of three exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file, at format 3, is the second, for the same reason: no release that writes format 1 or 2 runs a worker in an environment, so no environment holds a snapshot of either. Execution's recover files at format 2, whose `account.json` holds the broker's records, and the journal's four kinds for a broker's record and what the platform did not send, are the third: no environment builds a broker outside a backtest over a folder, so none holds a recover file of format 1 or a journal entry of those kinds. A pin back past the release that brought them halts on any such file or entry. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of three exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file is the second, at every format before the first release that runs a worker in an environment, for the same reason: no such release has run, so no environment holds a snapshot of an earlier format. It is at format 4. Execution's recover files at format 2, whose `account.json` holds the broker's records, and the journal's four kinds for a broker's record and what the platform did not send, are the third: no environment builds a broker outside a backtest over a folder, so none holds a recover file of format 1 or a journal entry of those kinds. A pin back past the release that brought them halts on any such file or entry. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -357,8 +357,9 @@ At each decision the data
 worker downloads what that decision's lookback names and the mirror lacks.
 For the skeleton's one daily decision that is once a day at close−20: the
 previous session's sealed partition, and the newest five of the day's segments
-of each instrument. A strategy deciding once a minute lists the day again and
-downloads its newest five as each decision comes.
+of each instrument. Where the manifest lists the day's quotes partitions, it
+downloads those in their place and opens no segment. A strategy deciding once a
+minute lists the day again and downloads its newest five as each decision comes.
 
 #### How a partition reaches the mirror
 
@@ -371,6 +372,13 @@ For each partition a decision's lookback names, the data worker takes three step
 Each decision checks every file it reads against the SHA-256 marketlake's manifest records, before marketlake's reader opens any of it. A copy in the bucket that differs halts the decision, naming both hashes. marketlake's README publishes that an upload stopped before its `manifest.jsonl` leaves a file newer than its manifest entry until the next night's repair, so the halt names that case, and such a stop halts decisions for about a day. A copy in the mirror that differs is a damaged cache, so it is downloaded again. The manifest itself is downloaded whole for every decision, its bytes matched against the SHA-256 the bucket stored with it, and one that does not end in a newline halts, because marketlake's manifest reader drops a torn last line and still answers. A whole line hidden behind damage inside the file halts too, and so does a manifest SHA-256 that is not 64 lowercase hex digits. The mirror is a copy, so losing it costs only a
 download. `data/mirror.py`'s docstring gives each step.
 
+A sealed quotes partition of the decision's own day takes the same three steps,
+one key at a time, after every bar is read. Its faults differ from a bar
+partition's in one way: the snapshot is stored first, with each partition
+linked, and then the decision halts, as
+[What the sealed read does with each answer](../halts-and-drills.md#what-the-sealed-read-does-with-each-answer)
+says. Its key enters neither the snapshot's `ledgers` nor the bars' cache key.
+
 #### How a segment read before sealing is checked
 
 A capture segment read before sealing is checked by marketlake's reader, which is handed the SHA-256 S3 stored with the object and compares it with the bytes downloaded. marketlake's contract says that digest is the one its manifest records, because S3 refuses the upload otherwise. The bucket's `manifest.jsonl` is not read for it, because only the nightly upload writes that file, and the object's user metadata is not part of the contract. The segments are lake-relative keys under `<prefix>-live/`, beside the lake's own under `<prefix>/`, and the read credential covers both. One bucket name and one prefix are configured, and `runtime.data_worker.data_buckets` makes the two buckets from them.
@@ -379,7 +387,7 @@ The check cannot see an overwrite of a segment's key, because the digest comes f
 
 #### Which other marketlake files the mirror holds
 
-The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. The snapshot records each ledger's SHA-256. The split records a snapshot applied are recorded data, as rule 1 of [Data has a cost](../design.md#data-has-a-cost-except-the-data-that-cannot-be-recaptured) says, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds where they are stored. A snapshot keeps each reader file's SHA-256 and none of its rows. A replay reads the snapshot's own bars and quotes, and the partitions it read already show what the quarantine ledger admitted. The price is that marketlake keeps a replaced version of `quarantine.jsonl`, of the `actions/` ledger and of `manifest.jsonl` for 30 days only, as [its README](https://github.com/l3a0/marketlake#readme) publishes, so after that a recorded hash of any of them can no longer be checked against bytes. The manifest only grows by appending, so an old manifest hash can still be checked against the start of a later copy, except after a resync or an undo run by hand.
+The grant and the mirror cover every file marketlake's `is_reader_file` names, including `quarantine.jsonl`, `actions/corporate_actions.jsonl` and `reference/`, refreshed for each decision. The snapshot records each ledger's SHA-256. The split records a snapshot applied are recorded data, as rule 1 of [Data has a cost](../design.md#data-has-a-cost-except-the-data-that-cannot-be-recaptured) says, and [#46](https://github.com/l3a0/ithildin-runtime/issues/46) holds where they are stored. A snapshot keeps each reader file's SHA-256 and none of its rows. A replay of a recorded decision reads the snapshot's own bars and quotes, and the partitions it read already show what the quarantine ledger admitted. A backtest over a sealed day is not such a replay, because it reads the partitions again under today's ledgers. The price is that marketlake keeps a replaced version of `quarantine.jsonl`, of the `actions/` ledger and of `manifest.jsonl` for 30 days only, as [its README](https://github.com/l3a0/marketlake#readme) publishes, so after that a recorded hash of any of them can no longer be checked against bytes. The manifest only grows by appending, so an old manifest hash can still be checked against the start of a later copy, except after a resync or an undo run by hand.
 
 #### What stops a decision that reads the lake
 
@@ -387,9 +395,10 @@ The grant and the mirror cover every file marketlake's `is_reader_file` names, i
 
 | The data worker finds | What happens |
 | --- | --- |
-| A partition not yet in the bucket | It is "data not ready", which halts |
-| No segment of an instrument, no row captured by the decision, or no capture every instrument has | The snapshot is stored and the decision halts, naming each prefix and what it listed |
-| A partition that fails the check against the manifest's checksum | The decision halts |
+| A partition not yet in the bucket | It is "data not ready", which halts. For a quotes partition of the decision's day, the snapshot is stored first |
+| No segment of an instrument, no row captured by the cut 15 seconds before the decision, or no capture every instrument has | The snapshot is stored and the decision halts, naming each prefix or partition and what it held |
+| A quotes partition of the decision's day listed beside an instrument's that is not, or one with no row of the session's equity close | The snapshot is stored and the decision halts, naming the partition |
+| A partition that fails the check against the manifest's checksum | The decision halts. For a quotes partition of the decision's day, the snapshot is stored first |
 | A capture segment whose bytes do not hash to the SHA-256 the bucket stored, on a second download too | The snapshot is stored with what else was read, and the decision halts |
 | An absent or unreadable file that `is_reader_file` names | The decision stops |
 | A quarantined partition in the lookback | A test expects it to halt |
