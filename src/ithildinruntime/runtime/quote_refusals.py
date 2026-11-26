@@ -177,19 +177,21 @@ class Day:
     def refused(self, age: int, spread: Decimal, moment: int) -> Counter[tuple[str, str]]:
         """Each reason the decision is refused, by its class and instrument, or none.
 
-        A fault of the read names no instrument, and stands beside an empty one.
+        Each class counts once for each instrument, so a reason both sides of one
+        quote give counts once. A fault of the read names no instrument, and
+        stands beside an empty one.
         A read with no fault and no quote of an instrument refuses it, as data's
         stage does.
         """
         read = self.reads[age]
-        found: Counter[tuple[str, str]] = Counter((read_reason(f), "") for f in read.faults)
+        found = {(read_reason(f), "") for f in read.faults}
         if not read.faults:
             found.update((MISSING, str(i)) for i in self.instruments if i not in read.quotes)
         for instrument, quote in sorted(read.quotes.items()):
             judged = replace(quote, max_age=age, max_spread_share=spread)
             for fault in quote_faults(judged, self.decision, self.moments[moment]):
-                found[(quote_reason(fault), str(instrument))] += 1
-        return found
+                found.add((quote_reason(fault), str(instrument)))
+        return Counter(found)
 
     @property
     def widest(self) -> QuoteRead:
@@ -306,7 +308,8 @@ def render(m: Measurement) -> str:
         f"SHA-256 is `{m.manifest}`.",
         "",
         f"{n} sessions is a short record. A step that refuses none of them still allows a true "
-        f"share of up to about 3 in {n}, at 95% confidence.",
+        f"share as high as {_bound(n)}, the one-sided 95% bound 1 − 0.05^(1/n) for sessions "
+        "drawn independently. Sessions in a row are not independent, so the true bound is wider.",
         "",
         _kinds_line(m, took, n),
         "",
@@ -331,6 +334,9 @@ def render(m: Measurement) -> str:
         "for any send. The cutoff at close−12 is design.md's proposal for the hard caps' "
         "market-on-close cutoff. An order of another type, or one on a simulated account, can "
         "meet the gate up to the close, where the gate refuses a quote past its age.",
+        "",
+        "In each cell, the sessions refused for age include any that a reason no step lifts "
+        "refuses as well, and the same holds for the spread.",
         "",
         f"**Table:** Sessions refused at each age, with the spread at its widest step of "
         f"{SPREADS[-1]}, then those refused for age, with the reasons of age by instrument and "
@@ -395,6 +401,11 @@ def _cell(
     return said
 
 
+def _bound(n: int) -> str:
+    """The share a run of n sessions with none refused still allows, at 95%, as a percent."""
+    return f"{1 - 0.05 ** (1 / n):.0%}"
+
+
 def _kinds_line(m: Measurement, took: int, n: int) -> str:
     if not took:
         return "The tracked row of quote_kinds.csv covers every session."
@@ -443,7 +454,8 @@ def _quotes(m: Measurement) -> list[str]:
         f"check refuses | {past} of {total} |",
         f"| A bid or ask size of zero | {zero} of {total} |",
         f"| A bid or ask size that is missing | {none} of {total} |",
-        f"| Either, passing every check at the widest steps | {unsized_passed} of {unsized} |",
+        f"| Either, passing every check at the widest steps at the decision | {unsized_passed} "
+        f"of {unsized} |",
         *(f"| `security_status` of {s} | {c} of {total} |" for s, c in sorted(status.items())),
         *(f"| `realtime` of {s} | {c} of {total} |" for s, c in sorted(realtime.items())),
     ]

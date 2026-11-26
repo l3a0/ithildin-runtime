@@ -77,7 +77,9 @@ def lake(built_lake: Path, tmp_path: Path) -> Path:
                 "GLD", day, range(1, 31), bid_time=millis(stamp + 3 * SECOND), ask_size=0
             )
             # Exactly the clock bound after its capture, which the check passes.
-            made["USO"] = rows("USO", day, range(1, 31), ask_time=millis(stamp + 2 * SECOND))
+            made["USO"] = rows(
+                "USO", day, range(1, 31), ask_time=millis(stamp + 2 * SECOND), bid_size=None
+            )
         if day == UNLISTED:
             del made["USO"]
         if day == UNSHARED:
@@ -212,7 +214,10 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
     assert "| 0.0001 | 5 of 5, 3 for the spread: too wide, USO 3 |" in out
     assert "| 0.0005 | 3 of 5 |" in out
     assert "| Reason | Instrument-sessions |" in out
-    assert qr.PLAN in out and "5 sessions is a short record" in out
+    assert qr.PLAN in out
+    # 1 − 0.05 ** (1 / 5) is 0.4507, the share five sessions with none refused still allow.
+    assert "5 sessions is a short record. A step that refuses none of them still allows a " in out
+    assert "true share as high as 45%, the one-sided 95% bound" in out
     assert "the send 30 seconds after the decision is a stand-in" in out
     assert "Refused at the cutoff at close−12, a proposal |" in out
     assert "| A bid or ask stamp later than its capture | 2 of 8 |" in out
@@ -220,8 +225,8 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
         "| The same, by more than the clock bound of 1 second, which the check refuses | 1 of 8 |"
     ) in out
     assert "| A bid or ask size of zero | 2 of 8 |" in out
-    assert "| A bid or ask size that is missing | 1 of 8 |" in out
-    assert "| Either, passing every check at the widest steps | 2 of 3 |" in out
+    assert "| A bid or ask size that is missing | 2 of 8 |" in out
+    assert "| Either, passing every check at the widest steps at the decision | 3 of 4 |" in out
     assert "| `security_status` of 'Halted' | 1 of 8 |" in out
     assert "| `security_status` of 'Normal' | 7 of 8 |" in out
     assert "| `realtime` of True | 8 of 8 |" in out
@@ -266,12 +271,31 @@ def test_a_session_the_copy_does_not_hold_stops_the_run(lake: Path, tmp_path: Pa
     )
 
 
-def test_a_damaged_partition_stops_the_run(lake: Path, tmp_path: Path) -> None:
-    path = lake / part_key("GLD", PLAIN)
+@pytest.mark.parametrize("ticker", BOTH)
+def test_a_damaged_partition_stops_the_run(lake: Path, tmp_path: Path, ticker: str) -> None:
+    path = lake / part_key(ticker, PLAIN)
     path.write_bytes(path.read_bytes() + b"x")
     code, out, err = run(lake, tmp_path, "--normal-status", "Normal")
     assert (code, out) == (1, "") and err.startswith(f"quote_refusals: on {PLAIN}, ")
     assert "SHA-256" in err and str(lake) not in err
+
+
+def test_the_tracked_row_on_every_session_says_so(lake: Path, tmp_path: Path) -> None:
+    kind = QuoteKind("consolidated quote", "consolidated sale", "consolidated", "shares", "Normal")
+    kinds = QuoteKinds((QuoteKindRow(PLAIN, QUOTE_SOURCE, PLAIN, LAST, kind, "a test"),))
+    code, out, err = run(lake, tmp_path, kinds=kinds)
+    assert (code, err) == (0, "")
+    assert "The tracked row of quote_kinds.csv covers every session." in out
+    assert "stand-in on" not in out
+
+
+def test_a_reason_both_sides_give_counts_once(measured: qr.Measurement) -> None:
+    (day,) = [d for d in measured.days if d.session.day == PLAIN]
+    zero = replace(day.widest.quotes[GLD], bid=Decimal(0), ask=Decimal(0))
+    read = replace(day.widest, quotes={**day.widest.quotes, GLD: zero})
+    bare = replace(day, reads={age: read for age in qr.AGES})
+    found = bare.refused(900, qr.SPREADS[-1], 0)
+    assert found[("a side missing or not above zero", "GLD")] == 1
 
 
 def test_a_read_with_no_fault_and_no_quote_refuses(measured: qr.Measurement) -> None:
@@ -388,7 +412,7 @@ READ_FAULTS = [
         "a capture stamp that is no time",
     ),
     (
-        "GLD has no security master row valid on 2026-11-02, so its ticker is unknown",
+        "NOPE has no security master row valid on 2026-11-02, so no ticker names it",
         "no one ticker for an instrument",
     ),
     ("GLD has 2 security master rows on 2026-11-02", "no one ticker for an instrument"),
