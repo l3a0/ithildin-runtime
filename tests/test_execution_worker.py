@@ -51,7 +51,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
-from ithildinruntime.journal import Journal, OpeningEntry
+from ithildinruntime.journal import Journal, OpeningEntry, StopFiredEntry
 from ithildinruntime.runtime import execution_worker
 from ithildinruntime.runtime.data_worker import DATA_ROW
 from ithildinruntime.runtime.execution_worker import RECOVER_ROW, ExecutionWorker
@@ -246,7 +246,7 @@ def test_9_a_backtest_over_a_folder_recovers_through_the_loop(case: Case, monkey
     assert isinstance(clock, HistoryClock) and faults.events == faults.reads == faults.orders == {}
 
 
-SHADOW = "#147, #148, #149, #150, #151, #155 and #156"
+SHADOW = "#147, #148, #149, #150, #151 and #155"
 
 
 def s3_store() -> S3Store:
@@ -477,7 +477,7 @@ def test_10_an_answer_and_its_alarm_both_lost_are_named_as_the_process_ends(case
 def test_10_a_last_settle_that_fails_with_nothing_owed_ends_with_an_error(case: Case) -> None:
     worker = case.worker()
 
-    def broken(report: Callable[[], None]) -> None:
+    def broken(report: Callable[[], None], **_: object) -> None:
         raise RuntimeError("PKFAKEKEY")
 
     worker.account.settle = broken  # type: ignore[method-assign]
@@ -491,7 +491,7 @@ def test_10_a_last_settle_that_fails_with_nothing_owed_ends_with_an_error(case: 
 def test_10_a_failed_last_settle_whose_alarm_is_refused_says_so(case: Case) -> None:
     worker = case.worker()
 
-    def broken(report: Callable[[], None]) -> None:
+    def broken(report: Callable[[], None], **_: object) -> None:
         raise RuntimeError("PKFAKEKEY")
 
     def refused(reason: str) -> None:
@@ -508,7 +508,7 @@ def test_10_a_failed_last_settle_whose_alarm_is_refused_says_so(case: Case) -> N
 def test_10_an_error_that_is_no_halt_at_the_end_names_its_type_alone(case: Case) -> None:
     worker, _, said = owing(case, refuse=True)
 
-    def broken(report: Callable[[], None]) -> None:
+    def broken(report: Callable[[], None], **_: object) -> None:
         raise RuntimeError("PKFAKEKEY")
 
     worker.account.settle = broken  # type: ignore[method-assign]
@@ -757,3 +757,53 @@ def test_5_a_stage_that_follows_and_keeps_no_order_starts_at_its_event(case: Cas
         assert started.wait_for(lambda: starts == [0, 2], 10)
         case.data(0)
         assert started.wait_for(lambda: starts == [0, 2, 1], 10)
+
+
+def test_10_the_last_settle_journals_a_firing_the_process_holds(case: Case) -> None:
+    """A firing held in memory alone is tried once more, and the journal takes it."""
+    case.opened()
+    worker = case.worker()
+    latch = worker.account._shared.latch
+    latch._pending.append(
+        StopFiredEntry("a" * 32, DEPLOYMENT, RUN, AT[0], None, "a firing no write took")
+    )
+    worker.run(Looped())  # type: ignore[arg-type]
+    assert latch.held() == ()
+    standing = worker.account.view(lambda: None).stop.standing
+    assert standing.entry.firing == "a" * 32 and standing.stored is not None
+    assert any("the loss stop's firing" in reason for reason in case.alarms.reasons)
+
+
+def test_10_a_firing_that_may_end_with_the_process_pages_to_hold_the_account(case: Case) -> None:
+    case.opened()
+    worker = case.worker()
+    latch = worker.account._shared.latch
+    latch._pending.append(StopFiredEntry("a" * 32, DEPLOYMENT, RUN, AT[0], None, "no write took"))
+    latch.complete = lambda report: None  # type: ignore[method-assign]
+    with pytest.raises(Halt) as raised:
+        worker.run(Looped())  # type: ignore[arg-type]
+    hold = "pull the account's kill switch at once"
+    assert hold in raised.value.reason
+    assert all(hold in reason for reason in case.alarms.reasons)
+
+
+def test_10_the_hold_step_follows_what_is_still_owed_after_the_last_settle(case: Case) -> None:
+    """A firing the last settle journals drops the step, and one it leaves owed keeps it."""
+    hold = "pull the account's kill switch at once"
+    for before, stays in ((True, False), (False, True)):
+        worker, _, sent = owing(case, refuse=True)
+        latch = worker.account._shared.latch
+        entry = StopFiredEntry("b" * 32, DEPLOYMENT, RUN, AT[0], None, "no write took")
+        if before:
+            latch._pending.append(entry)
+
+        def settled(report, before=before, latch=latch, entry=entry):  # type: ignore[no-untyped-def]
+            # The journal takes the firing held before, or a firing comes during the settle.
+            latch._pending[:] = [] if before else [entry]
+
+        latch.complete = settled  # type: ignore[method-assign]
+        with pytest.raises(Halt) as raised:
+            worker.run(Looped())  # type: ignore[arg-type]
+        assert (hold in raised.value.reason) is stays
+        assert (hold in sent[-1]) is stays and (hold in sent[0]) is before
+        assert ACK in raised.value.reason

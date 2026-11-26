@@ -78,7 +78,7 @@ SEND_ROW = Stage(
 )
 
 # The parts of #10 that shadow waits for, and the one paper waits for beside them.
-_SHADOW = "#147, #148, #149, #150, #151, #155 and #156"
+_SHADOW = "#147, #148, #149, #150, #151 and #155"
 _PAPER = "#153"
 
 
@@ -209,7 +209,12 @@ class ExecutionWorker:
         host's restart record says it too. An alarm the channel would not take
         ends it the same way. A last settle that raised an error other than a halt pages
         with the error's type and the owner's step and ends it the same way, and the
-        error says where that page was not sent.
+        error says where that page was not sent. While a firing of the loss stop is
+        owed, each page and the error tell the owner to pull the kill switch at once.
+
+        A loss stop's blob that S3 has not stored keeps the process alive only
+        where the loop holds the account's own `core.Storage`, so whatever
+        builds the two builds them over one (#200).
         """
         try:
             loop.run()
@@ -218,8 +223,12 @@ class ExecutionWorker:
 
     def _settle(self) -> None:
         # The loop has ended, so there is nothing left to report to, and nothing beats.
-        account, step = self.account, f"The owner's step: {self._owner_step}"
+        account, plain = self.account, f"The owner's step: {self._owner_step}"
+        held = f"{_HOLD} {plain}"
         if owed := account.unstored():
+            # A firing the journal has not taken may reach the next process as the blob alone,
+            # and the host restarts execution on its own.
+            step = held if _fired(owed) else plain
             # Paged ahead of the tries, which can outlast the host's stop.
             account.alarm(
                 f"the process is ending before the journal holds {'; '.join(owed)}, and "
@@ -228,13 +237,16 @@ class ExecutionWorker:
             )
         failed = False
         try:
-            account.settle(lambda: None)
+            # The loss stop's firing too, which no stage's settle tries.
+            account.settle(lambda: None, stop=True)
             said = ""
         except Halt as halt:
             said = f": {halt.reason}"
         except Exception as error:
             said, failed = f": {type(error).__name__}", True
         owed = account.unstored()
+        firing = _fired(owed)
+        step = held if firing else plain
         if owed:
             reason = f"the process ends and the journal was not given {'; '.join(owed)}{said}"
             account.alarm(f"{reason}. {step}", lambda: None)
@@ -245,6 +257,8 @@ class ExecutionWorker:
         lost = [*(f"the journal was not given {one}" for one in owed)]
         lost += [f"the alarm '{one}' was not sent" for one in unsent]
         reason = f"the process ends and {'; '.join(lost) or 'its last settle failed'}{said}"
+        if firing:
+            reason = f"{reason}. {_HOLD}"
         if failed and not owed:
             # A settle that failed cannot vouch for its own count of what it owes,
             # so the owner checks the broker's site as where something was lost.
@@ -253,6 +267,18 @@ class ExecutionWorker:
                 reason = f"{reason}. The alarm that says so was not sent"
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)
+
+
+# What the owner does when a firing of the loss stop may end with the process.
+_HOLD = (
+    "The loss stop fired and the journal has not taken it, so pull the account's kill switch at "
+    "once: the host restarts execution on its own, and only stop.json may hold the firing."
+)
+
+
+def _fired(owed: tuple[str, ...]) -> bool:
+    """Whether what the account owes holds a firing of the loss stop."""
+    return any(one.startswith("the loss stop's firing") for one in owed)
 
 
 def _brokers(

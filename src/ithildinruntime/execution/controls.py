@@ -20,7 +20,6 @@ from ithildinruntime.core import (
     SEND_STAGE,
     BlobMissing,
     BlobStore,
-    StopState,
     account_halts_prefix,
     kill_switch_key,
     loss_stop_key,
@@ -105,13 +104,6 @@ class Controls:
             if read.found is not None:
                 return Stopping(f"strategy off: {name} stands{read.found}", False)
         return None
-
-    def stop(self, tries: Tries) -> tuple[StopState, str]:
-        """The loss stop's state, with the error's code where it could not be read."""
-        read = self._read(loss_stop_key(self._account), False, tries)
-        if read.error is not None:
-            return StopState.UNREADABLE, read.error
-        return (StopState.ABSENT if read.found is None else StopState.FIRED), ""
 
     def _read(self, key: str, folder: bool, tries: Tries) -> _Read:
         try:

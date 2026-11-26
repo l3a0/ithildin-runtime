@@ -34,6 +34,8 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 ## Prices in Runtime
 
 - [How the day's loss is measured](06-runtime.md#how-the-days-loss-is-measured)
+- [How a firing is written](06-runtime.md#how-a-firing-is-written)
+- [A rerun reads the decision's own loss](06-runtime.md#a-rerun-reads-the-decisions-own-loss)
 
 ## Prices in Deployment
 

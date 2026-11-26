@@ -54,6 +54,14 @@ class Patience:
             limit = min(limit, (until - self._clock.now()).total_seconds())
         return Tries(self._clock, self._retry, self._pause, report, limit)
 
+    def once(self, report: Callable[[], None]) -> Tries:
+        """Tries that make each call once, with no retry and no reading of the clock's time.
+
+        The history clock has no time on a thread that has waited for no
+        decision, such as the one a worker ends on.
+        """
+        return Tries(self._clock, self._retry, self._pause, report, 0.0)
+
 
 class Tries:
     """One deadline, and every call made under it.
