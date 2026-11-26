@@ -18,8 +18,9 @@ per order` gives the steps.
 8. The private submit, which takes that entry's acknowledgement and nothing
    else. It views the journal again, refuses an order the journal does not show
    as just approved and just sending, reads the hard caps, the loss stop and
-   every control again, and calls the broker. A firing this process holds is
-   read last, under the lock the call is marked under.
+   every control again, and calls the broker. A firing this process holds, and
+   the count of its firings since the checks began, are read last, under the
+   lock the call is marked under.
 9. The entry that says what the broker answered.
 
 An order reaches the broker at most once. Only the call whose `intent` the
@@ -463,6 +464,8 @@ class Shared:
             self.latch.complete(report)
         except Halt as halt:
             failing.append(halt.reason)
+        except Exception as error:
+            failing.append(f"completing the loss stop's firing raised {type(error).__name__}")
         if failing:
             raise Halt(". ".join(failing))
 
@@ -779,14 +782,17 @@ class OrderPath:
         except Halt as halt:
             if not unread:
                 raise
-            reason = (
-                f"the day's loss of the decision at {decision_at.isoformat()} could not be read"
+            said = (
+                f"the loss stop fired with no reading, because the day's loss of the decision at "
+                f"{decision_at.isoformat()} could not be read and the journal holds no plan of "
+                f"it: {halt.reason}"
             )
-            added = shared.latch.fire(None, where, f"{reason}: {halt.reason}", self._report)
-            raise Halt(f"{halt.reason}{added}") from None
+            alarmed = shared.alarm(said)
+            added = shared.latch.fire(None, where, said, self._report)
+            raise Halt(f"{said}{alarmed}{added}") from None
         for reading in decided:
             if reading.past:
-                raise self._past(reading, shared.latch.fire(reading, where, _DECIDED, self._report))
+                raise self._fired(reading, where, _DECIDED)
         now = shared.clock.now()
         readings = tuple(
             shared.gate.loss(book, inputs.snapshot, limits, handed, now)
@@ -794,7 +800,7 @@ class OrderPath:
         )
         for reading in readings:
             if reading.past:
-                raise self._past(reading, shared.latch.fire(reading, where, _NOW, self._report))
+                raise self._fired(reading, where, _NOW)
         if state is not StopState.ABSENT:
             raise Halt(shared.latch.said(view, state, error))
         return readings
@@ -914,13 +920,9 @@ class OrderPath:
         _, view = self._recorded(name, view, entry, last.at)
         if verdict.loss.past:
             where = planned.where
-            added = shared.latch.fire(
-                verdict.loss,
-                (where.deployment, where.run, where.decision_at),
-                _CHECKED,
-                self._report,
+            halt = self._fired(
+                verdict.loss, (where.deployment, where.run, where.decision_at), _CHECKED
             )
-            halt = self._past(verdict.loss, added)
             raise self._ended(name, halt.reason) if verdict.approved else halt
         if verdict.limit is Limit.STOP:
             raise Halt(f"the gate refused {name}: {stop}")
@@ -1026,12 +1028,13 @@ class OrderPath:
                 cleared = None
         if cleared is None:
             raise Halt("no order goes out on an acknowledgement this account is not holding")
-        order, went = self._checked(cleared)
+        order, went, fired = self._checked(cleared)
         found: object = None
         error = halted = None
         with shared.lock:
-            # A firing takes this lock as it is held, so none falls between here and the call.
-            if shared.latch.holding():
+            # A firing counts itself under this lock as it is held, so one that another thread
+            # held, or held and stored whole, since the checks began is seen here.
+            if shared.latch.holding() or shared.latch.count() != fired:
                 raise Halt(f"the order {cleared.name} is not sent: the loss stop fired")
             shared.called.add(ack.seq)
         try:
@@ -1048,18 +1051,24 @@ class OrderPath:
             came = went
         return _Answer(order.intent, went, came, found, error, halted)
 
-    def _checked(self, cleared: _Cleared) -> tuple[OrderRecord, datetime]:
-        """The order with every check read again in one pass, and the time read last.
+    def _checked(self, cleared: _Cleared) -> tuple[OrderRecord, datetime, int]:
+        """The order with every check read again in one pass, the time read last, and a count.
 
         A control that was read as absent may stand by the time the last is
         read. So a pass counts only where no read had to be tried again and it
         took no longer than `_PASS`. Any other is made again whole, until one
-        counts or the deadline they share is over.
+        counts or the deadline they share is over. The count is of the firings
+        this process had made when the pass began, which the call compares.
+
+        A firing stops every order here, a close after a broker's trade too,
+        until #117 says what the submit does with a valid close entry.
         """
         shared, name = self._shared, cleared.name
         tries = shared.patience.tries(self._report, cleared.last.at)
         while True:
             tries.waited, began = False, shared.clock.monotonic()
+            with shared.lock:
+                fired = shared.latch.count()
             view = self._view(tries=tries)
             if shared.latch.held() or view.stop.fired:
                 raise Halt(shared.latch.said(view, StopState.FIRED, ""))
@@ -1075,7 +1084,7 @@ class OrderPath:
             if stopping is not None:
                 raise _stopped(stopping)
             if not tries.waited and shared.clock.monotonic() - began <= _PASS:
-                return order, self._before(name, cleared.last)
+                return order, self._before(name, cleared.last), fired
             if tries.over:
                 raise Halt(
                     f"the checks of {name} were not all read in one pass by the deadline: in every "
@@ -1295,13 +1304,19 @@ class OrderPath:
     def _outage(self, reason: str) -> Halt:
         return self._shared.outage(reason)
 
-    def _past(self, reading: LossReading, added: str = "") -> Halt:
-        """The halt on a reading past its stop, alarmed, with what the firing's writes add."""
+    def _past(self, reading: LossReading) -> Halt:
+        """The halt on a reading past its stop, alarmed before the firing's writes are tried."""
         reason = (
             f"the day's loss of {reading.loss} is past its stop of {reading.bound}, measured from "
             f"the valuation of {reading.session.isoformat()}"
         )
-        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}{added}")
+        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
+
+    def _fired(self, reading: LossReading, where: tuple[str, str, datetime], reason: str) -> Halt:
+        """Alarm on a reading past its stop, fire the stop, and give the halt with both."""
+        halt = self._past(reading)
+        added = self._shared.latch.fire(reading, where, reason, self._report)
+        return Halt(f"{halt.reason}{added}")
 
 
 def _counted(book: Book, order: OrderIntent) -> Book:

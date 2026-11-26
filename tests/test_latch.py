@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -18,23 +19,27 @@ import pytest
 
 from ithildinruntime.core import (
     BlobMissing,
+    BlobRef,
     Halt,
     LossReading,
     OrderState,
     StopState,
     StoreUnavailable,
     decode,
+    encode,
     journal_entry_key,
     loss_stop_key,
 )
 from ithildinruntime.execution.latch import StopBlob
 from ithildinruntime.journal import (
     IntentEntry,
+    ReadEntry,
     StopClearedEntry,
     StopFiredEntry,
     StopStoredEntry,
     VerdictEntry,
 )
+from ithildinruntime.risk import Gate
 from tests.support import gates
 from tests.support.journals import AT, planned, verdict
 from tests.support.journals import started as journal_started
@@ -180,7 +185,8 @@ def test_no_module_but_the_journal_builds_a_clear() -> None:
         str(path.relative_to(SRC))
         for path in SRC.rglob("*.py")
         for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "StopClearedEntry"
+        if isinstance(node, ast.Call)
+        and "StopClearedEntry" in (getattr(node.func, "id", None), getattr(node.func, "attr", None))
     }
     assert found == set()
 
@@ -257,8 +263,7 @@ def test_a_second_reading_past_its_stop_before_a_clear_records_nothing_more() ->
 def test_a_rerun_after_the_close_fires_on_the_decisions_own_loss() -> None:
     world = losing()
     world.clock.at = gates.CLOSE + timedelta(minutes=1)
-    reason = halted(world, "", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
-    assert "past its stop" in reason
+    halted(world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
     entry = standing(world).standing.entry
     assert entry.reason == "the day's loss at the decision's own time read past its stop"
@@ -267,9 +272,15 @@ def test_a_rerun_after_the_close_fires_on_the_decisions_own_loss() -> None:
 def test_an_unread_loss_fires_only_where_asked() -> None:
     world = World()
     world.store.drop(next(k for k in world.store.blobs if "valuation" in k))
-    halted(world, "", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
-    assert stop_kinds(world) == []
-    halted(world, "", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, unread=True))
+    missing = "valuation.json, listed by .* is missing"
+    halted(world, missing, lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    assert stop_kinds(world) == [] and world.alarms.sent == []
+    reason = halted(
+        world,
+        "^the loss stop fired with no reading",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, unread=True),
+    )
+    assert re.search(missing, reason) and world.alarms.sent == [f"account {ACCOUNT}: {reason}"]
     entry = standing(world).standing.entry
     assert entry.reading is None and "could not be read" in entry.reason
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
@@ -384,7 +395,7 @@ def test_a_store_that_refuses_the_stored_entry_leaves_the_firing_unstored_until_
 
 def clear(world: World) -> None:
     """Complete the firing, journal its clear, and delete its blob on its tag."""
-    world.account().settle(world.report)
+    world.account()._shared.latch.complete(world.report)
     stop = standing(world)
     world.record(StopClearedEntry(stop.standing.seq))
     world.store.delete_if_match(KEY, stop.standing.stored.etag)
@@ -427,7 +438,8 @@ def test_a_reading_inside_a_clear_is_a_new_firing_that_outlives_the_delete() -> 
     world = recovered()
     stop = standing(world)
     world.record(StopClearedEntry(stop.standing.seq))
-    fire_in(world)
+    account = world.account()
+    assert fire_in(world, account) == "" and not account._shared.latch.held()
     # The old blob is there, so the new firing is journaled and left unstored.
     assert stop_kinds(world) == ["stop_fired", "stop_stored", "stop_cleared", "stop_fired"]
     world.store.delete_if_match(KEY, stop.standing.stored.etag)
@@ -444,7 +456,10 @@ def test_a_blob_deleted_by_hand_clears_nothing() -> None:
 
 def test_a_second_losing_session_inside_a_firing_records_nothing_more() -> None:
     world = recovered()
-    fire_in(world)
+    account = world.account()
+    later = (DEPLOYMENT, RUN, gates.DECISION + timedelta(days=1))
+    assert account._shared.latch.fire(PAST, later, "the next session's loss", world.report) == ""
+    assert not account._shared.latch.held()
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
 
 
@@ -505,3 +520,202 @@ def test_head_of_a_missing_blob_is_blob_missing() -> None:
     with pytest.raises(StoreUnavailable):
         world.store.refuse(("head", KEY))
         world.store.head(KEY)
+
+
+# What round 1 of the review asked for
+
+
+def test_a_firing_stored_whole_by_another_thread_before_the_call_stops_it() -> None:
+    """A firing held and stored whole between the last check and the call leaves no memory."""
+    world = World()
+    account = world.account()
+    strategy_halts = f"accounts/{ACCOUNT}/strategies/{gates.CHAN}/halts/"
+    lists: list[int] = []
+    added: list[str] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "list" and key == strategy_halts:
+            lists.append(number)
+            if len(lists) == 2:
+                added.append(fire_in(world, account))
+
+    world.store.before = before
+    halted(world, "is not sent: the loss stop fired", lambda: world.send(account=account))
+    assert added == [""] and not account._shared.latch.held()
+    assert stop_kinds(world) == ["stop_fired", "stop_stored"]
+    assert world.state() is OrderState.ABANDONED
+
+
+def test_a_firing_journaled_between_the_verdict_and_the_submit_stops_the_order() -> None:
+    """Another process's firing that only the journal holds, with no blob."""
+    world = World()
+    sending = journal_entry_key(ACCOUNT, len(world.every_kind()) + 3)
+
+    def after(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", sending):
+            world.record(fired())
+
+    world.store.after = after
+    reason = halted(world, "loss stop stands: entry")
+    assert KEY not in world.store.blobs and "fired it" in reason
+    assert world.state() is OrderState.ABANDONED
+
+
+def test_the_ask_fires_the_stop_on_a_reading_past_it() -> None:
+    world = losing()
+    (asked,) = world.path().ask([world.orders[0].client_order_id])
+    assert asked.verdict is None and "past its stop" in asked.reason
+    assert stop_kinds(world) == ["stop_fired", "stop_stored"]
+    assert (
+        standing(world).standing.entry.reason
+        == "an order's check read the day's loss past its stop"
+    )
+
+
+def test_a_reading_past_its_stop_at_the_clocks_time_alone_fires_it_too() -> None:
+    class Later(Gate):
+        def loss(self, book, snapshot, constraints, inputs, now):  # type: ignore[no-untyped-def]
+            read = super().loss(book, snapshot, constraints, inputs, now)
+            if now == gates.DECISION:
+                return read
+            return dataclasses.replace(read, loss=read.bound + 1, past=True)
+
+    world = World(gate=Later)
+    halted(world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    entry = standing(world).standing.entry
+    assert entry.reason == "the day's loss at the clock's time read past its stop"
+    assert stop_kinds(world) == ["stop_fired", "stop_stored"] and len(world.alarms.sent) == 1
+
+
+def test_a_past_verdict_standing_alone_gets_its_firing_at_the_next_settle() -> None:
+    world = World()
+    world.record(IntentEntry(3, world.orders[0]))
+    world.record(dataclasses.replace(past_verdict(world.orders[0].client_order_id), book=4))
+    assert standing(world).fired and standing(world).standing is None
+    world.account()._shared.latch.complete(world.report)
+    entry = standing(world).standing.entry
+    assert "at entry 5 read the day's loss past its stop" in entry.reason
+    assert standing(world).standing.verdicts == (5,) and KEY in world.store.blobs
+
+
+@pytest.mark.parametrize("taken", [False, True], ids=["another account's", "an id taken"])
+def test_an_orphan_blob_that_names_no_firing_this_account_can_take(taken: bool) -> None:
+    world = World()
+    if taken:
+        seq = world.record(fired())
+        world.record(StopStoredEntry(seq, "t-old"))
+        world.record(StopClearedEntry(seq))
+        made = StopBlob("a" * 32, ACCOUNT, None, None, None, PAST, "a copy", None)
+    else:
+        made = StopBlob("a" * 32, "paper-2", None, None, None, PAST, "another's", None)
+    world.store.put(KEY, encode(made))
+    world.account()._shared.latch.complete(world.report)
+    entry = standing(world).standing.entry
+    if taken:
+        assert entry.firing != "a" * 32 and entry.reading == PAST
+    else:
+        assert entry.reading is None and "another account" in entry.reason
+    assert standing(world).standing.stored.etag == world.store.tags[KEY]
+
+
+def test_a_settle_with_nothing_owed_reads_once_and_one_owed_waits_out_the_deadline() -> None:
+    world = World()
+    world.store.refuse(("list", "journal/"))
+    calls = len(world.store.calls)
+    world.account()._shared.latch.complete(world.report)
+    assert len(world.store.calls) - calls == 1
+    account = world.account()
+    account._shared.latch._pending.append(fired())
+    calls = len(world.store.calls)
+    with pytest.raises(Halt, match="the journal could not be read"):
+        account._shared.latch.complete(world.report)
+    assert len([c for c in world.store.calls[calls:] if c[0] == "list"]) > 1
+
+
+def test_a_firing_whose_journal_cannot_be_read_still_stores_its_blob() -> None:
+    world = World()
+    world.store.refuse(("list", "journal/"))
+    added = fire_in(world)
+    assert "the journal could not be read" in added and KEY in world.store.blobs
+
+
+def test_a_firing_whose_blob_cannot_be_read_says_so() -> None:
+    world = World()
+    world.record(fired())
+    world.store.refuse(("head", KEY))
+    with pytest.raises(Halt, match=f"{KEY} could not be read"):
+        world.account()._shared.latch.complete(world.report)
+
+
+def test_a_blob_held_through_an_interrupt_stays_held() -> None:
+    world = World()
+    storage = world.storage()
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", KEY):
+            raise KeyboardInterrupt
+
+    world.store.before = before
+    with pytest.raises(KeyboardInterrupt):
+        storage.hold_create(KEY, b"one")
+    assert [ref.key for ref in storage.unstored()] == [KEY]
+
+
+def test_a_held_copy_is_let_go_once_the_journal_has_a_blob_for_the_firing() -> None:
+    """Else `retry_held` would store it after a clear deleted the blob that counts."""
+    world = World()
+    account = world.account()
+    storage = account._shared.storage
+    world.store.refuse(("create", KEY))
+    fire_in(world, account)
+    assert [ref.key for ref in storage.unstored()] == [KEY]
+    answered(world)
+    # Another process stores the firing's blob and its stop_stored, and a person clears it.
+    stop = standing(world)
+    world.store.put(KEY, b"another process's blob")
+    world.record(StopStoredEntry(stop.standing.seq, world.store.tags[KEY]))
+    world.record(StopClearedEntry(stop.standing.seq))
+    world.store.delete_if_match(KEY, world.store.tags[KEY])
+    account._shared.latch.complete(world.report)
+    assert storage.unstored() == ()
+    storage.retry_held()
+    assert KEY not in world.store.blobs
+
+
+def test_a_completion_that_raises_is_named_and_stops_nothing_else() -> None:
+    world = World()
+    account = world.account()
+    latch = account._shared.latch
+
+    def broken(report):  # type: ignore[no-untyped-def]
+        raise RuntimeError("x")
+
+    latch._complete = broken  # type: ignore[method-assign]
+    assert "completing it raised RuntimeError" in fire_in(world, account)
+    latch.complete = broken  # type: ignore[method-assign]
+    with pytest.raises(Halt, match="completing the loss stop's firing raised RuntimeError"):
+        account._shared.settle(world.report)
+
+
+def test_a_worker_that_ends_holding_a_firing_names_it() -> None:
+    world = World()
+    account = world.account()
+    world.store.refuse(("create", entry_prefix()), ("create", KEY))
+    fire_in(world, account)
+    (named,) = account.unstored()
+    assert named.startswith("the loss stop's firing ")
+
+
+def test_a_stop_stored_whose_number_another_writer_took_is_tried_again() -> None:
+    world = World()
+    stored = journal_entry_key(ACCOUNT, len(world.every_kind()) + 2)
+    taken: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", stored) and not taken:
+            taken.append(number)
+            world.record(ReadEntry("execution/send", AT, BlobRef("r", "b" * 64), AT))
+
+    world.store.before = before
+    assert fire_in(world) == "" and taken
+    assert stop_kinds(world) == ["stop_fired", "stop_stored"]

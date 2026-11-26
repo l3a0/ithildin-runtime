@@ -166,14 +166,21 @@ class Account:
 
         Each stage's handler calls it before its first view of the journal. An
         order in doubt halts recover, so an answer held back until the next
-        send would never be written. It then completes the loss stop's firing,
-        whose failure joins the entries' rather than replacing it.
+        send would never be written. It leaves the loss stop's firing to the
+        order path's own settle, so a blob S3 will not take holds up no read of
+        the broker.
         """
-        self._held().settle(quietly(report))
+        self._held().unstored.settle(quietly(report))
 
     def unstored(self) -> tuple[str, ...]:
-        """Each entry this process holds that the journal has not taken."""
-        return () if isinstance(self._shared, Halt) else self._shared.unstored.names()
+        """Each entry this process holds that the journal has not taken, a firing included."""
+        if isinstance(self._shared, Halt):
+            return ()
+        held = tuple(
+            f"the loss stop's firing {entry.firing}, which no record holds yet"
+            for entry in self._shared.latch.held()
+        )
+        return (*self._shared.unstored.names(), *held)
 
     def _held(self) -> Shared:
         if isinstance(self._shared, Halt):

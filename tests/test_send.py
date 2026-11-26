@@ -16,6 +16,7 @@ import pytest
 from ithildinruntime.core import (
     CAPS_OUTPUT,
     RECOVER_STAGE,
+    VALUATION_OUTPUT,
     Halt,
     OrderState,
     Stopped,
@@ -30,7 +31,14 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.execution.brokers.faults import EditCash, EditPosition, Faults, OrderFault
 from ithildinruntime.execution.order_path import OrderPath
-from ithildinruntime.journal import DecisionEntry, Journal, ReadEntry, StopClearedEntry
+from ithildinruntime.journal import (
+    DecisionEntry,
+    Journal,
+    ReadEntry,
+    StopClearedEntry,
+    StopFiredEntry,
+    StopStoredEntry,
+)
 from tests.support import gates
 from tests.support.send_world import CHAN, SendWorld, strategy
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT, FULL, GLD, USO, after, close_of
@@ -485,7 +493,7 @@ def test_a_loss_stop_that_fired_refuses_the_next_sessions_order_until_a_clear() 
     assert "`ithildin stop clear --account" in result.halt.reason
     assert len(made.submits()) == 1
     # A clear by hand, in the command's steps.
-    made.account.settle(lambda: None)
+    made.account._shared.latch.complete(lambda: None)
     standing = made.view().stop.standing
     clearer = Journal(made.store, ACCOUNT, "c" * 32)
     clearer.record(clearer.view(), StopClearedEntry(standing.seq), made.clock.now())
@@ -494,6 +502,50 @@ def test_a_loss_stop_that_fired_refuses_the_next_sessions_order_until_a_clear() 
     result = made.send_stage()
     assert result.halt is None, result.halt.reason
     assert len(made.submits()) == 2
+
+
+def _claimed_by_a_dead_call(made: SendWorld) -> None:
+    key = claim_key(DEPLOYMENT, made.run, made.at)
+    made.store.put(key, b'{"token":"dead","writer":"' + b"f" * 32 + b'"}')
+
+
+def test_a_claim_with_no_plan_whose_loss_cannot_be_read_fires_the_stop_and_pages() -> None:
+    """The call that claimed it may have read the loss past its stop and died before storing it."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    _claimed_by_a_dead_call(made)
+    made.store.drop(made.key(VALUATION_OUTPUT))
+    result = made.send_attempt()
+    assert result.halt is not None
+    said = "the loss stop fired with no reading"
+    assert said in result.halt.reason and any(said in sent for sent in made.alarms.sent)
+    assert [k for k in made.kinds() if k.startswith("stop_")] == ["stop_fired", "stop_stored"]
+    assert made.view().stop.standing.entry.reading is None
+
+
+def test_a_claim_on_a_decision_the_journal_holds_a_plan_of_fires_nothing() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    made.send_stage()
+    _claimed_by_a_dead_call(made)
+    made.store.drop(made.key(VALUATION_OUTPUT))
+    result = made.send_attempt(made.sender(writer="f" * 32))
+    assert result.halt is not None and "the loss stop fired" not in result.halt.reason
+    assert not [k for k in made.kinds() if k.startswith("stop_")]
+
+
+def test_the_stops_entries_between_recovers_book_and_the_sync_move_no_book() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    # A firing another thread journaled and a person cleared, after recover stored its book.
+    writer = Journal(made.store, ACCOUNT, "c" * 32)
+    entry = StopFiredEntry("e" * 32, None, None, None, None, "a firing cleared at once")
+    _, view = writer.record(writer.view(), entry, made.clock.now())
+    seq = view.through.seq
+    _, view = writer.record(view, StopStoredEntry(seq, "t"), made.clock.now())
+    writer.record(view, StopClearedEntry(seq), made.clock.now())
+    result = made.send_stage()
+    assert result.halt is None, result.halt.reason
 
 
 def test_the_ask_halts_on_an_order_the_journal_already_holds() -> None:

@@ -78,7 +78,7 @@ SEND_ROW = Stage(
 )
 
 # The parts of #10 that shadow waits for, and the one paper waits for beside them.
-_SHADOW = "#147, #148, #149, #150, #151, #155 and #156"
+_SHADOW = "#147, #148, #149, #150, #151 and #155"
 _PAPER = "#153"
 
 

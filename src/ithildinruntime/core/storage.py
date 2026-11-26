@@ -396,6 +396,11 @@ class Storage:
             self._hold(StageKind.CAPTURING, held)
             raise
 
+    def release(self, key: str) -> None:
+        """Let go of each blob `hold_create` holds at `key`, which its caller no longer needs."""
+        with self._lock:
+            self._held = [h for h in self._held if not (h.stands_in and h.key == key)]
+
     def claim(self, key: str, data: bytes) -> bool:
         """Create `key` holding `data`, and say whether the blob that stands there is these bytes.
 

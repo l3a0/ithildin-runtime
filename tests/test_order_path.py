@@ -1183,10 +1183,8 @@ def test_6_every_unsent_alarm_is_tried_once_at_each_settle_in_its_order() -> Non
     account.settle(world.report)
     account.settle(world.report)
     assert world.alarms.sent == [first, second, first, second]
-    # A report follows each alarm, and each of the loss stop's two reads, its view of the
-    # journal and its look for a blob no entry names, and nothing else of a settle with
-    # nothing kept.
-    assert world.reports == reports + 2 + 2 * 2
+    # A report follows each alarm, and nothing else of a settle with nothing kept.
+    assert world.reports == reports + 2
 
 
 # Each answer that says two things, by what its copy says the order has filled, as a share of it.

@@ -276,7 +276,7 @@ On a live account only the owner may. On shadow and paper this doc proposes that
 
 ###### `ithildin stop clear --account <a>`
 
-This journals the clear of a fired loss stop, then deletes its blob, so the gate takes new orders again. Deleting the blob by hand clears nothing, because the journal keeps the firing, as [When a clear counts](architecture/06-runtime.md#when-a-clear-counts) says. On a live account only the owner may, and on shadow and paper the operator may too.
+This journals the clear of a fired loss stop, then deletes its blob, so the gate takes new orders again. Deleting the blob by hand clears nothing, because the journal keeps the firing, as [When a clear counts](architecture/06-runtime.md#when-a-clear-counts) says. [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds the command, and until it does a fired stop holds the account. On a live account only the owner may, and on shadow and paper the operator may too.
 
 ###### `ithildin switch clear --account <a>`
 

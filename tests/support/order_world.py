@@ -9,6 +9,7 @@ call, before it lands or after, and `refuse` answers as a store that is down.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -98,15 +99,16 @@ class Kill(BaseException):
 class Wired(Memory):
     """A store whose every call a test can hook, by its number, its operation and its key.
 
-    Each blob a create or a `put` makes gets a tag of its own, which `head`
-    answers with, as S3 and the folder do for blobs of different bytes. `head`
+    Each blob a create or a `put` makes gets the MD5 of its bytes as its tag,
+    which `head` answers with, as S3 does for a blob stored in one part. `head`
     is hooked as the other calls are.
     """
 
     def __init__(self, blobs: Mapping[str, bytes] | None = None) -> None:
         super().__init__(blobs)
-        self.tags: dict[str, str] = {key: f"t-{n}" for n, key in enumerate(self.blobs)}
-        self.made = len(self.tags)
+        self.tags: dict[str, str] = {}
+        for key in self.blobs:
+            self._tagged(key)
         self.calls: list[tuple[str, str]] = []
         self.before: Callable[[int, str, str], None] = lambda n, op, key: None
         self.after: Callable[[int, str, str], None] = lambda n, op, key: None
@@ -131,8 +133,8 @@ class Wired(Memory):
         return self._hooked("create", key, made)
 
     def _tagged(self, key: str) -> str:
-        self.made += 1
-        self.tags[key] = f"t-{self.made}"
+        # S3 gives a blob stored in one part the MD5 of its bytes as its tag.
+        self.tags[key] = f'"{hashlib.md5(self.blobs[key]).hexdigest()}"'
         return self.tags[key]
 
     def get(self, key: str) -> bytes:

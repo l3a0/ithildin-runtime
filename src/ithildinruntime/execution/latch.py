@@ -78,9 +78,10 @@ class _Wrote(Enum):
 class Latch:
     """The loss stop of one account, which every path of the account shares.
 
-    `lock` is the account's own, which the submit holds while it reads
-    `holding` and marks a call, so no thread's firing falls between the last
-    check and the broker's call.
+    `lock` is the account's own. A firing is held and counted under it, and the
+    submit holds it while it reads `holding` and `count` and marks a call, so
+    no firing of this process falls between the last check and the broker's
+    call, whether it is still held or was stored whole in between.
     """
 
     def __init__(
@@ -102,6 +103,8 @@ class Latch:
         self._lock = lock
         self._key = loss_stop_key(account)
         self._pending: list[StopFiredEntry] = []
+        # How many firings this process has held, which only rises.
+        self._count = 0
 
     # Firing
 
@@ -121,6 +124,7 @@ class Latch:
         entry = StopFiredEntry(secrets.token_hex(16), deployment, run, at, reading, reason)
         with self._lock:
             self._pending.append(entry)
+            self._count += 1
         try:
             failing = self._complete(report)
         except Exception as error:
@@ -144,6 +148,15 @@ class Latch:
     def holding(self) -> bool:
         """Whether this process holds a firing the journal has not taken. Call it under the lock."""
         return bool(self._pending)
+
+    def count(self) -> int:
+        """How many firings this process has held, which only rises. Call it under the lock.
+
+        The submit compares the count its checks began with and the count as
+        it marks the call, so a firing another thread held and stored whole in
+        between is seen.
+        """
+        return self._count
 
     def held(self) -> tuple[StopFiredEntry, ...]:
         with self._lock:
@@ -189,7 +202,8 @@ class Latch:
         else:
             what = f"{self._key} stands, and the journal holds no firing of it yet"
         return (
-            f"loss stop stands: {what}. `ithildin stop clear --account {self._account}` clears it"
+            f"loss stop stands: {what}. `ithildin stop clear --account {self._account}` clears it, "
+            "once #203 builds that command"
         )
 
     # Completing
@@ -211,7 +225,7 @@ class Latch:
         whole deadline.
         """
         tries = self._patience.tries(report)
-        once = self._patience.tries(report, self._clock.now())
+        once = self._patience.once(report)
         try:
             view = (tries if self.held() else once)(self._journal.view)
         except (StoreError, Halt) as error:
@@ -223,7 +237,8 @@ class Latch:
             return False
         latch = view.stop
         with self._lock:
-            # The journal keeps a firing it holds, and one that stands records this one too.
+            # The journal keeps a firing it holds, and one that stands covers this one, so
+            # nothing more is journaled for it.
             self._pending = [
                 entry
                 for entry in self._pending
@@ -252,6 +267,10 @@ class Latch:
                 self._create(entry, None, failing)
             return wrote is not _Wrote.FAILED
         standing = latch.standing
+        if not latch.alone and (standing is None or standing.stored is not None):
+            # Nothing needs a blob, so a copy `core.Storage` holds is let go rather than stored
+            # after a clear has deleted the one that counts.
+            self._storage.release(self._key)
         if standing is not None and standing.stored is not None:
             return False
         wanted = standing is not None
@@ -276,7 +295,10 @@ class Latch:
                 # A covered firing's blob: a clear between its entry and its delete.
                 return False
             stored = StopStoredEntry(standing.seq, found)
-            return self._write(view, stored, tries, failing, "its stop_stored") is _Wrote.WROTE
+            return self._write(view, stored, tries, failing, "its stop_stored") in (
+                _Wrote.WROTE,
+                _Wrote.TAKEN,
+            )
         if found is None or found in latch.tags:
             return False
         # A blob no entry names, with no firing standing.

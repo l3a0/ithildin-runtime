@@ -585,7 +585,7 @@ The first recover of a session values the book at the official closes of the ses
 | Mode | What it builds | What lifts the halt |
 | --- | --- | --- |
 | A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares, which halts both stages, or its row of send is not, which halts send alone |
-| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#147](https://github.com/l3a0/ithildin-runtime/issues/147) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151), [#155](https://github.com/l3a0/ithildin-runtime/issues/155) and [#156](https://github.com/l3a0/ithildin-runtime/issues/156) closes last |
+| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#147](https://github.com/l3a0/ithildin-runtime/issues/147) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
 | Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
 | Live | The same | Only the owner switches an account to live |
 | An unknown mode, and a backtest over any other store | The same | The configuration |
@@ -1022,12 +1022,18 @@ A blob that cannot be read reads as unreadable, whatever the other two say, beca
 
 ##### How a firing is written
 
-1. Hold the firing in memory, with a fresh random id that its entry and its blob both carry. S3's tag is a hash of the bytes, so the id keeps two firings on one reading from sharing a tag. The lock it is held under is the one the submit marks its call under, so no firing falls between the last check and the broker's call.
-2. Journal `stop_fired`, unless a firing stands already, which then records this reading too.
+1. Hold the firing in memory, with a fresh random id that its entry and its blob both carry. S3's tag is a hash of the bytes, so the id keeps two firings on one reading from sharing a tag. It is counted under the lock the submit marks its call under, and the submit compares the count its checks began with, so no firing of this process falls between the last check and the broker's call. A second process on the account waits on [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease.
+2. Journal `stop_fired`, unless a firing stands already. That firing covers this reading, and nothing more is journaled for it.
 3. Create the blob. Any blob already at the key stands for it.
 4. Journal `stop_stored` with the blob's tag. A tag that a covered firing's `stop_stored` names belongs to a clear between its entry and its delete, so the new firing stays unstored until that blob is gone.
 
-Each step runs whether the one before it failed or not. Each settle of the account, at the start of every stage and every send, completes what is missing. It journals a firing held in memory, gives a past `verdict` that stands alone its `stop_fired`, gives a firing its blob and its `stop_stored`, and journals a firing for a blob no entry names. The price is a crash while the journal refuses a firing and a clear is mid-delete, which loses that firing.
+Each step runs whether the one before it failed or not. The alarm on the reading goes out first, so an outage that holds the writes does not hold the page. Each settle of the order path, before every send, hold, ask and loss, completes what is missing. It journals a firing held in memory, gives a past `verdict` that stands alone its `stop_fired`, gives a firing its blob and its `stop_stored`, and journals a firing for a blob no entry names. It lets go of a blob `core.Storage` holds once nothing needs it, so a held copy is not stored after a clear. A stage's own settle leaves the latch alone, so a blob S3 will not take holds up no read of the broker. A worker that ends holding a firing names it among what it owes.
+
+The price has three parts.
+
+1. A settle with nothing owed costs one listing of the journal and one `head` of the blob, each tried once, before every order.
+2. A crash while S3 refuses both the entry and the blob loses the firing, since the process held it alone.
+3. A crash while the journal refuses a firing and a clear is mid-delete loses that firing too.
 
 ##### When a clear counts
 
