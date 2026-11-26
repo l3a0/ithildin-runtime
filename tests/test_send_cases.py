@@ -43,13 +43,15 @@ from ithildinruntime.core import (
     sha256_of,
 )
 from ithildinruntime.execution.brokers.faults import Faults, OrderFault
+from ithildinruntime.execution.brokers.simulated import SimulatedBroker
 from ithildinruntime.execution.inputs import read_inputs
 from ithildinruntime.execution.order_path import OrderPath
 from ithildinruntime.execution.send import OUTCOME_OUTPUT
 from ithildinruntime.journal import Journal, VerdictEntry, record_of
 from ithildinruntime.portfolio.sizing import size
-from tests.support import gates
-from tests.support.relay_broker import CheckedBroker
+from tests.support import fake_broker, gates
+from tests.support.fake_broker import FakeBroker
+from tests.support.relay_broker import CheckedBroker, RelayBroker
 from tests.support.send_world import CHAN, EXECUTION, SendWorld, strategy
 from tests.support.sim_world import ACCOUNT, DEPLOYMENT, FULL, GLD, USO, after, close_of
 
@@ -214,6 +216,22 @@ def checked(made: SendWorld, writer: str = "e" * 32):
         brokers=lambda at: CheckedBroker(lambda: made.store.blobs, ACCOUNT, at, to=made.broker()),
         writer=writer,
     )
+
+
+def test_a_checked_broker_reaches_a_simulated_broker_alone() -> None:
+    # The order sweep exempts tests/support/relay_broker.py's submits on this promise alone.
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+
+    class Mine(SimulatedBroker):
+        pass
+
+    mine = Mine(made.log, made.clock, object(), Faults())  # type: ignore[arg-type]
+    fake = FakeBroker(lambda: made.store.blobs, ACCOUNT, made.at)
+    for wrong in (fake, RelayBroker(made.broker(), lambda: None), mine):
+        with pytest.raises(TypeError, match="simulated broker alone"):
+            CheckedBroker(lambda: made.store.blobs, ACCOUNT, made.at, to=wrong)  # type: ignore[arg-type]
+    fake_broker.made.clear()
 
 
 def test_no_order_of_a_day_reaches_the_broker_but_as_its_journal_and_plan_say() -> None:
@@ -394,16 +412,19 @@ def test_a_price_wrong_100_times_sends_no_order_past_a_share_cap(leg, factor, st
         assert sizing is not None and Limit.MAX_POSITION in sizing.cut
         assert result.halt is None, result.halt.reason
         assert len(placed) == (2 if start == "flat" else 0)
-    made.rebuilt()
+    assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
 
 
 @pytest.mark.parametrize("start", ["flat", "held"])
 def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start) -> None:
     # The target sizing would give at GLD's price 100 times low, had no cap cut it: 400 /
-    # (3 × 1.01 + 5 × 20) baskets, each leg rounded to the nearest share. The gate's share caps,
-    # which read no price, are what stop it.
+    # (3 × 1.01 + 5 × 20) baskets, each leg rounded to the nearest share. The gross cap reads
+    # the price, so it is fooled: 12 × 1.01 + 19 × 20 = 392.12 is inside 1,000, where 12 × 101
+    # alone is past it. The gate's share caps, which read no price, are what stop it.
     made = SendWorld(_priced(GLD, Decimal("0.01"), DAYS[1]), strategies=(SIZED,))
-    made.constraints = gates.constraints(max_order_qty=TRUE, max_position=TRUE)
+    made.constraints = gates.constraints(
+        max_order_qty=TRUE, max_position=TRUE, max_gross=Decimal(1000)
+    )
     if start == "held":
         result, _ = _tried(made, DAYS[0], 1)
         assert result.halt is None, result.halt.reason
@@ -418,6 +439,10 @@ def test_a_wrong_priced_target_past_the_share_caps_is_refused_by_the_gate(start)
     assert f"the gate refused {first} on max_order_qty" in result.halt.reason
     assert made.submits()[before:] == []
     assert made.states()[first] == "Refused" and made.states()[second] == "Abandoned"
+    # The gate read GLD at its wrong price, so its gross figure is inside the cap.
+    refusal = verdicts(made)[first][-1]
+    assert refusal.limit is Limit.MAX_ORDER_QTY
+    assert Limit.MAX_GROSS not in [p.limit for p in refusal.past]
     assert made.rebuilt() == len([v for vs in verdicts(made).values() for v in vs])
 
 
@@ -548,9 +573,10 @@ def test_a_refused_short_settles_on_the_brokers_refusal_and_is_not_resent(fault)
     assert result.halt is None, result.halt.reason
     states = made.states()
     assert states[short] == "Rejected" and states[first] == "Filled"
-    # The journal holds one `sending` of it, and the checks behind the broker refuse a second
-    # submit of the id. The simulator places an order it rejects later, and never one it
-    # rejects at the submit.
+    # The journal holds one `sending` of it, and the checks behind each stage's broker refuse a
+    # second submit of the id. Across stages, a resend with its own `sending` breaks the count,
+    # and one without it fails the check that a `sending` is the order's newest entry. The
+    # simulator places an order it rejects later, and never one it rejects at the submit.
     kinds = [e.kind for e in made.view().orders[short].entries]
     assert kinds.count("sending") == 1 and kinds[-1] == "rejected", kinds
     assert made.submits().count(short) == (fault is OrderFault.REJECT_LATER)
@@ -569,7 +595,8 @@ def test_a_strategys_part_ends_in_one_of_four_ways_and_none_is_a_skip() -> None:
 def _of_the_day_before(made: SendWorld) -> dict:
     """The targets stored again under this decision's key, each of the decision before it."""
     key = output_key(DEPLOYMENT, made.run, made.at, PORTFOLIO_STAGE, TARGET_OUTPUT)
-    stored = decode_output(made.targets(made.at, PAIR) and made.store.blobs[key], TargetPortfolio)
+    made.targets(made.at, PAIR)
+    stored = decode_output(made.store.blobs[key], TargetPortfolio)
     earlier = tuple(replace(t, decision_at=close_of(FULL)) for t in stored.entries)
     return {"stored": earlier}
 

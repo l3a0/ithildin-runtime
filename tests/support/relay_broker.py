@@ -14,10 +14,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import NoReturn
 
 from ithildinruntime.core import Ack, OrderIntent
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
-from tests.support.fake_broker import FakeBroker
+from tests.support.fake_broker import FakeBroker, Refused
 
 __all__ = ["CheckedBroker", "RelayBroker"]
 
@@ -47,10 +48,12 @@ class CheckedBroker(FakeBroker):
     """The simulated broker behind the fake broker's four refusals.
 
     A submit the checks pass reaches the simulator unchanged. A refusal fails
-    the test through tests/conftest.py's fixture. The account's reads, the
-    order list, a lookup and the clock are the simulator's. A cancel and a
-    search for an order are not forwarded, since no case here sends either,
-    and each fails the test.
+    the test through tests/conftest.py's fixture. The account's five reads and
+    a lookup are the simulator's, which are every call the order path makes of
+    a broker today. The order list, the clock, a cancel and a search for an
+    order are not forwarded, since no case here makes one. Each is kept as a
+    refusal before it raises, so the fixture fails the test whatever catches
+    the error.
     """
 
     to: SimulatedBroker | None = None
@@ -79,20 +82,25 @@ class CheckedBroker(FakeBroker):
     def fills(self, since: datetime):
         return self._sim.fills(since)
 
-    def orders(self, since: datetime):
-        return self._sim.orders(since)
-
     def activities(self, since: datetime):
         return self._sim.activities(since)
 
     def lookup(self, broker_order_id: str):
         return self._sim.lookup(broker_order_id)
 
+    def orders(self, since: datetime):
+        self._unforwarded("reads the order list")
+
     def clock(self) -> datetime:
-        return self._sim.clock()
+        self._unforwarded("reads the clock")
 
     def find_order(self, intent: OrderIntent, since: datetime, mapped: object):
-        raise AssertionError("no case behind a checked broker searches for an order")
+        self._unforwarded("searches for an order")
 
     def cancel(self, broker_order_id: str):
-        raise AssertionError("no case behind a checked broker sends a cancel")
+        self._unforwarded("sends a cancel")
+
+    def _unforwarded(self, what: str) -> NoReturn:
+        why = f"no case behind a checked broker {what}"
+        self.refused.append(why)
+        raise Refused(why)
