@@ -200,9 +200,10 @@ def test_the_operating_range_the_tracked_limits_rest_on(traded, held, closes) ->
     the widest the gate can count for a decision's two legs, each leg either
     filled or not, at the decision's closes, and the gross takes each leg at the
     larger of before and after. A loss is a day's move on what the close before
-    held. Each share limit is the largest position rounded up to ten shares, as
-    the tracked file says, and no day of test 1 reaches the loss stop. Pinned at
-    c288e22.
+    held. Each `max_position` is the largest position rounded up to ten shares, as
+    the tracked file says, and no day of test 1 reaches the loss stop. The gate in
+    the run refuses a gross, a net or a loss past its limit before these asserts
+    read it. Pinned at c288e22.
     """
     limits = STRATEGY.section("risk")
     most_held = dict.fromkeys((GLD, USO), ZERO)

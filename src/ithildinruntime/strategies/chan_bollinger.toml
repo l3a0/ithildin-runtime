@@ -86,8 +86,9 @@ gross = 9936
 # - loss_stop is a tenth of G. The gate reads it against the account's loss on
 #   the day, V less the book at its marks, and past it refuses every order,
 #   exits included. It stops trading after a loss and bounds no loss itself: a
-#   repeat of the stress move on the net can pass it about five times over. Test
-#   1's worst day, a loss of 6.6% of G, shows that no day of test 1 stops.
+#   stress move against every leg, as the gate's worst loss counts it, can pass
+#   it by far. No ruling sets this level, so it waits for the owner's. Test 1's
+#   worst day, a loss of 6.6% of G, shows only that no day of test 1 stops.
 # - moc_cutoff is 0, because test 1's account fills at the close. An account's
 #   caps set its own.
 [risk]
